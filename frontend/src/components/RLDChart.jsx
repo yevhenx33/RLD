@@ -81,7 +81,7 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
                 x2="0"
                 y2="1"
               >
-                <stop offset="5%" stopColor={area.color} stopOpacity={0.3} />
+                <stop offset="5%" stopColor={area.color} stopOpacity={0.33} />
                 <stop offset="95%" stopColor={area.color} stopOpacity={0} />
               </linearGradient>
             ))}
