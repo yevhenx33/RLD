@@ -8,6 +8,9 @@ import {
   Wallet,
   ExternalLink,
   RefreshCw,
+  Clock,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import RLDPerformanceChart from "./components/RLDChart";
 
@@ -155,6 +158,26 @@ function App() {
     };
   }, [rates]);
 
+  // 24H Change Calculation
+  const dailyChange = useMemo(() => {
+    if (!rates || rates.length < 2) return 0;
+    const oneDaySeconds = 86400;
+    const latestTs = rates[rates.length - 1].timestamp;
+    const targetTs = latestTs - oneDaySeconds;
+
+    let closest = rates[0];
+    let minDiff = Math.abs(closest.timestamp - targetTs);
+
+    for (let i = 1; i < rates.length; i++) {
+      const diff = Math.abs(rates[i].timestamp - targetTs);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = rates[i];
+      }
+    }
+    return rates[rates.length - 1].apy - closest.apy;
+  }, [rates]);
+
   const getDateRangeString = () => {
     if (!rates || rates.length === 0) return "WAITING...";
     const opts = { month: "2-digit", day: "2-digit", year: "2-digit" };
@@ -182,12 +205,10 @@ function App() {
   let leverage, liqRate, notional;
 
   if (tradeSide === "LONG") {
-    // Long Logic: No leverage (1:1)
     leverage = 1;
     notional = collateral;
-    liqRate = null; // No liquidation for fully collateralized long
+    liqRate = null;
   } else {
-    // Short Logic
     const crDecimal = shortCR / 100;
     notional = crDecimal > 0 ? collateral / crDecimal : 0;
     liqRate = currentRate * (shortCR / 110);
@@ -200,7 +221,6 @@ function App() {
     }
   };
 
-  // For Long, Amount = Collateral exactly
   const handleLongAmountChange = (newAmount) => {
     setCollateral(newAmount);
   };
@@ -245,7 +265,6 @@ function App() {
       {/* HEADER */}
       <div className="sticky top-0 bg-[#050505]/95 backdrop-blur-sm z-50 w-full border-b border-transparent">
         <header className="max-w-[1800px] mx-auto px-6 py-3 flex items-center justify-between">
-          {/* Logo & Nav */}
           <div className="flex items-center gap-5 pl-1">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 bg-white"></div>
@@ -255,30 +274,29 @@ function App() {
             </div>
             <div className="hidden md:flex text-[12px] items-center gap-1 font-bold tracking-[0.15em] uppercase">
               <span className="text-white/10">//</span>
-              <span className="text-gray-600 hover:text-white transition-colors cursor-pointer px-2">
+              <a className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest">
                 TERMINAL
-              </span>
+              </a>
               <span className="text-white/10">|</span>
-              <span className="text-gray-600 hover:text-white transition-colors cursor-pointer px-2">
+              <a className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest">
                 BONDS
-              </span>
+              </a>
               <span className="text-white/10">|</span>
-              <span className="text-gray-600 hover:text-white transition-colors cursor-pointer px-2">
-                CDS [SOON]
-              </span>
+              <a className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest ">
+                CDS_[SOON]
+              </a>
               <span className="text-white/10">|</span>
               <a
                 href="https://lumisfi.notion.site/rld"
                 target="_blank"
                 rel="noreferrer"
-                className="text-gray-600 hover:text-white transition-colors cursor-pointer px-2"
+                className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest"
               >
                 RESEARCH
               </a>
             </div>
           </div>
 
-          {/* Right Side: Network Stats & Connect */}
           <div className="flex items-center gap-6">
             <div className="hidden md:flex items-center gap-6 text-[10px] uppercase tracking-widest text-gray-500 border-r border-white/10 pr-6 h-6">
               <span className="flex items-center gap-2">
@@ -291,7 +309,6 @@ function App() {
               </span>
               <span>BLOCK: #{latest.block_number}</span>
             </div>
-
             <button
               onClick={connectWallet}
               className="flex items-center gap-3 border border-white/10 bg-black hover:bg-white/5 hover:border-white/30 transition-all px-6 py-2 focus:outline-none rounded-none"
@@ -313,7 +330,6 @@ function App() {
 
       {/* MAIN GRID LAYOUT */}
       <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
-        {/* ROW 1: CONTENT (Left) & TERMINAL (Right) - Equal Height via items-stretch */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
           {/* === LEFT COLUMN: DATA & CHART (Span 9) === */}
           <div className="xl:col-span-9 flex flex-col gap-4">
@@ -344,29 +360,35 @@ function App() {
                   </a>
                 </div>
               </div>
-              {/* Metrics */}
+
               <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
+                {/* CARD 1: CURRENT SPOT + 24H CHANGE */}
                 <MetricBox
                   label="CURRENT_SPOT"
                   value={latest.apy.toFixed(2)}
                   sub={
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-green-500 animate-pulse"></span>
-                      <span>
-                        LAST UPDATE: <TimeAgo timestamp={latest.timestamp} />
+                    <div
+                      className={`flex items-center gap-2 ${
+                        dailyChange >= 0 ? "text-green-500" : "text-red-500"
+                      }`}
+                    >
+                      {dailyChange >= 0 ? (
+                        <TrendingUp size={15} />
+                      ) : (
+                        <TrendingDown size={15} />
+                      )}
+                      <span className="font-bold">
+                        24H: {dailyChange > 0 ? "+" : ""}
+                        {dailyChange.toFixed(2)}%
                       </span>
                     </div>
                   }
                 />
-                <MetricBox
-                  label={formatTwarLabel(twarWindow)}
-                  value={showTwar ? latestTwar.toFixed(2) : "OFF"}
-                  sub="MOVING AVG"
-                  dimmed={!showTwar}
-                />
+
+                {/* CARD 2: PERIOD STATS */}
                 <div className="p-6 flex flex-col justify-between h-full min-h-[180px]">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
-                    PERIOD_STATS <Activity size={10} className="opacity-20" />
+                  <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
+                    PERIOD_STATS <Activity size={15} className="opacity-90" />
                   </div>
                   <div className="grid grid-cols-2 gap-y-6 gap-x-4">
                     <StatItem
@@ -384,6 +406,23 @@ function App() {
                     <StatItem
                       label="VOLATILITY"
                       value={`±${stats.vol.toFixed(2)}%`}
+                    />
+                  </div>
+                </div>
+
+                {/* CARD 3: FUNDING_RATE (Daily/Yearly) */}
+                <div className="p-6 flex flex-col justify-between h-full min-h-[180px]">
+                  <div className="text-[12px] text-gray-500 uppercase tracking-widest flex justify-between">
+                    FUNDING_RATE <Clock size={15} className="opacity-90" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-4 mt-auto">
+                    <StatItem
+                      label="DAILY"
+                      value={`${(latest.apy / 365).toFixed(4)}%`}
+                    />
+                    <StatItem
+                      label="YEARLY"
+                      value={`${latest.apy.toFixed(2)}%`}
                     />
                   </div>
                 </div>
@@ -530,12 +569,12 @@ function App() {
             </div>
           </div>
 
-          {/* === RIGHT COLUMN: TRADING TERMINAL + PNL (Span 3) - Unified Container === */}
+          {/* === RIGHT COLUMN: TRADING TERMINAL + PNL (Span 3) === */}
           <div className="xl:col-span-3 border border-white/10 bg-[#080808] flex flex-col h-full">
             {/* 1. Header */}
             <div className="p-4 border-b border-white/10 bg-[#0a0a0a]">
               <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                <Terminal size={12} className="text-gray-500" /> Synthetic Rates
+                <Terminal size={15} className="text-gray-500" /> Synthetic_Rates
               </h3>
             </div>
 
@@ -565,11 +604,11 @@ function App() {
               </div>
             </div>
 
-            {/* 3. Main Trading Logic (Flex Grow to push PnL down) */}
+            {/* 3. Main Trading Logic */}
             <div className="flex-1 flex flex-col p-6 gap-6">
               {/* Collateral Input */}
               <div className="space-y-2">
-                <div className="flex justify-between text-[11px] uppercase tracking-widest font-bold text-gray-500">
+                <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
                   <span>Collateral</span>
                   <span>Balance: {account ? "2,450.00" : "--"} USDC</span>
                 </div>
@@ -581,16 +620,16 @@ function App() {
                     className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
                     placeholder="0.00"
                   />
-                  <span className="absolute right-0 top-2 text-xs text-gray-600">
+                  <span className="absolute right-0 top-2 text-sm text-gray-600">
                     USDC
                   </span>
                 </div>
               </div>
 
-              {/* LONG: Amount (No Leverage Slider) */}
+              {/* LONG: Amount */}
               {tradeSide === "LONG" && (
                 <div className="space-y-2">
-                  <div className="text-[11px] uppercase tracking-widest font-bold text-gray-500">
+                  <div className="text-[12px] uppercase tracking-widest font-bold text-gray-500">
                     Amount (Notional)
                   </div>
                   <div className="relative group">
@@ -605,7 +644,7 @@ function App() {
                       className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
                       placeholder="0.00"
                     />
-                    <span className="absolute right-0 top-2 text-xs text-gray-500">
+                    <span className="absolute right-0 top-2 text-sm text-gray-600">
                       USDC
                     </span>
                   </div>
@@ -616,7 +655,7 @@ function App() {
               {tradeSide === "SHORT" && (
                 <>
                   <div className="space-y-2">
-                    <div className="text-[11px] uppercase tracking-widest font-bold text-gray-500">
+                    <div className="text-[12px] uppercase tracking-widest font-bold text-gray-500">
                       Amount (Notional)
                     </div>
                     <div className="relative group">
@@ -631,14 +670,14 @@ function App() {
                         className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
                         placeholder="0.00"
                       />
-                      <span className="absolute right-0 top-2 text-xs text-gray-500">
+                      <span className="absolute right-0 top-2 text-[12px] text-gray-600">
                         USDC
                       </span>
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <div className="flex justify-between text-[11px] uppercase tracking-widest font-bold text-gray-500">
+                    <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
                       <span>Collateral Ratio</span>
                       <span className="text-white">{shortCR.toFixed(0)}%</span>
                     </div>
@@ -649,9 +688,9 @@ function App() {
                       step="10"
                       value={shortCR}
                       onChange={(e) => setShortCR(Number(e.target.value))}
-                      className="w-full h-0.5 bg-white/10 text-xs rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
+                      className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
                     />
-                    <div className="flex justify-between text-xs text-gray-500 font-mono">
+                    <div className="flex justify-between text-[12px] text-gray-500 font-mono">
                       <span>110%</span>
                       <span>1500%</span>
                     </div>
@@ -659,21 +698,23 @@ function App() {
                 </>
               )}
 
-              {/* Stats Box */}
-              <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-[11px]">
-                <div className="flex justify-between items-center ">
+              {/* Stats Box - TEXT-XS */}
+              <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02]">
+                <div className="flex justify-between items-center text-[12px]">
                   <span className="text-gray-500 uppercase">Entry Rate</span>
                   <span className="font-mono text-white">
                     {currentRate.toFixed(2)}%
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-500 uppercase ">Liq. Rate</span>
-                  <span className="font-mono text-orange-500">
+                  <span className="text-gray-500 uppercase text-[12px]">
+                    Liq. Rate
+                  </span>
+                  <span className="font-mono text-orange-500 text-[12px]">
                     {liqRate ? `${liqRate.toFixed(2)}%` : "None"}
                   </span>
                 </div>
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center text-[12px]">
                   <span className="text-gray-500 uppercase">Notional</span>
                   <span className="font-mono text-white">
                     $
@@ -682,8 +723,10 @@ function App() {
                     })}
                   </span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-500 uppercase">Est. Fee</span>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-gray-500 uppercase tracking-widest">
+                    Est. Fee
+                  </span>
                   <span className="font-mono text-gray-400">
                     {(notional * 0.001).toFixed(2)} USDC
                   </span>
@@ -713,7 +756,7 @@ function App() {
               </div>
             </div>
 
-            {/* 4. PnL Simulator (Bottom Section) */}
+            {/* 4. PnL Simulator */}
             <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
               <div className="flex justify-between items-center">
                 <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
@@ -726,9 +769,9 @@ function App() {
                 />
               </div>
 
-              <div className="space-y-2 text-[13px]">
-                <div className="flex justify-between text-gray-500 font-mono">
-                  <span>Rate Scenario</span>
+              <div className="space-y-2">
+                <div className="flex justify-between text-[13px] text-gray-500 font-mono">
+                  <span>Rate_Scenario</span>
                   <span>
                     {simTargetRate ? simTargetRate.toFixed(2) : "0.00"}%
                   </span>
@@ -749,7 +792,7 @@ function App() {
                       onClick={() =>
                         setSimTargetRate(currentRate * (1 + pct / 100))
                       }
-                      className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 text-[12px] font-mono text-gray-400 focus:outline-none"
+                      className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 text-xs font-mono text-gray-400 focus:outline-none"
                     >
                       {pct > 0 ? "+" : ""}
                       {pct}%
@@ -758,9 +801,9 @@ function App() {
                 </div>
               </div>
 
-              <div className=" border-white/10">
+              <div className="">
                 <div className="flex justify-between items-end">
-                  <span className="text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                  <span className="text-[13px] text-gray-500">
                     Est. PnL (1Y)
                   </span>
                   <div
@@ -821,15 +864,15 @@ function MetricBox({ label, value, sub, dimmed }) {
         dimmed ? "opacity-30" : ""
       }`}
     >
-      <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
-        {label} <Terminal size={10} className="opacity-20" />
+      <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+        {label} <Terminal size={15} className="opacity-90" />
       </div>
       <div>
         <div className="text-3xl font-light text-white mb-2 tracking-tight">
           {value}
-          <span className="text-xs text-gray-600 ml-1">%</span>
+          <span className="text-sm text-gray-600 ml-1">%</span>
         </div>
-        <div className="text-[9px] text-gray-500 uppercase tracking-widest">
+        <div className="text-[12px] text-gray-500 uppercase tracking-widest">
           {sub}
         </div>
       </div>
