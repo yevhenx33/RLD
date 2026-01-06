@@ -792,7 +792,7 @@ function App() {
                       onClick={() =>
                         setSimTargetRate(currentRate * (1 + pct / 100))
                       }
-                      className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 text-xs font-mono text-gray-400 focus:outline-none"
+                      className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 text-xs font-mono text-gray-400 focus:outline-none rounded-none"
                     >
                       {pct > 0 ? "+" : ""}
                       {pct}%
