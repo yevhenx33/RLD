@@ -13,7 +13,7 @@ import {
   TrendingDown,
 } from "lucide-react";
 import RLDPerformanceChart from "./components/RLDChart";
-
+import { useSymbioticOracle } from "./hooks/useSymbioticOracle";
 const fetcher = (url) => axios.get(url).then((res) => res.data);
 
 // --- HELPER FUNCTIONS ---
@@ -56,6 +56,14 @@ function App() {
 
   // PnL Simulation State
   const [simTargetRate, setSimTargetRate] = useState(null);
+
+  // --- NEW: Symbiotic Hook ---
+  const { data: symbioticData } = useSymbioticOracle();
+  const latestSymbiotic = useMemo(() => {
+    return symbioticData && symbioticData.length > 0
+      ? symbioticData[symbioticData.length - 1]
+      : null;
+  }, [symbioticData]);
 
   // --- ACTIONS ---
   const handleApplyDate = () => {
@@ -177,19 +185,6 @@ function App() {
     }
     return rates[rates.length - 1].apy - closest.apy;
   }, [rates]);
-
-  const getDateRangeString = () => {
-    if (!rates || rates.length === 0) return "WAITING...";
-    const opts = { month: "2-digit", day: "2-digit", year: "2-digit" };
-    const s = new Date(rates[0].timestamp * 1000).toLocaleDateString(
-      "en-GB",
-      opts
-    );
-    const e = new Date(
-      rates[rates.length - 1].timestamp * 1000
-    ).toLocaleDateString("en-GB", opts);
-    return `${s} -> ${e}`;
-  };
 
   const isCappedRaw = resolution === "RAW" && rates && rates.length >= 30000;
   const latest =
@@ -541,8 +536,20 @@ function App() {
                     </div>
                   )}
                 </div>
-                <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest">
-                  RANGE: {getDateRangeString()}
+                <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                  {latestSymbiotic ? (
+                    <>
+                      <span className="text-pink-500">
+                        SYMBIOTIC: ${latestSymbiotic.twar.toFixed(4)}
+                      </span>
+                      <span className="text-gray-600">
+                        Updated{" "}
+                        <TimeAgo timestamp={latestSymbiotic.timestamp} /> ago
+                      </span>
+                    </>
+                  ) : (
+                    "SYMBIOTIC: SYNCING..."
+                  )}
                 </div>
               </div>
               <div className="h-[500px] w-full border border-white/10 p-4 bg-[#080808]">
