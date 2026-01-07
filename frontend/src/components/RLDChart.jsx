@@ -100,14 +100,14 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
             domain={["dataMin", "dataMax"]}
             tickFormatter={formatTick}
             stroke="#71717a"
-            fontSize={11}
+            fontSize={12}
             tickMargin={12}
             minTickGap={60}
           />
 
           <YAxis
             stroke="#71717a"
-            fontSize={11}
+            fontSize={12}
             domain={["auto", "auto"]}
             tickFormatter={(val) => `${val}%`}
             width={40}
