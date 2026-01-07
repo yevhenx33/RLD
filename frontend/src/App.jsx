@@ -298,7 +298,7 @@ function App() {
           </div>
 
           <div className="flex items-center gap-6">
-            <div className="hidden md:flex items-center gap-6 text-[10px] uppercase tracking-widest text-gray-500 border-r border-white/10 pr-6 h-6">
+            <div className="hidden md:flex items-center gap-6 text-[11px] uppercase tracking-widest text-gray-500 border-r border-white/10 pr-6 h-6">
               <span className="flex items-center gap-2">
                 <div
                   className={`w-1.5 h-1.5 ${
@@ -436,7 +436,7 @@ function App() {
                   <button
                     key={res}
                     onClick={() => setResolution(res)}
-                    className={`flex-1 text-xs py-1.5 uppercase tracking-wider transition-colors border border-transparent rounded-none focus:outline-none ${
+                    className={`flex-1 text-[12px] font-bold py-1 uppercase tracking-wider transition-colors border border-transparent rounded-none focus:outline-none ${
                       resolution === res
                         ? "bg-white text-black border-white"
                         : "text-gray-500 hover:text-white hover:bg-white/5"
@@ -458,7 +458,7 @@ function App() {
                   <button
                     key={btn.l}
                     onClick={() => handleQuickRange(btn.d, btn.l)}
-                    className={`flex-1 text-xs py-1.5 uppercase tracking-wider transition-colors border border-transparent rounded-none focus:outline-none ${
+                    className={`flex-1 text-[12px] font-semibold py-1 uppercase tracking-wider transition-colors border border-transparent rounded-none focus:outline-none ${
                       activeRange === btn.l
                         ? "bg-white text-black border-white"
                         : "text-gray-500 hover:text-white hover:bg-white/5"
@@ -528,20 +528,20 @@ function App() {
                 <div className="flex gap-8">
                   <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-cyan-400"></div>
-                    <span className="text-[10px] uppercase tracking-widest">
+                    <span className="text-[11px] uppercase tracking-widest">
                       Spot Rate
                     </span>
                   </div>
                   {showTwar && (
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 bg-pink-500"></div>
-                      <span className="text-[10px] uppercase tracking-widest">
+                      <span className="text-[11px] uppercase tracking-widest">
                         {formatTwarLabel(twarWindow)}
                       </span>
                     </div>
                   )}
                 </div>
-                <div className="text-[10px] font-mono text-gray-500 uppercase tracking-widest">
+                <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest">
                   RANGE: {getDateRangeString()}
                 </div>
               </div>
@@ -558,10 +558,6 @@ function App() {
                       ...(showTwar
                         ? [{ key: "twar", name: "TWAR", color: "#ec4899" }]
                         : []),
-                    ]}
-                    referenceLines={[
-                      { y: 4.0, label: "FLOOR", stroke: "#10b981" },
-                      { y: 20.0, label: "KINK", stroke: "#ef4444" },
                     ]}
                   />
                 )}
@@ -836,7 +832,7 @@ function App() {
 function ControlCell({ label, children, className = "" }) {
   return (
     <div className={`p-4 flex flex-col gap-3 ${className}`}>
-      <span className="text-[10px] text-gray-600 uppercase tracking-[0.2em] font-bold">
+      <span className="text-[11px] text-gray-500 uppercase tracking-[0.2em] font-bold">
         {label}
       </span>
       <div className="flex items-center w-full">{children}</div>
@@ -847,7 +843,7 @@ function ControlCell({ label, children, className = "" }) {
 function StatItem({ label, value }) {
   return (
     <div>
-      <div className="text-[9px] text-gray-500 uppercase tracking-widest mb-1">
+      <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">
         {label}
       </div>
       <div className="text-xl font-light text-white font-mono tracking-tighter">
