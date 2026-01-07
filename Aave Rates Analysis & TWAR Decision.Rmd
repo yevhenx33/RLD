@@ -1,0 +1,167 @@
+---
+title: "Aave Rates Analysis & TWAR Decision"
+author: "Yevhen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(DBI)
+library(RSQLite)
+library(tidyverse)
+library(lubridate)
+library(runner)
+library(knitr) # For nice tables
+
+DB_PATH <- "~/Documents/GitHub/rate-dashboard/aave_rates.db"
+BLOCK_TIME <- 12
+
+# Custom Theme
+theme_rld <- theme_minimal() +
+  theme(
+    plot.background = element_rect(fill = "#050505", color = NA),
+    panel.background = element_rect(fill = "#050505", color = NA),
+    text = element_text(color = "#e0e0e0"),
+    axis.text = element_text(color = "#9ca3af"),
+    panel.grid.major = element_line(color = "#333333"),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+```{r}
+con <- dbConnect(RSQLite::SQLite(), DB_PATH)
+df <- dbGetQuery(con, "SELECT * FROM rates ORDER BY timestamp ASC")
+dbDisconnect(con)
+
+rates <- df %>%
+  mutate(date = as_datetime(timestamp), apy = as.numeric(apy)) %>%
+  arrange(date) %>%
+  filter(date >= (now() - months(6))) %>%
+  distinct(timestamp, .keep_all = TRUE) %>%
+  mutate(dt = as.numeric(timestamp - lag(timestamp, default = first(timestamp)))) %>%
+  mutate(wt_apy = apy * dt) # Pre-calc for optimization
+
+print(paste("Rows loaded:", nrow(rates)))
+```
+
+```{r}
+# Gap Check
+gaps <- rates %>% filter(dt > 24)
+print(paste("Gaps > 24s:", nrow(gaps)))
+
+# Outlier Check
+Q1 <- quantile(rates$apy, 0.25); Q3 <- quantile(rates$apy, 0.95)
+lower <- Q1 - 1.5 * (Q3 - Q1); upper <- Q3 + 1.5 * (Q3 - Q1)
+rates <- rates %>% mutate(is_outlier = apy < lower | apy > upper)
+print(paste("Outliers:", sum(rates$is_outlier)))
+```
+
+```{r}
+# Define all windows to test (in seconds)
+# 1-10 mins, 20 mins (100 blocks), 60 mins (1 hour)
+windows_test <- c(
+  setNames(seq(60, 600, 60), paste0(1:10, "m")), # 1m to 10m
+  "20m (100blk)" = 100 * BLOCK_TIME,             # 1200s
+  "1h" = 3600                                    # 3600s
+)
+
+results_list <- list()
+
+print("Running Decision Matrix...")
+
+for(w_name in names(windows_test)) {
+  w_secs <- windows_test[[w_name]]
+  
+  # Fast Calc
+  sum_wt <- runner(x = rates$wt_apy, k = w_secs, idx = rates$timestamp, f = sum)
+  sum_dt <- runner(x = rates$dt,     k = w_secs, idx = rates$timestamp, f = sum)
+  twar_val <- sum_wt / sum_dt
+  
+  # Calculate Deviation Stats
+  devs <- abs(rates$apy - twar_val)
+  n_volatile <- sum(devs > 1.0, na.rm = TRUE)
+  pct_volatile <- (n_volatile / nrow(rates)) * 100
+  
+  results_list[[w_name]] <- tibble(
+    Window = w_name,
+    Seconds = w_secs,
+    Violations = n_volatile,
+    Risk_Percent = round(pct_volatile, 3)
+  )
+}
+
+# Combine into final table
+decision_table <- bind_rows(results_list)
+
+# Display Table
+kable(decision_table, 
+      col.names = c("Window", "Duration (s)", "Rows > 1% Dev", "% Time in Danger Zone"),
+      caption = "TWAR Smoothness vs. Lag Analysis")
+```
+
+```{r}
+ggplot(decision_table, aes(x = reorder(Window, Seconds), y = Risk_Percent)) +
+  geom_bar(stat = "identity", fill = "#22d3ee", alpha = 0.8) +
+  geom_text(aes(label = paste0(Risk_Percent, "%")), vjust = -0.5, color = "white", size = 3) +
+  labs(
+    title = "Risk Analysis: Time Spent in >1% Deviation",
+    subtitle = "Lower is safer (less lag). Higher means TWAR cannot keep up with volatility.",
+    x = "Smoothing Window",
+    y = "% of Time > 1% Deviation"
+  ) +
+  theme_rld
+```
+
+```{r}
+# Calculate 100-block TWAR for final plot
+w_100 <- 100 * BLOCK_TIME
+s_wt <- runner(x = rates$wt_apy, k = w_100, idx = rates$timestamp, f = sum)
+s_dt <- runner(x = rates$dt,     k = w_100, idx = rates$timestamp, f = sum)
+rates$twar_final <- s_wt / s_dt
+
+rates <- rates %>% mutate(is_volatile = abs(apy - twar_final) > 1.0)
+
+ggplot(rates, aes(x = date)) +
+  # Red Danger Zones
+  geom_ribbon(data = subset(rates, is_volatile),
+              aes(ymin = pmin(apy, twar_final), ymax = pmax(apy, twar_final)),
+              fill = "#ef4444", alpha = 0.8) +
+  # Lines
+  geom_line(aes(y = twar_final, color = "100-Block TWAR"), size = 0.8) +
+  geom_line(aes(y = apy, color = "Spot"), size = 0.3, alpha = 0.5) +
+  scale_color_manual(values = c("Spot" = "#22d3ee", "100-Block TWAR" = "#f472b6")) +
+  labs(
+    title = "Final Choice: 100-Block Smoothing",
+    subtitle = paste0("Red zones indicate deviations > 1% | Window: ", w_100, "s"),
+    y = "APY (%)", x = "Date"
+  ) +
+  theme_rld
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
