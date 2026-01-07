@@ -69,6 +69,7 @@ if [ ! -f "api.py" ]; then
 fi
 
 # Run Uvicorn in background
+source venv/bin/activate
 uvicorn api:app --reload --port 8000 > backend_logs.txt 2>&1 &
 BACKEND_PID=$!
 echo -e "${GREEN}✅ Backend running (logs in backend_logs.txt)${NC}"
