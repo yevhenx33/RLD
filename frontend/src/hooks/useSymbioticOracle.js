@@ -3,8 +3,9 @@ import axios from "axios";
 
 // --- CONFIGURATION ---
 const RPC_URL = "http://127.0.0.1:8545"; // Local Anvil Node
+
 // Ensure this matches your deployment
-const CONTRACT_ADDRESS = "0x0b4868Dbdfb981a4b26eE5d670739Bc03b16cd9c";
+const CONTRACT_ADDRESS = "0x751527acFf86638af877D292Ef165300D9AdDd1E";
 
 // Event Signature: TwarUpdated(uint256,uint256,uint256)
 const EVENT_TOPIC =
@@ -16,6 +17,9 @@ const hexToBigInt = (hex) => {
 };
 
 const fetcher = async () => {
+  // Debug Log
+  console.log(`[Symbiotic] Fetching logs from ${CONTRACT_ADDRESS}...`);
+
   const payload = {
     jsonrpc: "2.0",
     id: 1,
@@ -23,7 +27,7 @@ const fetcher = async () => {
     params: [
       {
         address: CONTRACT_ADDRESS,
-        fromBlock: "0x0", // Start from genesis for history
+        fromBlock: "earliest",
         toBlock: "latest",
         topics: [EVENT_TOPIC],
       },
@@ -32,19 +36,29 @@ const fetcher = async () => {
 
   try {
     const res = await axios.post(RPC_URL, payload);
-    if (res.data.error) throw new Error(res.data.error.message);
+
+    // Check for RPC Errors
+    if (res.data.error) {
+      console.error("[Symbiotic] RPC Error:", res.data.error);
+      throw new Error(res.data.error.message);
+    }
 
     const logs = res.data.result;
+    console.log(`[Symbiotic] Found ${logs.length} logs`);
+
     if (!logs || logs.length === 0) return [];
 
+    // Decode Logs
     const formattedData = logs.map((log) => {
       // 1. Timestamp (Indexed -> Topic[1])
       const timestampBig = hexToBigInt(log.topics[1]);
       const timestamp = Number(timestampBig);
 
       // 2. Data (Twar + Diff)
+      // Remove 0x, split into 32-byte chunks (64 hex chars)
       const dataRaw = log.data.replace("0x", "");
       const twarHex = "0x" + dataRaw.substring(0, 64);
+      // const diffHex = "0x" + dataRaw.substring(64, 128); // Not used yet
 
       const twarBig = hexToBigInt(twarHex);
       const twar = Number(twarBig) / 1e18;
@@ -58,14 +72,14 @@ const fetcher = async () => {
 
     return formattedData.sort((a, b) => a.timestamp - b.timestamp);
   } catch (err) {
-    console.error("Symbiotic Oracle Stream Error:", err);
-    return [];
+    console.error("[Symbiotic] Fetch Failed:", err);
+    return []; // Return empty to prevent crash
   }
 };
 
 export function useSymbioticOracle() {
   const { data, error } = useSWR("symbiotic-oracle-data", fetcher, {
-    refreshInterval: 5000,
+    refreshInterval: 5000, // Poll faster (5s) for local testing
     dedupingInterval: 2000,
   });
 
