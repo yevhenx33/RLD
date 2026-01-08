@@ -177,11 +177,11 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 border border-white/5 bg-[#0a0a0a] p-2 relative">
+      <div className="flex-1 min-h-0 border-white/5 bg-[#080808] p-2 relative">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={data}
-            margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
+            margin={{ top: 0, right: 10, left: 10, bottom: 0 }}
           >
             <defs>
               <linearGradient
@@ -210,13 +210,13 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
               axisLine={false}
               tickFormatter={(d) => `D${d}`}
               stroke="#52525b"
-              fontSize={10}
-              minTickGap={30}
+              fontSize={12}
+              minTickGap={50}
             />
             <YAxis
               orientation="right"
               stroke="#52525b"
-              fontSize={10}
+              fontSize={12}
               tickLine={false}
               axisLine={false}
               tickFormatter={(val) =>
@@ -225,7 +225,7 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
                 })}`
               }
               domain={["auto", "auto"]}
-              width={40}
+              width={50}
             />
             <Tooltip
               content={<CustomWealthTooltip />}

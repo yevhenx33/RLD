@@ -110,7 +110,7 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
             fontSize={12}
             domain={["auto", "auto"]}
             tickFormatter={(val) => `${val}%`}
-            width={40}
+            width={50}
           />
 
           <Tooltip
