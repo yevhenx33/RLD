@@ -52,14 +52,12 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
                                 CDS_[SOON]
                             </a>
                             <span className="text-white/10">|</span>
-                            <a
-                                href="https://lumisfi.notion.site/rld"
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest"
+                            <Link
+                                to="/research"
+                                className={`transition-colors px-2 tracking-widest ${location.pathname === '/research' ? 'text-white cursor-default' : 'text-gray-400 hover:text-white cursor-pointer'}`}
                             >
                                 RESEARCH
-                            </a>
+                            </Link>
                         </div>
                     </div>
 
