@@ -53,7 +53,8 @@ const getToday = () => new Date().toISOString().split("T")[0];
 
 const formatNum = (num, digits = 2, symbol = "") => {
   if (num === null || num === undefined) return "--";
-  return `${symbol}${num.toLocaleString(undefined, {
+
+  return `${symbol}${num.toLocaleString("en-US", {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   })}`;
@@ -465,7 +466,7 @@ const MetricsGrid = ({ latest, dailyChange, stats }) => (
       label="FUNDING_RATE"
       Icon={Clock}
       content={
-        <div className="grid grid-cols-2 gap-x-4 mt-auto h-full items-end pb-1">
+        <div className="grid grid-cols-2 gap-x-4 mt-auto h-full items-end">
           <StatItem
             label="DAILY"
             value={`${formatNum(latest.apy / 365, 4)}%`}
@@ -766,7 +767,7 @@ const ProductCard = ({ theme = "pink", title, desc, badge, Icon, onClick }) => {
   return (
     <div
       onClick={onClick}
-      className="border border-white/10 bg-[#050505] p-6 hover:bg-[#0a0a0a] transition-colors cursor-pointer group min-h-[180px] h-full flex flex-col justify-between"
+      className="border border-white/10 bg-[#080808]  p-6 hover:bg-white/5 transition-colors cursor-pointer group min-h-[180px] h-full flex flex-col justify-between"
     >
       <div>
         <div className="flex justify-between items-center mb-6">
@@ -845,7 +846,7 @@ export default function BondsPage() {
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
           <div className="xl:col-span-9 flex flex-col gap-6">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-              <div className="lg:col-span-4 h-full">
+              <div className="lg:col-span-4 h-full ">
                 <ProductCard
                   theme="cyan"
                   title="FIXED_YIELD"
