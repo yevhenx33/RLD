@@ -14,12 +14,14 @@ import {
 import {
   Terminal,
   Activity,
-  RefreshCw,
   Clock,
   TrendingUp,
   TrendingDown,
   Shield,
   Percent,
+  Calendar,
+  Settings,
+  AlertTriangle,
 } from "lucide-react";
 
 // --- CONSTANTS & UTILS ---
@@ -32,6 +34,19 @@ const getPastDate = (days) => {
   const d = new Date();
   d.setDate(d.getDate() - days);
   return d.toISOString().split("T")[0];
+};
+
+const getFutureDate = (days) => {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+};
+
+const getDaysDiff = (dateStr) => {
+  const d1 = new Date();
+  const d2 = new Date(dateStr);
+  const diffTime = Math.abs(d2 - d1);
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 };
 
 const getToday = () => new Date().toISOString().split("T")[0];
@@ -50,21 +65,14 @@ function useWealthProjection(collateral, currentRate, days = 90) {
   return useMemo(() => {
     const data = [];
     const fixedRateDaily = currentRate / 100 / 365;
-
-    // Wave parameters for simulation
-    const volatility = 0.01; // Amplitude of the wave relative to collateral
-    const cycleSpeed = 0.2; // Frequency of the wave
+    const volatility = 0.02;
+    const cycleSpeed = 0.1;
 
     for (let i = 0; i <= days; i++) {
-      // 1. Fixed Path (Linear Growth)
       const fixedBalance = collateral * (1 + fixedRateDaily * i);
-
-      // 2. Variable Path (Wave + Noise around linear trend)
-      // We take the fixed trend and add a sine wave + random noise
-      const trend = collateral * (1 + fixedRateDaily * 1.2 * i); // Variable tends to be slightly higher/lower on avg
+      const trend = collateral * (1 + fixedRateDaily * 1.2 * i);
       const wave = Math.sin(i * cycleSpeed) * (collateral * volatility);
       const noise = (Math.random() - 0.5) * (collateral * 0.005);
-
       const variableBalance = trend + wave + noise;
 
       data.push({
@@ -78,7 +86,7 @@ function useWealthProjection(collateral, currentRate, days = 90) {
   }, [collateral, currentRate, days]);
 }
 
-const CustomWealthTooltip = ({ active, payload, label }) => {
+const CustomWealthTooltip = ({ active, payload }) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-zinc-950 border border-zinc-800 p-3 rounded shadow-2xl font-mono text-xs z-50">
@@ -114,45 +122,52 @@ const CustomWealthTooltip = ({ active, payload, label }) => {
   return null;
 };
 
-const WealthProjectionChart = ({ data, collateral }) => {
+const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
   if (!data || data.length === 0) return null;
 
-  // Calculate final metrics from the last data point
   const finalPoint = data[data.length - 1];
   const valueAtMaturity = finalPoint.fixed;
   const calculatedWealth = valueAtMaturity - collateral;
 
+  // Define colors based on theme
+  const mainColor = theme === "pink" ? "#ec4899" : "#22d3ee"; // Pink-500 vs Cyan-400
+  const labelColor = theme === "pink" ? "text-pink-500" : "text-cyan-400";
+  const bgColor = theme === "pink" ? "bg-pink-500" : "bg-cyan-400";
+
   return (
-    <div className="w-full h-full select-none bg-[#050505] border border-white/10 p-6 flex flex-col">
-      {/* Top Header Metrics */}
-      <div className="flex items-start justify-between mb-2">
+    <div className="w-full h-full select-none bg-[#080808] border border-white/10 p-6 flex flex-col">
+      <div className="flex items-start justify-between mb-6">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
-            Value_at_Maturity
+            Value at Maturity
           </div>
           <div className="text-3xl font-light text-white font-mono tracking-tight">
             ${formatNum(valueAtMaturity, 2)}
           </div>
         </div>
-
         <div className="text-right">
           <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
-            Calculated_Wealth
+            {theme === "pink" ? "Projected Hedge" : "Calculated Wealth"}
           </div>
-          <div className="text-xl text-green-500 font-mono tracking-tight">
+          <div
+            className={`text-xl ${
+              theme === "pink" ? "text-pink-500" : "text-green-500"
+            } font-mono tracking-tight`}
+          >
             +${formatNum(calculatedWealth, 2)}
           </div>
         </div>
       </div>
 
-      {/* Legend & Chart Title */}
       <div className="flex justify-between items-center mb-4">
         <div className="text-[10px] text-gray-600 uppercase tracking-widest">
-          Simulated_90_Day_Path
+          Simulated Path
         </div>
         <div className="flex gap-4">
-          <div className="flex items-center gap-2 text-[10px] text-cyan-400 uppercase tracking-wider">
-            <div className="w-2 h-0.5 bg-cyan-400"></div> Fixed
+          <div
+            className={`flex items-center gap-2 text-[10px] ${labelColor} uppercase tracking-wider`}
+          >
+            <div className={`w-2 h-0.5 ${bgColor}`}></div> Fixed
           </div>
           <div className="flex items-center gap-2 text-[10px] text-gray-400 uppercase tracking-wider">
             <div className="w-2 h-0.5 bg-gray-400 border border-dashed"></div>{" "}
@@ -161,30 +176,33 @@ const WealthProjectionChart = ({ data, collateral }) => {
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="flex-1 min-h-0 border-white/5 bg-[#050505] relative">
+      <div className="flex-1 min-h-0 border border-white/5 bg-[#0a0a0a] p-2 relative">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={data}
             margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
           >
             <defs>
-              <linearGradient id="gradientFixed" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.2} />
-                <stop offset="95%" stopColor="#22d3ee" stopOpacity={0} />
+              <linearGradient
+                id={`gradientFixed-${theme}`}
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="1"
+              >
+                <stop offset="5%" stopColor={mainColor} stopOpacity={0.2} />
+                <stop offset="95%" stopColor={mainColor} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="gradientVar" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="#9ca3af" stopOpacity={0.1} />
                 <stop offset="95%" stopColor="#9ca3af" stopOpacity={0} />
               </linearGradient>
             </defs>
-
             <CartesianGrid
               strokeDasharray="3 3"
               stroke="#27272a"
               vertical={false}
             />
-
             <XAxis
               dataKey="day"
               tickLine={false}
@@ -194,7 +212,6 @@ const WealthProjectionChart = ({ data, collateral }) => {
               fontSize={10}
               minTickGap={30}
             />
-
             <YAxis
               orientation="right"
               stroke="#52525b"
@@ -209,13 +226,10 @@ const WealthProjectionChart = ({ data, collateral }) => {
               domain={["auto", "auto"]}
               width={40}
             />
-
             <Tooltip
               content={<CustomWealthTooltip />}
               cursor={{ stroke: "#52525b", strokeDasharray: "4 4" }}
             />
-
-            {/* Variable Path (Simulated Wave) */}
             <Area
               type="monotone"
               dataKey="variable"
@@ -226,15 +240,13 @@ const WealthProjectionChart = ({ data, collateral }) => {
               fill="url(#gradientVar)"
               isAnimationActive={false}
             />
-
-            {/* Fixed Path (Linear Bond) */}
             <Area
               type="monotone"
               dataKey="fixed"
               name="Fixed"
-              stroke="#22d3ee"
+              stroke={mainColor}
               strokeWidth={2}
-              fill="url(#gradientFixed)"
+              fill={`url(#gradientFixed-${theme})`}
               isAnimationActive={false}
             />
           </ComposedChart>
@@ -244,21 +256,18 @@ const WealthProjectionChart = ({ data, collateral }) => {
   );
 };
 
-// --- CUSTOM HOOKS (Preserved) ---
+// --- CUSTOM HOOKS ---
 
 function useMarketData(resolution = "4H") {
   const [dates] = useState({ start: getPastDate(90), end: getToday() });
-  const getUrl = () => {
-    let url = `${API_URL}/rates?resolution=${resolution}`;
-    if (dates.start) url += `&start_date=${dates.start}`;
-    if (dates.end) url += `&end_date=${dates.end}`;
-    return url;
-  };
+  const getUrl = () =>
+    `${API_URL}/rates?resolution=${resolution}&start_date=${dates.start}&end_date=${dates.end}`;
   const {
     data: rates,
     error,
     isLoading,
   } = useSWR(getUrl(), fetcher, { refreshInterval: 10000 });
+
   const stats = useMemo(() => {
     if (!rates || rates.length === 0)
       return { min: 0, max: 0, mean: 0, vol: 0 };
@@ -273,6 +282,7 @@ function useMarketData(resolution = "4H") {
       vol: Math.sqrt(variance),
     };
   }, [rates]);
+
   const dailyChange = useMemo(() => {
     if (!rates || rates.length < 2) return 0;
     const latestTs = rates[rates.length - 1].timestamp;
@@ -284,6 +294,7 @@ function useMarketData(resolution = "4H") {
     );
     return rates[rates.length - 1].apy - closest.apy;
   }, [rates]);
+
   const latest =
     rates && rates.length > 0
       ? rates[rates.length - 1]
@@ -293,54 +304,40 @@ function useMarketData(resolution = "4H") {
 }
 
 function useTradeLogic(currentRate) {
-  const [tradeSide, setTradeSide] = useState("LONG");
-  const [collateral, setCollateral] = useState(10000);
-  const [shortCR, setShortCR] = useState(150);
-  const [simTargetRate, setSimTargetRate] = useState(null);
-  useEffect(() => {
-    if (simTargetRate === null && currentRate > 0)
-      setSimTargetRate(currentRate);
-  }, [currentRate, simTargetRate]);
-  let notional, liqRate;
-  if (tradeSide === "LONG") {
-    notional = collateral;
-    liqRate = null;
-  } else {
-    const crDecimal = shortCR / 100;
-    notional = crDecimal > 0 ? collateral / crDecimal : 0;
-    liqRate = currentRate * (shortCR / 110);
-  }
-  const simPnL = useMemo(() => {
-    if (!simTargetRate) return { value: 0, percent: 0 };
-    let pnl = 0;
-    if (tradeSide === "LONG")
-      pnl = ((simTargetRate - currentRate) / 100) * notional;
-    else pnl = ((currentRate - simTargetRate) / 100) * notional;
-    const percent = collateral > 0 ? (pnl / collateral) * 100 : 0;
-    return { value: pnl, percent };
-  }, [simTargetRate, currentRate, tradeSide, notional, collateral]);
-  const setShortAmount = (amount) => {
-    if (amount > 0) {
-      const newCR = (collateral / amount) * 100;
-      setShortCR(Math.min(Math.max(newCR, 110), 1500));
-    }
+  const [activeProduct, setActiveProduct] = useState("FIXED_YIELD");
+  const [activeTab, setActiveTab] = useState("OPEN");
+
+  const [notional, setNotional] = useState(1000);
+  const [maturityDays, setMaturityDays] = useState(90);
+  const [maturityDate, setMaturityDate] = useState(getFutureDate(90));
+  const [slippage, setSlippage] = useState(0.5);
+
+  const handleDaysChange = (days) => {
+    setMaturityDays(days);
+    setMaturityDate(getFutureDate(days));
   };
+
+  const handleDateChange = (date) => {
+    setMaturityDate(date);
+    setMaturityDays(getDaysDiff(date));
+  };
+
   return {
     state: {
-      tradeSide,
-      collateral,
-      shortCR,
-      simTargetRate,
+      activeProduct,
+      activeTab,
       notional,
-      liqRate,
-      simPnL,
+      maturityDays,
+      maturityDate,
+      slippage,
     },
     actions: {
-      setTradeSide,
-      setCollateral,
-      setShortCR,
-      setSimTargetRate,
-      setShortAmount,
+      setActiveProduct,
+      setActiveTab,
+      setNotional,
+      handleDaysChange,
+      handleDateChange,
+      setSlippage,
     },
   };
 }
@@ -374,9 +371,19 @@ const AppHeader = ({
             BONDS
           </span>
           <span className="text-white/10">|</span>
-          <span className="text-gray-600 px-2 tracking-widest cursor-not-allowed">
+          <a className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest ">
             CDS_[SOON]
-          </span>
+          </a>
+          <span className="text-white/10">|</span>
+
+          <a
+            href="https://lumisfi.notion.site/rld"
+            target="_blank"
+            rel="noreferrer"
+            className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest"
+          >
+            RESEARCH
+          </a>
         </nav>
       </div>
       <div className="flex items-center gap-6">
@@ -412,7 +419,7 @@ const AppHeader = ({
 );
 
 const MetricsGrid = ({ latest, dailyChange, stats }) => (
-  <div className="grid grid-cols-1 md:grid-cols-3 h-full border border-white/10 bg-[#050505] divide-y md:divide-y-0 md:divide-x divide-white/10">
+  <div className="grid grid-cols-1 md:grid-cols-3 h-full border border-white/10 bg-[#080808] divide-y md:divide-y-0 md:divide-x divide-white/10">
     <MetricCell
       label="CURRENT_SPOT"
       Icon={Terminal}
@@ -478,117 +485,210 @@ const TradingTerminal = ({
   actions,
 }) => {
   const {
-    tradeSide,
-    collateral,
-    shortCR,
-    simTargetRate,
+    activeProduct,
+    activeTab,
     notional,
-    liqRate,
-    simPnL,
+    maturityDays,
+    maturityDate,
+    slippage,
   } = state;
   const {
-    setTradeSide,
-    setCollateral,
-    setShortCR,
-    setSimTargetRate,
-    setShortAmount,
+    setActiveTab,
+    setNotional,
+    handleDaysChange,
+    handleDateChange,
+    setSlippage,
   } = actions;
+
+  // Logic for Close View Mock
+  const accruedYield = useMemo(() => {
+    // Mock: Assume held for 30 days at current rate
+    return notional * (currentRate / 100) * (30 / 365);
+  }, [notional, currentRate]);
+
   return (
     <div className="xl:col-span-3 border border-white/10 bg-[#080808] flex flex-col h-full">
-      <div className="p-4 border-b border-white/10 bg-[#0a0a0a]">
+      {/* Header */}
+      <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
         <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
-          <Terminal size={15} className="text-gray-500" /> Synthetic_Rates
+          <Terminal size={15} className="text-gray-500" /> {activeProduct}
         </h3>
+        <span className="text-[10px] text-gray-600 uppercase tracking-widest">
+          {activeProduct === "FIXED_YIELD" ? "SHORT RLP" : "LONG RLP"}
+        </span>
       </div>
-      <div className="p-1 border-b border-white/10 bg-[#080808]">
-        <div className="grid grid-cols-2 gap-1">
-          {["LONG", "SHORT"].map((side) => (
-            <button
-              key={side}
-              onClick={() => setTradeSide(side)}
-              className={`py-3 text-[13px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
-                tradeSide === side
-                  ? side === "LONG"
-                    ? "bg-cyan-900/30 text-cyan-400"
-                    : "bg-pink-900/30 text-pink-500"
-                  : "bg-[#0f0f0f] text-gray-600 hover:text-gray-400 hover:bg-white/5"
-              }`}
-            >
-              {side}
-            </button>
-          ))}
-        </div>
+
+      {/* Tabs (Monochrome) */}
+      <div className="grid grid-cols-2 border-b border-white/10">
+        {["OPEN", "CLOSE"].map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`py-3 text-[12px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
+              activeTab === tab
+                ? "bg-white text-black"
+                : "bg-[#080808] text-gray-500 hover:text-white hover:bg-white/5"
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
       </div>
+
+      {/* Inputs Area */}
       <div className="flex-1 flex flex-col p-6 gap-6">
-        <InputGroup
-          label="Collateral"
-          subLabel={`Balance: ${account ? "2,450.00" : "--"} USDC`}
-          value={collateral}
-          onChange={(v) => setCollateral(Number(v))}
-          suffix="USDC"
-        />
-        <div className="space-y-2">
-          <div className="text-[12px] uppercase tracking-widest font-bold text-gray-500">
-            Amount (Notional)
-          </div>
-          <div className="relative group">
-            <input
-              type="number"
-              value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
-              onChange={(e) =>
-                tradeSide === "LONG"
-                  ? setCollateral(Number(e.target.value))
-                  : setShortAmount(Number(e.target.value))
-              }
-              className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
-              placeholder="0.00"
+        {/* --- OPEN TAB (SHARED LOGIC) --- */}
+        {activeTab === "OPEN" && (
+          <>
+            <InputGroup
+              label="Notional Amount"
+              subLabel={`Bal: ${account ? "2,450" : "--"} USDC`}
+              value={notional}
+              onChange={(v) => setNotional(Number(v))}
+              suffix="USDC"
             />
-            <span className="absolute right-0 top-2 text-[12px] text-gray-600">
-              USDC
-            </span>
-          </div>
-        </div>
-        {tradeSide === "SHORT" && (
-          <div className="space-y-2">
-            <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
-              <span>Collateral Ratio</span>
-              <span className="text-white">{shortCR.toFixed(0)}%</span>
+
+            <div className="space-y-3">
+              <div className="flex justify-between items-end">
+                <span className="text-[11px] text-gray-500 uppercase tracking-widest font-bold">
+                  Maturity Date
+                </span>
+                <span
+                  className={`text-[11px] font-mono ${
+                    activeProduct === "FIXED_BORROW"
+                      ? "text-pink-500"
+                      : "text-cyan-400"
+                  }`}
+                >
+                  {maturityDays} Days
+                </span>
+              </div>
+
+              <div className="relative group">
+                <div className="flex items-center gap-2 border-b border-white/20 pb-1">
+                  <Calendar size={14} className="text-gray-500" />
+                  <input
+                    type="date"
+                    value={maturityDate}
+                    onChange={(e) => handleDateChange(e.target.value)}
+                    className="bg-transparent text-sm font-mono text-white focus:outline-none w-full uppercase [&::-webkit-calendar-picker-indicator]:invert"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <input
+                  type="range"
+                  min="7"
+                  max="365"
+                  step="1"
+                  value={maturityDays}
+                  onChange={(e) => handleDaysChange(Number(e.target.value))}
+                  className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none hover:[&::-webkit-slider-thumb]:scale-125 transition-all"
+                />
+                <div className="flex justify-between text-[9px] text-gray-600 font-mono mt-1">
+                  <span>1W</span>
+                  <span>1Y</span>
+                </div>
+              </div>
             </div>
-            <input
-              type="range"
-              min="110"
-              max="1500"
-              step="10"
-              value={shortCR}
-              onChange={(e) => setShortCR(Number(e.target.value))}
-              className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
-            />
-          </div>
+
+            <div className="border border-white/10 p-4 space-y-3 bg-white/[0.02]">
+              <SummaryRow
+                label="Entry Rate"
+                value={`${formatNum(currentRate)}%`}
+              />
+              <div className="flex justify-between items-center pt-2">
+                <div className="flex items-center gap-1.5 text-[11px] text-gray-500 uppercase tracking-widest">
+                  <Settings size={12} /> Slippage
+                </div>
+                <div className="flex gap-1">
+                  {[0.1, 0.5, 1.0].map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setSlippage(s)}
+                      className={`text-[10px] px-2 py-0.5 font-mono border transition-colors ${
+                        slippage === s
+                          ? "border-white text-white"
+                          : "border-white/10 text-gray-500 hover:border-white/30"
+                      }`}
+                    >
+                      {s}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </>
         )}
-        <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02]">
-          <SummaryRow label="Entry Rate" value={`${formatNum(currentRate)}%`} />
-          <SummaryRow
-            label="Liq. Rate"
-            value={liqRate ? `${formatNum(liqRate)}%` : "None"}
-            valueColor="text-orange-500"
-          />
-          <SummaryRow label="Notional" value={`$${formatNum(notional, 0)}`} />
-          <SummaryRow
-            label="Est. Fee"
-            value={`${formatNum(notional * 0.001)} USDC`}
-            valueColor="text-gray-400"
-          />
-        </div>
+
+        {/* --- CLOSE TAB (SHARED LOGIC) --- */}
+        {activeTab === "CLOSE" && (
+          <>
+            <InputGroup
+              label="Amount to Close"
+              subLabel={`Max: ${formatNum(notional)} USDC`}
+              value={notional}
+              onChange={(v) => setNotional(Number(v))}
+              suffix="USDC"
+            />
+
+            <div className="border border-white/10 p-4 space-y-4 bg-white/[0.02]">
+              <div className="flex justify-between items-center">
+                <span className="text-[11px] text-gray-500 uppercase tracking-widest font-bold">
+                  {activeProduct === "FIXED_BORROW"
+                    ? "Accrued Hedge"
+                    : "Accrued Yield"}
+                </span>
+                <span
+                  className={`text-xl font-mono tracking-tight ${
+                    activeProduct === "FIXED_BORROW"
+                      ? "text-pink-500"
+                      : "text-green-500"
+                  }`}
+                >
+                  + {formatNum(accruedYield)}{" "}
+                  <span className="text-xs">USDC</span>
+                </span>
+              </div>
+              <div className="flex justify-between items-center border-t border-white/5 pt-4">
+                <span className="text-[11px] text-gray-500 uppercase tracking-widest font-bold">
+                  Time to Maturity
+                </span>
+                <span className="font-mono text-white text-sm">
+                  {maturityDays - 30 > 0 ? maturityDays - 30 : 0} Days
+                </span>
+              </div>
+            </div>
+
+            {/* Slippage Warning */}
+            <div className="bg-yellow-900/10 border border-yellow-700/30 p-4 flex gap-3">
+              <AlertTriangle
+                size={16}
+                className="text-yellow-600 shrink-0 mt-0.5"
+              />
+              <div>
+                <div className="text-[10px] text-yellow-500 font-bold uppercase tracking-widest mb-1">
+                  Early Exit Notice
+                </div>
+                <p className="text-[10px] text-gray-400 leading-relaxed font-mono">
+                  You can exit your position at any time. However, early exits
+                  are subject to slippage based on TWAMM liquidity availability.
+                </p>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Action Button */}
         <div className="mt-auto">
           {account ? (
             <button
-              className={`w-full py-4 text-xs font-bold tracking-[0.2em] uppercase transition-all hover:opacity-90 focus:outline-none rounded-none ${
-                tradeSide === "LONG"
-                  ? "bg-cyan-500 text-black hover:bg-cyan-400"
-                  : "bg-pink-500 text-black hover:bg-pink-400"
+              className={`w-full py-4 text-black hover:opacity-90 text-xs font-bold tracking-[0.2em] uppercase transition-all focus:outline-none rounded-none ${
+                activeProduct === "FIXED_BORROW" ? "bg-pink-500" : "bg-cyan-400"
               }`}
             >
-              {tradeSide} RATE
+              {activeTab} POSITION
             </button>
           ) : (
             <button
@@ -600,66 +700,11 @@ const TradingTerminal = ({
           )}
         </div>
       </div>
-      <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
-        <div className="flex justify-between items-center">
-          <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
-            PnL Simulator
-          </span>
-          <RefreshCw
-            size={15}
-            className="text-gray-600 cursor-pointer hover:text-white transition-colors"
-            onClick={() => setSimTargetRate(currentRate)}
-          />
-        </div>
-        <div className="space-y-2">
-          <div className="flex justify-between text-[13px] text-gray-500 font-mono">
-            <span>Rate_Scenario</span>
-            <span>{formatNum(simTargetRate)}%</span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="30"
-            step="0.1"
-            value={simTargetRate || currentRate}
-            onChange={(e) => setSimTargetRate(Number(e.target.value))}
-            className="w-full h-1 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
-          />
-          <div className="flex justify-between gap-1">
-            {[-50, -10, 10, 50].map((pct) => (
-              <button
-                key={pct}
-                onClick={() => setSimTargetRate(currentRate * (1 + pct / 100))}
-                className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 text-xs font-mono text-gray-400 focus:outline-none rounded-none"
-              >
-                {pct > 0 ? "+" : ""}
-                {pct}%
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex justify-between items-end">
-          <span className="text-[13px] text-gray-500">Est. PnL (1Y)</span>
-          <div
-            className={`text-right ${
-              simPnL.value >= 0 ? "text-green-500" : "text-red-500"
-            }`}
-          >
-            <div className="text-xl font-mono leading-none">
-              {simPnL.value >= 0 ? "+" : ""}
-              {formatNum(simPnL.value, 0)} USDC
-            </div>
-            <div className="text-[12px] font-mono mt-1">
-              {formatNum(simPnL.percent)}% ROI
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
 
-// --- HELPER COMPONENTS (Preserved) ---
+// --- HELPER COMPONENTS ---
 const MetricCell = ({ label, Icon, content }) => (
   <div className="p-6 flex flex-col justify-between h-full min-h-[180px]">
     <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
@@ -753,11 +798,10 @@ export default function BondsPage() {
     useMarketData();
   const tradeLogic = useTradeLogic(latest.apy);
 
-  // Project Wealth Logic (90 Days)
   const projectionData = useWealthProjection(
-    tradeLogic.state.collateral,
+    tradeLogic.state.notional,
     latest.apy,
-    90
+    tradeLogic.state.maturityDays
   );
 
   const connectWallet = useCallback(async () => {
@@ -803,12 +847,14 @@ export default function BondsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
               <div className="lg:col-span-4 h-full">
                 <ProductCard
-                  theme="pink"
+                  theme="cyan"
                   title="FIXED_YIELD"
                   badge="Synthetic Bond"
                   Icon={Percent}
                   desc="Transform volatile rates into a fixed-income product. Short RLP + TWAMM."
-                  onClick={() => tradeLogic.actions.setTradeSide("SHORT")}
+                  onClick={() =>
+                    tradeLogic.actions.setActiveProduct("FIXED_YIELD")
+                  }
                 />
               </div>
               <div className="lg:col-span-8 h-full">
@@ -820,18 +866,25 @@ export default function BondsPage() {
               </div>
               <div className="lg:col-span-4 h-[200px]">
                 <ProductCard
-                  theme="cyan"
+                  theme="pink"
                   title="FIXED_BORROW"
                   badge="Fixed-Term Debt"
                   Icon={Shield}
                   desc="Immunize your debt against Aave rate spikes. Long RLP (Hedge)."
-                  onClick={() => tradeLogic.actions.setTradeSide("LONG")}
+                  onClick={() =>
+                    tradeLogic.actions.setActiveProduct("FIXED_BORROW")
+                  }
                 />
               </div>
               <div className="lg:col-span-8 h-[500px]">
                 <WealthProjectionChart
                   data={projectionData}
-                  collateral={tradeLogic.state.collateral}
+                  collateral={tradeLogic.state.notional}
+                  theme={
+                    tradeLogic.state.activeProduct === "FIXED_BORROW"
+                      ? "pink"
+                      : "cyan"
+                  }
                 />
               </div>
             </div>
