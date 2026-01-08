@@ -597,7 +597,7 @@ function App() {
                   onClick={() => setTradeSide("LONG")}
                   className={`py-3 text-[12px] font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
                     tradeSide === "LONG"
-                      ? "bg-[cyan-900/30] text-cyan-400"
+                      ? "bg-cyan-900/30 text-cyan-400"
                       : "bg-[#050505] text-gray-600 hover:text-gray-400 hover:bg-white/5"
                   }`}
                 >
