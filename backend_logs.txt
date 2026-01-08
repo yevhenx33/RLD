@@ -1,14 +1,77 @@
 INFO:     Will watch for changes in these directories: ['/Users/yevhen/Documents/GitHub/rate-dashboard']
 INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [75760] using StatReload
-INFO:     Started server process [75769]
+INFO:     Started reloader process [86734] using StatReload
+INFO:     Started server process [86744]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     127.0.0.1:54549 - "GET /rates?resolution=4H&start_date=2025-10-09&end_date=2026-01-07 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54559 - "GET /rates?resolution=4H&start_date=2025-10-09&end_date=2026-01-07 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54577 - "GET /rates?resolution=4H&start_date=2025-10-09&end_date=2026-01-07 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54582 - "GET /rates?resolution=4H&start_date=2025-10-09&end_date=2026-01-07 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54627 - "GET /rates?resolution=4H&start_date=2025-10-09&end_date=2026-01-07 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54634 - "GET /rates?resolution=4H&start_date=2025-10-09&end_date=2026-01-07 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54765 - "GET /rates?resolution=4H&start_date=2025-10-09&end_date=2026-01-07 HTTP/1.1" 200 OK
-INFO:     127.0.0.1:54817 - "GET /rates?resolution=4H&start_date=2025-10-09&end_date=2026-01-07 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57111 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57117 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57186 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57198 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57226 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57238 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57297 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57424 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57582 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57584 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57586 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57623 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57694 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57694 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57696 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57699 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57705 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57731 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57733 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57741 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57762 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57765 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57772 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57776 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57913 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57916 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57916 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57953 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58021 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58024 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58032 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58066 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58069 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58098 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58100 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58108 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58108 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58153 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58155 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58158 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58161 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58165 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58171 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58184 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58186 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58193 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58195 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58197 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58203 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58206 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58218 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58340 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58343 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58367 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58374 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58377 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58379 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58385 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58391 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58397 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58403 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58407 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58409 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58414 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58426 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58429 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58439 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58443 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58509 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58520 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58549 - "GET /rates?resolution=4H&start_date=2025-10-10&end_date=2026-01-08 HTTP/1.1" 200 OK

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
+import { Link } from "react-router-dom";
 import useSWR from "swr";
 import axios from "axios";
 import {
@@ -269,14 +270,22 @@ function App() {
             </div>
             <div className="hidden md:flex text-[12px] items-center gap-1 font-bold tracking-[0.15em] uppercase">
               <span className="text-white/10">//</span>
-              <a className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest">
+
+              <span className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest">
                 TERMINAL
-              </a>
+              </span>
+
               <span className="text-white/10">|</span>
-              <a className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest">
+
+              <Link
+                to="/bonds"
+                className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest"
+              >
                 BONDS
-              </a>
+              </Link>
+
               <span className="text-white/10">|</span>
+
               <a className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest ">
                 CDS_[SOON]
               </a>
