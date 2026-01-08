@@ -29,5 +29,15 @@ contract DeployRLD is Script {
         console.log("Operator set to:", operator);
 
         vm.stopBroadcast();
+
+        // 3. Export Addresses to JSON
+        string memory obj = "key";
+        string memory addressesJson = vm.serializeAddress(obj, "RLDAaveOracle", address(spotOracle));
+        addressesJson = vm.serializeAddress(obj, "SymbioticRateOracle", address(symbioticOracle));
+        addressesJson = vm.serializeAddress(obj, "Operator", operator);
+        
+        string memory path = "../shared/addresses.json";
+        vm.writeFile(path, addressesJson);
+        console.log("Addresses written to shared/addresses.json");
     }
 }

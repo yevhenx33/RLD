@@ -13,11 +13,20 @@ load_dotenv("../contracts/.env")
 # Network & Wallet Config
 # Ensure these are set in your .env file or hardcoded here for testing
 RPC_URL = os.getenv("MAINNET_RPC_URL", "http://127.0.0.1:8545")
-PRIVATE_KEY = os.getenv("PRIVATE_KEY", "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+PRIVATE_KEY = os.getenv("PRIVATE_KEY")
+if not PRIVATE_KEY:
+    raise ValueError("❌ PRIVATE_KEY not set in environment or .env file!")
 
 # Contract Addresses (Update ORACLE_ADDRESS after deployment!)
-# ORACLE_ADDRESS = "0x751527acFf86638af877D292Ef165300D9AdDd1E" 
-ORACLE_ADDRESS = "0x751527acFf86638af877D292Ef165300D9AdDd1E" # Example from your deployment logs
+# Load Contract Addresses from Shared JSON
+try:
+    with open("../shared/addresses.json", "r") as f:
+        import json
+        addresses = json.load(f)
+        ORACLE_ADDRESS = addresses.get("SymbioticRateOracle")
+except Exception as e:
+    print(f"⚠️ Warning: Could not load shared/addresses.json: {e}")
+    ORACLE_ADDRESS = os.getenv("ORACLE_ADDRESS", "0x0000000000000000000000000000000000000000")
 
 # Aave V3 Mainnet Addresses
 AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"

@@ -4,8 +4,8 @@ import axios from "axios";
 // --- CONFIGURATION ---
 const RPC_URL = "http://127.0.0.1:8545"; // Local Anvil Node
 
-// Ensure this matches your deployment
-const CONTRACT_ADDRESS = "0x751527acFf86638af877D292Ef165300D9AdDd1E";
+import addresses from "../../../shared/addresses.json";
+const CONTRACT_ADDRESS = addresses.SymbioticRateOracle;
 
 // Event Signature: TwarUpdated(uint256,uint256,uint256)
 const EVENT_TOPIC =

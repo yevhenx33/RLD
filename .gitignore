@@ -1,1 +1,19 @@
+
+# Environment variables
+.env
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
 *.db
+*_logs.txt
+
+# Javascript
+node_modules/
+dist/
+
+# Shared artifacts (optional, but addresses.json might technically be local state)
+# shared/addresses.json

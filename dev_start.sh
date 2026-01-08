@@ -11,7 +11,7 @@ echo -e "${BLUE}🚀 Starting RLD Protocol Development Environment...${NC}"
 # 0. Cleanup previous runs to prevent port conflicts
 echo -e "${BLUE}>> Cleaning up old processes...${NC}"
 pkill anvil
-pkill -f "symbiotic_operator.py"
+pkill -f "operator_bot.py"
 pkill -f "uvicorn" 
 
 # 1. Source Environment Variables
@@ -45,52 +45,40 @@ echo -e "${GREEN} Done!${NC}"
 # 3. Deploy Contracts
 echo -e "${BLUE}>> Deploying Contracts...${NC}"
 cd contracts || exit
-DEPLOY_OUTPUT=$(forge script script/DeployRLD.s.sol --fork-url http://127.0.0.1:8545 --broadcast --legacy)
-ORACLE_ADDR=$(echo "$DEPLOY_OUTPUT" | grep "SymbioticRateOracle deployed at:" | awk '{print $4}')
+forge script script/DeployRLD.s.sol --fork-url http://127.0.0.1:8545 --broadcast --legacy
+cd ..
 
-if [ -z "$ORACLE_ADDR" ]; then
-    echo -e "${RED}❌ Deployment Failed. Output:${NC}"
-    echo "$DEPLOY_OUTPUT"
+# Check if addresses.json exists
+if [ ! -f "shared/addresses.json" ]; then
+    echo -e "${RED}❌ Deployment Failed. shared/addresses.json not found.${NC}"
     kill $ANVIL_PID
     exit 1
 fi
-echo -e "${GREEN}✅ Symbiotic Oracle Deployed: $ORACLE_ADDR${NC}"
+echo -e "${GREEN}✅ Contracts Deployed & Addresses Exported${NC}"
 
-# 4. Start REAL Backend (Uvicorn) - UPDATED STEP
+# 4. Start REAL Backend (Uvicorn)
 echo -e "${BLUE}>> Starting FastAPI Backend (Port 8000)...${NC}"
-cd .. # Go back to root (assuming api.py is in root)
-
-# Check if api.py exists, or adjust folder if it's in /backend
-if [ ! -f "api.py" ]; then
-    echo -e "${RED}⚠️  Warning: api.py not found in root. Checking /backend...${NC}"
-    if [ -d "backend" ]; then
-        cd backend
-    fi
-fi
+cd backend || exit
 
 # Run Uvicorn in background
-source venv/bin/activate
+source ../venv/bin/activate
 uvicorn api:app --reload --port 8000 > backend_logs.txt 2>&1 &
 BACKEND_PID=$!
-echo -e "${GREEN}✅ Backend running (logs in backend_logs.txt)${NC}"
+echo -e "${GREEN}✅ Backend running (logs in backend/backend_logs.txt)${NC}"
 
-cd contracts || exit # Return to contracts folder for next steps
-
-# 5. Config & Start Operator Bot
-echo -e "${BLUE}>> Configuring & Starting Operator Bot...${NC}"
-sed -i '' "s/ORACLE_ADDRESS = \".*\"/ORACLE_ADDRESS = \"$ORACLE_ADDR\"/" script/symbiotic_operator.py
-
+# 5. Start Operator Bot
+echo -e "${BLUE}>> Starting Operator Bot...${NC}"
 export MAINNET_RPC_URL="http://127.0.0.1:8545"
-python3 script/symbiotic_operator.py > ../operator_logs.txt 2>&1 &
+# Operator now reads from shared/addresses.json directly
+python3 operator_bot.py > operator_logs.txt 2>&1 &
 OPERATOR_PID=$!
+echo -e "${GREEN}✅ Operator running (logs in backend/operator_logs.txt)${NC}"
 
-# 6. Config & Start Frontend
-echo -e "${BLUE}>> Configuring & Starting Frontend...${NC}"
-cd ../frontend/src/hooks || exit
-sed -i '' "s/const CONTRACT_ADDRESS = \".*\";/const CONTRACT_ADDRESS = \"$ORACLE_ADDR\";/" useSymbioticOracle.js
-
-cd ../.. || exit
+# 6. Start Frontend
+echo -e "${BLUE}>> Starting Frontend...${NC}"
+cd ../frontend || exit
+# Frontend now reads from shared/addresses.json directly
 npm run dev
 
-# Exit Trap - Kills Anvil, Uvicorn, and Operator when you Ctrl+C
+# Exit Trap
 trap "kill $ANVIL_PID $BACKEND_PID $OPERATOR_PID" EXIT
