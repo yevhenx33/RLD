@@ -1,9 +1,16 @@
 import time
 import sqlite3
+import os
 from web3 import Web3
+from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-RPC_URL = "https://eth.llamarpc.com"
+load_dotenv("../contracts/.env")
+RPC_URL = os.getenv("MAINNET_RPC_URL")
+if not RPC_URL:
+    print("Warning: MAINNET_RPC_URL not found in .env, using public RPC")
+    RPC_URL = "https://eth.llamarpc.com"
+
 POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
 USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 

@@ -1,0 +1,14 @@
+🚀 Operator Active: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+📡 Oracle Contract: 0x751527acFf86638af877D292Ef165300D9AdDd1E
+⏳ collecting 2 data points before first push...
+[1/2] Spot: $4.5555 | TWAR: $4.5555
+[2/2] Spot: $4.5555 | TWAR: $4.5555
+>> Pushing Update...
+✅ Tx Sent: 22f51fbe7b0255bcd135f8a309526e0f98f83c945834f8467e5fdb8e2da54cbd
+[2/2] Spot: $4.5555 | TWAR: $4.5555
+>> Pushing Update...
+✅ Tx Sent: 7d8d8f435d419d6fb311375cc8d75263401b188d9fd0c7db49187e2043c9f67b
+[2/2] Spot: $4.5555 | TWAR: $4.5555
+>> Pushing Update...
+✅ Tx Sent: ed579a5791183d1f76f806aa458d790365b18faab68dbb6e90e32fa0a4cc4ed8
+❌ Error: HTTPConnectionPool(host='127.0.0.1', port=8545): Max retries exceeded with url: / (Caused by NewConnectionError("HTTPConnection(host='127.0.0.1', port=8545): Failed to establish a new connection: [Errno 61] Connection refused"))
