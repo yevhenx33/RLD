@@ -8,7 +8,23 @@ import { BLOG_POSTS } from '../data/posts';
 export default function Research() {
     // Only used for Header compatibility
     const { account } = useWallet();
-    const latest = { block_number: 0 }; // Placeholder
+    const [latest, setLatest] = useState({ block_number: 0 });
+
+    React.useEffect(() => {
+        const fetchBlock = async () => {
+            try {
+                // Fetch just 1 record to get the latest block number from our indexer
+                const res = await fetch("http://127.0.0.1:8000/rates?resolution=RAW&limit=1");
+                const data = await res.json();
+                if (data && data.length > 0) {
+                    setLatest({ block_number: data[data.length - 1].block_number });
+                }
+            } catch (e) {
+                console.error("Failed to fetch block number", e);
+            }
+        };
+        fetchBlock();
+    }, []);
 
     return (
         <div className="min-h-screen bg-[#080808] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
