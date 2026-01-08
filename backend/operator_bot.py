@@ -11,8 +11,9 @@ from dotenv import load_dotenv
 load_dotenv("../contracts/.env")
 
 # Network & Wallet Config
-# Ensure these are set in your .env file or hardcoded here for testing
-RPC_URL = os.getenv("MAINNET_RPC_URL", "http://127.0.0.1:8545")
+# CRITICAL: Operator must connect to the LOCAL ANVIL CHAIN (which forks Mainnet)
+# because the Symbiotic contracts only exist locally.
+RPC_URL = os.getenv("LOCAL_RPC_URL", "http://127.0.0.1:8545")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")
 if not PRIVATE_KEY:
     raise ValueError("❌ PRIVATE_KEY not set in environment or .env file!")

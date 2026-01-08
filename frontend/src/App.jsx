@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import RLDPerformanceChart from "./components/RLDChart";
 import { useSymbioticOracle } from "./hooks/useSymbioticOracle";
+import { useWallet } from "./context/WalletContext";
+import Header from "./components/Header";
 const fetcher = (url) => axios.get(url).then((res) => res.data);
 
 // --- HELPER FUNCTIONS ---
@@ -35,6 +37,9 @@ const formatTwarLabel = (seconds) => {
 };
 
 // --- APP COMPONENT ---
+
+
+// --- APP COMPONENT ---
 function App() {
   // Data State
   const [tempStart, setTempStart] = useState(getPastDate(90));
@@ -50,7 +55,7 @@ function App() {
   const [tempTwarInput, setTempTwarInput] = useState(3600);
 
   // Trading State
-  const [account, setAccount] = useState(null);
+  const { account, connectWallet, usdcBalance } = useWallet();
   const [tradeSide, setTradeSide] = useState("LONG");
   const [collateral, setCollateral] = useState(1000);
   const [shortCR, setShortCR] = useState(150);
@@ -88,21 +93,6 @@ function App() {
     setAppliedStart(start.toISOString().split("T")[0]);
     setAppliedEnd(end.toISOString().split("T")[0]);
     setActiveRange(label);
-  };
-
-  const connectWallet = async () => {
-    if (window.ethereum) {
-      try {
-        const accounts = await window.ethereum.request({
-          method: "eth_requestAccounts",
-        });
-        setAccount(accounts[0]);
-      } catch (err) {
-        console.error("User rejected connection");
-      }
-    } else {
-      alert("No Ethereum wallet found.");
-    }
   };
 
   const getUrl = () => {
@@ -259,78 +249,8 @@ function App() {
   return (
     <div className="min-h-screen bg-[#080808] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
       {/* HEADER */}
-      <div className="sticky top-0 bg-[#050505]/95 backdrop-blur-sm z-50 w-full border-b border-transparent">
-        <header className="max-w-[1800px] mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-5 pl-1">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 bg-white"></div>
-              <h1 className="text-sm font-bold tracking-widest uppercase">
-                RLD
-              </h1>
-            </div>
-            <div className="hidden md:flex text-[12px] items-center gap-1 font-bold tracking-[0.15em] uppercase">
-              <span className="text-white/10">//</span>
+      <Header latest={latest} isCapped={isCappedRaw} ratesLoaded={!!rates} />
 
-              <span className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest">
-                TERMINAL
-              </span>
-
-              <span className="text-white/10">|</span>
-
-              <Link
-                to="/bonds"
-                className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest"
-              >
-                BONDS
-              </Link>
-
-              <span className="text-white/10">|</span>
-
-              <a className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest ">
-                CDS_[SOON]
-              </a>
-              <span className="text-white/10">|</span>
-              <a
-                href="https://lumisfi.notion.site/rld"
-                target="_blank"
-                rel="noreferrer"
-                className="text-gray-400 hover:text-white transition-colors cursor-pointer px-2 tracking-widest"
-              >
-                RESEARCH
-              </a>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-6">
-            <div className="hidden md:flex items-center gap-6 text-[11px] uppercase tracking-widest text-gray-500 border-r border-white/10 pr-6 h-6">
-              <span className="flex items-center gap-2">
-                <div
-                  className={`w-1.5 h-1.5 ${
-                    rates ? "bg-green-500" : "bg-red-500"
-                  }`}
-                ></div>
-                {isCappedRaw ? "WARN: LIMIT_ACTIVE" : "NET: STABLE"}
-              </span>
-              <span>BLOCK: #{latest.block_number}</span>
-            </div>
-            <button
-              onClick={connectWallet}
-              className="flex items-center gap-3 border border-white/10 bg-black hover:bg-white/5 hover:border-white/30 transition-all px-6 py-2 focus:outline-none rounded-none"
-            >
-              <div
-                className={`w-1.5 h-1.5 rounded-full ${
-                  account
-                    ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]"
-                    : "bg-gray-600"
-                }`}
-              ></div>
-              <span className="text-xs font-bold tracking-widest uppercase text-white">
-                {account ? `${account.substring(0, 6)}...` : "CONNECT WALLET"}
-              </span>
-            </button>
-          </div>
-        </header>
-      </div>
 
       {/* MAIN GRID LAYOUT */}
       <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12 ">
@@ -622,7 +542,7 @@ function App() {
               <div className="space-y-2">
                 <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
                   <span>Collateral</span>
-                  <span>Balance: {account ? "2,450.00" : "--"} USDC</span>
+                  <span>Balance: {account ? parseFloat(usdcBalance).toFixed(2) : "--"} USDC</span>
                 </div>
                 <div className="relative group">
                   <input

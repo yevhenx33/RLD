@@ -12,6 +12,7 @@ echo -e "${BLUE}🚀 Starting RLD Protocol Development Environment...${NC}"
 echo -e "${BLUE}>> Cleaning up old processes...${NC}"
 pkill anvil
 pkill -f "operator_bot.py"
+pkill -f "indexer.py"
 pkill -f "uvicorn" 
 
 # 1. Source Environment Variables
@@ -64,7 +65,14 @@ cd backend || exit
 source ../venv/bin/activate
 uvicorn api:app --reload --port 8000 > backend_logs.txt 2>&1 &
 BACKEND_PID=$!
-echo -e "${GREEN}✅ Backend running (logs in backend/backend_logs.txt)${NC}"
+    echo -e "${GREEN}✅ Backend running (logs in backend/backend_logs.txt)${NC}"
+
+# 4b. Start Indexer
+    echo -e "${BLUE}>> Starting Indexer...${NC}"
+    # Indexer reads from contracts/.env by itself now
+    python3 indexer.py > indexer_logs.txt 2>&1 &
+    INDEXER_PID=$!
+    echo -e "${GREEN}✅ Indexer running (logs in backend/indexer_logs.txt)${NC}"
 
 # 5. Start Operator Bot
 echo -e "${BLUE}>> Starting Operator Bot...${NC}"
@@ -81,4 +89,4 @@ cd ../frontend || exit
 npm run dev
 
 # Exit Trap
-trap "kill $ANVIL_PID $BACKEND_PID $OPERATOR_PID" EXIT
+trap "kill $ANVIL_PID $BACKEND_PID $OPERATOR_PID $INDEXER_PID" EXIT
