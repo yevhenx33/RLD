@@ -12,6 +12,7 @@ import {
   Clock,
   TrendingUp,
   TrendingDown,
+  FileDown,
 } from "lucide-react";
 import RLDPerformanceChart from "./components/RLDChart";
 import { useSymbioticOracle } from "./hooks/useSymbioticOracle";
@@ -100,6 +101,41 @@ function App() {
     if (appliedStart) url += `&start_date=${appliedStart}`;
     if (appliedEnd) url += `&end_date=${appliedEnd}`;
     return url;
+  };
+
+  const handleDownloadCSV = async () => {
+    try {
+      // Fetch 2 years of hourly data. 20k is enough for safety.
+      const url = "http://127.0.0.1:8000/rates?resolution=1H&limit=25000";
+      const res = await axios.get(url);
+      const data = res.data;
+
+      if (!data || data.length === 0) {
+        alert("No data available to download");
+        return;
+      }
+
+      const headers = "Timestamp,Date (UTC),APY (%),Block Number\n";
+      const rows = data.map(row => {
+        const date = new Date(row.timestamp * 1000).toISOString().replace("T", " ").replace("Z", "");
+        return `${row.timestamp},${date},${row.apy.toFixed(4)},${row.block_number}`;
+      }).join("\n");
+
+      const csvContent = headers + rows;
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      const urlObj = URL.createObjectURL(blob);
+      
+      link.setAttribute("href", urlObj);
+      link.setAttribute("download", `aave_usdc_rates_2y_${getToday()}.csv`);
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("CSV Download Failed:", err);
+      alert("Failed to download CSV data.");
+    }
   };
 
   const { data: rates, error } = useSWR(getUrl(), fetcher, {
@@ -464,6 +500,15 @@ function App() {
                       </span>
                     </div>
                   )}
+                  {/* CSV Download Button */}
+                  <button 
+                    onClick={handleDownloadCSV}
+                    className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-gray-500 hover:text-white transition-colors focus:outline-none group"
+                    title="Download 2-Year Hourly Data"
+                  >
+                    <FileDown size={12} className="group-hover:text-cyan-400 transition-colors" />
+                    <span className="group-hover:underline decoration-cyan-400 underline-offset-4">CSV</span>
+                  </button>
                 </div>
                 <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-2">
                   {latestSymbiotic ? (
