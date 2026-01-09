@@ -19,6 +19,7 @@ import { useSymbioticOracle } from "./hooks/useSymbioticOracle";
 import { useWallet } from "./context/WalletContext";
 import Header from "./components/Header";
 import TradingTerminal, { InputGroup, SummaryRow } from "./components/TradingTerminal";
+import SettingsButton from "./components/SettingsButton";
 const fetcher = (url) => axios.get(url).then((res) => res.data);
 
 // --- HELPER FUNCTIONS ---
@@ -394,17 +395,14 @@ function App() {
             <div className="border-y border-white/10 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 divide-y md:divide-y-0 xl:divide-y-0">
               <ControlCell label="RESOLUTION" className="pl-0">
                 {["RAW", "1H", "4H", "1D"].map((res) => (
-                  <button
+                  <SettingsButton
                     key={res}
                     onClick={() => setResolution(res)}
-                    className={`flex-1 text-[12px] font-bold py-1 uppercase tracking-wider transition-colors border border-transparent rounded-none focus:outline-none ${
-                      resolution === res
-                        ? "bg-white text-black border-white"
-                        : "text-gray-500 hover:text-white hover:bg-white/5"
-                    }`}
+                    isActive={resolution === res}
+                    className="flex-1"
                   >
                     {res}
-                  </button>
+                  </SettingsButton>
                 ))}
               </ControlCell>
               <ControlCell label="TIMEFRAME">
@@ -416,17 +414,14 @@ function App() {
                   { l: "1Y", d: 365 },
                   { l: "ALL", d: 9999 },
                 ].map((btn) => (
-                  <button
+                  <SettingsButton
                     key={btn.l}
                     onClick={() => handleQuickRange(btn.d, btn.l)}
-                    className={`flex-1 text-[12px] font-semibold py-1 uppercase tracking-wider transition-colors border border-transparent rounded-none focus:outline-none ${
-                      activeRange === btn.l
-                        ? "bg-white text-black border-white"
-                        : "text-gray-500 hover:text-white hover:bg-white/5"
-                    }`}
+                    isActive={activeRange === btn.l}
+                    className="flex-1"
                   >
                     {btn.l}
-                  </button>
+                  </SettingsButton>
                 ))}
               </ControlCell>
               <ControlCell label="CUSTOM_RANGE">
@@ -444,12 +439,12 @@ function App() {
                     onChange={(e) => setTempEnd(e.target.value)}
                     className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-[38%] py-1 rounded-none"
                   />
-                  <button
+                  <SettingsButton
                     onClick={handleApplyDate}
-                    className="text-xs uppercase text-gray-500 hover:text-white border border-white/10 hover:border-white px-3 h-full flex items-center rounded-none transition-colors focus:outline-none"
+                    className="px-3 h-full flex items-center"
                   >
                     SET
-                  </button>
+                  </SettingsButton>
                 </div>
               </ControlCell>
               <ControlCell label="TWAR_SMOOTHING_[SEC]" className="pr-0">
@@ -460,25 +455,22 @@ function App() {
                     onChange={(e) => setTempTwarInput(Number(e.target.value))}
                     className="flex-1 bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono h-full py-1 text-right pr-2 rounded-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
-                  <button
+                  <SettingsButton
                     onClick={handleApplyTwar}
-                    className="text-xs uppercase text-gray-500 hover:text-white border border-white/10 hover:border-white px-3 h-full flex items-center rounded-none transition-colors focus:outline-none"
+                    className="px-3 h-full flex items-center"
                   >
                     SET
-                  </button>
-                  <button
+                  </SettingsButton>
+                  <SettingsButton
                     onClick={() => setShowTwar(!showTwar)}
-                    className={`px-3 h-full flex items-center justify-center gap-2 border text-xs uppercase font-bold tracking-wider transition-all rounded-none focus:outline-none ${
-                      showTwar
-                        ? "bg-white text-black border-white"
-                        : "bg-transparent text-gray-600 border-white/10 hover:border-white/40"
-                    }`}
+                    isActive={showTwar}
+                    className="px-3 h-full flex items-center justify-center gap-2"
                   >
                     <Power
                       size={12}
                       className={showTwar ? "text-black" : "text-gray-600"}
                     />
-                  </button>
+                  </SettingsButton>
                 </div>
               </ControlCell>
             </div>
@@ -593,16 +585,16 @@ function App() {
                     />
                     <div className="flex justify-between gap-1">
                       {[-50, -10, 10, 50].map((pct) => (
-                        <button
+                        <SettingsButton
                           key={pct}
                           onClick={() =>
                             setSimTargetRate(currentRate * (1 + pct / 100))
                           }
-                          className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 text-xs font-mono text-gray-400 focus:outline-none rounded-none"
+                          className="flex-1"
                         >
                           {pct > 0 ? "+" : ""}
                           {pct}%
-                        </button>
+                        </SettingsButton>
                       ))}
                     </div>
                   </div>

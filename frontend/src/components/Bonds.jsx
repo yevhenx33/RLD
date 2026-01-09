@@ -14,6 +14,7 @@ import MetricsGrid from "./MetricsGrid";
 import TradingTerminal, { InputGroup, SummaryRow } from "./TradingTerminal";
 import WealthProjectionChart from "./WealthProjectionChart";
 import ProductCard from "./ProductCard";
+import SettingsButton from "./SettingsButton";
 
 export default function BondsPage() {
   const { account, connectWallet, usdcBalance } = useWallet();
@@ -193,7 +194,7 @@ export default function BondsPage() {
                   </div>
                 </div>
 
-                <div className="border font-bold border-white/10 p-4 space-y-3 bg-white/[0.02] text-[11px] tracking-widest">
+                <div className="border border-white/10 p-4 space-y-3 bg-white/[0.02] text-[11px] tracking-widest">
                   <SummaryRow
                     label="Entry_Rate"
                     value={`${formatNum(latest.apy)}%`}
@@ -204,17 +205,14 @@ export default function BondsPage() {
                     </div>
                     <div className="flex gap-1">
                       {[0.1, 0.5, 1.0].map((s) => (
-                        <button
+                        <SettingsButton
                           key={s}
                           onClick={() => setSlippage(s)}
-                          className={`text-[12px] px-3 py-1 font-mono font-bold border transition-colors rounded-none outline-none focus:outline-none${
-                            slippage === s
-                              ? "border-white text-white"
-                              : "border-white/10 text-gray-500 hover:border-white/30"
-                          }`}
+                          isActive={slippage === s}
+                          className="px-3"
                         >
                           {s}%
-                        </button>
+                        </SettingsButton>
                       ))}
                     </div>
                   </div>
