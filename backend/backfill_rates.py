@@ -11,14 +11,10 @@ if not RPC_URL:
     print("Warning: MAINNET_RPC_URL not found in .env, using public RPC")
     RPC_URL = "https://eth.llamarpc.com"
 
-POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-# --- ASSETS CONFIGURATION ---
-# Symbol -> Underlying Address
+# --- ASSETS CONFIGURATION (Targeting DAI and USDT only for backfill as USDC has history) ---
+# USDC has history from previous indexer runs (or csv), but we can include it if we want full coverage.
+# User asked specifically "similarly to how we collected USDC rates" implying we want DAI/USDT to catch up.
 ASSETS = {
-    "USDC": {
-        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        "table": "rates" # Legacy table name for USDC
-    },
     "DAI": {
         "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
         "table": "rates_dai"
@@ -29,14 +25,16 @@ ASSETS = {
     }
 }
 
+POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+BLOCKS_PER_HOUR = 300 # Approx 12s block time -> 300 blocks/hr
+HOURS_TO_BACKFILL = 24 * 365 # 365 Days
+
 # --- SETUP ---
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
-
-# Database Setup
-conn = sqlite3.connect('aave_rates.db')
+conn = sqlite3.connect(os.path.join(os.path.dirname(__file__), 'aave_rates.db'))
 cursor = conn.cursor()
 
-# Initialize Tables
+# Ensure tables exist
 for symbol, data in ASSETS.items():
     cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS {data['table']} (
@@ -47,42 +45,26 @@ for symbol, data in ASSETS.items():
     ''')
 conn.commit()
 
-# FULL ABI (Exact Aave V3 ReserveData Structure)
-# ... (ABI remains same) ...
+# ABI (Same as indexer.py)
 POOL_ABI = [
     {
         "inputs": [{"internalType": "address", "name": "asset", "type": "address"}],
         "name": "getReserveData",
         "outputs": [
-            # 0. Configuration (Bitmap)
             {"internalType": "uint256", "name": "configuration", "type": "uint256"},
-            # 1. Liquidity Index
             {"internalType": "uint128", "name": "liquidityIndex", "type": "uint128"},
-            # 2. Supply Rate
             {"internalType": "uint128", "name": "currentLiquidityRate", "type": "uint128"},
-            # 3. Variable Borrow Index
             {"internalType": "uint128", "name": "variableBorrowIndex", "type": "uint128"},
-            # 4. Variable Borrow Rate (TARGET)
-            {"internalType": "uint128", "name": "currentVariableBorrowRate", "type": "uint128"},
-            # 5. Stable Borrow Rate
+            {"internalType": "uint128", "name": "currentVariableBorrowRate", "type": "uint128"}, # Index 4
             {"internalType": "uint128", "name": "currentStableBorrowRate", "type": "uint128"},
-            # 6. Timestamp
             {"internalType": "uint40", "name": "lastUpdateTimestamp", "type": "uint40"},
-            # 7. ID
             {"internalType": "uint16", "name": "id", "type": "uint16"},
-            # 8. aToken Address
             {"internalType": "address", "name": "aTokenAddress", "type": "address"},
-            # 9. Stable Debt Token
             {"internalType": "address", "name": "stableDebtTokenAddress", "type": "address"},
-            # 10. Variable Debt Token
             {"internalType": "address", "name": "variableDebtTokenAddress", "type": "address"},
-            # 11. Interest Strategy
             {"internalType": "address", "name": "interestRateStrategyAddress", "type": "address"},
-            # 12. Accrued To Treasury
             {"internalType": "uint128", "name": "accruedToTreasury", "type": "uint128"},
-            # 13. Unbacked
             {"internalType": "uint128", "name": "unbacked", "type": "uint128"},
-            # 14. Isolation Mode Total Debt
             {"internalType": "uint128", "name": "isolationModeTotalDebt", "type": "uint128"}
         ],
         "stateMutability": "view",
@@ -92,53 +74,54 @@ POOL_ABI = [
 
 pool_contract = w3.eth.contract(address=POOL_ADDRESS, abi=POOL_ABI)
 
-# --- FUNCTIONS ---
-def get_aave_rate(asset_address, block_identifier='latest'):
+def get_aave_rate_at_block(asset_address, block_num):
     try:
-        # Fetch data from smart contract
-        reserve_data = pool_contract.functions.getReserveData(asset_address).call(block_identifier=block_identifier)
-        
-        # Target Index: 4 (currentVariableBorrowRate)
+        reserve_data = pool_contract.functions.getReserveData(asset_address).call(block_identifier=block_num)
         raw_rate = reserve_data[4]
-        
-        # Convert from Ray (10^27) to percentage
         apy = raw_rate / 10**27 * 100
         return apy
     except Exception as e:
-        print(f"Error fetching data for {asset_address}: {e}")
+        print(f"Error fetching data for {asset_address} at block {block_num}: {e}")
         return None
 
-# --- MAIN EXECUTION ---
-if __name__ == "__main__":
+def run_backfill():
     if not w3.is_connected():
         print("CRITICAL: Could not connect to Ethereum node.")
-        exit()
-        
-    print(f"Monitoring Aave V3 Borrow Rates (USDC, DAI, USDT)...")
-    print(f"Connected to: {RPC_URL}")
-    print("-" * 40)
-    
-    try:
-        while True:
-            # Fetch latest block for timestamp and consistency
-            try:
-                block = w3.eth.get_block('latest')
-                block_number = block['number']
-                block_timestamp = block['timestamp']
-                
-                timestamp_str = time.strftime("%H:%M:%S", time.localtime(block_timestamp))
-                
-                for symbol, data in ASSETS.items():
-                    rate = get_aave_rate(data['address'], block_number)
-                    if rate is not None:
-                        cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (block_number, block_timestamp, rate))
-                        conn.commit()
-                        print(f"[{timestamp_str}] Block {block_number} | {symbol}: {rate:.2f}%")
-            
-            except Exception as loop_err:
-                print(f"Error in loop: {loop_err}")
+        return
 
-            time.sleep(12)
+    latest_block = w3.eth.get_block('latest')['number']
+    print(f"Starting Backfill from Block {latest_block} backwards for {HOURS_TO_BACKFILL} hours...")
+
+    for i in range(HOURS_TO_BACKFILL + 1):
+        target_block = latest_block - (i * BLOCKS_PER_HOUR)
+        
+        try:
+            # Get timestamp for accuracy
+            block_data = w3.eth.get_block(target_block)
+            timestamp = block_data['timestamp']
+            time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
             
-    except KeyboardInterrupt:
-        print("\nStopping script.")
+            print(f"[{i}/{HOURS_TO_BACKFILL}] Processing Block {target_block} ({time_str})")
+
+            for symbol, data in ASSETS.items():
+                # Check for existing data first to avoid duplicates (optional, but good practice)
+                cursor.execute(f"SELECT 1 FROM {data['table']} WHERE block_number = ?", (target_block,))
+                if cursor.fetchone():
+                    # print(f"  Skipping {symbol}: Data exists.")
+                    continue
+
+                rate = get_aave_rate_at_block(data['address'], target_block)
+                if rate is not None:
+                    cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (target_block, timestamp, rate))
+                    conn.commit()
+                    print(f"  Saved {symbol}: {rate:.2f}%")
+                    
+        except Exception as e:
+            print(f"Error processing block {target_block}: {e}")
+            continue
+            
+    print("Backfill Complete.")
+    conn.close()
+
+if __name__ == "__main__":
+    run_backfill()

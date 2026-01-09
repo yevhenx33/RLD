@@ -144,6 +144,7 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
               fill={`url(#gradient-${area.key})`}
               name={area.name}
               isAnimationActive={false}
+              connectNulls={true}
             />
           ))}
 

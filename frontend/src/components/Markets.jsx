@@ -47,7 +47,7 @@ export default function Markets() {
     useEffect(() => {
         const fetchAllData = async () => {
             try {
-                const provider = new JsonRpcProvider("https://eth.llamarpc.com");
+                const provider = new JsonRpcProvider("https://mainnet.infura.io/v3/***REDACTED_INFURA***");
                 const ERC20_ABI = ["function totalSupply() view returns (uint256)"];
 
                 const promises = ASSETS.map(async (asset) => {
@@ -88,8 +88,7 @@ export default function Markets() {
     }, []);
 
     // --- Chart Data Fetching (USDC History) ---
-    const getChartUrl = () => {
-        // Calculate start date based on activeRange
+    const getHistoryUrl = (symbol) => {
         const end = new Date();
         const start = new Date();
         let days = 30;
@@ -99,11 +98,12 @@ export default function Markets() {
 
         start.setDate(end.getDate() - days);
         const startStr = start.toISOString().split("T")[0];
-        
-        return `http://localhost:8000/rates?symbol=USDC&resolution=${resolution}&start_date=${startStr}`;
+        return `http://localhost:8000/rates?symbol=${symbol}&resolution=${resolution}&start_date=${startStr}`;
     };
 
-    const { data: historyRates } = useSWR(getChartUrl(), fetcher);
+    const { data: usdcHistory } = useSWR(getHistoryUrl("USDC"), fetcher);
+    const { data: daiHistory } = useSWR(getHistoryUrl("DAI"), fetcher);
+    const { data: usdtHistory } = useSWR(getHistoryUrl("USDT"), fetcher);
     
     const { data: ethPrices } = useSWR(
         () => {
@@ -122,26 +122,51 @@ export default function Markets() {
 
     // Merge Data for Chart
     const chartData = useMemo(() => {
-        if (!historyRates || historyRates.length === 0) return [];
+        if (!usdcHistory || usdcHistory.length === 0) return [];
         
-        // Create Price Map
-        const priceMap = new Map();
-        if (ethPrices) ethPrices.forEach(p => priceMap.set(p.timestamp, p.price));
+        // Define bucket size based on resolution
+        const getBucket = (ts) => {
+            let seconds = 3600; // Default 1H
+            if (resolution === "4H") seconds = 14400;
+            if (resolution === "1D") seconds = 86400;
+            if (resolution === "1W") seconds = 604800;
+            return Math.floor(ts / seconds) * seconds;
+        };
 
-        return historyRates.map(r => {
-             // Simple lookup (exact match or closest bucket logic could be added)
-             // For now, relying on same-period buckets from backend or approx match
-             let price = r.eth_price; // Backend might provide it separate or joined? 
-             // Backend API returns rates... eth_price is in eth-prices endpoint mostly, unless aggregated
-             
-             if (!price) price = priceMap.get(r.timestamp);
-             
-             return {
-                 ...r,
-                 ethPrice: price || null
-             };
-        });
-    }, [historyRates, ethPrices]);
+        const merged = new Map();
+
+        const mergePoint = (ts, key, val) => {
+            const bucket = getBucket(ts);
+            if (!merged.has(bucket)) {
+                merged.set(bucket, { timestamp: bucket });
+            }
+            const point = merged.get(bucket);
+            // If multiple points fall in same bucket, take the latest (or avg?) 
+            // Simple overwrite is fine for "latest in bucket"
+            point[key] = val;
+        };
+
+        // 1. USDC
+        usdcHistory.forEach(r => mergePoint(r.timestamp, "apy_usdc", r.apy));
+        
+        // 2. DAI
+        if (daiHistory) daiHistory.forEach(r => mergePoint(r.timestamp, "apy_dai", r.apy));
+
+        // 3. USDT
+        if (usdtHistory) usdtHistory.forEach(r => mergePoint(r.timestamp, "apy_usdt", r.apy));
+
+        // 4. ETH Price
+        // Prefer price from ethPrices endpoint, fallback to USDC object if present
+        if (ethPrices) {
+            ethPrices.forEach(p => mergePoint(p.timestamp, "ethPrice", p.price));
+        } else {
+             usdcHistory.forEach(r => {
+                 if (r.eth_price) mergePoint(r.timestamp, "ethPrice", r.eth_price);
+             });
+        }
+
+        return Array.from(merged.values()).sort((a, b) => a.timestamp - b.timestamp);
+    }, [usdcHistory, daiHistory, usdtHistory, ethPrices, resolution]);
 
 
     const stats = useMemo(() => {
@@ -169,6 +194,32 @@ export default function Markets() {
         else if (range === "3M") setResolution("4H");
         else setResolution("1D");
     };
+
+    // --- Legend / Series State ---
+    const [hiddenSeries, setHiddenSeries] = useState(new Set());
+
+    const SERIES_CONFIG = [
+        { key: "apy_usdc", label: "USDC_Rate", name: "USDC Rate", color: "#22d3ee", bg: "bg-cyan-400" },
+        { key: "apy_dai", label: "DAI_Rate", name: "DAI Rate", color: "#facc15", bg: "bg-yellow-400" },
+        { key: "apy_usdt", label: "USDT_Rate", name: "USDT Rate", color: "#4ade80", bg: "bg-green-400" },
+        { key: "ethPrice", label: "ETH_Price", name: "ETH Price", color: "#a1a1aa", bg: "bg-zinc-400", yAxisId: "right" }
+    ];
+
+    const toggleSeries = (key) => {
+        const next = new Set(hiddenSeries);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        setHiddenSeries(next);
+    };
+
+    const activeAreas = useMemo(() => {
+        return SERIES_CONFIG.filter(s => !hiddenSeries.has(s.key)).map(s => ({
+            key: s.key,
+            name: s.name,
+            color: s.color,
+            yAxisId: s.yAxisId
+        }));
+    }, [hiddenSeries]);
 
     return (
         <div className="min-h-screen bg-[#050505] text-gray-300 font-mono selection:bg-pink-500/30">
@@ -219,16 +270,20 @@ export default function Markets() {
                 {/* CHART SECTION */}
                 <div className="mb-12">
                    <div className="bg-[#0a0a0a] border border-white/10 p-4">
-                       <div className="flex justify-between items-center mb-6 px-2 pt-2">
-                           <div className="flex items-center gap-4">
-                               <h3 className="text-sm font-bold text-white uppercase tracking-widest">
-                                   Historical Rates <span className="text-gray-600">&</span> Price
-                               </h3>
-                               <div className="h-4 w-px bg-white/10"></div>
-                               <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-gray-500">
-                                   <div className="w-2 h-2 bg-cyan-400"></div> USDC Rate
-                                   <div className="w-2 h-2 bg-zinc-500 ml-2"></div> ETH Price
-                               </div>
+                       <div className="flex justify-between items-end mb-4 px-1">
+                           <div className="flex gap-8">
+                               {SERIES_CONFIG.map(series => (
+                                   <div 
+                                       key={series.key}
+                                       onClick={() => toggleSeries(series.key)}
+                                       className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.has(series.key) ? 'opacity-50 line-through' : 'opacity-100 hover:opacity-80'}`}
+                                   >
+                                       <div className={`w-2 h-2 ${series.bg} rounded-none`}></div> 
+                                       <span className="text-[11px] uppercase tracking-widest text-[#e0e0e0]">
+                                           {series.label}
+                                       </span>
+                                   </div>
+                               ))}
                            </div>
                            <div className="flex gap-1">
                                {["1W", "1M", "3M", "1Y"].map(range => (
@@ -236,7 +291,7 @@ export default function Markets() {
                                        key={range} 
                                        isActive={activeRange === range} 
                                        onClick={() => handleRangeChange(range)}
-                                       className="w-12"
+                                       className="w-12 h-6 text-[10px]"
                                    >
                                        {range}
                                    </SettingsButton>
@@ -245,17 +300,14 @@ export default function Markets() {
                        </div>
                        
                        <div className="h-[350px] w-full">
-                           {!historyRates ? (
+                           {!usdcHistory ? (
                                <div className="h-full flex items-center justify-center">
                                    <Loader2 className="animate-spin text-gray-700" />
                                </div>
                            ) : (
                                <RLDPerformanceChart 
                                    data={chartData}
-                                   areas={[
-                                       { key: "apy", name: "USDC Rate", color: "#22d3ee" },
-                                       { key: "ethPrice", name: "ETH Price", color: "#71717a", yAxisId: "right" }
-                                   ]} 
+                                   areas={activeAreas} 
                                />
                            )}
                        </div>
