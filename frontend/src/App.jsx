@@ -393,19 +393,7 @@ function App() {
 
             {/* 2. CONTROLS */}
             <div className="border-y border-white/10 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 divide-y md:divide-y-0 xl:divide-y-0">
-              <ControlCell label="RESOLUTION" className="pl-0">
-                {["RAW", "1H", "4H", "1D"].map((res) => (
-                  <SettingsButton
-                    key={res}
-                    onClick={() => setResolution(res)}
-                    isActive={resolution === res}
-                    className="flex-1"
-                  >
-                    {res}
-                  </SettingsButton>
-                ))}
-              </ControlCell>
-              <ControlCell label="TIMEFRAME">
+              <ControlCell label="TIMEFRAME" className="pl-0">
                 {[
                   { l: "1D", d: 1 },
                   { l: "1W", d: 7 },
@@ -421,6 +409,18 @@ function App() {
                     className="flex-1"
                   >
                     {btn.l}
+                  </SettingsButton>
+                ))}
+              </ControlCell>
+              <ControlCell label="RESOLUTION">
+                {["RAW", "1H", "4H", "1D"].map((res) => (
+                  <SettingsButton
+                    key={res}
+                    onClick={() => setResolution(res)}
+                    isActive={resolution === res}
+                    className="flex-1"
+                  >
+                    {res}
                   </SettingsButton>
                 ))}
               </ControlCell>
