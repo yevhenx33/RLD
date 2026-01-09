@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
 # Load environment variables from the contracts/.env file
-load_dotenv("../contracts/.env")
+load_dotenv("../.env")
 
 # Network & Wallet Config
 # CRITICAL: Operator must connect to the LOCAL ANVIL CHAIN (which forks Mainnet)

@@ -5,7 +5,7 @@ from web3 import Web3
 from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-load_dotenv(os.path.join(os.path.dirname(__file__), "../contracts/.env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 RPC_URL = os.getenv("MAINNET_RPC_URL")
 if not RPC_URL:
     print("Warning: MAINNET_RPC_URL not found in .env, using public RPC")

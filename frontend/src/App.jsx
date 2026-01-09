@@ -110,7 +110,8 @@ function App() {
   };
 
   const getUrl = () => {
-    let url = `http://127.0.0.1:8000/rates?resolution=${resolution}`;
+    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+    let url = `${API_BASE}/rates?resolution=${resolution}`;
     if (appliedStart) url += `&start_date=${appliedStart}`;
     if (appliedEnd) url += `&end_date=${appliedEnd}`;
     return url;
@@ -118,8 +119,9 @@ function App() {
 
   const handleDownloadCSV = async () => {
     try {
+      const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
       // Fetch full history (approx 45k hours since 2021). Limit to 60k safe.
-      const url = "http://127.0.0.1:8000/rates?resolution=1H&limit=60000";
+      const url = `${API_BASE}/rates?resolution=1H&limit=60000`;
       const res = await axios.get(url);
       const data = res.data;
 
@@ -184,7 +186,8 @@ function App() {
 
   // Fetch ETH Prices
   const getEthUrl = () => {
-    let url = `http://127.0.0.1:8000/eth-prices?resolution=${resolution}`;
+    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+    let url = `${API_BASE}/eth-prices?resolution=${resolution}`;
     if (appliedStart) url += `&start_date=${appliedStart}`;
     if (appliedEnd) url += `&end_date=${appliedEnd}`;
     return url;
