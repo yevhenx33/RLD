@@ -98,10 +98,10 @@ function App() {
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - days);
-    if (days <= 3) setResolution("RAW");
-    else if (days <= 30) setResolution("1H");
-    else if (days <= 180) setResolution("4H");
-    else setResolution("1D");
+    if (days <= 3) setResolution("RAW"); // 24H - 3D -> RAW
+    else if (days <= 14) setResolution("1H"); // 1W - 2W -> 1H (High Res)
+    else if (days <= 90) setResolution("4H"); // 1M - 3M -> 4H (Medium Res)
+    else setResolution("1D"); // 1Y - ALL -> 1D (Low Res)
     setTempStart(start.toISOString().split("T")[0]);
     setTempEnd(end.toISOString().split("T")[0]);
     setAppliedStart(start.toISOString().split("T")[0]);
@@ -304,6 +304,16 @@ function App() {
     }
     return rates[rates.length - 1].apy - closest.apy;
   }, [rates]);
+
+  // Downsample data for rendering performance
+  // Recharts crashes with >3-5k points (SVG overload).
+  // We limit to ~2000 visual points.
+  const chartData = useMemo(() => {
+     if (processedData.length <= 2000) return processedData;
+     
+     const step = Math.ceil(processedData.length / 2000);
+     return processedData.filter((_, i) => i % step === 0);
+  }, [processedData]);
 
   const isCappedRaw = resolution === "RAW" && rates && rates.length >= 30000;
   const latest =
@@ -632,7 +642,7 @@ function App() {
                   </div>
                 ) : (
                   <RLDPerformanceChart
-                    data={processedData}
+                    data={chartData}
                     areas={[
                       { key: "apy", name: "Spot", color: "#22d3ee" },
                       { key: "ethPrice", name: "ETH Price", color: "#a1a1aa", yAxisId: "right" },

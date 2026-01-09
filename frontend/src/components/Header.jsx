@@ -53,6 +53,13 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
                             </a>
                             <span className="text-white/10">|</span>
                             <Link
+                                to="/markets"
+                                className={`transition-colors px-2 tracking-widest ${location.pathname === '/markets' ? 'text-white cursor-default' : 'text-gray-400 hover:text-white cursor-pointer'}`}
+                            >
+                                MARKETS
+                            </Link>
+                            <span className="text-white/10">|</span>
+                            <Link
                                 to="/research"
                                 className={`transition-colors px-2 tracking-widest ${location.pathname === '/research' ? 'text-white cursor-default' : 'text-gray-400 hover:text-white cursor-pointer'}`}
                             >

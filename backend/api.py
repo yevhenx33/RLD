@@ -25,34 +25,52 @@ def get_rates(
     limit: int = 50000, 
     start_date: str = Query(None),
     end_date: str = Query(None),
-    resolution: str = Query("1H", description="RAW, 1H, 4H, 1D, 1W")
+    resolution: str = Query("1H", description="RAW, 1H, 4H, 1D, 1W"),
+    symbol: str = Query("USDC", description="USDC, DAI, USDT")
 ):
     try:
         conn = get_db_connection()
         
-        # --- 1. SMART LIMITS ---
+        # Determine Base Table based on Symbol
+        symbol = symbol.upper()
+        if symbol == "USDC":
+            base_table = "rates"
+            # Support Views for USDC
+            use_views = True
+        elif symbol == "DAI":
+            base_table = "rates_dai"
+            use_views = False # No views yet
+        elif symbol == "USDT":
+            base_table = "rates_usdt"
+            use_views = False # No views yet
+        else:
+            raise HTTPException(status_code=400, detail="Invalid Symbol. Supported: USDC, DAI, USDT")
+
+        # --- 1. SMART LIMITS & VIEW ROUTING ---
         # Browser Safety: 
         # RAW data is heavy (1 row = 1 block). Limit to 30k (approx 4-5 days).
         # Aggregated data is light (1 row = 1 hour). We can allow 100k rows.
-        if resolution == "RAW":
-            # --- RAW DATA FROM rates TABLE ---
+        
+        # Valid Resolutions for Views: 1H, 4H, 1D, 1W, ALL
+        if resolution == "RAW" or not use_views:
             effective_limit = min(limit, 30000)
             select_clause = "*"
-            table_name = "rates"
+            table_name = base_table
             group_clause = ""
             order_clause = "timestamp DESC"
-        else:
-            # --- AGGREGATED DATA FROM rates_1h TABLE ---
-            # rates_1h is already 1H resolution.
-            # If requesting 4H or 1D, we aggregate further from rates_1h.
+        elif resolution == "4H":
             effective_limit = 100000
-            table_name = "rates_1h"
+            select_clause = "*"
+            table_name = "rates_4h" # Only USDC has views for now
+            group_clause = ""
+            order_clause = "timestamp DESC"
+        elif resolution == "1D" or resolution == "1W" or resolution == "ALL":
+            effective_limit = 100000
+            table_name = "rates_1d"
             
-            buckets = {"4H": 14400, "1D": 86400, "1W": 604800}
-            seconds = buckets.get(resolution)
-
-            if seconds:
-                # Downsample (e.g. 1H -> 4H)
+            if resolution == "1W":
+                # Aggregate 1D -> 1W
+                seconds = 604800
                 select_clause = f"""
                     MAX(timestamp) as timestamp, 
                     AVG(apy) as apy, 
@@ -61,10 +79,17 @@ def get_rates(
                 """
                 group_clause = f"GROUP BY CAST(timestamp / {seconds} AS INTEGER)"
             else:
-                # 1H (matches table resolution) - No grouping needed
+                # 1D or ALL
                 select_clause = "*"
                 group_clause = ""
             
+            order_clause = "timestamp DESC"
+        else:
+            # Default to 1H View (USDC)
+            effective_limit = 100000
+            select_clause = "*"
+            table_name = "rates_1h"
+            group_clause = ""
             order_clause = "timestamp DESC"
 
         # --- 3. BUILD QUERY ---

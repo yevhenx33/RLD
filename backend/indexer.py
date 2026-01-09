@@ -12,7 +12,22 @@ if not RPC_URL:
     RPC_URL = "https://eth.llamarpc.com"
 
 POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+# --- ASSETS CONFIGURATION ---
+# Symbol -> Underlying Address
+ASSETS = {
+    "USDC": {
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "table": "rates" # Legacy table name for USDC
+    },
+    "DAI": {
+        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "table": "rates_dai"
+    },
+    "USDT": {
+        "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "table": "rates_usdt"
+    }
+}
 
 # --- SETUP ---
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
@@ -20,17 +35,20 @@ w3 = Web3(Web3.HTTPProvider(RPC_URL))
 # Database Setup
 conn = sqlite3.connect('aave_rates.db')
 cursor = conn.cursor()
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS rates (
-        block_number INTEGER,
-        timestamp INTEGER,
-        apy REAL
-    )
-''')
+
+# Initialize Tables
+for symbol, data in ASSETS.items():
+    cursor.execute(f'''
+        CREATE TABLE IF NOT EXISTS {data['table']} (
+            block_number INTEGER,
+            timestamp INTEGER,
+            apy REAL
+        )
+    ''')
 conn.commit()
 
 # FULL ABI (Exact Aave V3 ReserveData Structure)
-# The decoder requires every single field to be defined to work.
+# ... (ABI remains same) ...
 POOL_ABI = [
     {
         "inputs": [{"internalType": "address", "name": "asset", "type": "address"}],
@@ -75,10 +93,10 @@ POOL_ABI = [
 pool_contract = w3.eth.contract(address=POOL_ADDRESS, abi=POOL_ABI)
 
 # --- FUNCTIONS ---
-def get_aave_usdc_rate(block_identifier='latest'):
+def get_aave_rate(asset_address, block_identifier='latest'):
     try:
         # Fetch data from smart contract
-        reserve_data = pool_contract.functions.getReserveData(USDC_ADDRESS).call(block_identifier=block_identifier)
+        reserve_data = pool_contract.functions.getReserveData(asset_address).call(block_identifier=block_identifier)
         
         # Target Index: 4 (currentVariableBorrowRate)
         raw_rate = reserve_data[4]
@@ -87,7 +105,7 @@ def get_aave_usdc_rate(block_identifier='latest'):
         apy = raw_rate / 10**27 * 100
         return apy
     except Exception as e:
-        print(f"Error fetching data: {e}")
+        print(f"Error fetching data for {asset_address}: {e}")
         return None
 
 # --- MAIN EXECUTION ---
@@ -96,25 +114,30 @@ if __name__ == "__main__":
         print("CRITICAL: Could not connect to Ethereum node.")
         exit()
         
-    print(f"Monitoring Aave V3 USDC Borrow Rate...")
+    print(f"Monitoring Aave V3 Borrow Rates (USDC, DAI, USDT)...")
     print(f"Connected to: {RPC_URL}")
     print("-" * 40)
     
     try:
         while True:
             # Fetch latest block for timestamp and consistency
-            block = w3.eth.get_block('latest')
-            block_number = block['number']
-            block_timestamp = block['timestamp']
-            
-            rate = get_aave_usdc_rate(block_number)
-            if rate is not None:
-                cursor.execute("INSERT INTO rates VALUES (?, ?, ?)", (block_number, block_timestamp, rate))
-                conn.commit()
+            try:
+                block = w3.eth.get_block('latest')
+                block_number = block['number']
+                block_timestamp = block['timestamp']
                 
                 timestamp_str = time.strftime("%H:%M:%S", time.localtime(block_timestamp))
-                print(f"[{timestamp_str}] Block {block_number} | USDC Borrow APY: {rate:.2f}%")
+                
+                for symbol, data in ASSETS.items():
+                    rate = get_aave_rate(data['address'], block_number)
+                    if rate is not None:
+                        cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (block_number, block_timestamp, rate))
+                        conn.commit()
+                        print(f"[{timestamp_str}] Block {block_number} | {symbol}: {rate:.2f}%")
             
+            except Exception as loop_err:
+                print(f"Error in loop: {loop_err}")
+
             time.sleep(12)
             
     except KeyboardInterrupt:
