@@ -57,6 +57,13 @@ if [ ! -f "shared/addresses.json" ]; then
 fi
 echo -e "${GREEN}✅ Contracts Deployed & Addresses Exported${NC}"
 
+# 3b. Run Data Continuity Check (Fill Gaps)
+echo -e "${BLUE}>> Checking Data Continuity...${NC}"
+# We must activate venv to have python packages
+source venv/bin/activate
+python3 backend/fill_gaps_startup.py
+deactivate 
+
 # 4. Start REAL Backend (Uvicorn)
 echo -e "${BLUE}>> Starting FastAPI Backend (Port 8000)...${NC}"
 cd backend || exit
