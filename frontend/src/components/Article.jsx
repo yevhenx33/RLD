@@ -12,24 +12,6 @@ import { useWallet } from '../context/WalletContext';
 export default function Article() {
   const { id } = useParams();
   const post = BLOG_POSTS.find(p => p.id === Number(id));
-  const { account } = useWallet();
-  const [latest, setLatest] = React.useState({ block_number: 0 });
-
-  React.useEffect(() => {
-    const fetchBlock = async () => {
-        try {
-            const res = await fetch("http://127.0.0.1:8000/rates?resolution=RAW&limit=1");
-            const data = await res.json();
-            if (data && data.length > 0) {
-                setLatest({ block_number: data[data.length - 1].block_number });
-            }
-        } catch (e) {
-            console.error("Failed to fetch block number", e);
-        }
-    };
-    fetchBlock();
-  }, []);
-
   if (!post) {
     return (
       <div className="min-h-screen bg-[#080808] text-white flex items-center justify-center font-mono">
@@ -40,8 +22,7 @@ export default function Article() {
 
   return (
     <div className="min-h-screen bg-[#080808] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
-      <Header latest={latest} isCapped={false} ratesLoaded={true} />
-
+      
       <div className="max-w-[1000px] mx-auto w-full px-6 flex-1 py-12">
         {/* BACK BUTTON */}
         <Link 
