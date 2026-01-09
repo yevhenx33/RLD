@@ -22,7 +22,11 @@ import bisect
 
 # ... (Configuration)
 BLOCKS_PER_HOUR = 300
-HOURS_TO_BACKFILL = 24 * 365 * 2 # 2 Years
+# Aave V3 Ethereum Pool Deployment Block (approx Jan 2023)
+MIN_BLOCK = 16475699
+
+# Backfill covers back to deployment (approx 3 years)
+HOURS_TO_BACKFILL = int(24 * 365 * 3.5) 
 
 # --- SETUP ---
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
@@ -86,10 +90,15 @@ def fetch_data_for_block(block_num):
         return None
 
 def main():
-    print(f"🚀 Starting 2-Year Backfill ({HOURS_TO_BACKFILL} hours)...")
+    print(f"🚀 Starting Deep Backfill ({HOURS_TO_BACKFILL} hours)...")
     
     current_block = w3.eth.get_block('latest')['number']
-    start_block = current_block - (BLOCKS_PER_HOUR * HOURS_TO_BACKFILL)
+    
+    # Calculate start block but respect deployment block
+    target_start = current_block - (BLOCKS_PER_HOUR * HOURS_TO_BACKFILL)
+    start_block = max(target_start, MIN_BLOCK)
+    
+    print(f"Start Block: {start_block} (Deployment limit: {MIN_BLOCK})")
     
     candidate_blocks = list(range(start_block, current_block, BLOCKS_PER_HOUR))
     print(f"Target Grid: {len(candidate_blocks)} points.")

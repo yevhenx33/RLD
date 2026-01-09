@@ -15,6 +15,7 @@ const CustomTooltip = ({ active, payload, label }) => {
     const dateStr = new Date(label * 1000).toLocaleString("en-US", {
       month: "short",
       day: "numeric",
+      year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -32,7 +33,9 @@ const CustomTooltip = ({ active, payload, label }) => {
             />
             <span className="text-zinc-300 font-medium">{entry.name}:</span>
             <span className="text-white font-bold">
-              {entry.value.toFixed(2)}%
+              {entry.name && (entry.name.includes("Price") || entry.name.includes("ETH"))
+                ? `$${Number(entry.value).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}` 
+                : `${Number(entry.value).toFixed(2)}%`}
             </span>
           </div>
         ))}
@@ -64,7 +67,7 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
   };
 
   return (
-    <div className="w-full h-full select-none">
+    <div className="w-full h-full select-none outline-none focus:outline-none">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart
           data={data}
@@ -112,6 +115,18 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
             tickFormatter={(val) => `${val}%`}
             width={50}
           />
+          {/* Secondary YAxis for Price */}
+          {areas.some((a) => a.yAxisId === "right") && (
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              stroke="#71717a"
+              fontSize={12}
+              domain={["auto", "auto"]}
+              tickFormatter={(val) => `$${val}`}
+              width={60}
+            />
+          )}
 
           <Tooltip
             content={<CustomTooltip />}
@@ -121,6 +136,7 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
           {areas.map((area, index) => (
             <Area
               key={index}
+              {...(area.yAxisId ? { yAxisId: area.yAxisId } : {})}
               type="monotone"
               dataKey={area.key}
               stroke={area.color}

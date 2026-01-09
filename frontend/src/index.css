@@ -23,3 +23,7 @@ body {
   min-height: 100vh;
   @apply bg-[#050505] text-gray-300 font-mono;
 }
+
+*:focus-visible {
+  outline: none;
+}

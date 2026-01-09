@@ -31,12 +31,12 @@ const getPastDate = (days) => {
 const getToday = () => new Date().toISOString().split("T")[0];
 
 const formatTwarLabel = (seconds) => {
-  if (!seconds) return "TWAR_OFF";
-  if (seconds < 60) return `TWAR_${seconds}S`;
-  if (seconds < 3600) return `TWAR_${Math.round(seconds / 60)}M`;
+  if (!seconds) return "RATE_TWAR_OFF";
+  if (seconds < 60) return `RATE_TWAR_${seconds}S`;
+  if (seconds < 3600) return `RATE_TWAR_${Math.round(seconds / 60)}M`;
   if (seconds < 86400)
-    return `TWAR_${parseFloat((seconds / 3600).toFixed(1))}H`;
-  return `TWAR_${parseFloat((seconds / 86400).toFixed(1))}D`;
+    return `RATE_TWAR_${parseFloat((seconds / 3600).toFixed(1))}H`;
+  return `RATE_TWAR_${parseFloat((seconds / 86400).toFixed(1))}D`;
 };
 
 // --- APP COMPONENT ---
@@ -74,6 +74,17 @@ function App() {
       : null;
   }, [symbioticData]);
 
+  // --- VISIBILITY STATE ---
+  const [hiddenSeries, setHiddenSeries] = useState(['ethPrice']);
+
+  const toggleSeries = (key) => {
+    setHiddenSeries(prev => 
+      prev.includes(key) 
+        ? prev.filter(k => k !== key)
+        : [...prev, key]
+    );
+  };
+
   // --- ACTIONS ---
   const handleApplyDate = () => {
     setAppliedStart(tempStart);
@@ -107,8 +118,8 @@ function App() {
 
   const handleDownloadCSV = async () => {
     try {
-      // Fetch 2 years of hourly data. 20k is enough for safety.
-      const url = "http://127.0.0.1:8000/rates?resolution=1H&limit=25000";
+      // Fetch full history (approx 45k hours since 2021). Limit to 60k safe.
+      const url = "http://127.0.0.1:8000/rates?resolution=1H&limit=60000";
       const res = await axios.get(url);
       const data = res.data;
 
@@ -117,10 +128,36 @@ function App() {
         return;
       }
 
-      const headers = "Timestamp,Date (UTC),APY (%),Block Number\n";
-      const rows = data.map(row => {
+      const headers = "Timestamp,Date (UTC),APY (%),RATE_TWAR (%),ETH Price ($)\n";
+      
+      // Calculate TWAR for CSV
+      const historyQueue = [];
+      let runningArea = 0;
+      let runningTime = 0;
+      
+      const rows = data.map((row, i) => {
+        // TWAR Logic
+        const prevTs = i > 0 ? data[i - 1].timestamp : row.timestamp;
+        let dt = row.timestamp - prevTs;
+        if (dt < 0) dt = 0;
+        
+        const apy = row.apy !== null && row.apy !== undefined ? row.apy : 0;
+        const stepArea = apy * dt;
+        historyQueue.push({ dt, area: stepArea, timestamp: row.timestamp });
+        runningArea += stepArea;
+        runningTime += dt;
+        
+        while (historyQueue.length > 0 && row.timestamp - historyQueue[0].timestamp > twarWindow) {
+             const removed = historyQueue.shift();
+             runningArea -= removed.area;
+             runningTime -= removed.dt;
+        }
+        let twar = runningTime > 0 ? runningArea / runningTime : apy;
+        twar = Math.max(0, twar);
+
         const date = new Date(row.timestamp * 1000).toISOString().replace("T", " ").replace("Z", "");
-        return `${row.timestamp},${date},${row.apy.toFixed(4)},${row.block_number}`;
+        const price = row.eth_price ? row.eth_price.toFixed(2) : "";
+        return `${row.timestamp},${date},${apy.toFixed(4)},${twar.toFixed(4)},${price}`;
       }).join("\n");
 
       const csvContent = headers + rows;
@@ -129,7 +166,7 @@ function App() {
       const urlObj = URL.createObjectURL(blob);
       
       link.setAttribute("href", urlObj);
-      link.setAttribute("download", `aave_usdc_rates_2y_${getToday()}.csv`);
+      link.setAttribute("download", `aave_usdc_rates_full_history_${getToday()}.csv`);
       link.style.visibility = "hidden";
       document.body.appendChild(link);
       link.click();
@@ -140,45 +177,98 @@ function App() {
     }
   };
 
+  // Fetch Rates
   const { data: rates, error } = useSWR(getUrl(), fetcher, {
     refreshInterval: 10000,
   });
 
+  // Fetch ETH Prices
+  const getEthUrl = () => {
+    let url = `http://127.0.0.1:8000/eth-prices?resolution=${resolution}`;
+    if (appliedStart) url += `&start_date=${appliedStart}`;
+    if (appliedEnd) url += `&end_date=${appliedEnd}`;
+    return url;
+  };
+  const { data: ethPrices } = useSWR(getEthUrl(), fetcher);
+
   // Calculations
   const processedData = useMemo(() => {
     if (!rates || rates.length === 0) return [];
+    
+    // ETH Price Map
+    const priceMap = new Map();
+    if (ethPrices && ethPrices.length > 0) {
+        ethPrices.forEach(p => priceMap.set(p.timestamp, p.price));
+    }
+
     const result = [];
     const historyQueue = [];
     let runningArea = 0;
     let runningTime = 0;
+    
+    // Determine bucket size for matching
+    // If RAW, we match to the nearest hour (3600)
+    // If others, we match to that resolution
+    const bucketSize = resolution === "RAW" ? 3600 : 
+                       resolution === "4H" ? 14400 : 
+                       resolution === "1D" ? 86400 : 3600;
 
     for (let i = 0; i < rates.length; i++) {
-      const current = rates[i];
-      const prevTs = i > 0 ? rates[i - 1].timestamp : current.timestamp;
-      let dt = current.timestamp - prevTs;
-      if (dt < 0) dt = 0;
-      const stepArea = current.apy * dt;
-      historyQueue.push({
-        dt: dt,
-        area: stepArea,
-        timestamp: current.timestamp,
-      });
-      runningArea += stepArea;
-      runningTime += dt;
-      while (
-        historyQueue.length > 0 &&
-        current.timestamp - historyQueue[0].timestamp > twarWindow
-      ) {
-        const removed = historyQueue.shift();
-        runningArea -= removed.area;
-        runningTime -= removed.dt;
-      }
-      let twarValue = runningTime > 0 ? runningArea / runningTime : current.apy;
-      twarValue = Math.max(0, twarValue);
-      result.push({ ...current, twar: twarValue });
+        const current = rates[i];
+        
+        // --- TWAR Logic ---
+        const prevTs = i > 0 ? rates[i - 1].timestamp : current.timestamp;
+        let dt = current.timestamp - prevTs;
+        if (dt < 0) dt = 0;
+        
+        const apy = current.apy !== null && current.apy !== undefined ? current.apy : 0;
+        const stepArea = apy * dt;
+        
+        historyQueue.push({
+            dt: dt,
+            area: stepArea,
+            timestamp: current.timestamp,
+        });
+        runningArea += stepArea;
+        runningTime += dt;
+        
+        while (
+            historyQueue.length > 0 &&
+            current.timestamp - historyQueue[0].timestamp > twarWindow
+        ) {
+            const removed = historyQueue.shift();
+            runningArea -= removed.area;
+            runningTime -= removed.dt;
+        }
+        let twarValue = runningTime > 0 ? runningArea / runningTime : apy;
+        twarValue = Math.max(0, twarValue);
+
+        // Lookup Price (Loose Matching)
+        // 1. Check if backend already provided it (Aggregated Mode)
+        let price = current.eth_price;
+
+        if (price === undefined || price === null) {
+            // 2. Fallback: Client-side Map Lookup (RAW Mode)
+            price = priceMap.get(current.timestamp);
+            
+            if (price === undefined) {
+                 const bucketTs = Math.floor(current.timestamp / bucketSize) * bucketSize;
+                 price = priceMap.get(bucketTs);
+            }
+            if (price === undefined && resolution === "RAW") {
+                 const hourTs = Math.floor(current.timestamp / 3600) * 3600;
+                 price = priceMap.get(hourTs);
+            }
+        }
+
+        result.push({ 
+            ...current, 
+            twar: twarValue,
+            ethPrice: price || null
+        });
     }
     return result;
-  }, [rates, twarWindow]);
+  }, [rates, ethPrices, twarWindow, resolution]);
 
   const stats = useMemo(() => {
     if (!rates || rates.length === 0)
@@ -479,25 +569,41 @@ function App() {
             <div className="relative flex-1 min-h-[400px]">
               <div className="flex justify-between items-end mb-4 px-1">
                 <div className="flex gap-8">
-                  <div className="flex items-center gap-2">
+                  <div 
+                    className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes('apy') ? 'opacity-50 line-through' : 'opacity-100 hover:opacity-80'}`}
+                    onClick={() => toggleSeries('apy')}
+                  >
                     <div className="w-2 h-2 bg-cyan-400"></div>
                     <span className="text-[11px] uppercase tracking-widest">
                       Spot_Rate
                     </span>
                   </div>
                   {showTwar && (
-                    <div className="flex items-center gap-2">
+                    <div 
+                        className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes('twar') ? 'opacity-50 line-through' : 'opacity-100 hover:opacity-80'}`}
+                        onClick={() => toggleSeries('twar')}
+                    >
                       <div className="w-2 h-2 bg-pink-500"></div>
                       <span className="text-[11px] uppercase tracking-widest">
                         {formatTwarLabel(twarWindow)}
                       </span>
                     </div>
                   )}
+                  {/* ETH Price Legend */}
+                  <div 
+                    className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes('ethPrice') ? 'opacity-50 line-through' : 'opacity-100 hover:opacity-80'}`}
+                    onClick={() => toggleSeries('ethPrice')}
+                  >
+                    <div className="w-2 h-2 bg-zinc-400"></div>
+                    <span className="text-[11px] uppercase tracking-widest">
+                      ETH_Price
+                    </span>
+                  </div>
                   {/* CSV Download Button */}
                   <button 
                     onClick={handleDownloadCSV}
                     className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-gray-500 hover:text-white transition-colors focus:outline-none group"
-                    title="Download 2-Year Hourly Data"
+                    title="Download Full History (CSV)"
                   >
                     <FileDown size={12} className="group-hover:text-cyan-400 transition-colors" />
                     <span className="group-hover:underline decoration-cyan-400 underline-offset-4">CSV</span>
@@ -529,10 +635,11 @@ function App() {
                     data={processedData}
                     areas={[
                       { key: "apy", name: "Spot", color: "#22d3ee" },
+                      { key: "ethPrice", name: "ETH Price", color: "#a1a1aa", yAxisId: "right" },
                       ...(showTwar
                         ? [{ key: "twar", name: "TWAR", color: "#ec4899" }]
                         : []),
-                    ]}
+                    ].filter(a => !hiddenSeries.includes(a.key))}
                   />
                 )}
               </div>
