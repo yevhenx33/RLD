@@ -7,7 +7,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-load_dotenv("../contracts/.env")
+load_dotenv("../.env")
 DB_FILE = "aave_rates.db"
 RPC_URL = os.getenv("MAINNET_RPC_URL")
 
