@@ -1,7 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import Header from './Header';
-import { Loader2, Activity, Database, Network, TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Loader2, TrendingUp, ArrowUpRight, Shield, Globe, Zap, Wallet, BarChart3, Clock } from 'lucide-react';
 import { JsonRpcProvider, Contract, formatUnits } from 'ethers';
+import useSWR from 'swr';
+import axios from 'axios';
+import RLDPerformanceChart from './RLDChart';
+import SettingsButton from './SettingsButton';
+
+const fetcher = (url) => axios.get(url).then((res) => res.data);
 
 const ASSETS = [
     {
@@ -9,28 +14,36 @@ const ASSETS = [
         name: "USD Coin",
         decimals: 6,
         debtToken: "0x72E95b8931767C79bA4EeE721354d6E99a61D004",
-        icon: "https://icons.llama.fi/usdc.png"
+        icon: "https://icons.llama.fi/usdc.png",
+        color: "text-blue-400"
     },
     {
         symbol: "DAI",
         name: "Dai Stablecoin",
         decimals: 18,
         debtToken: "0xcF8d0c70c850859266f5C338b38F9D663181C314",
-        icon: "https://icons.llama.fi/dai.png"
+        icon: "https://icons.llama.fi/dai.png",
+        color: "text-yellow-400"
     },
     {
         symbol: "USDT",
         name: "Tether USD",
         decimals: 6,
         debtToken: "0x6df1C1E379bC5a00a7b4C6e67A203333772f45A8",
-        icon: "https://icons.llama.fi/usdt.png"
+        icon: "https://icons.llama.fi/usdt.png",
+        color: "text-green-400"
     }
 ];
 
 export default function Markets() {
     const [marketData, setMarketData] = useState([]);
     const [loading, setLoading] = useState(true);
-
+    
+    // --- Chart State ---
+    const [activeRange, setActiveRange] = useState("1M");
+    const [resolution, setResolution] = useState("4H");
+    
+    // --- Initial Data Fetch (Cards/Table) ---
     useEffect(() => {
         const fetchAllData = async () => {
             try {
@@ -38,19 +51,15 @@ export default function Markets() {
                 const ERC20_ABI = ["function totalSupply() view returns (uint256)"];
 
                 const promises = ASSETS.map(async (asset) => {
-                    // 1. Fetch APY from Backend
                     let apy = 0;
                     try {
                         const apiRes = await fetch(`http://localhost:8000/rates?resolution=RAW&limit=1&symbol=${asset.symbol}`);
                         const apiData = await apiRes.json();
-                        if (apiData && apiData.length > 0) {
-                            apy = apiData[apiData.length - 1].apy;
-                        }
+                        if (apiData && apiData.length > 0) apy = apiData[apiData.length - 1].apy;
                     } catch (e) {
-                        console.error(`Failed to fetch APY for ${asset.symbol}`, e);
+                         console.error(`Failed to fetch APY for ${asset.symbol}`, e);
                     }
 
-                    // 2. Fetch On-Chain Debt
                     let debt = 0;
                     try {
                         const debtContract = new Contract(asset.debtToken, ERC20_ABI, provider);
@@ -60,15 +69,10 @@ export default function Markets() {
                          console.error(`Failed to fetch Debt for ${asset.symbol}`, e);
                     }
 
-                    return {
-                        ...asset,
-                        apy,
-                        debt
-                    };
+                    return { ...asset, apy, debt };
                 });
 
                 const results = await Promise.all(promises);
-                // Sort by Debt Descending
                 results.sort((a, b) => b.debt - a.debt);
                 
                 setMarketData(results);
@@ -83,99 +87,272 @@ export default function Markets() {
         fetchAllData();
     }, []);
 
+    // --- Chart Data Fetching (USDC History) ---
+    const getChartUrl = () => {
+        // Calculate start date based on activeRange
+        const end = new Date();
+        const start = new Date();
+        let days = 30;
+        if (activeRange === "1W") days = 7;
+        if (activeRange === "3M") days = 90;
+        if (activeRange === "1Y") days = 365;
+
+        start.setDate(end.getDate() - days);
+        const startStr = start.toISOString().split("T")[0];
+        
+        return `http://localhost:8000/rates?symbol=USDC&resolution=${resolution}&start_date=${startStr}`;
+    };
+
+    const { data: historyRates } = useSWR(getChartUrl(), fetcher);
+    
+    const { data: ethPrices } = useSWR(
+        () => {
+            const end = new Date();
+            const start = new Date();
+            let days = 30;
+            if (activeRange === "1W") days = 7;
+            if (activeRange === "3M") days = 90;
+            if (activeRange === "1Y") days = 365;
+            start.setDate(end.getDate() - days);
+            const startStr = start.toISOString().split("T")[0];
+            return `http://localhost:8000/eth-prices?resolution=${resolution}&start_date=${startStr}`;
+        },
+        fetcher
+    );
+
+    // Merge Data for Chart
+    const chartData = useMemo(() => {
+        if (!historyRates || historyRates.length === 0) return [];
+        
+        // Create Price Map
+        const priceMap = new Map();
+        if (ethPrices) ethPrices.forEach(p => priceMap.set(p.timestamp, p.price));
+
+        return historyRates.map(r => {
+             // Simple lookup (exact match or closest bucket logic could be added)
+             // For now, relying on same-period buckets from backend or approx match
+             let price = r.eth_price; // Backend might provide it separate or joined? 
+             // Backend API returns rates... eth_price is in eth-prices endpoint mostly, unless aggregated
+             
+             if (!price) price = priceMap.get(r.timestamp);
+             
+             return {
+                 ...r,
+                 ethPrice: price || null
+             };
+        });
+    }, [historyRates, ethPrices]);
+
+
+    const stats = useMemo(() => {
+        const totalDebt = marketData.reduce((acc, curr) => acc + curr.debt, 0);
+        
+        const weightedSum = marketData.reduce((acc, curr) => acc + (curr.apy * curr.debt), 0);
+        const avgApy = totalDebt > 0 ? weightedSum / totalDebt : 0;
+        
+        const topMarket = marketData.reduce((prev, current) => (prev.debt > current.debt) ? prev : current, { symbol: '-', debt: 0 });
+        const dominance = totalDebt > 0 ? (topMarket.debt / totalDebt) * 100 : 0;
+
+        return { totalDebt, avgApy, topMarket, dominance };
+    }, [marketData]);
+
     const formatCurrency = (value) => {
-        return new Intl.NumberFormat('en-US', {
-            style: 'currency',
-            currency: 'USD',
-            maximumFractionDigits: 0
-        }).format(value);
+        if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+        if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
+    };
+
+    const handleRangeChange = (range) => {
+        setActiveRange(range);
+        if (range === "1W") setResolution("1H");
+        else if (range === "1M") setResolution("4H");
+        else if (range === "3M") setResolution("4H");
+        else setResolution("1D");
     };
 
     return (
         <div className="min-h-screen bg-[#050505] text-gray-300 font-mono selection:bg-pink-500/30">
-            <Header />
-            
             <main className="max-w-7xl mx-auto px-6 py-12">
-                <div className="mb-12 border-b border-white/10 pb-6 flex justify-between items-end">
-                    <div>
-                        <h1 className="text-4xl font-bold text-white tracking-widest uppercase mb-2">
-                            AAVE V3 <span className="text-pink-500">MARKETS</span>
-                        </h1>
-                        <div className="flex items-center gap-4 text-xs tracking-widest text-gray-500 uppercase">
-                            <span>Ethereum Mainnet</span>
-                            <span>•</span>
-                            <span className="text-green-500 flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
-                                Live Data
-                            </span>
+                
+                {/* HERO STATS */}
+                <div className="mb-12 grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="border border-white/10 bg-[#0a0a0a] p-6 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Wallet size={48} />
+                        </div>
+                        <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-bold">Total Active Debt</div>
+                        <div className="text-3xl font-bold text-white tracking-tight">
+                            {loading ? "..." : formatCurrency(stats.totalDebt)}
+                        </div>
+                        <div className="text-xs text-green-500 mt-2 flex items-center gap-1">
+                            <TrendingUp size={12} /> Live On-Chain
+                        </div>
+                    </div>
+
+                    <div className="border border-white/10 bg-[#0a0a0a] p-6 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <BarChart3 size={48} />
+                        </div>
+                        <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-bold">Avg. Borrow Rate</div>
+                        <div className="text-3xl font-bold text-cyan-400 tracking-tight">
+                            {loading ? "..." : `${stats.avgApy.toFixed(2)}%`}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-2">
+                             Weighted Average (Debt)
+                        </div>
+                    </div>
+
+                    <div className="border border-white/10 bg-[#0a0a0a] p-6 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Shield size={48} />
+                        </div>
+                        <div className="text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-bold">Top Market</div>
+                        <div className="text-3xl font-bold text-white tracking-tight flex items-center gap-2">
+                            {loading ? "..." : stats.topMarket.symbol}
+                        </div>
+                        <div className="text-xs text-pink-500 mt-2 flex items-center gap-1">
+                             {loading ? "0" : stats.dominance.toFixed(1)}% Dominance
                         </div>
                     </div>
                 </div>
 
-                {loading ? (
-                    <div className="h-64 w-full flex flex-col items-center justify-center gap-4 border border-white/10 bg-[#080808] rounded-sm">
-                        <Loader2 className="w-10 h-10 text-pink-500 animate-spin" />
-                        <span className="text-xs tracking-widest uppercase text-gray-500">Syncing Multi-Asset Data...</span>
+                {/* CHART SECTION */}
+                <div className="mb-12">
+                   <div className="bg-[#0a0a0a] border border-white/10 p-4">
+                       <div className="flex justify-between items-center mb-6 px-2 pt-2">
+                           <div className="flex items-center gap-4">
+                               <h3 className="text-sm font-bold text-white uppercase tracking-widest">
+                                   Historical Rates <span className="text-gray-600">&</span> Price
+                               </h3>
+                               <div className="h-4 w-px bg-white/10"></div>
+                               <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-gray-500">
+                                   <div className="w-2 h-2 bg-cyan-400"></div> USDC Rate
+                                   <div className="w-2 h-2 bg-zinc-500 ml-2"></div> ETH Price
+                               </div>
+                           </div>
+                           <div className="flex gap-1">
+                               {["1W", "1M", "3M", "1Y"].map(range => (
+                                   <SettingsButton 
+                                       key={range} 
+                                       isActive={activeRange === range} 
+                                       onClick={() => handleRangeChange(range)}
+                                       className="w-12"
+                                   >
+                                       {range}
+                                   </SettingsButton>
+                               ))}
+                           </div>
+                       </div>
+                       
+                       <div className="h-[350px] w-full">
+                           {!historyRates ? (
+                               <div className="h-full flex items-center justify-center">
+                                   <Loader2 className="animate-spin text-gray-700" />
+                               </div>
+                           ) : (
+                               <RLDPerformanceChart 
+                                   data={chartData}
+                                   areas={[
+                                       { key: "apy", name: "USDC Rate", color: "#22d3ee" },
+                                       { key: "ethPrice", name: "ETH Price", color: "#71717a", yAxisId: "right" }
+                                   ]} 
+                               />
+                           )}
+                       </div>
+                   </div>
+                </div>
+
+                {/* TABLE HEADER */}
+                <div className="mb-6 flex justify-between items-end">
+                    <div>
+                        <h2 className="text-xl font-light text-white tracking-wide uppercase mb-1">
+                            Active Markets
+                        </h2>
+                        <div className="text-[10px] uppercase tracking-widest text-gray-500">
+                            Real-time Lending Opportunities
+                        </div>
                     </div>
-                ) : (
-                    <div className="overflow-x-auto border border-white/10 bg-[#080808]">
+                </div>
+
+                {/* MAIN TABLE */}
+                <div className="border border-white/10 bg-[#0a0a0a] relative">
+                    {loading && (
+                        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-10 flex flex-col items-center justify-center">
+                             <Loader2 className="w-8 h-8 text-cyan-500 animate-spin mb-2" />
+                             <span className="text-[10px] uppercase tracking-widest text-white">Syncing Data...</span>
+                        </div>
+                    )}
+                    
+                    <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse">
                             <thead>
-                                <tr className="border-b border-white/10 text-xs uppercase tracking-widest text-gray-500">
-                                    <th className="p-6 font-medium">Asset</th>
-                                    <th className="p-6 font-medium">Chain</th>
-                                    <th className="p-6 font-medium text-right">Total Outstanding Debt</th>
-                                    <th className="p-6 font-medium text-right">Borrow APY</th>
-                                    <th className="p-6 font-medium text-right">Status</th>
+                                <tr className="border-b border-white/10 bg-white/[0.02]">
+                                    <th className="p-5 text-[10px] uppercase tracking-widest text-gray-500 font-bold">Asset</th>
+                                    <th className="p-5 text-[10px] uppercase tracking-widest text-gray-500 font-bold">Network</th>
+                                    <th className="p-5 text-[10px] uppercase tracking-widest text-gray-500 font-bold text-right">Total Debt</th>
+                                    <th className="p-5 text-[10px] uppercase tracking-widest text-gray-500 font-bold text-right">Borrow APY</th>
+                                    <th className="p-5 text-[10px] uppercase tracking-widest text-gray-500 font-bold text-right">Action</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
                                 {marketData.map((m) => (
-                                    <tr key={m.symbol} className="hover:bg-white/[0.02] transition-colors group">
-                                        <td className="p-6">
+                                    <tr key={m.symbol} className="hover:bg-white/[0.03] transition-all duration-300 group cursor-default">
+                                        <td className="p-5">
                                             <div className="flex items-center gap-4">
-                                                <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center overflow-hidden">
-                                                     <img src={m.icon} alt={m.symbol} className="w-full h-full object-cover" />
+                                                <div className="relative">
+                                                    <div className="w-10 h-10 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-2 group-hover:border-white/30 transition-colors">
+                                                         <img src={m.icon} alt={m.symbol} className="w-full h-full object-contain" />
+                                                    </div>
+                                                    <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-[#0a0a0a] rounded-full flex items-center justify-center border border-white/10">
+                                                        <Zap size={8} className="text-yellow-500" fill="currentColor" />
+                                                    </div>
                                                 </div>
                                                 <div>
-                                                    <div className="text-lg font-bold text-white tracking-tight">{m.symbol}</div>
-                                                    <div className="text-[10px] text-gray-600 uppercase tracking-widest">{m.name}</div>
+                                                    <div className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+                                                        {m.symbol}
+
+                                                    </div>
+                                                    <div className="text-[10px] text-gray-600 uppercase tracking-widest font-bold">{m.name}</div>
                                                 </div>
                                             </div>
                                         </td>
-                                        <td className="p-6">
+                                        <td className="p-5">
                                             <div className="flex items-center gap-2">
-                                                <Network size={14} className="text-gray-600" />
-                                                <span className="text-sm text-gray-400">Ethereum</span>
+                                                <div className="w-2 h-2 rounded-full bg-slate-700"></div>
+                                                <span className="text-xs text-gray-400 font-medium tracking-wide">Ethereum</span>
                                             </div>
                                         </td>
-                                        <td className="p-6 text-right">
-                                            <div className="text-xl font-mono text-white tracking-tight">
+                                        <td className="p-5 text-right">
+                                            <div className="text-lg font-mono font-medium text-white">
                                                 {formatCurrency(m.debt)}
                                             </div>
-                                            <div className="text-[10px] text-gray-600 uppercase tracking-widest mt-1">
-                                                On-Chain
-                                            </div>
+
                                         </td>
-                                        <td className="p-6 text-right">
+                                        <td className="p-5 text-right">
                                              <div className="flex flex-col items-end">
-                                                <div className="text-xl font-mono text-cyan-400 tracking-tight font-bold">
+                                                <div className="text-lg font-mono font-bold text-cyan-400">
                                                     {m.apy.toFixed(2)}%
                                                 </div>
-                                                <div className="text-[10px] text-gray-600 uppercase tracking-widest mt-1">
-                                                    Variable Rate
+                                                <div className="text-[10px] text-gray-600 uppercase tracking-widest mt-0.5">
+                                                    Variable
                                                 </div>
                                              </div>
                                         </td>
-                                        <td className="p-6 text-right">
+                                        <td className="p-5 text-right">
                                             <div className="flex justify-end">
                                                 <a 
                                                     href={`https://app.aave.com/reserve-overview/?underlyingAsset=${m.debtToken}&marketName=proto_mainnet_v3`} 
                                                     target="_blank" 
                                                     rel="noreferrer"
-                                                    className="flex items-center gap-2 text-xs uppercase tracking-widest text-gray-500 hover:text-white transition-colors group-hover:underline underline-offset-4"
+                                                    className="
+                                                        flex items-center gap-2 px-4 py-2 
+                                                        border border-white/10 bg-white/[0.02] 
+                                                        text-xs uppercase tracking-widest font-bold text-gray-400 
+                                                        hover:text-white hover:border-cyan-500/50 hover:bg-cyan-500/10 
+                                                        transition-all duration-300
+                                                    "
                                                 >
-                                                    View <ArrowRight size={12} />
+                                                    Manage <ArrowUpRight size={12} />
                                                 </a>
                                             </div>
                                         </td>
@@ -183,8 +360,16 @@ export default function Markets() {
                                 ))}
                             </tbody>
                         </table>
+                        
+                        {/* Empty State / Footer */}
+                        {!loading && marketData.length > 0 && (
+                            <div className="p-4 border-t border-white/5 bg-[#0d0d0d] flex justify-between items-center text-[10px] uppercase tracking-widest text-gray-600">
+                                <span>Showing {marketData.length} Assets</span>
+                                <span className="flex items-center gap-1">Data provided by <span className="text-white">Aave V3</span></span>
+                            </div>
+                        )}
                     </div>
-                )}
+                </div>
             </main>
         </div>
     );

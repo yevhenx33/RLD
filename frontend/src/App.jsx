@@ -386,10 +386,6 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#080808] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
-      {/* HEADER */}
-      <Header latest={latest} isCapped={isCappedRaw} ratesLoaded={!!rates} />
-
-
       {/* MAIN GRID LAYOUT */}
       <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12 ">
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-stretch">
