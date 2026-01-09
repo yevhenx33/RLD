@@ -58,18 +58,17 @@ def get_rates(
             table_name = base_table
             group_clause = ""
             order_clause = "timestamp DESC"
-        elif resolution == "4H":
+        elif resolution == "4H" and use_views:
             effective_limit = 100000
             select_clause = "*"
-            table_name = "rates_4h" # Only USDC has views for now
+            table_name = "rates_4h" 
             group_clause = ""
             order_clause = "timestamp DESC"
-        elif resolution == "1D" or resolution == "1W" or resolution == "ALL":
+        elif (resolution == "1D" or resolution == "1W" or resolution == "ALL") and use_views:
             effective_limit = 100000
             table_name = "rates_1d"
             
             if resolution == "1W":
-                # Aggregate 1D -> 1W
                 seconds = 604800
                 select_clause = f"""
                     MAX(timestamp) as timestamp, 
@@ -79,16 +78,23 @@ def get_rates(
                 """
                 group_clause = f"GROUP BY CAST(timestamp / {seconds} AS INTEGER)"
             else:
-                # 1D or ALL
                 select_clause = "*"
                 group_clause = ""
             
             order_clause = "timestamp DESC"
         else:
-            # Default to 1H View (USDC)
-            effective_limit = 100000
-            select_clause = "*"
-            table_name = "rates_1h"
+            # Fallback for View-supported assets OR non-view assets requesting High Res
+            if use_views:
+                effective_limit = 100000
+                select_clause = "*"
+                table_name = "rates_1h"
+            else:
+                # Non-view asset (DAI/USDT) requesting Aggregated resolution
+                # For now, return Raw data but mapped to base table
+                effective_limit = 30000
+                select_clause = "*"
+                table_name = base_table
+
             group_clause = ""
             order_clause = "timestamp DESC"
 
