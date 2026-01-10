@@ -43,8 +43,11 @@ def get_rates(
         elif symbol == "USDT":
             base_table = "rates_usdt"
             use_views = False # No views yet
+        elif symbol == "SOFR":
+            base_table = "sofr_rates"
+            use_views = False
         else:
-            raise HTTPException(status_code=400, detail="Invalid Symbol. Supported: USDC, DAI, USDT")
+            raise HTTPException(status_code=400, detail="Invalid Symbol. Supported: USDC, DAI, USDT, SOFR")
 
         # --- 1. SMART LIMITS & VIEW ROUTING ---
         # Browser Safety: 
@@ -127,7 +130,9 @@ def get_rates(
         # Interest rates are stateful. If no event happened in an hour, the rate is same as previous.
         # This fixes "gaps" where we have Price data but no Rate data.
         df['apy'] = df['apy'].ffill()
-        df['block_number'] = df['block_number'].ffill()
+        df['apy'] = df['apy'].ffill()
+        if 'block_number' in df.columns:
+            df['block_number'] = df['block_number'].ffill()
 
         # Fix for JSON serialization of NaN (caused by missing eth_price or start of gap)
         data = df.to_dict(orient="records")

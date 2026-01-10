@@ -10,15 +10,22 @@ import {
   ReferenceLine,
 } from "recharts";
 
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = ({ active, payload, label, resolution }) => {
   if (active && payload && payload.length) {
-    const dateStr = new Date(label * 1000).toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const isDaily = resolution === "1D" || resolution === "1W";
+    const dateOptions = {
+        month: "short",
+        day: "numeric",
+        year: "numeric"
+    };
+    
+    // Only add time if NOT daily/weekly
+    if (!isDaily) {
+        dateOptions.hour = "2-digit";
+        dateOptions.minute = "2-digit";
+    }
+
+    const dateStr = new Date(label * 1000).toLocaleString("en-US", dateOptions);
 
     return (
       <div className="bg-zinc-950 border border-zinc-800 p-3 rounded shadow-2xl font-mono text-xs z-50">
@@ -45,7 +52,7 @@ const CustomTooltip = ({ active, payload, label }) => {
   return null;
 };
 
-const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
+const RLDPerformanceChart = ({ data, areas = [], referenceLines = [], resolution = "1H" }) => {
   // State & Refs
   const containerRef = useRef(null);
   const [yDomain, setYDomain] = useState(['auto', 'auto']);
@@ -402,7 +409,7 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [] }) => {
           )}
 
           <Tooltip
-            content={<CustomTooltip />}
+            content={<CustomTooltip resolution={resolution} />}
             cursor={{ stroke: "#52525b", strokeDasharray: "4 4" }}
           />
 

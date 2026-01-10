@@ -170,12 +170,12 @@ export default function Markets() {
     
     // --- Chart State ---
     // --- Chart State ---
-    const [tempStart, setTempStart] = useState(getPastDate(30)); 
+    const [tempStart, setTempStart] = useState(getPastDate(365)); 
     const [tempEnd, setTempEnd] = useState(getToday());
-    const [appliedStart, setAppliedStart] = useState(getPastDate(30)); 
+    const [appliedStart, setAppliedStart] = useState(getPastDate(365)); 
     const [appliedEnd, setAppliedEnd] = useState(getToday());
-    const [activeRange, setActiveRange] = useState("1M");
-    const [resolution, setResolution] = useState("4H");
+    const [activeRange, setActiveRange] = useState("1Y");
+    const [resolution, setResolution] = useState("1D");
     
     // --- Filters State ---
     const [selectedProtocols, setSelectedProtocols] = useState(new Set(["AAVE", "MORPHO", "EULER", "FLUID"]));
@@ -262,6 +262,7 @@ export default function Markets() {
     const { data: usdcHistory } = useSWR(getHistoryUrl("USDC"), fetcher);
     const { data: daiHistory } = useSWR(getHistoryUrl("DAI"), fetcher);
     const { data: usdtHistory } = useSWR(getHistoryUrl("USDT"), fetcher);
+    const { data: sofrHistory } = useSWR(getHistoryUrl("SOFR"), fetcher);
     
     const { data: ethPrices } = useSWR(
         () => {
@@ -292,8 +293,6 @@ export default function Markets() {
                 merged.set(bucket, { timestamp: bucket });
             }
             const point = merged.get(bucket);
-            // If multiple points fall in same bucket, take the latest (or avg?) 
-            // Simple overwrite is fine for "latest in bucket"
             point[key] = val;
         };
 
@@ -305,9 +304,11 @@ export default function Markets() {
 
         // 3. USDT
         if (usdtHistory) usdtHistory.forEach(r => mergePoint(r.timestamp, "apy_usdt", r.apy));
+        
+        // 4. SOFR (Risk Free Rate)
+        if (sofrHistory) sofrHistory.forEach(r => mergePoint(r.timestamp, "apy_sofr", r.apy));
 
-        // 4. ETH Price
-        // Prefer price from ethPrices endpoint, fallback to USDC object if present
+        // 5. ETH Price
         if (ethPrices) {
             ethPrices.forEach(p => mergePoint(p.timestamp, "ethPrice", p.price));
         } else {
@@ -316,8 +317,19 @@ export default function Markets() {
              });
         }
 
-        return Array.from(merged.values()).sort((a, b) => a.timestamp - b.timestamp);
-    }, [usdcHistory, daiHistory, usdtHistory, ethPrices, resolution]);
+        const sortedData = Array.from(merged.values()).sort((a, b) => a.timestamp - b.timestamp);
+        
+        // Forward Fill SOFR (and potentially others) to ensure continuous lines/tooltips on weekends
+        let lastSofr = null;
+        return sortedData.map(point => {
+            if (point.apy_sofr !== undefined && point.apy_sofr !== null) {
+                lastSofr = point.apy_sofr;
+            } else if (lastSofr !== null) {
+                point.apy_sofr = lastSofr;
+            }
+            return point;
+        });
+    }, [usdcHistory, daiHistory, usdtHistory, sofrHistory, ethPrices, resolution]);
 
 
     const stats = useMemo(() => {
@@ -347,6 +359,7 @@ export default function Markets() {
         { key: "apy_usdc", label: "USDC_Rate", name: "USDC Rate", color: "#22d3ee", bg: "bg-cyan-400" },
         { key: "apy_dai", label: "DAI_Rate", name: "DAI Rate", color: "#facc15", bg: "bg-yellow-400" },
         { key: "apy_usdt", label: "USDT_Rate", name: "USDT Rate", color: "#4ade80", bg: "bg-green-400" },
+        { key: "apy_sofr", label: "SOFR_Rate", name: "SOFR (Risk Free)", color: "#c084fc", bg: "bg-purple-400" },
         { key: "ethPrice", label: "ETH_Price", name: "ETH Price", color: "#a1a1aa", bg: "bg-zinc-400", yAxisId: "right" }
     ];
 
@@ -490,6 +503,7 @@ export default function Markets() {
                                <RLDPerformanceChart 
                                    data={chartData}
                                    areas={activeAreas} 
+                                   resolution={resolution}
                                />
                            )}
                        </div>
