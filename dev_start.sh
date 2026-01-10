@@ -77,17 +77,24 @@ if [ "$ANVIL_READY" = true ]; then
         cd ..
     fi
 
-    # 3b. Run Data Continuity Check (Fill Gaps)
-    if [ "$DEPLOY_SUCCESS" = true ]; then
-        echo -e "${BLUE}>> Checking Data Continuity...${NC}"
-        # We must activate venv to have python packages
-        source venv/bin/activate
-        # Run in background or allow failure without exit
-        python3 backend/fill_gaps_startup.py || echo -e "${YELLOW}⚠️ Gap Fill failed (non-fatal)${NC}"
-        deactivate 
-    fi
+
 else
     echo -e "${YELLOW}⚠️  Skipping Contract Deployment (Chain not ready).${NC}"
+fi
+
+# 3b. Run Data Continuity Check (Fill Gaps) - RUN ALWAYS
+echo -e "${BLUE}>> Checking Data Continuity...${NC}"
+if [ -f "venv/bin/activate" ]; then
+    # We must activate venv to have python packages
+    source venv/bin/activate
+    # Run in foreground to ensure DB is patched before API starts
+    # But for speed, maybe background? No, safer foreground if gaps are huge.
+    # Actually, user wants "deployment script to check", implying it's a step.
+    # Let's run it.
+    python3 backend/fill_gaps_startup.py || echo -e "${YELLOW}⚠️ Gap Fill failed (non-fatal)${NC}"
+    deactivate 
+else
+    echo -e "${YELLOW}⚠️  venv not found, skipping gap fill.${NC}"
 fi
 
 # 4. Start REAL Backend (Uvicorn) - ALWAYS START
