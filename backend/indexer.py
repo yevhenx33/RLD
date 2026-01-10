@@ -1,3 +1,6 @@
+import threading
+import requests
+from datetime import datetime
 import time
 import sqlite3
 import os
@@ -43,7 +46,61 @@ cursor.execute('''
         block_number INTEGER
     )
 ''')
+
+# SOFR Table
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS sofr_rates (
+        timestamp INTEGER PRIMARY KEY,
+        apy REAL
+    )
+''')
 conn.commit()
+
+SOFR_API_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json"
+
+def poll_sofr_data():
+    """
+    Background thread to fetch SOFR rates from NY Fed API.
+    Runs every hour, but only inserts if data is new.
+    """
+    print("📈 Starting SOFR Indexer Thread...")
+    
+    while True:
+        try:
+            conn_sofr = sqlite3.connect(DB_NAME)
+            cursor_sofr = conn_sofr.cursor()
+            
+            response = requests.get(SOFR_API_URL, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'refRates' in data and len(data['refRates']) > 0:
+                    rate_data = data['refRates'][0]
+                    
+                    # Parse Date
+                    date_str = rate_data['effectiveDate'] # YYYY-MM-DD
+                    percent = rate_data['percentRate']
+                    
+                    # Convert to Timestamp (Midnight UTC or specific?)
+                    # Existing Excel import likely used pd.to_datetime which defaults to midnight
+                    dt = datetime.strptime(date_str, "%Y-%m-%d")
+                    ts = int(dt.timestamp())
+                    
+                    # Insert (Ignore if exists to avoid duplicates)
+                    cursor_sofr.execute("INSERT OR IGNORE INTO sofr_rates (timestamp, apy) VALUES (?, ?)", (ts, percent))
+                    conn_sofr.commit()
+                    
+                    # Log if it was a new insertion (rowcount > 0 doesn't work well with IGNORE in all sqlite versions, check manually? 
+                    # simple print is fine, it's a background thread)
+                    # print(f"   [SOFR] Checked {date_str}: {percent}%")
+            
+            conn_sofr.close()
+            
+        except Exception as e:
+            print(f"   ⚠️ [SOFR] Error: {e}")
+        
+        # Sleep 1 hour
+        time.sleep(3600)
+
 
 # FULL ABI (Exact Aave V3 ReserveData Structure)
 # ... (ABI remains same) ...
@@ -156,6 +213,10 @@ if __name__ == "__main__":
     print(f"Monitoring Aave V3 Borrow Rates (USDC, DAI, USDT)...")
     print(f"Connected to: {RPC_URL}")
     print("-" * 40)
+    
+    # Start SOFR Thread
+    t = threading.Thread(target=poll_sofr_data, daemon=True)
+    t.start()
     
     try:
         while True:
