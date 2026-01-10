@@ -3,10 +3,11 @@ import sqlite3
 import time
 import subprocess
 import os
+from config import DB_NAME, ETH_PRICE_GRAPH_URL
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "aave_rates.db")
-# Graph API Endpoint from user's R script
-GRAPH_URL = "https://gateway.thegraph.com/api/b838305c2d118eb10501790526a71bb3/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV"
+DB_PATH = os.path.join(os.path.dirname(__file__), DB_NAME)
+# Graph API Endpoint
+GRAPH_URL = ETH_PRICE_GRAPH_URL
 POOL_ADDRESS = "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640" # ETH/USDC 0.05%
 
 def get_last_timestamp():

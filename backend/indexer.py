@@ -11,41 +11,29 @@ if not RPC_URL:
     print("Warning: MAINNET_RPC_URL not found in .env, using public RPC")
     RPC_URL = "https://eth.llamarpc.com"
 
-POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-UNI_POOL_ADDRESS = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640" # USDC/ETH 0.05%
-# --- ASSETS CONFIGURATION ---
-# Symbol -> Underlying Address
-ASSETS = {
-    "USDC": {
-        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        "table": "rates" # Legacy table name for USDC
-    },
-    "DAI": {
-        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-        "table": "rates_dai"
-    },
-    "USDT": {
-        "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-        "table": "rates_usdt"
-    }
-}
+# Import Centralized Config
+from config import AAVE_POOL_ADDRESS, UNI_POOL_ADDRESS, ASSETS, DB_NAME
+
+POOL_ADDRESS = AAVE_POOL_ADDRESS
+# UNI_POOL_ADDRESS is imported directly
 
 # --- SETUP ---
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
 # Database Setup
-conn = sqlite3.connect('aave_rates.db')
+conn = sqlite3.connect(DB_NAME)
 cursor = conn.cursor()
 
-# Initialize Tables
+# Initialize Tables (On-Chain Assets only)
 for symbol, data in ASSETS.items():
-    cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS {data['table']} (
-            block_number INTEGER,
-            timestamp INTEGER,
-            apy REAL
-        )
-    ''')
+    if data['type'] == 'onchain':
+        cursor.execute(f'''
+            CREATE TABLE IF NOT EXISTS {data['table']} (
+                block_number INTEGER,
+                timestamp INTEGER,
+                apy REAL
+            )
+        ''')
 
 # Price Table
 cursor.execute('''
@@ -180,6 +168,9 @@ if __name__ == "__main__":
                 timestamp_str = time.strftime("%H:%M:%S", time.localtime(block_timestamp))
                 
                 for symbol, data in ASSETS.items():
+                    if data.get('type') != 'onchain':
+                        continue
+                        
                     rate = get_aave_rate(data['address'], block_number)
                     if rate is not None:
                         cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (block_number, block_timestamp, rate))

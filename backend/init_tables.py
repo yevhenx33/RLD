@@ -1,17 +1,16 @@
 import sqlite3
+from config import ASSETS, DB_NAME
 
-ASSETS = {
-    "DAI": "rates_dai",
-    "USDT": "rates_usdt"
-}
-
-conn = sqlite3.connect('aave_rates.db')
+conn = sqlite3.connect(DB_NAME)
 cursor = conn.cursor()
 
-for symbol, table in ASSETS.items():
-    print(f"Creating table {table}...")
+for symbol, data in ASSETS.items():
+    if data['type'] != 'onchain':
+        continue
+        
+    print(f"Creating table {data['table']}...")
     cursor.execute(f'''
-        CREATE TABLE IF NOT EXISTS {table} (
+        CREATE TABLE IF NOT EXISTS {data['table']} (
             block_number INTEGER,
             timestamp INTEGER,
             apy REAL

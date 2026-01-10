@@ -1,11 +1,21 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 import sqlite3
 import pandas as pd
 from datetime import datetime
+import time
+from functools import wraps
 
 app = FastAPI()
 
+# 1. Security & Compression
+app.add_middleware(
+    TrustedHostMiddleware, 
+    allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0"]
+)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,7 +30,34 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+# 3. Simple In-Memory Cache (TTL: 20s)
+# Reduces DB load for identical frequent requests
+CACHE_STORE = {}
+CACHE_TTL = 20 
+
+def ttl_cache(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Create unique key from kwargs (FastAPI passes params as kwargs)
+        # We sort keys to ensure consistency
+        key = f"{func.__name__}:{sorted(kwargs.items())}"
+        now = time.time()
+        
+        # Cleanup old cache (naive) - every 100 requests? 
+        # For simplicity, we just check access.
+        
+        if key in CACHE_STORE:
+            val, timestamp = CACHE_STORE[key]
+            if now - timestamp < CACHE_TTL:
+                return val
+            
+        result = func(*args, **kwargs)
+        CACHE_STORE[key] = (result, now)
+        return result
+    return wrapper
+
 @app.get("/rates")
+@ttl_cache
 def get_rates(
     limit: int = 50000, 
     start_date: str = Query(None),
@@ -146,6 +183,7 @@ def get_rates(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/eth-prices")
+@ttl_cache
 def get_eth_prices(
     start_date: str = Query(None),
     end_date: str = Query(None),
