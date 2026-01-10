@@ -1,131 +1,77 @@
-```markdown
-# RLD Protocol: Local Development Environment
+# Rate Level Derivatives (RLD) Dashboard
 
-This repository contains the full stack for the **RLD Protocol**—a decentralized, Symbiotic-powered oracle network and synthetic rate dashboard.
+**A High-Performance Analytics Terminal for On-Chain Interest Rates.**
 
-This guide automates the deployment of the entire stack:
-1.  **Blockchain:** Local Anvil node (Mainnet Fork).
-2.  **Contracts:** Solidity Oracle & Gateway contracts.
-3.  **Operator Network:** Python bot (Symbiotic Operator) feeding real-time data.
-4.  **Backend:** FastAPI server for historical data.
-5.  **Frontend:** React Dashboard streaming live on-chain updates.
+The **RLD Dashboard** provides institutional-grade visibility into DeFi lending markets. It indexes real-time borrow rates from Aave V3, benchmarks them against the risk-free SOFR rate, and visualizes the data in a responsive, high-frequency interface.
 
 ---
 
-## 🛠️ Prerequisites
+## ✨ Key Features
 
-Ensure you have the following installed:
+### 📊 Real-Time Market Analytics
+*   **Multi-Asset Tracking**: Monitor borrowing rates for **USDC**, **DAI**, and **USDT** simultaneously.
+*   **Live Borrow APY**: Streamed directly from Ethereum Mainnet (via local fork or RPC) with 12-second latency.
+*   **Total Debt & Utilization**: Track billions in active liquidity across Aave V3 markets.
 
-* **[Foundry](https://getfoundry.sh/):** For local blockchain & contract deployment.
-* **[Python 3.10+](https://www.python.org/):** For the Operator Bot & API.
-* **[Node.js 18+](https://nodejs.org/):** For the Frontend.
-* **[Git](https://git-scm.com/):** Version control.
+### 📈 Advanced Visualization
+*   **Interactive Charts**: 
+    *   **Zoom & Pan**: Smooth 60FPS navigation through years of historical data.
+    *   **Smart Downsampling**: Renders 1M+ data points instantly without browser lag.
+    *   **Custom Resolution**: Switch between Raw (Block-level), Hourly, Daily, and Weekly aggregates.
+*   **Risk-Free Benchmarking**: Automatically overlays the **Secured Overnight Financing Rate (SOFR)** (sourced from NY Fed) to assess basis/spread.
+*   **ETH Price Overlay**: Correlate interest rate spikes with ETH price action.
 
----
-
-## 📦 Installation
-
-Run these commands once to set up dependencies for all layers.
-
-### 1. Contracts (Foundry)
-```bash
-cd contracts
-forge install
-cd ..
-
-```
-
-### 2. Python Environment (Operator & API)
-
-```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install web3 eth-account python-dotenv fastapi uvicorn
-
-```
-
-### 3. Frontend (React)
-
-```bash
-cd frontend
-npm install
-cd ..
-
-```
+### 🛡️ Data Integrity & Ops
+*   **Auto-Healing Database**: The system detects missing blocks (e.g., after downtime) on startup and automatically backfills history from the blockchain.
+*   **Zero-Maintenance SOFR**: A background daemon polls the NY Fed API hourly to keep risk-free rates up to date.
+*   **Hot Backups**: Automated, non-blocking SQLite snapshots ensure data safety.
 
 ---
 
-## ⚙️ Configuration
+## 🚀 Quick Start (Local Dev)
 
-Create a `.env` file in the `contracts/` directory to configure your local fork.
+Launch the entire stack (Blockchain Fork, Indexer, API, Frontend) with a single command.
 
-**File:** `contracts/.env`
+### Prerequisites
+*   **Docker** (Optional, for future use) or **Python 3.10+** & **Node.js 18+**
+*   **Foundry** (`forge`, `anvil`)
+*   **Ethereum RPC URL** (Alchemy/Infura)
 
+### 1. Configure Environment
+Create a `.env` file in the root directory:
 ```env
-# Your Alchemy/Infura Mainnet URL (Required for forking state)
-MAINNET_RPC_URL=[https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY](https://eth-mainnet.g.alchemy.com/v2/YOUR_API_KEY)
-
-# Anvil Default Private Key (Do not change for local dev - Account #0)
-PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-
+MAINNET_RPC_URL="https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
 ```
 
----
-
-## 🚀 Usage (Launch Everything)
-
-We have created a master script `dev_start.sh` that orchestrates the entire system. It spins up the chain, deploys contracts, auto-configures addresses, and launches the UI.
-
-### 1. Make the script executable (First time only)
-
-```bash
-chmod +x dev_start.sh
-
-```
-
-### 2. Run the System
-
+### 2. Run System
 ```bash
 ./dev_start.sh
-
 ```
 
-**What happens next?**
-
-1. **Anvil** starts a local blockchain (forked from Mainnet) on port `8545`.
-2. **Forge** deploys your Oracle contracts to this local chain.
-3. **Auto-Config:** The script grabs the newly deployed address and updates your Python Bot and React Frontend automatically.
-4. **Backend API** starts on port `8000`.
-5. **Symbiotic Operator** starts feeding live TWAR data to the contract.
-6. **Frontend** launches at `http://localhost:5173`.
+**That's it.** The script will:
+1.  Fork Mainnet via Anvil.
+2.  Deploy RLD Oracle Contracts.
+3.  **Check & Repair Data Gaps** (indexes missing history).
+4.  Launch the API (`localhost:8000`) and Frontend (`localhost:5173`).
 
 ---
 
-## 🏗️ Architecture
+## 🖥️ System Architecture
+For a deep dive into the visual language and component design, see [SYSTEM_DESIGN.md](./SYSTEM_DESIGN.md).
 
-* **Symbiotic Operator (Python):** Reads Spot rates from Aave V3 (on the fork), calculates Time-Weighted Average Rate (TWAR), signs it, and pushes it to the Oracle Contract.
-* **Oracle Contract (Solidity):** Verifies the operator's signature and ensures the data is fresh before updating the on-chain state.
-* **Frontend (React/SWR):** Connects to the local node (`localhost:8545`) to listen for `TwarUpdated` events and streams them to the chart in real-time.
+*   **Indexer**: Python-based, multi-threaded (Aave RPC + NY Fed API).
+*   **Database**: SQLite (WAL Mode) for high-concurrency performance.
+*   **Frontend**: React + Vite + Tailwind (Premium Terminal Theme).
+
+## 🛠️ Manual Data Tools
+
+| Task | Command | Description |
+| :--- | :--- | :--- |
+| **Check Gap Status** | `python3 backend/scripts/check_gaps.py` | Scan database for missing blocks. |
+| **Manual Backfill** | `python3 backend/scripts/batched_backfill.py` | Force-fetch history for a range. |
+| **Backup DB** | `python3 backend/backup.py` | Trigger an immediate hot backup. |
 
 ---
 
-## 🔧 Troubleshooting
-
-* **`Address already in use`**: You have old processes running.
-* Run: `pkill anvil && pkill -f uvicorn && pkill -f python`
-
-
-* **`MAINNET_RPC_URL not set`**: Check your `contracts/.env` file. Ensure there are **no spaces** around the `=` sign.
-* **Frontend shows "SYNCING..."**:
-* Check if the Operator is running (look at `operator_logs.txt`).
-* Ensure your `EVENT_TOPIC` in `useSymbioticOracle.js` matches the deployed contract (use `cast logs` to verify).
-
-
-* **Chart is flat:** You are on a local fork, so Aave rates don't change unless you manipulate the chain. The Operator Bot adds tiny "jitter" to the price to visually demonstrate liveness.
-
-```
-
-```
+## 📜 License
+Private / Proprietary.
