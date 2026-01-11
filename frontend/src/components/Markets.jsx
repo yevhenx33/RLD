@@ -221,7 +221,7 @@ export default function Markets() {
                         const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
                         const apiRes = await fetch(`${API_BASE}/rates?resolution=RAW&limit=1&symbol=${asset.symbol}`);
                         const apiData = await apiRes.json();
-                        if (apiData && apiData.length > 0) apy = apiData[apiData.length - 1].apy;
+                        if (apiData && apiData.length > 0) apy = apiData[apiData.length - 1].apy || 0;
                     } catch (e) {
                          console.error(`Failed to fetch APY for ${asset.symbol}`, e);
                     }
