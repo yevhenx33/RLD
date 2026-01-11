@@ -1,0 +1,9 @@
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@uniswap/v3-core/=lib/v3-core/
+@uniswap/v3-periphery/=lib/v3-periphery/
+v4-twamm-hook/=lib/v4-twamm-hook/src/
+@uniswap/v4-core/=lib/v4-twamm-hook/lib/v4-core/
+v4-core/=lib/v4-twamm-hook/lib/v4-core/
+v4-periphery/=lib/v4-twamm-hook/lib/v4-periphery/
+solmate/=lib/v4-twamm-hook/lib/v4-core/lib/solmate/
+permit2/=lib/v4-twamm-hook/lib/v4-periphery/lib/permit2/
