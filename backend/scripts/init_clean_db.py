@@ -1,0 +1,37 @@
+import sqlite3
+import os
+
+# Define DB Path
+DB_NAME = "clean_rates.db"
+# Place it in the backend folder (same level as this script's parent)
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", DB_NAME)
+
+def init_db():
+    print(f"🚀 Initializing new database: {DB_PATH}")
+    
+    # Remove existing file if we want a fresh start, 
+    # but usually init is safe to run repeatedly if using CREATE TABLE IF NOT EXISTS
+    # For this specific task "create a separate DB", we might want to ensure it's fresh?
+    # Let's keep data if exists but ensure table structure.
+    
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Single unified table for hourly stats
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS hourly_stats (
+            timestamp INTEGER PRIMARY KEY, -- Hourly timestamp (e.g. 1677801600, 1677805200)
+            eth_price REAL,
+            usdc_rate REAL,
+            dai_rate REAL,
+            usdt_rate REAL,
+            sofr_rate REAL
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+    print("✅ Database initialized successfully.")
+
+if __name__ == "__main__":
+    init_db()

@@ -218,6 +218,9 @@ if __name__ == "__main__":
     t = threading.Thread(target=poll_sofr_data, daemon=True)
     t.start()
     
+    # Clean DB Path
+    CLEAN_DB_NAME = "clean_rates.db"
+
     try:
         while True:
             # Fetch latest block for timestamp and consistency
@@ -228,31 +231,50 @@ if __name__ == "__main__":
                 
                 timestamp_str = time.strftime("%H:%M:%S", time.localtime(block_timestamp))
                 
+                # --- UPDATE CLEAN DB ---
+                period_ts = (block_timestamp // 3600) * 3600
+                conn_clean = sqlite3.connect(CLEAN_DB_NAME)
+                cursor_clean = conn_clean.cursor()
+                cursor_clean.execute("INSERT OR IGNORE INTO hourly_stats (timestamp) VALUES (?)", (period_ts,))
+                conn_clean.commit()
+                # -----------------------
+
                 for symbol, data in ASSETS.items():
                     if data.get('type') != 'onchain':
                         continue
                         
                     rate = get_aave_rate(data['address'], block_number)
                     if rate is not None:
+                        # Existing DB
                         cursor.execute(f"INSERT INTO {data['table']} VALUES (?, ?, ?)", (block_number, block_timestamp, rate))
                         conn.commit()
                         print(f"[{timestamp_str}] Block {block_number} | {symbol}: {rate:.2f}%")
+                        
+                        # Clean DB Update
+                        col_map = {
+                            "USDC": "usdc_rate",
+                            "DAI": "dai_rate",
+                            "USDT": "usdt_rate"
+                        }
+                        if symbol in col_map:
+                            col = col_map[symbol]
+                            cursor_clean.execute(f"UPDATE hourly_stats SET {col} = ? WHERE timestamp = ?", (rate, period_ts))
+                            conn_clean.commit()
                 
                 # Fetch & Store ETH Price
                 eth_price = get_eth_price(block_number)
                 if eth_price:
-                    # Use INSERT OR REPLACE to handle potential primary key collision on timestamp
-                    # though block timestamps are usually unique per block, multiple blocks can share second-level TS in edge cases?
-                    # SQLite INTEGER per table definition is RowID alias if Primary Key?
-                    # The definition is timestamp INTEGER PRIMARY KEY.
-                    # This might conflict if blocks are fast.
-                    # But Python time.time() is float. Block timestamp is seconds.
-                    # We might race if two blocks have same timestamp.
-                    # Let's hope block times > 1s.
+                    # Existing DB
                     cursor.execute("INSERT OR REPLACE INTO eth_prices (timestamp, price, block_number) VALUES (?, ?, ?)", 
                                   (block_timestamp, eth_price, block_number))
                     conn.commit()
                     print(f"[{timestamp_str}] Block {block_number} | ETH Price: ${eth_price:,.2f}")
+                    
+                    # Clean DB Update
+                    cursor_clean.execute("UPDATE hourly_stats SET eth_price = ? WHERE timestamp = ?", (eth_price, period_ts))
+                    conn_clean.commit()
+
+                conn_clean.close()
             
             except Exception as loop_err:
                 print(f"Error in loop: {loop_err}")

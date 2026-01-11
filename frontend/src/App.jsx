@@ -39,18 +39,34 @@ const formatTwarLabel = (seconds) => {
   return `RATE_TWAR_${parseFloat((seconds / 86400).toFixed(1))}D`;
 };
 
+const calculateCorrelation = (x, y) => {
+    if (x.length !== y.length || x.length === 0) return 0;
+    const n = x.length;
+    const sumX = x.reduce((a, b) => a + b, 0);
+    const sumY = y.reduce((a, b) => a + b, 0);
+    const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+    const sumX2 = x.reduce((sum, xi) => sum + xi * xi, 0);
+    const sumY2 = y.reduce((sum, yi) => sum + yi * yi, 0);
+
+    const numerator = n * sumXY - sumX * sumY;
+    const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+    
+    if (denominator === 0) return 0;
+    return numerator / denominator;
+};
+
 // --- APP COMPONENT ---
 
 
 // --- APP COMPONENT ---
 function App() {
   // Data State
-  const [tempStart, setTempStart] = useState(getPastDate(90));
+  const [tempStart, setTempStart] = useState(getPastDate(9999));
   const [tempEnd, setTempEnd] = useState(getToday());
-  const [appliedStart, setAppliedStart] = useState(getPastDate(90));
+  const [appliedStart, setAppliedStart] = useState(getPastDate(9999));
   const [appliedEnd, setAppliedEnd] = useState(getToday());
-  const [activeRange, setActiveRange] = useState("3M");
-  const [resolution, setResolution] = useState("4H");
+  const [activeRange, setActiveRange] = useState("ALL");
+  const [resolution, setResolution] = useState("1D");
 
   // Analysis State
   const [showTwar, setShowTwar] = useState(true);
@@ -75,7 +91,7 @@ function App() {
   }, [symbioticData]);
 
   // --- VISIBILITY STATE ---
-  const [hiddenSeries, setHiddenSeries] = useState(['ethPrice']);
+  const [hiddenSeries, setHiddenSeries] = useState([]);
 
   const toggleSeries = (key) => {
     setHiddenSeries(prev => 
@@ -183,6 +199,20 @@ function App() {
   const { data: rates, error } = useSWR(getUrl(), fetcher, {
     refreshInterval: 10000,
   });
+
+  // --- SYNC DATE INPUTS WITH ACTUAL DATA ---
+  useEffect(() => {
+    if (activeRange !== "CUSTOM" && rates && rates.length > 0) {
+      const firstTs = rates[0].timestamp;
+      const lastTs = rates[rates.length - 1].timestamp;
+      
+      const startStr = new Date(firstTs * 1000).toISOString().split("T")[0];
+      const endStr = new Date(lastTs * 1000).toISOString().split("T")[0];
+      
+      setTempStart(startStr);
+      setTempEnd(endStr);
+    }
+  }, [rates, activeRange]);
 
   // Fetch ETH Prices
   const getEthUrl = () => {
@@ -618,8 +648,24 @@ function App() {
                     <span className="group-hover:underline decoration-cyan-400 underline-offset-4">CSV</span>
                   </button>
                 </div>
-                <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-2">
-                  {latestSymbiotic ? (
+                  <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
+                    {/* Correlation Display */}
+                    {processedData.length > 0 && (
+                         <span className={(() => {
+                            const apys = processedData.map(d => d.apy || 0);
+                            const prices = processedData.map(d => d.ethPrice || 0);
+                            const corr = calculateCorrelation(apys, prices);
+                            return corr > 0 ? "text-green-500" : "text-red-500";
+                         })()}>
+                            CORRELATION: {(() => {
+                                const apys = processedData.map(d => d.apy || 0);
+                                const prices = processedData.map(d => d.ethPrice || 0);
+                                return calculateCorrelation(apys, prices).toFixed(2);
+                            })()}
+                         </span>
+                    )}
+
+                    {latestSymbiotic ? (
                     <>
                       <span className="text-pink-500">
                         SYMBIOTIC: ${latestSymbiotic.twar.toFixed(4)}
