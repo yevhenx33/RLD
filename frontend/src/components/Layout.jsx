@@ -14,7 +14,7 @@ export default function Layout() {
         const fetchStatus = async () => {
             try {
                 // Lightweight fetch for status only
-                const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+                const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
                 const res = await axios.get(`${API_BASE}/rates?resolution=RAW&limit=1`);
                 const data = res.data;
                 

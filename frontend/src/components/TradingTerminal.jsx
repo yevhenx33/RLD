@@ -54,6 +54,7 @@ const TradingTerminal = ({
   },
   
   account, // Passed for connect wallet logic if needed
+  connectWallet, // Passed for connect wallet logic
   footer, // Optional footer content
 }) => {
   return (
