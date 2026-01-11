@@ -1,6 +1,6 @@
 import axios from "axios";
 
-export const API_URL = "http://127.0.0.1:8080";
+export const API_URL = "https://rate-dashboard.onrender.com";
 
 export const fetcher = (url) => axios.get(url).then((res) => res.data);
 

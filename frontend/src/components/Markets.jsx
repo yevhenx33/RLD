@@ -218,7 +218,7 @@ export default function Markets() {
                 const promises = ASSETS.map(async (asset) => {
                     let apy = 0;
                     try {
-                        const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+                        const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://rate-dashboard.onrender.com";
                         const apiRes = await fetch(`${API_BASE}/rates?resolution=RAW&limit=1&symbol=${asset.symbol}`);
                         const apiData = await apiRes.json();
                         if (apiData && apiData.length > 0) apy = apiData[apiData.length - 1].apy || 0;

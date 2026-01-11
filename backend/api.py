@@ -13,7 +13,7 @@ app = FastAPI()
 # 1. Security & Compression
 app.add_middleware(
     TrustedHostMiddleware, 
-    allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0", "testserver"]
+    allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0", "testserver", "rate-dashboard.onrender.com"]
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
