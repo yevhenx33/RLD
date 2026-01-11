@@ -18,10 +18,19 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://rate-dashboard.netlify.app",
+        "*"
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+def health_check():
+    return {"status": "ok", "message": "Rate Dashboard API is running"}
 
 # Switch to Clean DB
 DB_PATH = "clean_rates.db"
