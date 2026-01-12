@@ -136,8 +136,8 @@ function App() {
   const handleDownloadCSV = async () => {
     try {
       const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
-      // Fetch full history (approx 45k hours since 2021). Limit to 60k safe.
-      const url = `${API_BASE}/rates?resolution=1H&limit=60000`;
+      // Fetch full history (approx 45k hours since 2021). Limit to 100k safe.
+      const url = `${API_BASE}/rates?resolution=1H&limit=100000`;
       const res = await axios.get(url);
       const data = res.data;
 
