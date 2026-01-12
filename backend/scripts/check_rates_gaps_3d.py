@@ -7,7 +7,10 @@ from datetime import datetime
 # Add backend to path to import config
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from config import DB_PATH, ASSETS
+from config import ASSETS
+
+# Pointing to clean_rates.db
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "clean_rates.db")
 
 def check_rates_gaps_3d():
     print(f"🔍 Connecting to {DB_PATH}...")
@@ -28,17 +31,28 @@ def check_rates_gaps_3d():
     MAX_ISSUES_FOUND = False
     GAP_THRESHOLD = 3600 # 1 hour
 
+    # Map Symbol to Column in clean_rates.db
+    symbol_map = {
+        "USDC": "usdc_rate",
+        "DAI": "dai_rate",
+        "USDT": "usdt_rate",
+        "SOFR": "sofr_rate"
+    }
+
     for symbol, config in ASSETS.items():
         if config['type'] != 'onchain':
             continue
             
-        table_name = config['table']
-        print(f"\n🔵 ASSET: {symbol} (Table: {table_name})")
+        col_name = symbol_map.get(symbol)
+        if not col_name:
+            continue
+
+        print(f"\n🔵 ASSET: {symbol} (Column: {col_name} in hourly_stats)")
 
         query = f"""
         SELECT timestamp 
-        FROM {table_name}
-        WHERE timestamp >= ? 
+        FROM hourly_stats
+        WHERE timestamp >= ? AND {col_name} IS NOT NULL
         ORDER BY timestamp ASC
         """
         
@@ -46,7 +60,7 @@ def check_rates_gaps_3d():
             cursor.execute(query, (three_days_ago,))
             timestamps = [row[0] for row in cursor.fetchall()]
         except Exception as e:
-            print(f"⚠️  Error querying table {table_name}: {e}")
+            print(f"⚠️  Error querying table hourly_stats for {symbol}: {e}")
             continue
 
         if not timestamps:

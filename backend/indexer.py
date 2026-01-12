@@ -10,9 +10,14 @@ from dotenv import load_dotenv
 # --- CONFIGURATION ---
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 RPC_URL = os.getenv("MAINNET_RPC_URL")
-if not RPC_URL:
-    print("Warning: MAINNET_RPC_URL not found in .env, using public RPC")
-    RPC_URL = "https://eth.llamarpc.com"
+RESERVE_RPC = os.getenv("RESERVE_RPC_URL")
+
+RPC_URLS = [url for url in [RPC_URL, RESERVE_RPC, "https://eth.llamarpc.com"] if url]
+current_rpc_index = 0
+
+if not RPC_URLS:
+    print("CRITICAL: No RPC URLs found.")
+    exit(1)
 
 # Import Centralized Config
 from config import AAVE_POOL_ADDRESS, UNI_POOL_ADDRESS, ASSETS, DB_NAME
@@ -21,7 +26,14 @@ POOL_ADDRESS = AAVE_POOL_ADDRESS
 # UNI_POOL_ADDRESS is imported directly
 
 # --- SETUP ---
-w3 = Web3(Web3.HTTPProvider(RPC_URL))
+w3 = Web3(Web3.HTTPProvider(RPC_URLS[0]))
+
+def switch_rpc():
+    global current_rpc_index, w3
+    current_rpc_index = (current_rpc_index + 1) % len(RPC_URLS)
+    new_url = RPC_URLS[current_rpc_index]
+    print(f"⚠️ Switching RPC to: {new_url}")
+    w3.provider = Web3.HTTPProvider(new_url)
 
 # Database Setup
 conn = sqlite3.connect(DB_NAME)
@@ -278,6 +290,7 @@ if __name__ == "__main__":
             
             except Exception as loop_err:
                 print(f"Error in loop: {loop_err}")
+                switch_rpc()
 
             time.sleep(12)
             

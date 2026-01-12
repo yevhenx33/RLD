@@ -6,7 +6,8 @@ from datetime import datetime
 
 # Add backend to path to import config
 # DB PATH directly since config imports missing dotenv
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "aave_rates.db")
+# Pointing to clean_rates.db which is in backend root (one level up from scripts)
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "clean_rates.db")
 
 def check_eth_gaps_3d():
     print(f"🔍 Connecting to {DB_PATH}...")
@@ -19,10 +20,12 @@ def check_eth_gaps_3d():
     
     print(f"Checking for gaps since {datetime.fromtimestamp(three_days_ago)} (Timestamp: {int(three_days_ago)})")
 
+    # In clean_rates.db, data is in 'hourly_stats' table
+    # We check for eth_price presence
     query = """
     SELECT timestamp 
-    FROM eth_prices 
-    WHERE timestamp >= ? 
+    FROM hourly_stats 
+    WHERE timestamp >= ? AND eth_price IS NOT NULL
     ORDER BY timestamp ASC
     """
     
