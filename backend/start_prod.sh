@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Ensure Clean DB exists
+echo "📦 Initializing Database..."
+python3 scripts/init_clean_db.py
+
 # Start Indexer in background
 echo "🚀 Starting Indexer Service..."
 python3 indexer.py > indexer.log 2>&1 &

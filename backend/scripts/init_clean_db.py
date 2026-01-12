@@ -1,10 +1,13 @@
 import sqlite3
 import os
+import sys
+
+# Add backend to path to import config
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from config import CLEAN_DB_PATH
 
 # Define DB Path
-DB_NAME = "clean_rates.db"
-# Place it in the backend folder (same level as this script's parent)
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", DB_NAME)
+DB_PATH = CLEAN_DB_PATH
 
 def init_db():
     print(f"🚀 Initializing new database: {DB_PATH}")
