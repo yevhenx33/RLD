@@ -2,7 +2,8 @@ import useSWR from "swr";
 import axios from "axios";
 
 // --- CONFIGURATION ---
-const RPC_URL = "http://127.0.0.1:8545"; // Local Anvil Node
+// --- CONFIGURATION ---
+const RPC_URL = import.meta.env.VITE_MAINNET_RPC_URL || "http://127.0.0.1:8545"; // Fallback to Local Anvil
 
 import addresses from "../../../shared/addresses.json";
 const CONTRACT_ADDRESS = addresses.SymbioticRateOracle;
