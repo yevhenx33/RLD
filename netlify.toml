@@ -8,5 +8,8 @@
   to = "/index.html"
   status = 200
 
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "API_KEY,VITE_API_BASE_URL,VITE_API_KEY"
+
 [context.production.environment]
   VITE_API_BASE_URL = "https://rate-dashboard.onrender.com"
