@@ -1,8 +1,11 @@
 import axios from "axios";
 
-export const API_URL = "https://rate-dashboard.onrender.com";
+export const API_URL = import.meta.env.VITE_API_BASE_URL || "https://rate-dashboard.onrender.com";
 
-export const fetcher = (url) => axios.get(url).then((res) => res.data);
+const API_KEY = import.meta.env.VITE_API_KEY;
+const authHeaders = API_KEY ? { "X-API-Key": API_KEY } : {};
+
+export const fetcher = (url) => axios.get(url, { headers: authHeaders }).then((res) => res.data);
 
 export const getPastDate = (days) => {
   const d = new Date();

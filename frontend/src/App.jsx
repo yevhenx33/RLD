@@ -20,7 +20,10 @@ import { useWallet } from "./context/WalletContext";
 import Header from "./components/Header";
 import TradingTerminal, { InputGroup, SummaryRow } from "./components/TradingTerminal";
 import SettingsButton from "./components/SettingsButton";
-const fetcher = (url) => axios.get(url).then((res) => res.data);
+const API_KEY = import.meta.env.VITE_API_KEY;
+const authHeaders = API_KEY ? { "X-API-Key": API_KEY } : {};
+
+const fetcher = (url) => axios.get(url, { headers: authHeaders }).then((res) => res.data);
 
 // --- HELPER FUNCTIONS ---
 const getPastDate = (days) => {
