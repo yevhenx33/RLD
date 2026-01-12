@@ -107,7 +107,8 @@ def get_rates(
         effective_limit = min(limit, 100000)
 
         # Build Query
-        query = f"SELECT {select_clause} FROM hourly_stats WHERE 1=1"
+        # Enforce Genesis Date: March 3, 2023 (1677801600)
+        query = f"SELECT {select_clause} FROM hourly_stats WHERE timestamp >= 1677801600"
         params = []
 
         if start_date:
@@ -178,7 +179,8 @@ def get_eth_prices(
             group_clause = f"GROUP BY CAST(timestamp / {seconds} AS INTEGER)"
             
         params = []
-        query = f"SELECT {select_clause} FROM hourly_stats WHERE 1=1"
+        # Enforce Genesis Date: March 3, 2023 (1677801600)
+        query = f"SELECT {select_clause} FROM hourly_stats WHERE timestamp >= 1677801600"
 
         if start_date:
             dt = datetime.strptime(start_date, "%Y-%m-%d")

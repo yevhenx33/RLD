@@ -148,6 +148,7 @@ def fill_gaps():
             LEAD(timestamp) OVER (ORDER BY timestamp) as next_ts,
             LEAD(timestamp) OVER (ORDER BY timestamp) - timestamp as diff
         FROM eth_prices
+        WHERE timestamp >= 1677801600
     ) WHERE diff > 3600
     """
     

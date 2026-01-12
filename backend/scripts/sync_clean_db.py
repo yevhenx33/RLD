@@ -38,8 +38,9 @@ def sync_clean_db():
     conn_clean.commit()
 
     # 1. Sync ETH Prices
-    print("   Running sync for ETH prices...")
-    df_eth = pd.read_sql_query("SELECT timestamp, price as eth_price FROM eth_prices", conn_raw)
+    print("   Running sync for ETH prices (>= March 3, 2023)...")
+    # 1677801600 = March 3, 2023
+    df_eth = pd.read_sql_query("SELECT timestamp, price as eth_price FROM eth_prices WHERE timestamp >= 1677801600", conn_raw)
     if not df_eth.empty:
         # Round timestamp to hour
         df_eth['hour_ts'] = (df_eth['timestamp'] // 3600) * 3600
