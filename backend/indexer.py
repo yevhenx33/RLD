@@ -20,7 +20,7 @@ if not RPC_URLS:
     exit(1)
 
 # Import Centralized Config
-from config import AAVE_POOL_ADDRESS, UNI_POOL_ADDRESS, ASSETS, DB_NAME
+from config import AAVE_POOL_ADDRESS, UNI_POOL_ADDRESS, ASSETS, DB_NAME, DB_PATH, CLEAN_DB_PATH
 
 POOL_ADDRESS = AAVE_POOL_ADDRESS
 # UNI_POOL_ADDRESS is imported directly
@@ -36,7 +36,7 @@ def switch_rpc():
     w3.provider = Web3.HTTPProvider(new_url)
 
 # Database Setup
-conn = sqlite3.connect(DB_NAME)
+conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
 # Initialize Tables (On-Chain Assets only)
@@ -245,7 +245,7 @@ if __name__ == "__main__":
                 
                 # --- UPDATE CLEAN DB ---
                 period_ts = (block_timestamp // 3600) * 3600
-                conn_clean = sqlite3.connect(CLEAN_DB_NAME)
+                conn_clean = sqlite3.connect(CLEAN_DB_PATH)
                 cursor_clean = conn_clean.cursor()
                 cursor_clean.execute("INSERT OR IGNORE INTO hourly_stats (timestamp) VALUES (?)", (period_ts,))
                 conn_clean.commit()

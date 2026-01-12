@@ -33,12 +33,13 @@ def health_check():
     return {"status": "ok", "message": "Rate Dashboard API is running"}
 
 # Switch to Clean DB
-DB_PATH = "clean_rates.db"
+DB_NAME = "clean_rates.db"
+DB_DIR = os.getenv("DB_DIR", os.path.dirname(__file__))
+DB_PATH = os.path.join(DB_DIR, DB_NAME)
 
 def get_db_connection():
-    # Use absolute path relative to this file to be safe
-    abs_db_path = os.path.join(os.path.dirname(__file__), DB_PATH)
-    conn = sqlite3.connect(f'file:{abs_db_path}?mode=ro', uri=True)
+    # Use URI for Read-Only mode validation
+    conn = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 

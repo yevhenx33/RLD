@@ -6,11 +6,11 @@ from datetime import datetime
 
 # Add backend to path to import config
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from config import ASSETS, DB_NAME
+from config import ASSETS, DB_PATH, CLEAN_DB_PATH
 
 # Paths
-RAW_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "aave_rates.db")
-CLEAN_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "clean_rates.db")
+RAW_DB_PATH = DB_PATH
+# CLEAN_DB_PATH is imported directly
 
 def sync_clean_db():
     print("🔄 SYNC: Validating Clean DB against Raw Data...")

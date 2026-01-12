@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 
 # Ensure we can import config
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from config import DB_NAME, ASSETS, AAVE_POOL_ADDRESS
+from config import DB_NAME, ASSETS, AAVE_POOL_ADDRESS, DB_PATH
 
 # --- CONFIGURATION ---
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
-DB_FILE = os.path.join(os.path.dirname(__file__), DB_NAME)
+DB_FILE = DB_PATH
 # RPC Configuration
 RPC_URLS = [
     os.getenv("MAINNET_RPC_URL"),

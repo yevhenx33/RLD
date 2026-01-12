@@ -37,8 +37,12 @@ ASSETS = {
 }
 
 # --- DATABASE ---
+# --- DATABASE ---
+DB_DIR = os.getenv("DB_DIR", os.path.dirname(__file__))
 DB_NAME = "aave_rates.db"
-DB_PATH = os.path.join(os.path.dirname(__file__), DB_NAME)
+DB_PATH = os.path.join(DB_DIR, DB_NAME)
+CLEAN_DB_NAME = "clean_rates.db"
+CLEAN_DB_PATH = os.path.join(DB_DIR, CLEAN_DB_NAME)
 
 # --- GRAPHQL SOURCES (Fallback/History) ---
 from dotenv import load_dotenv
