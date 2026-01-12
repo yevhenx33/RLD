@@ -15,7 +15,7 @@ import {
   FileDown,
 } from "lucide-react";
 import RLDPerformanceChart from "./components/RLDChart";
-import { useSymbioticOracle } from "./hooks/useSymbioticOracle";
+
 import { useWallet } from "./context/WalletContext";
 import Header from "./components/Header";
 import TradingTerminal, { InputGroup, SummaryRow } from "./components/TradingTerminal";
@@ -85,13 +85,7 @@ function App() {
   // PnL Simulation State
   const [simTargetRate, setSimTargetRate] = useState(null);
 
-  // --- NEW: Symbiotic Hook ---
-  const { data: symbioticData } = useSymbioticOracle();
-  const latestSymbiotic = useMemo(() => {
-    return symbioticData && symbioticData.length > 0
-      ? symbioticData[symbioticData.length - 1]
-      : null;
-  }, [symbioticData]);
+
 
   // --- VISIBILITY STATE ---
   const [hiddenSeries, setHiddenSeries] = useState([]);
@@ -667,19 +661,7 @@ function App() {
                          </span>
                     )}
 
-                    {latestSymbiotic ? (
-                    <>
-                      <span className="text-pink-500">
-                        SYMBIOTIC: ${latestSymbiotic.twar.toFixed(4)}
-                      </span>
-                      <span className="text-gray-600">
-                        Updated{" "}
-                        <TimeAgo timestamp={latestSymbiotic.timestamp} /> ago
-                      </span>
-                    </>
-                  ) : (
-                    "SYMBIOTIC: SYNCING..."
-                  )}
+
                 </div>
               </div>
               <div className="h-[500px] w-full border border-white/10 p-4 bg-[#080808]">
@@ -920,22 +902,6 @@ function MetricBox({ label, value, sub, dimmed }) {
   );
 }
 
-function TimeAgo({ timestamp }) {
-  const [ago, setAgo] = useState("SYNC");
-  useEffect(() => {
-    if (!timestamp) return;
-    const update = () => {
-      const seconds = Math.floor(Date.now() / 1000 - timestamp);
-      if (seconds < 1) setAgo("0s");
-      else if (seconds < 60) setAgo(`${seconds}s`);
-      else if (seconds < 3600) setAgo(`${Math.floor(seconds / 60)}m`);
-      else setAgo(">1h");
-    };
-    update();
-    const interval = setInterval(update, 1000);
-    return () => clearInterval(interval);
-  }, [timestamp]);
-  return <span>{ago}</span>;
-}
+
 
 export default App;
