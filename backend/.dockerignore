@@ -7,8 +7,7 @@ env/
 venv/
 .env
 .venv
-*.db
-*.sqlite
+
 .DS_Store
 .git
 .gitignore
