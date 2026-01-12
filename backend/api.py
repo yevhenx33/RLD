@@ -1,14 +1,56 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Security, Depends
+from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 import sqlite3
 import pandas as pd
 from datetime import datetime
 import time
 import os
+from collections import defaultdict
 
-app = FastAPI()
+# --- Security: API Key ---
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    expected_key = os.getenv("API_KEY")
+    if expected_key:
+        if api_key_header != expected_key:
+             raise HTTPException(status_code=403, detail="Invalid or Missing API Key")
+    return api_key_header
+
+app = FastAPI(dependencies=[Depends(get_api_key)])
+
+# --- Security: Rate Limiter ---
+# Limit: 20 requests per 10 seconds per IP
+RATE_LIMIT_WINDOW = 10 
+RATE_LIMIT_MAX_REQUESTS = 20
+request_history = defaultdict(list)
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    client_ip = request.client.host
+    now = time.time()
+    
+    # Filter out requests older than window
+    request_history[client_ip] = [t for t in request_history[client_ip] if now - t < RATE_LIMIT_WINDOW]
+    
+    # Check limit
+    if len(request_history[client_ip]) >= RATE_LIMIT_MAX_REQUESTS:
+        return JSONResponse(status_code=429, content={"error": "Too Many Requests. Please slow down."})
+    
+    # Record request
+    request_history[client_ip].append(now)
+    
+    # Prevent memory leak (simple cleanup)
+    if len(request_history) > 5000:
+        request_history.clear()
+
+    response = await call_next(request)
+    return response
 
 # 1. Security & Compression
 app.add_middleware(
@@ -22,28 +64,15 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "https://rate-dashboard.netlify.app",
-        "*"
+        "https://rate-dashboard.onrender.com"
     ],
-    allow_methods=["*"],
+    allow_methods=["GET"], # Restrict to GET only
     allow_headers=["*"],
 )
 
 @app.get("/")
 def health_check():
-    # Debug Info
-    raw_path = os.path.join(DB_DIR, "aave_rates.db")
-    raw_size = os.path.getsize(raw_path) if os.path.exists(raw_path) else "MISSING"
-    clean_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else "MISSING"
-
-    return {
-        "status": "ok", 
-        "message": "Rate Dashboard API is running",
-        "debug": {
-            "DB_DIR": DB_DIR,
-            "CLEAN_DB": {"path": DB_PATH, "size": clean_size},
-            "RAW_DB": {"path": raw_path, "size": raw_size}
-        }
-    }
+    return {"status": "ok", "message": "Rate Dashboard API is running"}
 
 # Switch to Clean DB
 DB_NAME = "clean_rates.db"
@@ -95,7 +124,7 @@ def get_rates(
         
         target_col = symbol_map.get(symbol.upper())
         if not target_col:
-            raise HTTPException(status_code=400, detail="Invalid Symbol. Supported: USDC, DAI, USDT, SOFR")
+            raise HTTPException(status_code=400, detail="Invalid Symbol")
 
         conn = get_db_connection()
         
@@ -162,7 +191,8 @@ def get_rates(
         return data
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"ERROR in get_rates: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/eth-prices")
 def get_eth_prices(
@@ -226,4 +256,5 @@ def get_eth_prices(
     except Exception as e:
         if "no such table" in str(e):
             return []
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"ERROR in get_eth_prices: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")

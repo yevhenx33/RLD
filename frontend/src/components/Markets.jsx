@@ -6,7 +6,10 @@ import axios from 'axios';
 import RLDPerformanceChart from './RLDChart';
 import SettingsButton from './SettingsButton';
 
-const fetcher = (url) => axios.get(url).then((res) => res.data);
+const API_KEY = import.meta.env.VITE_API_KEY;
+const authHeaders = API_KEY ? { "X-API-Key": API_KEY } : {};
+
+const fetcher = (url) => axios.get(url, { headers: authHeaders }).then((res) => res.data);
 
 // --- HELPER FUNCTIONS ---
 const getPastDate = (days) => {
@@ -219,7 +222,7 @@ export default function Markets() {
                     let apy = 0;
                     try {
                         const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://rate-dashboard.onrender.com";
-                        const apiRes = await fetch(`${API_BASE}/rates?resolution=1H&limit=1&symbol=${asset.symbol}`);
+                        const apiRes = await fetch(`${API_BASE}/rates?resolution=1H&limit=1&symbol=${asset.symbol}`, { headers: authHeaders });
                         const apiData = await apiRes.json();
                         if (apiData && apiData.length > 0) apy = apiData[apiData.length - 1].apy || 0;
                     } catch (e) {
