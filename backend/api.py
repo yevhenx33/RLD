@@ -30,7 +30,20 @@ app.add_middleware(
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "message": "Rate Dashboard API is running"}
+    # Debug Info
+    raw_path = os.path.join(DB_DIR, "aave_rates.db")
+    raw_size = os.path.getsize(raw_path) if os.path.exists(raw_path) else "MISSING"
+    clean_size = os.path.getsize(DB_PATH) if os.path.exists(DB_PATH) else "MISSING"
+
+    return {
+        "status": "ok", 
+        "message": "Rate Dashboard API is running",
+        "debug": {
+            "DB_DIR": DB_DIR,
+            "CLEAN_DB": {"path": DB_PATH, "size": clean_size},
+            "RAW_DB": {"path": raw_path, "size": raw_size}
+        }
+    }
 
 # Switch to Clean DB
 DB_NAME = "clean_rates.db"
