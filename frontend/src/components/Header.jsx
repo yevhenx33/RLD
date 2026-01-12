@@ -78,7 +78,7 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
                                 ></div>
                                 {isCapped ? "WARN: LIMIT_ACTIVE" : "NET: STABLE"}
                             </span>
-                            <span>BLOCK: #{latest?.block_number || 0}</span>
+
                         </div>
                         <button
                             onClick={handleWalletClick}
