@@ -215,7 +215,9 @@ export default function Markets() {
     useEffect(() => {
         const fetchAllData = async () => {
             try {
-                const provider = new JsonRpcProvider(import.meta.env.VITE_MAINNET_RPC_URL);
+                // Use configured RPC or fallback to public Cloudflare/LlamaNodes to prevent localhost errors
+                const rpcUrl = import.meta.env.VITE_MAINNET_RPC_URL || "https://eth.llamarpc.com";
+                const provider = new JsonRpcProvider(rpcUrl);
                 const ERC20_ABI = ["function totalSupply() view returns (uint256)"];
 
                 const promises = ASSETS.map(async (asset) => {
