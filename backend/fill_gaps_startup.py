@@ -14,33 +14,49 @@ from config import DB_NAME, ASSETS, AAVE_POOL_ADDRESS
 # --- CONFIGURATION ---
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 DB_FILE = os.path.join(os.path.dirname(__file__), DB_NAME)
-RPC_URL = os.getenv("MAINNET_RPC_URL")
+# RPC Configuration
+RPC_URLS = [
+    os.getenv("MAINNET_RPC_URL"),
+    os.getenv("RESERVE_RPC_URL"), # Reserve from .env
+    "https://eth.llamarpc.com" # Public Fallback
+]
+# Filter out None/Empty
+RPC_URLS = [url for url in RPC_URLS if url]
 
-# Fallback RPC if env var is missing
-if not RPC_URL:
-    print("⚠️ Warning: MAINNET_RPC_URL not found, using public RPC.")
-    RPC_URL = "https://eth.llamarpc.com"
-
-BATCH_SIZE = 50
-GAP_THRESHOLD_BLOCKS = 50 # Only fill if gap > 50 blocks (~10 mins)
+BATCH_SIZE = 10 # Reduced for more frequent commits
+GAP_THRESHOLD_BLOCKS = 1
 
 # Selector for Aave V3 getReserveData(address)
-# 0x35ea6a75
 FUNC_SELECTOR = "0x35ea6a75"
 
+def call_rpc(payload):
+    """
+    Attempts to call RPCs in order. Returns response json or None if all fail.
+    """
+    for url in RPC_URLS:
+        try:
+            response = requests.post(url, json=payload, timeout=20)
+            if response.status_code == 200:
+                parsed = response.json()
+                return parsed
+        except Exception as e:
+            print(f"  ⚠️ RPC {url} failed: {e}")
+            continue
+    return None
+
 def get_data_payload(asset_address):
-    # Padding address to 32 bytes (64 chars)
-    # Asset address is 40 chars (20 bytes) + '0x'
     clean_addr = asset_address[2:]
     padded = clean_addr.zfill(64)
     return FUNC_SELECTOR + padded
 
 def decode_rate(hex_data):
     try:
+        if hex_data == "0x": return None
         raw = hex_data[2:]
         # Index 4 is currentVariableBorrowRate
         start = 4 * 64 
         end = 5 * 64
+        if len(raw) < end: return None
         return int(raw[start:end], 16) / 10**27 * 100
     except:
         return None
@@ -77,16 +93,17 @@ def fetch_batch_multi(start_block, end_block, assets_map):
         id_map[req_id] = {'block': block_num, 'type': 'timestamp'}
         req_id += 1
 
-    try:
-        response = requests.post(RPC_URL, json=payload, timeout=20)
-        results = response.json()
-        if isinstance(results, dict) and 'error' in results:
-            print(f"RPC Error: {results['error']}")
-            return [], {}
-        return results, id_map
-    except Exception as e:
-        print(f"  ⚠️ RPC Connection Error: {e}")
+    results = call_rpc(payload)
+    if not results:
+        print("  ❌ All RPCs failed for batch.")
         return [], {}
+    
+    if isinstance(results, dict) and 'error' in results:
+        # Single error response? Batch usually returns list of results
+        print(f"  ❌ RPC Error: {results['error']}")
+        return [], {}
+        
+    return results, id_map
 
 def fill_gap_range(start_block, end_block, cursor, conn, target_assets):
     """
@@ -129,7 +146,9 @@ def fill_gap_range(start_block, end_block, cursor, conn, target_assets):
             meta = id_map.get(rid)
             if not meta: continue
             
-            if 'error' in res: continue
+            if 'error' in res: 
+                print(f"   ⚠️ Block {meta['block']} Error: {res['error']}")
+                continue
             if 'result' not in res or not res['result']: continue
 
             blk = meta['block']
@@ -148,38 +167,53 @@ def fill_gap_range(start_block, end_block, cursor, conn, target_assets):
                 if val is not None:
                     if blk not in block_rates: block_rates[blk] = {}
                     block_rates[blk][sym] = val
+                else:
+                    # Debug decoding failure occasionally?
+                    if total_records == 0 and (blk % 100 == 0):
+                       print(f"   ⚠️ Decode failed for {sym} at {blk}. Raw: {res['result'][:10]}...")
 
-        # Write to DB
         for blk in range(batch_start, batch_end):
             if blk in block_timestamps and blk in block_rates:
                 ts = block_timestamps[blk]
                 rates = block_rates[blk]
                 
                 for sym, rate in rates.items():
+                    # Check if already exists? (Ignore handles it)
                     table = assets_map[sym]['table']
                     cursor.execute(f"INSERT OR IGNORE INTO {table} VALUES (?, ?, ?)", (blk, ts, rate))
                     total_records += 1
         
         conn.commit()
-        print(f"   Filled to block {batch_end}...", end='\r')
-        time.sleep(0.1)
+        
+        # Progress Bar
+        completed = batch_end - start_block
+        percent = (completed / count) * 100
+        bar_len = 30
+        filled_len = int(bar_len * completed // count)
+        bar = '█' * filled_len + '-' * (bar_len - filled_len)
+        print(f"\r   Patching: |{bar}| {percent:.1f}% (Block {batch_end})", end='')
+        
+        time.sleep(0.05) # Gentler rate limit
 
-    print(f"\n   ✅ Complete. {total_records} records added.")
+    print(f"\n   ✅ Filled {total_records} records.")
 
 def get_current_chain_block():
-    try:
-        payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
-        response = requests.post(RPC_URL, json=payload, timeout=5)
-        return int(response.json()['result'], 16)
-    except Exception as e:
-        print(f"❌ Error getting chain height: {e}")
-        return None
+    payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}
+    result = call_rpc(payload)
+    
+    if result and 'result' in result:
+        try:
+            return int(result['result'], 16)
+        except:
+             pass
+    
+    print(f"❌ Error getting chain height from all RPCs.")
+    return None
 
-def run_startup_check():
-    print("🔍 [Startup] Checking Data Continuity...")
+def run_repair_job():
+    print("🛠️  [Repair] Starting Deep Repair (Last 7 Days)...")
     
     if not os.path.exists(DB_FILE):
-        print(f"ℹ️  DB {DB_FILE} missing. Skipping.")
         return
 
     conn = sqlite3.connect(DB_FILE)
@@ -187,88 +221,85 @@ def run_startup_check():
 
     current_chain = get_current_chain_block()
     if not current_chain:
-        print("⚠️ Could not reach RPC. Skipping gap fill.")
         conn.close()
         return
 
-    print(f"⛓️  Chain Tip: {current_chain}")
+    # 7 Days in blocks (~12s) -> 50400 blocks approximately
+    BLOCKS_7D = int(7 * 24 * 3600 / 12)
+    start_search_block = current_chain - BLOCKS_7D
+    
+    print(f"   Scanning from block {start_search_block} to {current_chain}...")
 
-    # Check each asset
-    assets_to_fill = [] # List of (symbol, start_fill_block, config)
-
-    # 1. Identify where each asset is
+    # For each asset, find MISSING blocks
     for symbol, config in ASSETS.items():
         if config['type'] != 'onchain': continue
         
         table = config['table']
-        try:
-            cursor.execute(f"SELECT MAX(block_number) FROM {table}")
-            res = cursor.fetchone()
-            last_db_block = res[0] if res and res[0] else 0
+        print(f"   🔎 Scanning {symbol} ({table})...")
+        
+        # Get all blocks in range
+        cursor.execute(f"SELECT block_number FROM {table} WHERE block_number >= ? ORDER BY block_number ASC", (start_search_block,))
+        rows = cursor.fetchall()
+        existing_blocks = set(r[0] for r in rows)
+        
+        if not existing_blocks:
+            print(f"   ⚠️ No data found. Full fill needed.")
+            missing_blocks = list(range(start_search_block, current_chain))
+        else:
+            # Find gaps
+            # Optimization: create ranges
+            missing_ranges = []
             
-            if last_db_block == 0:
-                # Table empty? Maybe backfill from a recent block or skip
-                # We assume init_tables ran. If empty, maybe backfill last 24h?
-                # For safety, let's pick chain_tip - 7200 (1 day) if empty
-                last_db_block = current_chain - 50000 # ~1 week default if empty
-                print(f"   {symbol}: Empty. Defaulting to -1 week.")
-            
-            gap = current_chain - last_db_block
-            
-            if gap > GAP_THRESHOLD_BLOCKS:
-                print(f"   ⚠️ {symbol}: Lagging by {gap} blocks (DB: {last_db_block})")
-                assets_to_fill.append({
-                    'symbol': symbol,
-                    'start': last_db_block + 1,
-                    'config': config
-                })
-            else:
-                print(f"   ✅ {symbol}: Synced (Gap: {gap})")
+            # Check head gap
+            max_existing = max(existing_blocks)
+            if max_existing < current_chain:
+                # Add tail range
+                pass # Handled by range logic below?
                 
-        except Exception as e:
-            print(f"   Error checking {symbol}: {e}")
-
-    # 2. Group by start block to optimize? 
-    # Actually, simpler to just run fill for each, or merge ranges.
-    # Merging ranges is complex if they differ wildly. 
-    # Let's process them individually or grouped if starts are close.
-    # For now, let's process individually for safety, OR group globally if they are all close.
-    # In "startup" scenario, likely all stopped at same time.
-    
-    if not assets_to_fill:
-        print("🎉 All assets up to date.")
-        conn.close()
-        return
-
-    # Determine global start (min of all starts) to batch efficiently?
-    # No, effectively we want to batch fetch.
-    # If USDC needs 1000 blocks and DAI needs 1000 blocks, fetch together.
-    # Let's simple approach: Group everything into one massive "Fill Target" from MIN(start) to CHAIN_TIP.
-    # And only insert for assets that need it?
-    # Better: just use the fill_gap_range function with a dict of assets.
-    
-    # We find the MIN start block
-    min_start = min(a['start'] for a in assets_to_fill)
-    
-    # Filter map for the filler
-    target_assets_map = {a['symbol']: a['config'] for a in assets_to_fill}
-    
-    # Note: This will fetch data for ALL target assets from min_start. 
-    # If DAI was synced but USDC wasn't, we shouldn't fetch DAI.
-    # But current implementation of fetch_batch_multi fetches ALL in map.
-    # So we should validly pass the map.
-    # Optimize: If DAI start is >> min_start, we waste calls.
-    # But usually they are synced. 
-    # Let's trust they are close.
-    
-    try:
-        fill_gap_range(min_start, current_chain, cursor, conn, target_assets_map)
-    except KeyboardInterrupt:
-        print("\n🛑 Interrupted.")
-    except Exception as e:
-        print(f"\n❌ Error during fill: {e}")
+            # Iterate expected
+            # This is slow if we iterate 50k items in python? 50k is fast.
+            # But making requests for 50k separate blocks is slow.
+            # We want to identify RANGES.
+            
+            # Simple approach: Identify gaps > 1 block
+            sorted_blocks = sorted(list(existing_blocks))
+            
+            # Check internal gaps
+            ranges_to_fill = []
+            
+            # 1. From Start to First Existing
+            if sorted_blocks[0] > start_search_block:
+                ranges_to_fill.append((start_search_block, sorted_blocks[0]))
+            
+            # 2. Internal
+            for i in range(1, len(sorted_blocks)):
+                prev = sorted_blocks[i-1]
+                curr = sorted_blocks[i]
+                if curr - prev > 1:
+                    ranges_to_fill.append((prev + 1, curr))
+            
+            # 3. Tail
+            if sorted_blocks[-1] < current_chain:
+                ranges_to_fill.append((sorted_blocks[-1] + 1, current_chain))
+                
+            # Execute Fill for ranges
+            total_missing = sum([e - s for s, e in ranges_to_fill])
+            if total_missing > 0:
+                print(f"   ⚠️ Found {total_missing} missing blocks in {len(ranges_to_fill)} ranges.")
+                
+                target_assets = {symbol: config}
+                for start, end in ranges_to_fill:
+                    # Limit batch size effectively
+                    # fill_gap_range handles batching
+                    try:
+                        fill_gap_range(start, end, cursor, conn, target_assets)
+                    except Exception as e:
+                        print(f"Fill error: {e}")
+            else:
+                print(f"   ✅ {symbol} is complete.")
 
     conn.close()
+    print("✨ Repair Complete.")
 
 if __name__ == "__main__":
-    run_startup_check()
+    run_repair_job()
