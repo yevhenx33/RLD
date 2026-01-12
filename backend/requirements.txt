@@ -2,3 +2,6 @@ fastapi
 uvicorn
 pandas
 httpx
+python-dotenv
+web3
+requests
