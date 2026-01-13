@@ -16,3 +16,12 @@ dist/
 
 # Shared artifacts (optional, but addresses.json might technically be local state)
 # shared/addresses.json
+
+# Backups & Data
+backups/
+*.db
+*.db-shm
+*.db-wal
+**/*.db
+**/*.db-shm
+**/*.db-wal

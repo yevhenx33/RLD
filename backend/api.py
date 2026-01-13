@@ -11,6 +11,7 @@ import time
 import os
 from collections import defaultdict
 import logging
+import re
 
 # --- Logging Config ---
 logging.basicConfig(
@@ -57,6 +58,15 @@ async def rate_limit_middleware(request: Request, call_next):
         request_history.clear()
 
     response = await call_next(request)
+    return response
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     return response
 
 # 1. Security & Compression
@@ -117,6 +127,13 @@ def get_rates(
     resolution: str = Query("1H", description="1H, 4H, 1D, 1W"),
     symbol: str = Query("USDC", description="USDC, DAI, USDT, SOFR")
 ):
+    # Regex Validation for Dates (YYYY-MM-DD)
+    date_pattern = r"^\d{4}-\d{2}-\d{2}$"
+    if start_date and not re.match(date_pattern, start_date):
+        raise HTTPException(status_code=400, detail="Invalid start_date format. Use YYYY-MM-DD")
+    if end_date and not re.match(date_pattern, end_date):
+        raise HTTPException(status_code=400, detail="Invalid end_date format. Use YYYY-MM-DD")
+
     try:
         # Cache Check
         cache_key = f"rates:{symbol}:{resolution}:{limit}:{start_date}:{end_date}"

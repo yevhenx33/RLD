@@ -44,6 +44,10 @@ python3 indexer.py > indexer.log 2>&1 &
 echo "⏳ Starting History Backfill..."
 python3 fill_gaps_startup.py > backfill.log 2>&1 &
 
+# Start Monitor Service
+echo "🤖 Starting Telegram Monitor..."
+python3 scripts/monitor_service.py > monitor.log 2>&1 &
+
 # Start API in foreground
 echo "🚀 Starting API Service on port ${PORT:-10000}..."
 exec uvicorn api:app --host 0.0.0.0 --port ${PORT:-10000}
