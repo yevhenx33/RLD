@@ -714,7 +714,7 @@ function App() {
                   {/* CSV Download Button */}
                   <button 
                     onClick={handleDownloadCSV}
-                    className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-gray-500 hover:text-white transition-colors focus:outline-none group"
+                    className="hidden md:flex items-center gap-2 text-[11px] uppercase tracking-widest text-gray-500 hover:text-white transition-colors focus:outline-none group"
                     title="Download Full History (CSV)"
                   >
                     <FileDown size={12} className="group-hover:text-cyan-400 transition-colors" />
