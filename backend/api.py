@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException, Query, Request, Security, Depends
+from fastapi import FastAPI, HTTPException, Query, Request, Security, Depends, WebSocket, WebSocketDisconnect
+import asyncio
+import json
 from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -124,8 +126,86 @@ CACHE_STORE = TTLCache(maxsize=1000, ttl=20)
 def get_from_cache(key):
     return CACHE_STORE.get(key)
 
-def set_cache(key, val):
-    CACHE_STORE[key] = val
+
+# 4. WebSocket Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                # If sending fails, we might want to disconnect or ignore
+                pass
+
+manager = ConnectionManager()
+
+@app.websocket("/ws/rates")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+# 5. Background Broadcast Loop
+async def broadcast_rates():
+    last_rates = {}
+    while True:
+        try:
+            # Poll every 5 seconds (fast enough for 12s indexer)
+            await asyncio.sleep(5)
+            
+            # Use existing cache or DB
+            # We want LATEST rates for ALL assets.
+            # Efficient query: Get latest 1 row from hourly_stats
+            conn = get_db_connection()
+            # Order DESC to get latest
+            df = pd.read_sql_query("SELECT * FROM hourly_stats ORDER BY timestamp DESC LIMIT 1", conn)
+            conn.close()
+            
+            if not df.empty:
+                latest = df.iloc[0].to_dict()
+                
+                # Check for changes to avoid spam
+                # Simple: compare timestamp
+                if latest.get('timestamp') != last_rates.get('timestamp'):
+                    last_rates = latest
+                    
+                    # Format for Frontend: { "USDC": 4.5, "ETH": 2000... }
+                    # Or just send the whole object
+                    payload = {
+                        "type": "UPDATE",
+                        "data": {
+                            "timestamp": latest.get("timestamp"),
+                            "USDC": latest.get("usdc_rate"),
+                            "DAI": latest.get("dai_rate"),
+                            "USDT": latest.get("usdt_rate"),
+                            "SOFR": latest.get("sofr_rate"),
+                            "ETH": latest.get("eth_price")
+                        }
+                    }
+                    await manager.broadcast(payload)
+                    
+        except Exception as e:
+            logging.error(f"WS Broadcast Error: {e}")
+            await asyncio.sleep(5)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(broadcast_rates())
+
 
 @app.get("/rates")
 def get_rates(
