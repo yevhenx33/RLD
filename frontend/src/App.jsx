@@ -138,7 +138,7 @@ function App() {
       const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
       // Fetch full history (approx 45k hours since 2021). Limit to 100k safe.
       const url = `${API_BASE}/rates?resolution=1H&limit=100000`;
-      const res = await axios.get(url);
+      const res = await axios.get(url, { headers: authHeaders });
       const data = res.data;
 
       if (!data || data.length === 0) {
