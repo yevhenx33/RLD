@@ -239,6 +239,56 @@ if __name__ == "__main__":
     # Clean DB Path
     CLEAN_DB_NAME = "clean_rates.db"
 
+    # Initialize Clean DB Tables
+    try:
+        conn_clean_init = sqlite3.connect(CLEAN_DB_PATH)
+        cursor_clean_init = conn_clean_init.cursor()
+        cursor_clean_init.execute('''
+            CREATE TABLE IF NOT EXISTS sync_state (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        cursor_clean_init.execute('''
+            CREATE TABLE IF NOT EXISTS hourly_stats (
+                timestamp INTEGER PRIMARY KEY,
+                usdc_rate REAL,
+                dai_rate REAL,
+                usdt_rate REAL,
+                eth_price REAL
+            )
+        ''')
+        conn_clean_init.commit()
+        conn_clean_init.close()
+        logging.info("✅ Clean DB initialized.")
+    except Exception as e:
+        logging.error(f"Failed to init Clean DB: {e}")
+    
+    # Initialize Clean DB Tables
+    try:
+        conn_clean_init = sqlite3.connect(CLEAN_DB_PATH)
+        cursor_clean_init = conn_clean_init.cursor()
+        cursor_clean_init.execute('''
+            CREATE TABLE IF NOT EXISTS sync_state (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        cursor_clean_init.execute('''
+            CREATE TABLE IF NOT EXISTS hourly_stats (
+                timestamp INTEGER PRIMARY KEY,
+                usdc_rate REAL,
+                dai_rate REAL,
+                usdt_rate REAL,
+                eth_price REAL
+            )
+        ''')
+        conn_clean_init.commit()
+        conn_clean_init.close()
+        logging.info("✅ Clean DB initialized.")
+    except Exception as e:
+        logging.error(f"Failed to init Clean DB: {e}")
+
     try:
         while True:
             # Fetch latest block for timestamp and consistency
