@@ -13,6 +13,7 @@ import {
   TrendingUp,
   TrendingDown,
   FileDown,
+  ChevronDown,
 } from "lucide-react";
 import RLDPerformanceChart from "./components/RLDChart";
 
@@ -20,6 +21,7 @@ import { useWallet } from "./context/WalletContext";
 import Header from "./components/Header";
 import TradingTerminal, { InputGroup, SummaryRow } from "./components/TradingTerminal";
 import SettingsButton from "./components/SettingsButton";
+import MobileDropdown from "./components/MobileDropdown";
 const API_KEY = import.meta.env.VITE_API_KEY;
 const authHeaders = API_KEY ? { "X-API-Key": API_KEY } : {};
 
@@ -448,34 +450,79 @@ function App() {
 
               <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
                 {/* CARD 1: CURRENT SPOT + 24H CHANGE */}
-                <MetricBox
-                  label="CURRENT_SPOT"
-                  value={latest.apy.toFixed(2)}
-                  sub={
-                    <div
-                      className={`flex items-center gap-2 ${
-                        dailyChange >= 0 ? "text-green-500" : "text-red-500"
-                      }`}
-                    >
-                      {dailyChange >= 0 ? (
-                        <TrendingUp size={15} />
-                      ) : (
-                        <TrendingDown size={15} />
-                      )}
-                      <span className="font-bold">
-                        24H: {dailyChange > 0 ? "+" : ""}
-                        {dailyChange.toFixed(2)}%
-                      </span>
+                <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]"> 
+                    {/* MOBILE LAYOUT (Grid Row) */}
+                    <div className="md:hidden h-full flex flex-col justify-between">
+                         <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+                            CURRENT_SPOT <Terminal size={15} className="opacity-90" />
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-4 mt-auto">
+                            <StatItem
+                              label="SPOT_RATE"
+                              value={`${latest.apy.toFixed(2)}%`}
+                            />
+                            <div>
+                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">
+                                    24H_CHANGE
+                                </div>
+                                <div className={`text-xl font-light font-mono tracking-tighter flex items-center gap-1 ${dailyChange >= 0 ? "text-green-500" : "text-red-500"}`}>
+                                    {dailyChange > 0 ? "+" : ""}{dailyChange.toFixed(2)}%
+                                </div>
+                            </div>
+                          </div>
                     </div>
-                  }
-                />
+
+                    {/* DESKTOP LAYOUT (Original MetricBox Content) */}
+                    <div className="hidden md:block h-full">
+                        <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+                            CURRENT_SPOT <Terminal size={15} className="opacity-90" />
+                        </div>
+                        <div>
+                            <div className="text-3xl font-light text-white mb-2 tracking-tight">
+                            {latest.apy.toFixed(2)}
+                            <span className="text-sm text-gray-600 ml-1">%</span>
+                            </div>
+                            <div className="text-[12px] text-gray-500 uppercase tracking-widest">
+                                <div
+                                className={`flex items-center gap-2 ${
+                                    dailyChange >= 0 ? "text-green-500" : "text-red-500"
+                                }`}
+                                >
+                                {dailyChange >= 0 ? (
+                                    <TrendingUp size={15} />
+                                ) : (
+                                    <TrendingDown size={15} />
+                                )}
+                                <span className="font-bold">
+                                    24H: {dailyChange > 0 ? "+" : ""}
+                                    {dailyChange.toFixed(2)}%
+                                </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 {/* CARD 2: PERIOD STATS */}
-                <div className="p-6 flex flex-col justify-between h-full min-h-[180px]">
-                  <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
+                <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
+                  <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
                     PERIOD_STATS <Activity size={15} className="opacity-90" />
                   </div>
-                  <div className="grid grid-cols-2 gap-y-6 gap-x-4">
+                  
+                  {/* MOBILE: Range & Volatility Only (Row Layout like Funding Rate) */}
+                  <div className="md:hidden grid grid-cols-2 gap-x-4 mt-auto">
+                    <StatItem
+                      label="RANGE[MIN - MAX]"
+                      value={`${stats.min.toFixed(2)} - ${stats.max.toFixed(2)}`}
+                    />
+                    <StatItem
+                      label="VOLATILITY"
+                      value={`±${stats.vol.toFixed(2)}%`}
+                    />
+                  </div>
+
+                  {/* DESKTOP: Full Grid */}
+                  <div className="hidden md:grid grid-cols-2 gap-y-6 gap-x-4">
                     <StatItem
                       label="MIN_RATE"
                       value={`${stats.min.toFixed(2)}%`}
@@ -496,8 +543,8 @@ function App() {
                 </div>
 
                 {/* CARD 3: FUNDING_RATE (Daily/Yearly) */}
-                <div className="p-6 flex flex-col justify-between h-full min-h-[180px]">
-                  <div className="text-[12px] text-gray-500 uppercase tracking-widest flex justify-between">
+                <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
+                  <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest flex justify-between">
                     FUNDING_RATE <Clock size={15} className="opacity-90" />
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 mt-auto">
@@ -515,93 +562,125 @@ function App() {
             </div>
 
             {/* 2. CONTROLS */}
-            <div className="border-y border-white/10 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 divide-y md:divide-y-0 xl:divide-y-0">
-              <ControlCell label="TIMEFRAME" className="pl-0">
-                {[
-                  { l: "1D", d: 1 },
-                  { l: "1W", d: 7 },
-                  { l: "1M", d: 30 },
-                  { l: "3M", d: 90 },
-                  { l: "1Y", d: 365 },
-                  { l: "ALL", d: 9999 },
-                ].map((btn) => (
-                  <SettingsButton
-                    key={btn.l}
-                    onClick={() => handleQuickRange(btn.d, btn.l)}
-                    isActive={activeRange === btn.l}
-                    className="flex-1"
-                  >
-                    {btn.l}
-                  </SettingsButton>
-                ))}
+            <div className="order-last md:order-none border-y border-white/10 grid grid-cols-2 xl:grid-cols-4">
+              <ControlCell label="TIMEFRAME" className="pl-0 border-r md:border-r-0 border-white/10 pr-4 md:pr-4">
+                {/* Mobile Dropdown */}
+                <MobileDropdown 
+                    value={activeRange} 
+                    options={[
+                        { label: "1D", value: { d: 1, l: "1D" } },
+                        { label: "1W", value: { d: 7, l: "1W" } },
+                        { label: "1M", value: { d: 30, l: "1M" } },
+                        { label: "3M", value: { d: 90, l: "3M" } },
+                        { label: "1Y", value: { d: 365, l: "1Y" } },
+                        { label: "ALL", value: { d: 9999, l: "ALL" } },
+                    ].map(o => ({ label: o.label, value: o.value }))}
+                    onChange={(v) => handleQuickRange(v.d, v.l)}
+                />
+                
+                {/* Desktop Buttons */}
+                <div className="hidden md:flex w-full gap-0">
+                    {[
+                    { l: "1D", d: 1 },
+                    { l: "1W", d: 7 },
+                    { l: "1M", d: 30 },
+                    { l: "3M", d: 90 },
+                    { l: "1Y", d: 365 },
+                    { l: "ALL", d: 9999 },
+                    ].map((btn) => (
+                    <SettingsButton
+                        key={btn.l}
+                        onClick={() => handleQuickRange(btn.d, btn.l)}
+                        isActive={activeRange === btn.l}
+                        className="flex-1"
+                    >
+                        {btn.l}
+                    </SettingsButton>
+                    ))}
+                </div>
               </ControlCell>
-              <ControlCell label="RESOLUTION">
-                {["1H", "4H", "1D", "1W"].map((res) => (
-                  <SettingsButton
-                    key={res}
-                    onClick={() => setResolution(res)}
-                    isActive={resolution === res}
-                    className="flex-1"
-                  >
-                    {res}
-                  </SettingsButton>
-                ))}
+              <ControlCell label="RESOLUTION" className="pl-4 md:pl-4 ">
+                {/* Mobile Dropdown */}
+                <MobileDropdown 
+                    value={resolution} 
+                    options={["1H", "4H", "1D", "1W"].map(r => ({ label: r, value: r }))}
+                    onChange={(v) => setResolution(v)}
+                />
+
+                {/* Desktop Buttons */}
+                <div className="hidden md:flex w-full gap-0">
+                    {["1H", "4H", "1D", "1W"].map((res) => (
+                    <SettingsButton
+                        key={res}
+                        onClick={() => setResolution(res)}
+                        isActive={resolution === res}
+                        className="flex-1"
+                    >
+                        {res}
+                    </SettingsButton>
+                    ))}
+                </div>
               </ControlCell>
-              <ControlCell label="CUSTOM_RANGE">
-                <div className="flex items-center justify-between h-[30px] w-full gap-2">
-                  <input
-                    type="date"
-                    value={tempStart}
-                    onChange={(e) => setTempStart(e.target.value)}
-                    className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-[38%] py-1 rounded-none"
-                  />
-                  <span className="text-gray-600 text-xs">-</span>
-                  <input
-                    type="date"
-                    value={tempEnd}
-                    onChange={(e) => setTempEnd(e.target.value)}
-                    className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-[38%] py-1 rounded-none"
-                  />
+              <ControlCell label="CUSTOM_RANGE" className="hidden md:flex">
+                <div className="flex flex-col sm:flex-row items-center justify-between h-auto sm:h-[30px] w-full gap-2">
+                  <div className="flex items-center w-full sm:w-[76%] gap-2">
+                      <input
+                        type="date"
+                        value={tempStart}
+                        onChange={(e) => setTempStart(e.target.value)}
+                        className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-1/2 py-1 rounded-none"
+                      />
+                      <span className="text-gray-600 text-xs">-</span>
+                      <input
+                        type="date"
+                        value={tempEnd}
+                        onChange={(e) => setTempEnd(e.target.value)}
+                        className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-1/2 py-1 rounded-none"
+                      />
+                  </div>
                   <SettingsButton
                     onClick={handleApplyDate}
-                    className="px-3 h-full flex items-center"
+                    className="px-3 h-full flex items-center w-full sm:w-auto mt-2 sm:mt-0"
                   >
                     SET
                   </SettingsButton>
                 </div>
               </ControlCell>
-              <ControlCell label="TWAR_SMOOTHING_[SEC]" className="pr-0">
-                <div className="flex items-center justify-between gap-2 h-[30px] w-full">
+              <ControlCell label="TWAR_SMOOTHING_[SEC]" className="pr-0 hidden md:flex">
+                <div className="flex items-center justify-end md:justify-between gap-2 h-[30px] w-full">
                   <input
                     type="number"
                     value={tempTwarInput}
                     onChange={(e) => setTempTwarInput(Number(e.target.value))}
-                    className="flex-1 bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono h-full py-1 text-right pr-2 rounded-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    className="hidden md:block flex-1 bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono h-full py-1 text-right pr-2 rounded-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
                   <SettingsButton
                     onClick={handleApplyTwar}
-                    className="px-3 h-full flex items-center"
+                    className="hidden md:flex px-3 h-full items-center"
                   >
                     SET
                   </SettingsButton>
                   <SettingsButton
                     onClick={() => setShowTwar(!showTwar)}
                     isActive={showTwar}
-                    className="px-3 h-full flex items-center justify-center gap-2"
+                    className="w-full md:w-auto px-3 h-full flex items-center justify-center gap-2"
                   >
                     <Power
                       size={12}
                       className={showTwar ? "text-black" : "text-gray-600"}
                     />
+                    <span className="md:hidden text-[10px] uppercase font-bold tracking-widest">
+                        {showTwar ? "TWAR: ON" : "TWAR: OFF"}
+                    </span>
                   </SettingsButton>
                 </div>
               </ControlCell>
             </div>
 
             {/* 3. CHART */}
-            <div className="relative flex-1 min-h-[400px]">
-              <div className="flex justify-between items-end mb-4 px-1">
-                <div className="flex gap-8">
+            <div className="relative flex-1 min-h-[350px] md:min-h-[400px]">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 px-1 gap-3 md:gap-0">
+                <div className="flex gap-4 md:gap-8 flex-wrap">
                   <div 
                     className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes('apy') ? 'opacity-50 line-through' : 'opacity-100 hover:opacity-80'}`}
                     onClick={() => toggleSeries('apy')}
@@ -664,7 +743,7 @@ function App() {
 
                 </div>
               </div>
-              <div className="h-[500px] w-full border border-white/10 p-4 bg-[#080808]">
+              <div className="h-[350px] md:h-[500px] w-full border border-white/10 p-4 bg-[#080808]">
                 {processedData.length === 0 ? (
                   <div className="h-full flex items-center justify-center text-gray-700 text-xs tracking-widest uppercase">
                     No Data Available

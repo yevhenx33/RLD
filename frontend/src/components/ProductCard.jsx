@@ -25,7 +25,7 @@ const ProductCard = ({
   return (
     <div
       onClick={onClick}
-      className={`border border-white/10 p-6 hover:bg-white/5 transition-colors cursor-pointer group min-h-[180px] h-full flex flex-col justify-between ${
+      className={`border border-white/10 p-4 md:p-6 hover:bg-white/5 transition-colors cursor-pointer group min-h-[120px] md:min-h-[180px] h-full flex flex-col justify-between ${
         isActive ? "bg-white/5" : "bg-[#080808]"
       }`}
     >

@@ -5,6 +5,7 @@ import useSWR from 'swr';
 import axios from 'axios';
 import RLDPerformanceChart from './RLDChart';
 import SettingsButton from './SettingsButton';
+import MobileDropdown from './MobileDropdown';
 
 const API_KEY = import.meta.env.VITE_API_KEY;
 const authHeaders = API_KEY ? { "X-API-Key": API_KEY } : {};
@@ -51,18 +52,18 @@ const ASSETS = [
 function MarketMetricBox({ label, value, sub, dimmed, Icon = Activity }) {
   return (
     <div
-      className={`p-6 flex flex-col justify-between h-full min-h-[160px] ${
+      className={`p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[160px] ${
         dimmed ? "opacity-30" : ""
       }`}
     >
-      <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+      <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
         {label} <Icon size={15} className="opacity-90" />
       </div>
       <div>
-        <div className="text-3xl font-light text-white mb-2 tracking-tight">
+        <div className="text-xl md:text-3xl font-light text-white mb-1 md:mb-2 tracking-tight">
           {value}
         </div>
-        <div className="text-[12px] text-gray-500 uppercase tracking-widest">
+        <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest">
           {sub}
         </div>
       </div>
@@ -99,25 +100,23 @@ function FilterDropdown({ label, options, selected, onChange }) {
             <button 
                 onClick={() => setIsOpen(!isOpen)}
                 className={`
-                    w-full flex items-center justify-between gap-2 px-4 py-3
-                    border border-white/10 bg-white/[0.02] 
-                    text-xs font-bold text-gray-400 
-                    hover:text-white hover:border-white/20 hover:bg-white/[0.04]
-                    transition-all duration-200 uppercase tracking-widest
-                    ${isOpen ? 'border-white/20 bg-white/[0.04] text-white' : ''}
+                    w-full h-[30px] border border-white/20 bg-black flex items-center justify-between px-3 
+                    text-xs font-mono text-white focus:outline-none uppercase tracking-widest 
+                    hover:border-white transition-colors
+                    ${isOpen ? 'border-white' : ''}
                 `}
             >
                 <div className="flex items-center gap-2 overflow-hidden">
-                    <span>{label}</span>
-                    <span className="text-gray-600 font-normal border-l border-white/10 pl-2 ml-1">
+                    {label && <span>{label}</span>}
+                    <span className={`${label ? "text-gray-500 font-normal border-l border-white/20 pl-2 ml-1" : ""}`}>
                         {isAllSelected ? "ALL" : selected.size}
                     </span>
                 </div>
-                <ChevronDown size={14} className={`transition-transform duration-200 ${isOpen ? 'rotate-180 text-cyan-500' : ''}`} />
+                <ChevronDown size={14} className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
             </button>
             
             {isOpen && (
-                <div className="absolute top-full left-0 right-0 mt-2 bg-[#0f0f0f] border border-white/10 z-50 flex flex-col shadow-2xl animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute top-full left-0 right-0 mt-1 bg-[#0a0a0a] border border-white/20 z-50 flex flex-col shadow-xl">
                     <div className="max-h-[300px] overflow-y-auto p-1 space-y-0.5 custom-scrollbar">
                         {/* SELECT ALL OPTION */}
                         <button
@@ -421,38 +420,64 @@ export default function Markets() {
                 </div>
 
                 {/* CONTROLS */}
-                <div className="border-y border-white/10 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0">
-                  <ControlCell label="TIMEFRAME" className="pl-0">
-                    {[
-                      { l: "1D", d: 1 },
-                      { l: "1W", d: 7 },
-                      { l: "1M", d: 30 },
-                      { l: "3M", d: 90 },
-                      { l: "1Y", d: 365 },
-                    ].map((btn) => (
-                      <SettingsButton
-                        key={btn.l}
-                        onClick={() => handleQuickRange(btn.d, btn.l)}
-                        isActive={activeRange === btn.l}
-                        className="flex-1"
-                      >
-                        {btn.l}
-                      </SettingsButton>
-                    ))}
+                <div className="order-last md:order-none border-y border-white/10 grid grid-cols-2 md:grid-cols-3">
+                  <ControlCell label="TIMEFRAME" className="pl-0 border-r md:border-r-0 border-white/10 pr-4 md:pr-4">
+                    {/* Mobile Dropdown */}
+                    <MobileDropdown 
+                        value={activeRange} 
+                        options={[
+                            { label: "1D", value: { d: 1, l: "1D" } },
+                            { label: "1W", value: { d: 7, l: "1W" } },
+                            { label: "1M", value: { d: 30, l: "1M" } },
+                            { label: "3M", value: { d: 90, l: "3M" } },
+                            { label: "1Y", value: { d: 365, l: "1Y" } },
+                        ].map(o => ({ label: o.label, value: o.value }))}
+                        onChange={(v) => handleQuickRange(v.d, v.l)}
+                    />
+
+                    {/* Desktop Buttons */}
+                    <div className="hidden md:flex flex-wrap w-full gap-0">
+                        {[
+                          { l: "1D", d: 1 },
+                          { l: "1W", d: 7 },
+                          { l: "1M", d: 30 },
+                          { l: "3M", d: 90 },
+                          { l: "1Y", d: 365 },
+                        ].map((btn) => (
+                          <SettingsButton
+                            key={btn.l}
+                            onClick={() => handleQuickRange(btn.d, btn.l)}
+                            isActive={activeRange === btn.l}
+                            className="flex-1"
+                          >
+                            {btn.l}
+                          </SettingsButton>
+                        ))}
+                    </div>
                   </ControlCell>
-                  <ControlCell label="RESOLUTION">
-                    {["1H", "4H", "1D", "1W"].map((res) => (
-                      <SettingsButton
-                        key={res}
-                        onClick={() => setResolution(res)}
-                        isActive={resolution === res}
-                        className="flex-1"
-                      >
-                        {res}
-                      </SettingsButton>
-                    ))}
+                  <ControlCell label="RESOLUTION" className="pl-4 md:pl-4">
+                    {/* Mobile Dropdown */}
+                    <MobileDropdown 
+                        value={resolution} 
+                        options={["1H", "4H", "1D", "1W"].map(r => ({ label: r, value: r }))}
+                        onChange={(v) => setResolution(v)}
+                    />
+
+                    {/* Desktop Buttons */}
+                    <div className="hidden md:flex flex-wrap w-full gap-0">
+                        {["1H", "4H", "1D", "1W"].map((res) => (
+                          <SettingsButton
+                            key={res}
+                            onClick={() => setResolution(res)}
+                            isActive={resolution === res}
+                            className="flex-1"
+                          >
+                            {res}
+                          </SettingsButton>
+                        ))}
+                    </div>
                   </ControlCell>
-                  <ControlCell label="CUSTOM_RANGE" className="pr-0">
+                  <ControlCell label="CUSTOM_RANGE" className="pr-0 hidden md:flex">
                     <div className="flex items-center justify-between h-[30px] w-full gap-2">
                       <input
                         type="date"
@@ -483,7 +508,7 @@ export default function Markets() {
                 <div className="mb-6">
                    <div className="p-4 pl-0 pr-0">
                        <div className="flex justify-between items-end mb-4 px-1">
-                           <div className="flex gap-8">
+                           <div className="flex flex-wrap gap-x-4 gap-y-2 md:gap-8">
                                {SERIES_CONFIG.map(series => (
                                    <div 
                                        key={series.key}
@@ -500,7 +525,7 @@ export default function Markets() {
 
                        </div>
                        
-                       <div className="h-[350px] w-full">
+                       <div className="h-[350px] md:h-[500px] w-full">
                            {!usdcHistory ? (
                                <div className="h-full flex items-center justify-center">
                                    <Loader2 className="animate-spin text-gray-700" />
@@ -521,18 +546,16 @@ export default function Markets() {
 
                 
                 {/* FILTERS */}
-                <div className="mb-6 border-y border-white/10 grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/10">
-                    <ControlCell label="PROTOCOL" className="pl-0">
+                <div className="mb-6 border-y border-white/10 grid grid-cols-2 md:grid-cols-2">
+                    <ControlCell label="PROTOCOLS" className="pl-0 border-r border-white/10 pr-4 md:pr-4">
                         <FilterDropdown 
-                            label="Select Protocols"
                             options={["AAVE", "MORPHO", "EULER", "FLUID"]}
                             selected={selectedProtocols}
                             onChange={setSelectedProtocols}
                         />
                     </ControlCell>
-                    <ControlCell label="ASSET" className="pr-0">
+                    <ControlCell label="ASSETS" className="pl-4 md:pl-4 pr-0">
                         <FilterDropdown 
-                            label="Select Assets"
                             options={["USDC", "DAI", "USDT"]}
                             selected={selectedAssets}
                             onChange={setSelectedAssets}
@@ -640,7 +663,7 @@ function ControlCell({ label, children, className = "" }) {
       <span className="text-[11px] text-gray-500 uppercase tracking-[0.2em] font-bold">
         {label}
       </span>
-      <div className="flex items-center w-full">{children}</div>
+      <div className="flex items-center w-full flex-wrap gap-y-2">{children}</div>
     </div>
   );
 }

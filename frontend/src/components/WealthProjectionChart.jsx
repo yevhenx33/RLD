@@ -59,7 +59,7 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
   const bgColor = theme === "pink" ? "bg-pink-500" : "bg-cyan-400";
 
   return (
-    <div className="w-full h-full select-none bg-[#080808] border border-white/10 p-6 flex flex-col">
+    <div className="w-full h-full select-none bg-[#080808] border border-white/10 p-4 md:p-6 flex flex-col">
       <div className="flex items-start justify-between mb-6">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">

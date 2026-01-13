@@ -101,7 +101,7 @@ export default function BondsPage() {
                   isActive={tradeLogic.state.activeProduct === "FIXED_BORROW"}
                 />
               </div>
-              <div className="lg:col-span-8 h-[500px]">
+              <div className="lg:col-span-8 h-[350px] md:h-[500px]">
                 <WealthProjectionChart
                   data={projectionData}
                   collateral={tradeLogic.state.notional}

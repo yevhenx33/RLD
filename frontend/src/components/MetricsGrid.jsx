@@ -3,8 +3,8 @@ import { Terminal, Activity, Clock, TrendingUp, TrendingDown } from "lucide-reac
 import { formatNum } from "../utils/helpers";
 
 const MetricCell = ({ label, Icon, content }) => (
-  <div className="p-6 flex flex-col justify-between h-full min-h-[180px]">
-    <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
+  <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
+    <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
       {label} {Icon && <Icon size={15} className="opacity-90" />}
     </div>
     {content}
