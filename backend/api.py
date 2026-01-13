@@ -33,7 +33,12 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
              raise HTTPException(status_code=403, detail="Invalid or Missing API Key")
     return api_key_header
 
-app = FastAPI(dependencies=[Depends(get_api_key)])
+app = FastAPI(
+    dependencies=[Depends(get_api_key)],
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None
+)
 
 # --- Security: Rate Limiter ---
 # Limit: 20 requests per 10 seconds per IP
@@ -70,6 +75,9 @@ async def security_headers_middleware(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Hide server signature
+    if "server" in response.headers:
+        del response.headers["server"]
     return response
 
 # 1. Security & Compression
