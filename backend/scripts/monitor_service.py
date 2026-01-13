@@ -16,13 +16,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env"))
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 
 # --- CONFIG ---
-# --- CONFIG ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-API_KEY = os.getenv("API_KEY") # For authenticated requests
-API_URL = "http://localhost:8000" # Local health check
+API_KEY = os.getenv("API_KEY") 
+API_URL = "http://localhost:8000"
 
-# Refresh Interval
+# Refresh Interval for Background Checks
 INTERVAL = 60
 
 # Logging
@@ -38,36 +37,35 @@ def get_headers():
         return {"X-API-Key": API_KEY}
     return {}
 
-def send_telegram_message(message):
-    global CHAT_ID
-    if not CHAT_ID:
-        # Try to fetch from getUpdates if user messaged the bot
-        try:
-            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates"
-            res = requests.get(url, timeout=10).json()
-            if res['ok'] and len(res['result']) > 0:
-                # Get the last chat ID
-                CHAT_ID = str(res['result'][-1]['message']['chat']['id'])
-                logger.info(f"Discovered Chat ID: {CHAT_ID}")
-            else:
-                logger.warning("Chat ID not set and no updates found. Please search for the bot and send /start")
-                return False
-        except Exception as e:
-            logger.error(f"Failed to fetch updates: {e}")
-            return False
-
-    if not CHAT_ID:
-        return False
-
+# --- TELEGRAM API ---
+def tg_request(method, data=None):
     try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-        data = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-        requests.post(url, json=data, timeout=10)
-        return True
+        url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+        res = requests.post(url, json=data, timeout=20)
+        return res.json()
     except Exception as e:
-        logger.error(f"Failed to send message: {e}")
-        return False
+        logger.error(f"Telegram API Error ({method}): {e}")
+        return None
 
+def send_message(chat_id, text, reply_markup=None):
+    data = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    if reply_markup:
+        data["reply_markup"] = reply_markup
+    return tg_request("sendMessage", data)
+
+def edit_message(chat_id, message_id, text, reply_markup=None):
+    data = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "Markdown"}
+    if reply_markup:
+        data["reply_markup"] = reply_markup
+    return tg_request("editMessageText", data)
+
+def answer_callback(callback_query_id, text=None):
+    data = {"callback_query_id": callback_query_id}
+    if text:
+        data["text"] = text
+    return tg_request("answerCallbackQuery", data)
+
+# --- DATA FETCHING ---
 def check_api_health():
     try:
         start = time.time()
@@ -81,11 +79,8 @@ def check_api_health():
         return False, str(e)
 
 def get_asset_stats(symbol, endpoint="/rates"):
-    """Fetch Current and 24h ago stats for an asset"""
     try:
-        # Limit 48 to ensure we capture 24h ago even with minor gaps
         url = f"{API_URL}{endpoint}?symbol={symbol}&limit=48&resolution=1H"
-        # Using resolution=1H is safer for history comparison
         if endpoint == "/eth-prices":
             url = f"{API_URL}{endpoint}?limit=48&resolution=1H"
             
@@ -98,15 +93,9 @@ def get_asset_stats(symbol, endpoint="/rates"):
             return None, None
 
         current = data[0]
-        
-        # Find ~24h ago
-        # data is sorted DESC (newest first).
-        # We want timestamp closest to (current['timestamp'] - 86400)
         target_ts = current['timestamp'] - 86400
-        
-        # Search for closest match
         past = None
-        min_diff = 3600 * 2 # Tolerance window
+        min_diff = 3600 * 2
         
         for item in data:
             diff = abs(item['timestamp'] - target_ts)
@@ -119,92 +108,135 @@ def get_asset_stats(symbol, endpoint="/rates"):
         logger.error(f"Failed to fetch stats for {symbol}: {e}")
         return None, None
 
-def generate_hourly_report(is_healthy, latency):
+def generate_report():
+    is_healthy, latency = check_api_health()
     now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')
     status_emoji = "🟢" if is_healthy else "🔴"
     status_text = "Online" if is_healthy else "Offline"
     
-    report = f"📊 **Hourly System Report**\n🕒 `{now_str}`\n\n"
+    report = f"📊 **System Dashboard**\n🕒 `{now_str}`\n\n"
     report += f"**{status_emoji} API Status**: {status_text}\n"
     report += f"**⏱️ Response Time**: {latency}\n\n"
     
-    # 1. Market Rates
-    report += "**📉 Market Rates (24h Trend)**\n"
-    for symbol in ["USDC", "DAI", "USDT"]:
-        curr, past = get_asset_stats(symbol)
-        if curr:
-            rate = curr.get('apy', 0)
-            # Change
-            change_str = " (➖ 0.00%)"
-            if past:
-                old_rate = past.get('apy', 0)
-                delta = rate - old_rate
-                sign = "+" if delta >= 0 else ""
-                arrow = "⬆️" if delta > 0.05 else ("⬇️" if delta < -0.05 else "➖")
-                change_str = f" ({arrow} {sign}{delta:.2f}%)"
-            
-            report += f"• **{symbol}**: `{rate:.2f}%`{change_str}\n"
-        else:
-            report += f"• **{symbol}**: `N/A`\n"
+    if is_healthy:
+        report += "**📉 Market Rates (24h Trend)**\n"
+        for symbol in ["USDC", "DAI", "USDT"]:
+            curr, past = get_asset_stats(symbol)
+            if curr:
+                rate = curr.get('apy', 0)
+                change_str = " (➖ 0.00%)"
+                if past:
+                    old_rate = past.get('apy', 0)
+                    delta = rate - old_rate
+                    sign = "+" if delta >= 0 else ""
+                    arrow = "⬆️" if delta > 0.05 else ("⬇️" if delta < -0.05 else "➖")
+                    change_str = f" ({arrow} {sign}{delta:.2f}%)"
+                report += f"• **{symbol}**: `{rate:.2f}%`{change_str}\n"
+            else:
+                report += f"• **{symbol}**: `N/A`\n"
 
-    # 2. ETH Price
-    report += "\n"
-    curr_eth, past_eth = get_asset_stats("ETH", endpoint="/eth-prices")
-    if curr_eth:
-        price = curr_eth.get('price', 0)
-        change_str = " (➖ 0.0%)"
-        if past_eth:
-            old_price = past_eth.get('price', 0)
-            if old_price > 0:
-                delta_pct = ((price - old_price) / old_price) * 100
-                sign = "+" if delta_pct >= 0 else ""
-                arrow = "⬆️" if delta_pct > 0.5 else ("⬇️" if delta_pct < -0.5 else "➖")
-                change_str = f" ({arrow} {sign}{delta_pct:.1f}%)"
+        report += "\n"
+        curr_eth, past_eth = get_asset_stats("ETH", endpoint="/eth-prices")
+        if curr_eth:
+            price = curr_eth.get('price', 0)
+            change_str = " (➖ 0.0%)"
+            if past_eth:
+                old_price = past_eth.get('price', 0)
+                if old_price > 0:
+                    delta_pct = ((price - old_price) / old_price) * 100
+                    sign = "+" if delta_pct >= 0 else ""
+                    arrow = "⬆️" if delta_pct > 0.5 else ("⬇️" if delta_pct < -0.5 else "➖")
+                    change_str = f" ({arrow} {sign}{delta_pct:.1f}%)"
+            report += f"**💎 ETH Price**: `${price:,.2f}`{change_str}\n"
         
-        report += f"**💎 ETH Price**: `${price:,.2f}`{change_str}\n"
+        report += "\n**✅ Check**: Stable"
+    else:
+        report += "\n⚠️ **System is DOWN**"
     
-    # 3. Overall Check
-    report += "\n**✅ Check**: Stable"
     return report
 
-def monitor_loop():
-    logger.info("🤖 Monitor Bot Started")
-    send_telegram_message("🤖 **Monitor Bot Started**\nWatching System...")
+def get_dashboard_markup():
+    return {"inline_keyboard": [[{"text": "🔄 Refresh", "callback_data": "refresh"}]]}
 
+# --- MAIN LOOP ---
+def monitor_loop():
+    global CHAT_ID
+    logger.info("🤖 Interactive Monitor Bot Started")
+    
+    if CHAT_ID:
+        send_message(CHAT_ID, "🤖 **Interactive Bot Started**\nSend /start to open dashboard.")
+
+    offset = 0
+    last_check_time = 0
     status_ok = True
     last_report_hour = -1
 
     while True:
-        # 1. Check API Health
-        is_healthy, latency_or_error = check_api_health()
-        
-        # State Change Alerts
-        if status_ok and not is_healthy:
-            status_ok = False
-            msg = f"🚨 **ALERT: System DOWN** 🚨\nReason: `{latency_or_error}`\nTime: {datetime.utcnow().strftime('%H:%M:%S UTC')}"
-            logger.error("System went DOWN")
-            send_telegram_message(msg)
-        
-        elif not status_ok and is_healthy:
-            status_ok = True
-            msg = f"✅ **RECOVERY: System UP**\nTime: {datetime.utcnow().strftime('%H:%M:%S UTC')}"
-            logger.info("System Recovered")
-            send_telegram_message(msg)
+        # A. Background Health Check & Alerts (Every 60s)
+        if time.time() - last_check_time > INTERVAL:
+            last_check_time = time.time()
+            is_healthy, reason = check_api_health()
+            
+            if status_ok and not is_healthy:
+                status_ok = False
+                if CHAT_ID:
+                    send_message(CHAT_ID, f"🚨 **ALERT: System DOWN** 🚨\nReason: `{reason}`")
+            elif not status_ok and is_healthy:
+                status_ok = True
+                if CHAT_ID:
+                    send_message(CHAT_ID, "✅ **RECOVERY: System UP**")
+            
+            # Hourly Report
+            now = datetime.now()
+            if now.minute == 0 and now.hour != last_report_hour and CHAT_ID:
+                 if is_healthy:
+                    report = generate_report()
+                    # Determine title (this is auto-report)
+                    report = report.replace("System Dashboard", "Hourly Autoscan")
+                    send_message(CHAT_ID, report)
+                 last_report_hour = now.hour
 
-        # 2. Hourly Report (Every hour at :00)
-        now = datetime.now()
-        if now.minute == 0 and now.hour != last_report_hour:
-             # Wait a few seconds to let backend stabilize if just restarted/hourly tasks running
-            if is_healthy:
-                logger.info("Generating Hourly Report...")
-                report = generate_hourly_report(is_healthy, latency_or_error)
-                send_telegram_message(report)
-                last_report_hour = now.hour
-            else:
-                send_telegram_message("⚠️ **Hourly Report Skipped**: System is DOWN.")
-                last_report_hour = now.hour
+        # B. Long Polling for Updates (Timeout 5s to allow loop to cycle)
+        try:
+            updates_res = tg_request("getUpdates", {"offset": offset, "timeout": 5})
+            
+            if updates_res and updates_res.get("ok"):
+                for update in updates_res["result"]:
+                    offset = update["update_id"] + 1
+                    
+                    # 1. Handle Message (Commands)
+                    if "message" in update:
+                        msg = update["message"]
+                        chat = msg.get("chat", {}).get("id")
+                        text = msg.get("text", "")
+                        
+                        if chat:
+                            CHAT_ID = str(chat) # Auto-save chat ID
+                        
+                        if text == "/start" or text == "/status":
+                            report = generate_report()
+                            send_message(CHAT_ID, report, get_dashboard_markup())
+                    
+                    # 2. Handle Callback Query (Buttons)
+                    if "callback_query" in update:
+                        cb = update["callback_query"]
+                        cb_id = cb["id"]
+                        chat_id = cb["message"]["chat"]["id"]
+                        msg_id = cb["message"]["message_id"]
+                        data = cb["data"]
+                        
+                        if data == "refresh":
+                            # Acknowledge click immediately
+                            answer_callback(cb_id, "Refreshing data...")
+                            # Generate new report
+                            new_report = generate_report()
+                            # Edit message
+                            edit_message(chat_id, msg_id, new_report, get_dashboard_markup())
 
-        time.sleep(INTERVAL)
+        except Exception as e:
+            logger.error(f"Polling Loop Error: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
     monitor_loop()
+
