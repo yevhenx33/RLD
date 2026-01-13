@@ -71,7 +71,7 @@ def answer_callback(callback_query_id, text=None):
 def check_api_health():
     try:
         start = time.time()
-        res = requests.get(f"{API_URL}/", timeout=5)
+        res = requests.get(f"{API_URL}/", headers=get_headers(), timeout=5)
         latency = (time.time() - start) * 1000
         if res.status_code == 200:
             return True, f"{int(latency)}ms"
