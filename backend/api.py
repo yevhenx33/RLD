@@ -12,6 +12,7 @@ import os
 from collections import defaultdict
 import logging
 import re
+from cachetools import TTLCache
 
 # --- Logging Config ---
 logging.basicConfig(
@@ -117,19 +118,14 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-# 3. Simple In-Memory Cache (TTL: 20s)
-CACHE_STORE = {}
-CACHE_TTL = 20 
+# 3. Secure In-Memory Cache (TTL: 20s, Max: 1000 items)
+CACHE_STORE = TTLCache(maxsize=1000, ttl=20)
 
 def get_from_cache(key):
-    if key in CACHE_STORE:
-        val, timestamp = CACHE_STORE[key]
-        if time.time() - timestamp < CACHE_TTL:
-            return val
-    return None
+    return CACHE_STORE.get(key)
 
 def set_cache(key, val):
-    CACHE_STORE[key] = (val, time.time())
+    CACHE_STORE[key] = val
 
 @app.get("/rates")
 def get_rates(

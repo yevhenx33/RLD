@@ -32,6 +32,11 @@ def init_db():
         )
     """)
     
+    # Enable WAL Mode for Concurrency
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
+    
+    
     conn.commit()
     conn.close()
     print("✅ Database initialized successfully.")
