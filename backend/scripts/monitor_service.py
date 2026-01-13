@@ -16,10 +16,12 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env"))
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
 
 # --- CONFIG ---
+# --- CONFIG ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 API_KEY = os.getenv("API_KEY") 
-API_URL = "http://localhost:8000"
+PORT = os.getenv("PORT", "10000")
+API_URL = f"http://localhost:{PORT}"
 
 # Refresh Interval for Background Checks
 INTERVAL = 60
@@ -151,7 +153,11 @@ def generate_report():
         
         report += "\n**✅ Check**: Stable"
     else:
-        report += "\n⚠️ **System is DOWN**"
+        # Sanitize error message (if it's long)
+        error_msg = str(latency)
+        if len(error_msg) > 100:
+            error_msg = error_msg[:100] + "..."
+        report += f"\n⚠️ **System is DOWN**\nReason: `{error_msg}`"
     
     return report
 
@@ -180,7 +186,11 @@ def monitor_loop():
             if status_ok and not is_healthy:
                 status_ok = False
                 if CHAT_ID:
-                    send_message(CHAT_ID, f"🚨 **ALERT: System DOWN** 🚨\nReason: `{reason}`")
+                    # Sanitize error
+                    reason_safe = str(reason)
+                    if len(reason_safe) > 100:
+                         reason_safe = reason_safe[:100] + "..."
+                    send_message(CHAT_ID, f"🚨 **ALERT: System DOWN** 🚨\nReason: `{reason_safe}`")
             elif not status_ok and is_healthy:
                 status_ok = True
                 if CHAT_ID:
