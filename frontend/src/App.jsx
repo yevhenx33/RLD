@@ -743,6 +743,7 @@ function App() {
                   <RLDPerformanceChart
                     data={chartData}
                     onDataChange={setVisibleChartData}
+                    resolution={resolution}
                     areas={[
                       { key: "apy", name: "Spot", color: "#22d3ee" },
                       { key: "ethPrice", name: "ETH Price", color: "#a1a1aa", yAxisId: "right" },

@@ -330,23 +330,34 @@ const RLDPerformanceChart = ({ data, areas = [], referenceLines = [], resolution
   }, [data]); // Only re-bind if data changes
 
   const formatTick = (unix) => {
-    // Dynamic formatting based on visible duration
+    const date = new Date(unix * 1000);
+    
+    // 1. Daily/Weekly: Always show Date + Year (No Time)
+    if (resolution === "1D" || resolution === "1W") {
+        return date.toLocaleDateString("en-US", { 
+            month: "short", 
+            day: "numeric",
+            year: "2-digit"
+        }); // e.g. "Oct 24, 24"
+    }
+
+    // 2. Intraday: Dynamic based on zoom
     if (!visibleData.length) return "";
     const vStart = visibleData[0].timestamp;
     const vEnd = visibleData[visibleData.length - 1].timestamp;
     const vDuration = vEnd - vStart;
 
-    const date = new Date(unix * 1000);
     if (vDuration < 172800) { // < 2 Days
-      return date.toLocaleTimeString([], {
+      return date.toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
+        hour12: false 
       });
     }
     if (vDuration < 15552000) { // < 6 Months
-      return date.toLocaleDateString([], { month: "short", day: "numeric" });
+      return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
     }
-    return date.toLocaleDateString([], { month: "short", year: "2-digit" });
+    return date.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
   };
 
   return (

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Loader2, TrendingUp, ArrowUpRight, Shield, Globe, Zap, Wallet, BarChart3, Clock, Activity, ChevronDown, Check } from 'lucide-react';
+import { Loader2, TrendingUp, ArrowUpRight, Shield, Globe, Zap, Wallet, BarChart3, Clock, Activity, ChevronDown, Check, Download } from 'lucide-react';
 import { JsonRpcProvider, Contract, formatUnits } from 'ethers';
 import useSWR from 'swr';
 import axios from 'axios';
@@ -518,10 +518,33 @@ export default function Markets() {
                                    </div>
                                ))}
                            </div>
+                           
+                           {/* Download Button */}
+                           <button 
+                                onClick={() => {
+                                    const svg = document.querySelector("#markets-chart-container svg");
+                                    if (!svg) return;
+                                    const serializer = new XMLSerializer();
+                                    let source = serializer.serializeToString(svg);
+                                    if(!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)){
+                                        source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+                                    }
+                                    const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(source);
+                                    const link = document.createElement("a");
+                                    link.href = url;
+                                    link.download = `rate-dashboard-chart-${new Date().toISOString().split('T')[0]}.svg`;
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                }}
+                                className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors uppercase tracking-widest"
+                           >
+                               <Download size={14} /> SVG
+                           </button>
 
                        </div>
                        
-                       <div className="h-[350px] md:h-[500px] w-full">
+                       <div id="markets-chart-container" className="h-[350px] md:h-[500px] w-full">
                            {!usdcHistory ? (
                                <div className="h-full flex items-center justify-center">
                                    <Loader2 className="animate-spin text-gray-700" />
