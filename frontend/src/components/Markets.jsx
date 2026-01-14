@@ -524,12 +524,66 @@ export default function Markets() {
                                 onClick={() => {
                                     const svg = document.querySelector("#markets-chart-container svg");
                                     if (!svg) return;
+                                    
+                                    // 1. Get Setup
+                                    const rect = svg.getBoundingClientRect();
+                                    const width = rect.width;
+                                    const height = rect.height;
+                                    const legendHeight = 40;
+                                    const fontStyle = "font-family: monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;";
+                                    
+                                    // 2. Build Legend SVG
+                                    let legendContent = "";
+                                    let currentX = 20;
+                                    
+                                    SERIES_CONFIG.forEach(series => {
+                                        if (hiddenSeries.has(series.key)) return;
+                                        
+                                        // Box
+                                        legendContent += `<rect x="${currentX}" y="0" width="10" height="10" fill="${series.color}" />`;
+                                        
+                                        // Text
+                                        // Approx width calc: 7px per char
+                                        const labelWidth = series.label.length * 8; 
+                                        legendContent += `<text x="${currentX + 16}" y="9" fill="#000000" style="${fontStyle}">${series.label}</text>`;
+                                        
+                                        currentX += 16 + labelWidth + 20; 
+                                    });
+
+                                    // 3. Serialize & Combine
                                     const serializer = new XMLSerializer();
-                                    let source = serializer.serializeToString(svg);
-                                    if(!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)){
-                                        source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+                                    let sourceChart = serializer.serializeToString(svg);
+                                    
+                                    // Ensure xmlns
+                                    if(!sourceChart.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)){
+                                        sourceChart = sourceChart.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
                                     }
-                                    const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(source);
+
+                                    const finalSvg = `
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height + legendHeight}" viewBox="0 0 ${width} ${height + legendHeight}">
+                                            <defs>
+                                                <style>
+                                                    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&amp;display=swap');
+                                                    text { font-family: monospace !important; fill: #000000 !important; }
+                                                    .recharts-cartesian-grid line { stroke: #e5e5e5 !important; }
+                                                    .recharts-cartesian-axis-line { stroke: #000000 !important; }
+                                                    .recharts-cartesian-axis-tick-line { stroke: #000000 !important; }
+                                                </style>
+                                            </defs>
+                                            <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+                                            
+                                            <g transform="translate(0, 15)">
+                                                ${legendContent}
+                                            </g>
+                                            
+                                            <g transform="translate(0, ${legendHeight})">
+                                                ${sourceChart}
+                                            </g>
+                                        </svg>
+                                    `;
+
+                                    // 4. Download
+                                    const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(finalSvg);
                                     const link = document.createElement("a");
                                     link.href = url;
                                     link.download = `rate-dashboard-chart-${new Date().toISOString().split('T')[0]}.svg`;
@@ -537,7 +591,7 @@ export default function Markets() {
                                     link.click();
                                     document.body.removeChild(link);
                                 }}
-                                className="flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors uppercase tracking-widest"
+                                className="hidden md:flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors uppercase tracking-widest"
                            >
                                <Download size={14} /> SVG
                            </button>
