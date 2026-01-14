@@ -6,6 +6,7 @@ import axios from 'axios';
 import { API_BASE, authHeaders, fetcher } from '../utils/helpers';
 import RLDPerformanceChart from './RLDChart';
 import SettingsButton from './SettingsButton';
+import MobileDropdown from './MobileDropdown';
 
 // --- HELPER FUNCTIONS ---
 const getPastDate = (days) => {
