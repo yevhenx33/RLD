@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import Header from './Header';
 import axios from 'axios';
+import { API_BASE, authHeaders } from '../utils/helpers';
 
 export default function Layout() {
     const [headerData, setHeaderData] = useState({
@@ -14,10 +15,7 @@ export default function Layout() {
         const fetchStatus = async () => {
             try {
                 // Lightweight fetch for status only
-                const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://rate-dashboard.onrender.com";
-                const API_KEY = import.meta.env.VITE_API_KEY;
-                const headers = API_KEY ? { "X-API-Key": API_KEY } : {};
-                const res = await axios.get(`${API_BASE}/rates?resolution=RAW&limit=1`, { headers });
+                const res = await axios.get(`${API_BASE}/rates?resolution=RAW&limit=1`, { headers: authHeaders });
                 const data = res.data;
                 
                 if (data && data.length > 0) {
