@@ -3,14 +3,9 @@ import { Loader2, TrendingUp, ArrowUpRight, Shield, Globe, Zap, Wallet, BarChart
 import { JsonRpcProvider, Contract, formatUnits } from 'ethers';
 import useSWR from 'swr';
 import axios from 'axios';
+import { API_BASE, authHeaders, fetcher } from '../utils/helpers';
 import RLDPerformanceChart from './RLDChart';
 import SettingsButton from './SettingsButton';
-import MobileDropdown from './MobileDropdown';
-
-const API_KEY = import.meta.env.VITE_API_KEY;
-const authHeaders = API_KEY ? { "X-API-Key": API_KEY } : {};
-
-const fetcher = (url) => axios.get(url, { headers: authHeaders }).then((res) => res.data);
 
 // --- HELPER FUNCTIONS ---
 const getPastDate = (days) => {

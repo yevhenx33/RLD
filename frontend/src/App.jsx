@@ -22,12 +22,8 @@ import Header from "./components/Header";
 import TradingTerminal, { InputGroup, SummaryRow } from "./components/TradingTerminal";
 import SettingsButton from "./components/SettingsButton";
 import MobileDropdown from "./components/MobileDropdown";
-const API_KEY = import.meta.env.VITE_API_KEY;
-const authHeaders = API_KEY ? { "X-API-Key": API_KEY } : {};
+import { API_BASE, authHeaders, fetcher } from "./utils/helpers";
 
-const fetcher = (url) => axios.get(url, { headers: authHeaders }).then((res) => res.data);
-
-// --- HELPER FUNCTIONS ---
 const getPastDate = (days) => {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -126,7 +122,6 @@ function App() {
   };
 
   const getUrl = () => {
-    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
     let url = `${API_BASE}/rates?resolution=${resolution}`;
     if (appliedStart) url += `&start_date=${appliedStart}`;
     if (appliedEnd) url += `&end_date=${appliedEnd}`;
@@ -135,7 +130,6 @@ function App() {
 
   const handleDownloadCSV = async () => {
     try {
-      const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
       // Fetch full history (approx 45k hours since 2021). Limit to 100k safe.
       const url = `${API_BASE}/rates?resolution=1H&limit=100000`;
       const res = await axios.get(url, { headers: authHeaders });
@@ -216,7 +210,6 @@ function App() {
 
   // Fetch ETH Prices
   const getEthUrl = () => {
-    const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
     let url = `${API_BASE}/eth-prices?resolution=${resolution}`;
     if (appliedStart) url += `&start_date=${appliedStart}`;
     if (appliedEnd) url += `&end_date=${appliedEnd}`;
