@@ -466,13 +466,13 @@ function App() {
                     </div>
 
                     {/* DESKTOP LAYOUT (Original MetricBox Content) */}
-                    <div className="hidden md:block h-full">
+                    <div className="hidden md:flex flex-col justify-between h-full">
                         <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
                             CURRENT_SPOT <Terminal size={15} className="opacity-90" />
                         </div>
                         <div>
                             <div className="text-3xl font-light text-white mb-2 tracking-tight">
-                            {latest.apy.toFixed(2)}
+                            {latest.apy.toFixed(3)}
                             <span className="text-sm text-gray-600 ml-1">%</span>
                             </div>
                             <div className="text-[12px] text-gray-500 uppercase tracking-widest">
@@ -614,26 +614,24 @@ function App() {
                     ))}
                 </div>
               </ControlCell>
-              <ControlCell label="CUSTOM_RANGE" className="hidden md:flex">
-                <div className="flex flex-col sm:flex-row items-center justify-between h-auto sm:h-[30px] w-full gap-2">
-                  <div className="flex items-center w-full sm:w-[76%] gap-2">
-                      <input
-                        type="date"
-                        value={tempStart}
-                        onChange={(e) => setTempStart(e.target.value)}
-                        className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-1/2 py-1 rounded-none"
-                      />
-                      <span className="text-gray-600 text-xs">-</span>
-                      <input
-                        type="date"
-                        value={tempEnd}
-                        onChange={(e) => setTempEnd(e.target.value)}
-                        className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono w-1/2 py-1 rounded-none"
-                      />
-                  </div>
+              <ControlCell label="CUSTOM_RANGE" className="pr-0 hidden md:flex">
+                <div className="flex items-center justify-between h-[30px] w-full gap-2">
+                  <input
+                    type="date"
+                    value={tempStart}
+                    onChange={(e) => setTempStart(e.target.value)}
+                    className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
+                  />
+                  <span className="text-gray-600 text-xs">-</span>
+                  <input
+                    type="date"
+                    value={tempEnd}
+                    onChange={(e) => setTempEnd(e.target.value)}
+                    className="bg-transparent border-b border-white/20 text-xs text-white focus:outline-none focus:border-white font-mono flex-1 py-1 rounded-none text-center"
+                  />
                   <SettingsButton
                     onClick={handleApplyDate}
-                    className="px-3 h-full flex items-center w-full sm:w-auto mt-2 sm:mt-0"
+                    className="px-3 h-full flex items-center"
                   >
                     SET
                   </SettingsButton>

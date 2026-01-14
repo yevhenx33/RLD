@@ -394,7 +394,7 @@ export default function Markets() {
                 </div>
 
                 {/* HERO STATS */}
-                <div className="mb-6 border-y border-white/10 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
+                <div className="mb-6 border-y border-x border-white/10 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
                     <MarketMetricBox 
                         label="TOTAL_ACTIVE_DEBT" 
                         value={loading ? "..." : formatCurrency(stats.totalDebt)}
