@@ -19,7 +19,10 @@ import RLDPerformanceChart from "./components/RLDChart";
 
 import { useWallet } from "./context/WalletContext";
 import Header from "./components/Header";
-import TradingTerminal, { InputGroup, SummaryRow } from "./components/TradingTerminal";
+import TradingTerminal, {
+  InputGroup,
+  SummaryRow,
+} from "./components/TradingTerminal";
 import SettingsButton from "./components/SettingsButton";
 import MobileDropdown from "./components/MobileDropdown";
 import { API_BASE, authHeaders, fetcher } from "./utils/helpers";
@@ -41,23 +44,24 @@ const formatTwarLabel = (seconds) => {
 };
 
 const calculateCorrelation = (x, y) => {
-    if (x.length !== y.length || x.length === 0) return 0;
-    const n = x.length;
-    const sumX = x.reduce((a, b) => a + b, 0);
-    const sumY = y.reduce((a, b) => a + b, 0);
-    const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
-    const sumX2 = x.reduce((sum, xi) => sum + xi * xi, 0);
-    const sumY2 = y.reduce((sum, yi) => sum + yi * yi, 0);
+  if (x.length !== y.length || x.length === 0) return 0;
+  const n = x.length;
+  const sumX = x.reduce((a, b) => a + b, 0);
+  const sumY = y.reduce((a, b) => a + b, 0);
+  const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+  const sumX2 = x.reduce((sum, xi) => sum + xi * xi, 0);
+  const sumY2 = y.reduce((sum, yi) => sum + yi * yi, 0);
 
-    const numerator = n * sumXY - sumX * sumY;
-    const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
-    
-    if (denominator === 0) return 0;
-    return numerator / denominator;
+  const numerator = n * sumXY - sumX * sumY;
+  const denominator = Math.sqrt(
+    (n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY)
+  );
+
+  if (denominator === 0) return 0;
+  return numerator / denominator;
 };
 
 // --- APP COMPONENT ---
-
 
 // --- APP COMPONENT ---
 function App() {
@@ -83,17 +87,13 @@ function App() {
   // PnL Simulation State
   const [simTargetRate, setSimTargetRate] = useState(null);
 
-
-
   // --- VISIBILITY STATE ---
   const [hiddenSeries, setHiddenSeries] = useState([]);
   const [visibleChartData, setVisibleChartData] = useState([]); // Zoomed data from chart
 
   const toggleSeries = (key) => {
-    setHiddenSeries(prev => 
-      prev.includes(key) 
-        ? prev.filter(k => k !== key)
-        : [...prev, key]
+    setHiddenSeries((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
     );
   };
 
@@ -140,45 +140,59 @@ function App() {
         return;
       }
 
-      const headers = "Timestamp,Date (UTC),APY (%),RATE_TWAR (%),ETH Price ($)\n";
-      
+      const headers =
+        "Timestamp,Date (UTC),APY (%),RATE_TWAR (%),ETH Price ($)\n";
+
       // Calculate TWAR for CSV
       const historyQueue = [];
       let runningArea = 0;
       let runningTime = 0;
-      
-      const rows = data.map((row, i) => {
-        // TWAR Logic
-        const prevTs = i > 0 ? data[i - 1].timestamp : row.timestamp;
-        let dt = row.timestamp - prevTs;
-        if (dt < 0) dt = 0;
-        
-        const apy = row.apy !== null && row.apy !== undefined ? row.apy : 0;
-        const stepArea = apy * dt;
-        historyQueue.push({ dt, area: stepArea, timestamp: row.timestamp });
-        runningArea += stepArea;
-        runningTime += dt;
-        
-        while (historyQueue.length > 0 && row.timestamp - historyQueue[0].timestamp > twarWindow) {
-             const removed = historyQueue.shift();
-             runningArea -= removed.area;
-             runningTime -= removed.dt;
-        }
-        let twar = runningTime > 0 ? runningArea / runningTime : apy;
-        twar = Math.max(0, twar);
 
-        const date = new Date(row.timestamp * 1000).toISOString().replace("T", " ").replace("Z", "");
-        const price = row.eth_price ? row.eth_price.toFixed(2) : "";
-        return `${row.timestamp},${date},${apy.toFixed(4)},${twar.toFixed(4)},${price}`;
-      }).join("\n");
+      const rows = data
+        .map((row, i) => {
+          // TWAR Logic
+          const prevTs = i > 0 ? data[i - 1].timestamp : row.timestamp;
+          let dt = row.timestamp - prevTs;
+          if (dt < 0) dt = 0;
+
+          const apy = row.apy !== null && row.apy !== undefined ? row.apy : 0;
+          const stepArea = apy * dt;
+          historyQueue.push({ dt, area: stepArea, timestamp: row.timestamp });
+          runningArea += stepArea;
+          runningTime += dt;
+
+          while (
+            historyQueue.length > 0 &&
+            row.timestamp - historyQueue[0].timestamp > twarWindow
+          ) {
+            const removed = historyQueue.shift();
+            runningArea -= removed.area;
+            runningTime -= removed.dt;
+          }
+          let twar = runningTime > 0 ? runningArea / runningTime : apy;
+          twar = Math.max(0, twar);
+
+          const date = new Date(row.timestamp * 1000)
+            .toISOString()
+            .replace("T", " ")
+            .replace("Z", "");
+          const price = row.eth_price ? row.eth_price.toFixed(2) : "";
+          return `${row.timestamp},${date},${apy.toFixed(4)},${twar.toFixed(
+            4
+          )},${price}`;
+        })
+        .join("\n");
 
       const csvContent = headers + rows;
       const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       const urlObj = URL.createObjectURL(blob);
-      
+
       link.setAttribute("href", urlObj);
-      link.setAttribute("download", `aave_usdc_rates_full_history_${getToday()}.csv`);
+      link.setAttribute(
+        "download",
+        `aave_usdc_rates_full_history_${getToday()}.csv`
+      );
       link.style.visibility = "hidden";
       document.body.appendChild(link);
       link.click();
@@ -199,10 +213,10 @@ function App() {
     if (activeRange !== "CUSTOM" && rates && rates.length > 0) {
       const firstTs = rates[0].timestamp;
       const lastTs = rates[rates.length - 1].timestamp;
-      
+
       const startStr = new Date(firstTs * 1000).toISOString().split("T")[0];
       const endStr = new Date(lastTs * 1000).toISOString().split("T")[0];
-      
+
       setTempStart(startStr);
       setTempEnd(endStr);
     }
@@ -220,74 +234,81 @@ function App() {
   // Calculations
   const processedData = useMemo(() => {
     if (!rates || rates.length === 0) return [];
-    
+
     // ETH Price Map
     const priceMap = new Map();
     if (ethPrices && ethPrices.length > 0) {
-        ethPrices.forEach(p => priceMap.set(p.timestamp, p.price));
+      ethPrices.forEach((p) => priceMap.set(p.timestamp, p.price));
     }
 
     const result = [];
     const historyQueue = [];
     let runningArea = 0;
     let runningTime = 0;
-    
+
     // Determine bucket size for matching
     // If RAW, we match to the nearest hour (3600)
     // If others, we match to that resolution
-    const bucketSize = resolution === "1W" ? 604800 :
-                       resolution === "4H" ? 14400 : 
-                       resolution === "1D" ? 86400 : 3600;
+    const bucketSize =
+      resolution === "1W"
+        ? 604800
+        : resolution === "4H"
+        ? 14400
+        : resolution === "1D"
+        ? 86400
+        : 3600;
 
     for (let i = 0; i < rates.length; i++) {
-        const current = rates[i];
-        
-        // --- TWAR Logic ---
-        const prevTs = i > 0 ? rates[i - 1].timestamp : current.timestamp;
-        let dt = current.timestamp - prevTs;
-        if (dt < 0) dt = 0;
-        
-        const apy = current.apy !== null && current.apy !== undefined ? current.apy : 0;
-        const stepArea = apy * dt;
-        
-        historyQueue.push({
-            dt: dt,
-            area: stepArea,
-            timestamp: current.timestamp,
-        });
-        runningArea += stepArea;
-        runningTime += dt;
-        
-        while (
-            historyQueue.length > 0 &&
-            current.timestamp - historyQueue[0].timestamp > twarWindow
-        ) {
-            const removed = historyQueue.shift();
-            runningArea -= removed.area;
-            runningTime -= removed.dt;
+      const current = rates[i];
+
+      // --- TWAR Logic ---
+      const prevTs = i > 0 ? rates[i - 1].timestamp : current.timestamp;
+      let dt = current.timestamp - prevTs;
+      if (dt < 0) dt = 0;
+
+      const apy =
+        current.apy !== null && current.apy !== undefined ? current.apy : 0;
+      const stepArea = apy * dt;
+
+      historyQueue.push({
+        dt: dt,
+        area: stepArea,
+        timestamp: current.timestamp,
+      });
+      runningArea += stepArea;
+      runningTime += dt;
+
+      while (
+        historyQueue.length > 0 &&
+        current.timestamp - historyQueue[0].timestamp > twarWindow
+      ) {
+        const removed = historyQueue.shift();
+        runningArea -= removed.area;
+        runningTime -= removed.dt;
+      }
+      let twarValue = runningTime > 0 ? runningArea / runningTime : apy;
+      twarValue = Math.max(0, twarValue);
+
+      // Lookup Price (Loose Matching)
+      // 1. Check if backend already provided it (Aggregated Mode)
+      let price = current.eth_price;
+
+      if (price === undefined || price === null) {
+        // 2. Fallback: Client-side Map Lookup
+        price = priceMap.get(current.timestamp);
+
+        if (price === undefined) {
+          const bucketTs =
+            Math.floor(current.timestamp / bucketSize) * bucketSize;
+          price = priceMap.get(bucketTs);
         }
-        let twarValue = runningTime > 0 ? runningArea / runningTime : apy;
-        twarValue = Math.max(0, twarValue);
+      }
 
-        // Lookup Price (Loose Matching)
-        // 1. Check if backend already provided it (Aggregated Mode)
-        let price = current.eth_price;
-
-        if (price === undefined || price === null) {
-            // 2. Fallback: Client-side Map Lookup
-            price = priceMap.get(current.timestamp);
-            
-            if (price === undefined) {
-                 const bucketTs = Math.floor(current.timestamp / bucketSize) * bucketSize;
-                 price = priceMap.get(bucketTs);
-            }
-        }
-
-        result.push({ 
-            ...current, 
-            twar: twarValue,
-            ethPrice: price || null
-        });
+      result.push({
+        ...current,
+        twar: twarValue,
+        ethPrice: price || null,
+      });
     }
     return result;
   }, [rates, ethPrices, twarWindow, resolution]);
@@ -331,10 +352,10 @@ function App() {
   // Recharts crashes with >3-5k points (SVG overload).
   // We limit to ~2000 visual points.
   const chartData = useMemo(() => {
-     if (processedData.length <= 2000) return processedData;
-     
-     const step = Math.ceil(processedData.length / 2000);
-     return processedData.filter((_, i) => i % step === 0);
+    if (processedData.length <= 2000) return processedData;
+
+    const step = Math.ceil(processedData.length / 2000);
+    return processedData.filter((_, i) => i % step === 0);
   }, [processedData]);
 
   // const isCappedRaw = resolution === "RAW" && rates && rates.length >= 30000;
@@ -443,57 +464,62 @@ function App() {
 
               <div className="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-white/10">
                 {/* CARD 1: CURRENT SPOT + 24H CHANGE */}
-                <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]"> 
-                    {/* MOBILE LAYOUT (Grid Row) */}
-                    <div className="md:hidden h-full flex flex-col justify-between">
-                         <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
-                            CURRENT_SPOT <Terminal size={15} className="opacity-90" />
-                          </div>
-                          <div className="grid grid-cols-2 gap-x-4 mt-auto">
-                            <StatItem
-                              label="SPOT_RATE"
-                              value={`${latest.apy.toFixed(2)}%`}
-                            />
-                            <div>
-                                <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">
-                                    24H_CHANGE
-                                </div>
-                                <div className={`text-xl font-light font-mono tracking-tighter flex items-center gap-1 ${dailyChange >= 0 ? "text-green-500" : "text-red-500"}`}>
-                                    {dailyChange > 0 ? "+" : ""}{dailyChange.toFixed(2)}%
-                                </div>
-                            </div>
-                          </div>
+                <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
+                  {/* MOBILE LAYOUT (Grid Row) */}
+                  <div className="md:hidden h-full flex flex-col justify-between">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+                      CURRENT_SPOT <Terminal size={15} className="opacity-90" />
                     </div>
+                    <div className="grid grid-cols-2 gap-x-4 mt-auto">
+                      <StatItem
+                        label="SPOT_RATE"
+                        value={`${latest.apy.toFixed(2)}%`}
+                      />
+                      <div>
+                        <div className="text-[10px] text-gray-400 uppercase tracking-widest mb-1">
+                          24H_CHANGE
+                        </div>
+                        <div
+                          className={`text-xl font-light font-mono tracking-tighter flex items-center gap-1 ${
+                            dailyChange >= 0 ? "text-green-500" : "text-red-500"
+                          }`}
+                        >
+                          {dailyChange > 0 ? "+" : ""}
+                          {dailyChange.toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
-                    {/* DESKTOP LAYOUT (Original MetricBox Content) */}
-                    <div className="hidden md:flex flex-col justify-between h-full">
-                        <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
-                            CURRENT_SPOT <Terminal size={15} className="opacity-90" />
-                        </div>
-                        <div>
-                            <div className="text-3xl font-light text-white mb-2 tracking-tight">
-                            {latest.apy.toFixed(3)}
-                            <span className="text-sm text-gray-600 ml-1">%</span>
-                            </div>
-                            <div className="text-[12px] text-gray-500 uppercase tracking-widest">
-                                <div
-                                className={`flex items-center gap-2 ${
-                                    dailyChange >= 0 ? "text-green-500" : "text-red-500"
-                                }`}
-                                >
-                                {dailyChange >= 0 ? (
-                                    <TrendingUp size={15} />
-                                ) : (
-                                    <TrendingDown size={15} />
-                                )}
-                                <span className="font-bold">
-                                    24H: {dailyChange > 0 ? "+" : ""}
-                                    {dailyChange.toFixed(2)}%
-                                </span>
-                                </div>
-                            </div>
-                        </div>
+                  {/* DESKTOP LAYOUT (Original MetricBox Content) */}
+                  <div className="hidden md:flex flex-col justify-between h-full">
+                    <div className="text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+                      CURRENT_SPOT <Terminal size={15} className="opacity-90" />
                     </div>
+                    <div>
+                      <div className="text-3xl font-light text-white mb-2 tracking-tight">
+                        {latest.apy.toFixed(3)}
+                        <span className="text-sm text-gray-600 ml-1">%</span>
+                      </div>
+                      <div className="text-[12px] text-gray-500 uppercase tracking-widest">
+                        <div
+                          className={`flex items-center gap-2 ${
+                            dailyChange >= 0 ? "text-green-500" : "text-red-500"
+                          }`}
+                        >
+                          {dailyChange >= 0 ? (
+                            <TrendingUp size={15} />
+                          ) : (
+                            <TrendingDown size={15} />
+                          )}
+                          <span className="font-bold">
+                            24H: {dailyChange > 0 ? "+" : ""}
+                            {dailyChange.toFixed(2)}%
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* CARD 2: PERIOD STATS */}
@@ -501,12 +527,14 @@ function App() {
                   <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
                     PERIOD_STATS <Activity size={15} className="opacity-90" />
                   </div>
-                  
+
                   {/* MOBILE: Range & Volatility Only (Row Layout like Funding Rate) */}
                   <div className="md:hidden grid grid-cols-2 gap-x-4 mt-auto">
                     <StatItem
                       label="RANGE[MIN - MAX]"
-                      value={`${stats.min.toFixed(2)} - ${stats.max.toFixed(2)}`}
+                      value={`${stats.min.toFixed(2)} - ${stats.max.toFixed(
+                        2
+                      )}`}
                     />
                     <StatItem
                       label="VOLATILITY"
@@ -556,62 +584,68 @@ function App() {
 
             {/* 2. CONTROLS */}
             <div className="order-last md:order-none border-y border-white/10 grid grid-cols-2 xl:grid-cols-4">
-              <ControlCell label="TIMEFRAME" className="pl-0 border-r md:border-r-0 border-white/10 pr-4 md:pr-4">
+              <ControlCell
+                label="TIMEFRAME"
+                className="pl-0 border-r md:border-r-0 border-white/10 pr-4 md:pr-4"
+              >
                 {/* Mobile Dropdown */}
-                <MobileDropdown 
-                    value={activeRange} 
-                    options={[
-                        { label: "1D", value: { d: 1, l: "1D" } },
-                        { label: "1W", value: { d: 7, l: "1W" } },
-                        { label: "1M", value: { d: 30, l: "1M" } },
-                        { label: "3M", value: { d: 90, l: "3M" } },
-                        { label: "1Y", value: { d: 365, l: "1Y" } },
-                        { label: "ALL", value: { d: 9999, l: "ALL" } },
-                    ].map(o => ({ label: o.label, value: o.value }))}
-                    onChange={(v) => handleQuickRange(v.d, v.l)}
+                <MobileDropdown
+                  value={activeRange}
+                  options={[
+                    { label: "1D", value: { d: 1, l: "1D" } },
+                    { label: "1W", value: { d: 7, l: "1W" } },
+                    { label: "1M", value: { d: 30, l: "1M" } },
+                    { label: "3M", value: { d: 90, l: "3M" } },
+                    { label: "1Y", value: { d: 365, l: "1Y" } },
+                    { label: "ALL", value: { d: 9999, l: "ALL" } },
+                  ].map((o) => ({ label: o.label, value: o.value }))}
+                  onChange={(v) => handleQuickRange(v.d, v.l)}
                 />
-                
+
                 {/* Desktop Buttons */}
                 <div className="hidden md:flex w-full gap-0">
-                    {[
+                  {[
                     { l: "1D", d: 1 },
                     { l: "1W", d: 7 },
                     { l: "1M", d: 30 },
                     { l: "3M", d: 90 },
                     { l: "1Y", d: 365 },
                     { l: "ALL", d: 9999 },
-                    ].map((btn) => (
+                  ].map((btn) => (
                     <SettingsButton
-                        key={btn.l}
-                        onClick={() => handleQuickRange(btn.d, btn.l)}
-                        isActive={activeRange === btn.l}
-                        className="flex-1"
+                      key={btn.l}
+                      onClick={() => handleQuickRange(btn.d, btn.l)}
+                      isActive={activeRange === btn.l}
+                      className="flex-1"
                     >
-                        {btn.l}
+                      {btn.l}
                     </SettingsButton>
-                    ))}
+                  ))}
                 </div>
               </ControlCell>
               <ControlCell label="RESOLUTION" className="pl-4 md:pl-4 ">
                 {/* Mobile Dropdown */}
-                <MobileDropdown 
-                    value={resolution} 
-                    options={["1H", "4H", "1D", "1W"].map(r => ({ label: r, value: r }))}
-                    onChange={(v) => setResolution(v)}
+                <MobileDropdown
+                  value={resolution}
+                  options={["1H", "4H", "1D", "1W"].map((r) => ({
+                    label: r,
+                    value: r,
+                  }))}
+                  onChange={(v) => setResolution(v)}
                 />
 
                 {/* Desktop Buttons */}
                 <div className="hidden md:flex w-full gap-0">
-                    {["1H", "4H", "1D", "1W"].map((res) => (
+                  {["1H", "4H", "1D", "1W"].map((res) => (
                     <SettingsButton
-                        key={res}
-                        onClick={() => setResolution(res)}
-                        isActive={resolution === res}
-                        className="flex-1"
+                      key={res}
+                      onClick={() => setResolution(res)}
+                      isActive={resolution === res}
+                      className="flex-1"
                     >
-                        {res}
+                      {res}
                     </SettingsButton>
-                    ))}
+                  ))}
                 </div>
               </ControlCell>
               <ControlCell label="CUSTOM_RANGE" className="pr-0 hidden md:flex">
@@ -637,7 +671,10 @@ function App() {
                   </SettingsButton>
                 </div>
               </ControlCell>
-              <ControlCell label="TWAR_SMOOTHING_[SEC]" className="pr-0 hidden md:flex">
+              <ControlCell
+                label="TWAR_SMOOTHING_[SEC]"
+                className="pr-0 hidden md:flex"
+              >
                 <div className="flex items-center justify-end md:justify-between gap-2 h-[30px] w-full">
                   <input
                     type="number"
@@ -661,7 +698,7 @@ function App() {
                       className={showTwar ? "text-black" : "text-gray-600"}
                     />
                     <span className="md:hidden text-[10px] uppercase font-bold tracking-widest">
-                        {showTwar ? "TWAR: ON" : "TWAR: OFF"}
+                      {showTwar ? "TWAR: ON" : "TWAR: OFF"}
                     </span>
                   </SettingsButton>
                 </div>
@@ -672,9 +709,13 @@ function App() {
             <div className="relative flex-1 min-h-[350px] md:min-h-[400px]">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 px-1 gap-3 md:gap-0">
                 <div className="flex gap-4 md:gap-8 flex-wrap">
-                  <div 
-                    className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes('apy') ? 'opacity-50 line-through' : 'opacity-100 hover:opacity-80'}`}
-                    onClick={() => toggleSeries('apy')}
+                  <div
+                    className={`flex items-center gap-2 cursor-pointer transition-all ${
+                      hiddenSeries.includes("apy")
+                        ? "opacity-50 line-through"
+                        : "opacity-100 hover:opacity-80"
+                    }`}
+                    onClick={() => toggleSeries("apy")}
                   >
                     <div className="w-2 h-2 bg-cyan-400"></div>
                     <span className="text-[11px] uppercase tracking-widest">
@@ -682,9 +723,13 @@ function App() {
                     </span>
                   </div>
                   {showTwar && (
-                    <div 
-                        className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes('twar') ? 'opacity-50 line-through' : 'opacity-100 hover:opacity-80'}`}
-                        onClick={() => toggleSeries('twar')}
+                    <div
+                      className={`flex items-center gap-2 cursor-pointer transition-all ${
+                        hiddenSeries.includes("twar")
+                          ? "opacity-50 line-through"
+                          : "opacity-100 hover:opacity-80"
+                      }`}
+                      onClick={() => toggleSeries("twar")}
                     >
                       <div className="w-2 h-2 bg-pink-500"></div>
                       <span className="text-[11px] uppercase tracking-widest">
@@ -693,9 +738,13 @@ function App() {
                     </div>
                   )}
                   {/* ETH Price Legend */}
-                  <div 
-                    className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes('ethPrice') ? 'opacity-50 line-through' : 'opacity-100 hover:opacity-80'}`}
-                    onClick={() => toggleSeries('ethPrice')}
+                  <div
+                    className={`flex items-center gap-2 cursor-pointer transition-all ${
+                      hiddenSeries.includes("ethPrice")
+                        ? "opacity-50 line-through"
+                        : "opacity-100 hover:opacity-80"
+                    }`}
+                    onClick={() => toggleSeries("ethPrice")}
                   >
                     <div className="w-2 h-2 bg-zinc-400"></div>
                     <span className="text-[11px] uppercase tracking-widest">
@@ -703,35 +752,47 @@ function App() {
                     </span>
                   </div>
                   {/* CSV Download Button */}
-                  <button 
+                  <button
                     onClick={handleDownloadCSV}
                     className="hidden md:flex items-center gap-2 text-[11px] uppercase tracking-widest text-gray-500 hover:text-white transition-colors focus:outline-none group"
                     title="Download Full History (CSV)"
                   >
-                    <FileDown size={12} className="group-hover:text-cyan-400 transition-colors" />
-                    <span className="group-hover:underline decoration-cyan-400 underline-offset-4">CSV</span>
+                    <FileDown
+                      size={12}
+                      className="group-hover:text-cyan-400 transition-colors"
+                    />
+                    <span className="group-hover:underline decoration-cyan-400 underline-offset-4">
+                      CSV
+                    </span>
                   </button>
                 </div>
-                  <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
-                    {/* Correlation Display */}
-                    {processedData.length > 0 && (
-                         <span className={(() => {
-                            const source = visibleChartData.length > 0 ? visibleChartData : processedData;
-                            const apys = source.map(d => d.apy || 0);
-                            const prices = source.map(d => d.ethPrice || 0);
-                            const corr = calculateCorrelation(apys, prices);
-                            return corr > 0 ? "text-green-500" : "text-red-500";
-                         })()}>
-                            CORRELATION: {(() => {
-                                const source = visibleChartData.length > 0 ? visibleChartData : processedData;
-                                const apys = source.map(d => d.apy || 0);
-                                const prices = source.map(d => d.ethPrice || 0);
-                                return calculateCorrelation(apys, prices).toFixed(2);
-                            })()}
-                         </span>
-                    )}
-
-
+                <div className="text-[11px] font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
+                  {/* Correlation Display */}
+                  {processedData.length > 0 && (
+                    <span
+                      className={(() => {
+                        const source =
+                          visibleChartData.length > 0
+                            ? visibleChartData
+                            : processedData;
+                        const apys = source.map((d) => d.apy || 0);
+                        const prices = source.map((d) => d.ethPrice || 0);
+                        const corr = calculateCorrelation(apys, prices);
+                        return corr > 0 ? "text-green-500" : "text-red-500";
+                      })()}
+                    >
+                      CORRELATION:{" "}
+                      {(() => {
+                        const source =
+                          visibleChartData.length > 0
+                            ? visibleChartData
+                            : processedData;
+                        const apys = source.map((d) => d.apy || 0);
+                        const prices = source.map((d) => d.ethPrice || 0);
+                        return calculateCorrelation(apys, prices).toFixed(2);
+                      })()}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="h-[350px] md:h-[500px] w-full border border-white/10 p-4 bg-[#080808]">
@@ -746,11 +807,16 @@ function App() {
                     resolution={resolution}
                     areas={[
                       { key: "apy", name: "Spot", color: "#22d3ee" },
-                      { key: "ethPrice", name: "ETH Price", color: "#a1a1aa", yAxisId: "right" },
+                      {
+                        key: "ethPrice",
+                        name: "ETH Price",
+                        color: "#a1a1aa",
+                        yAxisId: "right",
+                      },
                       ...(showTwar
                         ? [{ key: "twar", name: "TWAR", color: "#ec4899" }]
                         : []),
-                    ].filter(a => !hiddenSeries.includes(a.key))}
+                    ].filter((a) => !hiddenSeries.includes(a.key))}
                   />
                 )}
               </div>
@@ -764,160 +830,182 @@ function App() {
             title="Synthetic_Rates"
             Icon={Terminal}
             tabs={[
-                { id: "LONG", label: "Long", onClick: () => setTradeSide("LONG"), isActive: tradeSide === "LONG", color: "cyan" },
-                { id: "SHORT", label: "Short", onClick: () => setTradeSide("SHORT"), isActive: tradeSide === "SHORT", color: "pink" }
+              {
+                id: "LONG",
+                label: "Long",
+                onClick: () => setTradeSide("LONG"),
+                isActive: tradeSide === "LONG",
+                color: "cyan",
+              },
+              {
+                id: "SHORT",
+                label: "Short",
+                onClick: () => setTradeSide("SHORT"),
+                isActive: tradeSide === "SHORT",
+                color: "pink",
+              },
             ]}
             actionButton={{
-                label: `${tradeSide} RATE`,
-                onClick: () => {}, 
-                variant: tradeSide === "LONG" ? "cyan" : "pink",
+              label: `${tradeSide} RATE`,
+              onClick: () => {},
+              variant: tradeSide === "LONG" ? "cyan" : "pink",
             }}
             footer={
-               <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
-                      PnL_Simulator
+              <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
+                    PnL_Simulator
+                  </span>
+                  <RefreshCw
+                    size={15}
+                    className="text-gray-600 cursor-pointer hover:text-white transition-colors"
+                    onClick={() => setSimTargetRate(currentRate)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex justify-between text-[13px] text-gray-500 font-mono">
+                    <span>Rate_Scenario</span>
+                    <span>
+                      {simTargetRate ? simTargetRate.toFixed(2) : "0.00"}%
                     </span>
-                    <RefreshCw
-                      size={15}
-                      className="text-gray-600 cursor-pointer hover:text-white transition-colors"
-                      onClick={() => setSimTargetRate(currentRate)}
-                    />
                   </div>
-
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-[13px] text-gray-500 font-mono">
-                      <span>Rate_Scenario</span>
-                      <span>
-                        {simTargetRate ? simTargetRate.toFixed(2) : "0.00"}%
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="30"
-                      step="0.1"
-                      value={simTargetRate || currentRate}
-                      onChange={(e) => setSimTargetRate(Number(e.target.value))}
-                      className="w-full h-1 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
-                    />
-                    <div className="flex justify-between gap-1">
-                      {[-50, -10, 10, 50].map((pct) => (
-                        <SettingsButton
-                          key={pct}
-                          onClick={() =>
-                            setSimTargetRate(currentRate * (1 + pct / 100))
-                          }
-                          className="flex-1"
-                        >
-                          {pct > 0 ? "+" : ""}
-                          {pct}%
-                        </SettingsButton>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="">
-                    <div className="flex justify-between items-end">
-                      <span className="text-[13px] text-gray-500">
-                        Est. PnL (1Y)
-                      </span>
-                      <div
-                        className={`text-right ${
-                          simPnL.value >= 0 ? "text-green-500" : "text-red-500"
-                        }`}
+                  <input
+                    type="range"
+                    min="0"
+                    max="30"
+                    step="0.1"
+                    value={simTargetRate || currentRate}
+                    onChange={(e) => setSimTargetRate(Number(e.target.value))}
+                    className="w-full h-1 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
+                  />
+                  <div className="flex justify-between gap-1">
+                    {[-50, -10, 10, 50].map((pct) => (
+                      <SettingsButton
+                        key={pct}
+                        onClick={() =>
+                          setSimTargetRate(currentRate * (1 + pct / 100))
+                        }
+                        className="flex-1"
                       >
-                        <div className="text-xl font-mono leading-none">
-                          {simPnL.value >= 0 ? "+" : ""}
-                          {simPnL.value.toLocaleString(undefined, {
-                            maximumFractionDigits: 0,
-                          })}{" "}
-                          USDC
-                        </div>
-                        <div className="text-[12px] font-mono mt-1">
-                          {simPnL.percent.toFixed(2)}% ROI
-                        </div>
+                        {pct > 0 ? "+" : ""}
+                        {pct}%
+                      </SettingsButton>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="">
+                  <div className="flex justify-between items-end">
+                    <span className="text-[13px] text-gray-500">
+                      Est. PnL (1Y)
+                    </span>
+                    <div
+                      className={`text-right ${
+                        simPnL.value >= 0 ? "text-green-500" : "text-red-500"
+                      }`}
+                    >
+                      <div className="text-xl font-mono leading-none">
+                        {simPnL.value >= 0 ? "+" : ""}
+                        {simPnL.value.toLocaleString(undefined, {
+                          maximumFractionDigits: 0,
+                        })}{" "}
+                        USDC
+                      </div>
+                      <div className="text-[12px] font-mono mt-1">
+                        {simPnL.percent.toFixed(2)}% ROI
                       </div>
                     </div>
                   </div>
                 </div>
+              </div>
             }
           >
-             {/* Collateral Input */}
-             <InputGroup 
-               label="Collateral"
-               subLabel={`Balance: ${account ? parseFloat(usdcBalance).toFixed(2) : "--"} USDC`}
-               value={collateral}
-               onChange={(v) => setCollateral(Number(v))} 
-               suffix="USDC"
-             />
+            {/* Collateral Input */}
+            <InputGroup
+              label="Collateral"
+              subLabel={`Balance: ${
+                account ? parseFloat(usdcBalance).toFixed(2) : "--"
+              } USDC`}
+              value={collateral}
+              onChange={(v) => setCollateral(Number(v))}
+              suffix="USDC"
+            />
 
-             {/* LONG: Amount */}
-             {tradeSide === "LONG" && (
-                <InputGroup 
-                   label="Amount_Notional"
-                   value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
-                   onChange={(v) => handleLongAmountChange(Number(v))}
-                   suffix="USDC"
+            {/* LONG: Amount */}
+            {tradeSide === "LONG" && (
+              <InputGroup
+                label="Amount_Notional"
+                value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
+                onChange={(v) => handleLongAmountChange(Number(v))}
+                suffix="USDC"
+              />
+            )}
+
+            {/* SHORT: Amount & CR */}
+            {tradeSide === "SHORT" && (
+              <>
+                <InputGroup
+                  label="Amount_Notional"
+                  value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
+                  onChange={(v) => handleShortAmountChange(Number(v))}
+                  suffix="USDC"
                 />
-             )}
 
-             {/* SHORT: Amount & CR */}
-             {tradeSide === "SHORT" && (
-                <>
-                   <InputGroup 
-                      label="Amount_Notional"
-                      value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
-                      onChange={(v) => handleShortAmountChange(Number(v))}
-                      suffix="USDC"
-                   />
-                   
-                   <div className="space-y-2">
-                    <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
-                      <span>Collateral_Ratio</span>
-                      <span className="text-white">{shortCR.toFixed(0)}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="110"
-                      max="1500"
-                      step="10"
-                      value={shortCR}
-                      onChange={(e) => setShortCR(Number(e.target.value))}
-                      className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
-                    />
-                    <div className="flex justify-between text-[12px] text-gray-500 font-mono">
-                      <span>110%</span>
-                      <span>1500%</span>
-                    </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                    <span>Collateral_Ratio</span>
+                    <span className="text-white">{shortCR.toFixed(0)}%</span>
                   </div>
-                </>
-             )}
+                  <input
+                    type="range"
+                    min="110"
+                    max="1500"
+                    step="10"
+                    value={shortCR}
+                    onChange={(e) => setShortCR(Number(e.target.value))}
+                    className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
+                  />
+                  <div className="flex justify-between text-[12px] text-gray-500 font-mono">
+                    <span>110%</span>
+                    <span>1500%</span>
+                  </div>
+                </div>
+              </>
+            )}
 
-             {/* Stats Box */}
-              <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-[12px]">
-                <SummaryRow label="Entry_Rate" value={`${currentRate.toFixed(2)}%`} />
-                
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-500 uppercase text-[12px]">
-                    Liq. Rate
-                  </span>
-                  <span className="font-mono text-orange-500 text-[12px]">
-                    {liqRate ? `${liqRate && liqRate.toFixed(2)}%` : "None"}
-                  </span>
-                </div>
-                
-                <SummaryRow label="Notional" value={`$${notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
-                
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-gray-500 uppercase text-[12px]">
-                    Est. Fee
-                  </span>{" "}
-                  <span className="font-mono text-gray-400">
-                    {(notional * 0.001).toFixed(2)} USDC
-                  </span>
-                </div>
+            {/* Stats Box */}
+            <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-[12px]">
+              <SummaryRow
+                label="Entry_Rate"
+                value={`${currentRate.toFixed(2)}%`}
+              />
+
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500 uppercase text-[12px]">
+                  Liq. Rate
+                </span>
+                <span className="font-mono text-orange-500 text-[12px]">
+                  {liqRate ? `${liqRate && liqRate.toFixed(2)}%` : "None"}
+                </span>
               </div>
+
+              <SummaryRow
+                label="Notional"
+                value={`$${notional.toLocaleString(undefined, {
+                  maximumFractionDigits: 0,
+                })}`}
+              />
+
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-gray-500 uppercase text-[12px]">
+                  Est. Fee
+                </span>{" "}
+                <span className="font-mono text-gray-400">
+                  {(notional * 0.001).toFixed(2)} USDC
+                </span>
+              </div>
+            </div>
           </TradingTerminal>
         </div>
       </div>
@@ -972,7 +1060,5 @@ function MetricBox({ label, value, sub, dimmed }) {
     </div>
   );
 }
-
-
 
 export default App;

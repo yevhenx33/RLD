@@ -1,3 +1,4 @@
+
 import sqlite3
 import pandas as pd
 import requests
@@ -7,10 +8,18 @@ import sys
 import subprocess
 from datetime import datetime
 from dotenv import load_dotenv
+import logging
 
 # Ensure we can import config
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from config import DB_NAME, ASSETS, AAVE_POOL_ADDRESS, DB_PATH
+
+# Logging Config
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("DataFiller")
 
 # --- CONFIGURATION ---
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
@@ -41,7 +50,7 @@ def call_rpc(payload):
                 parsed = response.json()
                 return parsed
         except Exception as e:
-            print(f"  ⚠️ RPC {url} failed: {e}")
+            logger.warning(f"RPC {url} failed: {e}")
             continue
     return None
 
@@ -96,12 +105,12 @@ def fetch_batch_multi(start_block, end_block, assets_map):
 
     results = call_rpc(payload)
     if not results:
-        print("  ❌ All RPCs failed for batch.")
+        logger.error("All RPCs failed for batch.")
         return [], {}
     
     if isinstance(results, dict) and 'error' in results:
         # Single error response? Batch usually returns list of results
-        print(f"  ❌ RPC Error: {results['error']}")
+        logger.error(f"RPC Error: {results['error']}")
         return [], {}
         
     return results, id_map
@@ -111,7 +120,7 @@ def fill_gap_range(start_block, end_block, cursor, conn, target_assets):
     target_assets: dict of symbol -> config
     """
     count = end_block - start_block
-    print(f"   🚀 Patching {count} blocks ({start_block} -> {end_block}) for {list(target_assets.keys())}...")
+    logger.info(f"🚀 Patching {count} blocks ({start_block} -> {end_block}) for {list(target_assets.keys())}...")
     
     # Pre-compute payloads
     assets_map = {}
@@ -148,7 +157,7 @@ def fill_gap_range(start_block, end_block, cursor, conn, target_assets):
             if not meta: continue
             
             if 'error' in res: 
-                print(f"   ⚠️ Block {meta['block']} Error: {res['error']}")
+                logger.warning(f"Block {meta['block']} Error: {res['error']}")
                 continue
             if 'result' not in res or not res['result']: continue
 
@@ -171,7 +180,7 @@ def fill_gap_range(start_block, end_block, cursor, conn, target_assets):
                 else:
                     # Debug decoding failure occasionally?
                     if total_records == 0 and (blk % 100 == 0):
-                       print(f"   ⚠️ Decode failed for {sym} at {blk}. Raw: {res['result'][:10]}...")
+                       logger.warning(f"Decode failed for {sym} at {blk}. Raw: {res['result'][:10]}...")
 
         for blk in range(batch_start, batch_end):
             if blk in block_timestamps and blk in block_rates:
@@ -186,17 +195,16 @@ def fill_gap_range(start_block, end_block, cursor, conn, target_assets):
         
         conn.commit()
         
-        # Progress Bar
+        # Periodic Logging instead of Progress Bar
         completed = batch_end - start_block
-        percent = (completed / count) * 100
-        bar_len = 30
-        filled_len = int(bar_len * completed // count)
-        bar = '█' * filled_len + '-' * (bar_len - filled_len)
-        print(f"\r   Patching: |{bar}| {percent:.1f}% (Block {batch_end})", end='')
+        if completed % 50 == 0 or completed == count: # Log every 50 blocks
+             percent = (completed / count) * 100
+             logger.info(f"Patching progress: {percent:.1f}% ({completed}/{count}) - Block {batch_end}")
         
         time.sleep(0.05) # Gentler rate limit
 
-    print(f"\n   ✅ Filled {total_records} records.")
+    logger.info(f"✅ Filled {total_records} records.")
+
 
 def get_current_chain_block():
     payload = {"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1}

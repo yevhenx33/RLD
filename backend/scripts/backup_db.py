@@ -5,6 +5,7 @@ import os
 import sys
 import time
 from datetime import datetime
+import logging
 
 # Add backend directory to sys.path to import config
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -13,6 +14,13 @@ from config import DB_NAME
 # --- CONFIG ---
 BACKUP_ROOT = "backups"
 RETENTION_DAYS = 7
+
+# Logging Config
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("Backup")
 
 # Source Files (Adjusted for Scripts Directory: backend/scripts/)
 BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -29,19 +37,19 @@ def create_backup():
     dest_dir = os.path.join(ROOT_DIR, BACKUP_ROOT, timestamp)
     os.makedirs(dest_dir, exist_ok=True)
     
-    print(f"📦 Starting Backup to: {dest_dir}")
+    logger.info(f"📦 Starting Backup to: {dest_dir}")
     
     # 2. SQLite Hot Backup (VACUUM INTO)
     # This creates a transaction-safe snapshot even if DB is busy.
     try:
         dest_db = os.path.join(dest_dir, DB_NAME)
         conn = sqlite3.connect(DB_FILE)
-        print(f"   Snapshotting {DB_NAME}...")
+        logger.info(f"Snapshotting {DB_NAME}...")
         conn.execute(f"VACUUM INTO '{dest_db}'")
         conn.close()
-        print("   ✅ Database snapshot complete.")
+        logger.info("✅ Database snapshot complete.")
     except Exception as e:
-        print(f"   ❌ Database snapshot failed (might be empty/locked): {e}")
+        logger.error(f"❌ Database snapshot failed (might be empty/locked): {e}")
 
     # 3. File Copies
     files_to_copy = [
@@ -54,13 +62,13 @@ def create_backup():
         if os.path.exists(src):
             try:
                 shutil.copy2(src, os.path.join(dest_dir, name))
-                print(f"   ✅ Copied {name}")
+                logger.info(f"✅ Copied {name}")
             except Exception as e:
-                print(f"   ⚠️ Failed to copy {name}: {e}")
+                logger.warning(f"⚠️ Failed to copy {name}: {e}")
         else:
-            print(f"   ⚠️ Source not found: {name}")
+            logger.warning(f"⚠️ Source not found: {name}")
 
-    print(f"🎉 Backup Complete: {timestamp}")
+    logger.info(f"🎉 Backup Complete: {timestamp}")
     
     # 4. Cleanup / Rotation
     cleanup_old_backups()
@@ -70,7 +78,7 @@ def cleanup_old_backups():
     if not os.path.exists(root):
         return
         
-    print("🧹 Checking for old backups...")
+    logger.info("🧹 Checking for old backups...")
     
     # List all subdirectories
     backups = []
@@ -84,7 +92,7 @@ def cleanup_old_backups():
     # Retention Policy
     while len(backups) > RETENTION_DAYS:
         to_delete = backups.pop(0)
-        print(f"   Deleting old backup: {to_delete.name}")
+        logger.info(f"Deleting old backup: {to_delete.name}")
         shutil.rmtree(to_delete.path)
 
 if __name__ == "__main__":

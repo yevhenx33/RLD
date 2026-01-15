@@ -31,6 +31,7 @@ if not PRIVATE_KEY:
 
 # Contract Addresses (Update ORACLE_ADDRESS after deployment!)
 # Load Contract Addresses from Shared JSON
+try:
     with open("../shared/addresses.json", "r") as f:
         import json
         addresses = json.load(f)
