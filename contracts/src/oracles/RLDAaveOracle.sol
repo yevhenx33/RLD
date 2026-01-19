@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "forge-std/console.sol";
-
 interface IAavePool {
     struct ReserveData {
         uint256 configuration;
@@ -35,8 +33,17 @@ interface IAavePool {
  */
 contract RLDAaveOracle {
     // --- Constants ---
-    address public constant POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2; // Aave V3 Mainnet
-    address public constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48; // USDC Mainnet
+    address public immutable POOL;
+    address public immutable ASSET;
+
+    // --- Errors ---
+    error InvalidAddress();
+
+    constructor(address _pool, address _asset) {
+        if (_pool == address(0) || _asset == address(0)) revert InvalidAddress();
+        POOL = _pool;
+        ASSET = _asset;
+    }
 
     // RLD Paper Section 2.1: "K=100, a 5% interest rate equals a $5.00 price"
     uint256 public constant K_SCALAR = 100;
@@ -49,9 +56,6 @@ contract RLDAaveOracle {
     // Prevents division by zero in AMM/Controller logic if rates drop to 0%
     uint256 public constant MIN_PRICE = 1e14;
 
-    // --- Errors ---
-    error RateOverflow();
-
     /**
      * @notice Returns the RLD Index Price for USDC.
      * @return priceWad The standardized price in WAD (18 decimals).
@@ -60,7 +64,7 @@ contract RLDAaveOracle {
     function getIndexPrice() external view returns (uint256 priceWad) {
         // 1. Fetch Raw Rate (RAY)
         IAavePool.ReserveData memory data = IAavePool(POOL).getReserveData(
-            USDC
+            ASSET
         );
         uint256 rawRateRay = uint256(data.currentVariableBorrowRate);
 

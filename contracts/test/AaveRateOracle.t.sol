@@ -12,7 +12,8 @@ contract RLDAaveOracleTest is Test {
         string memory rpcUrl = vm.envString("MAINNET_RPC_URL");
         vm.createSelectFork(rpcUrl);
 
-        oracle = new RLDAaveOracle();
+        address POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
+        oracle = new RLDAaveOracle(POOL, 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48);
     }
 
     function testRealTimeData() public {
