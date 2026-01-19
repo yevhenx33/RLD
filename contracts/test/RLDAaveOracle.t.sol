@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../src/oracles/RLDAaveOracle.sol";
+import "../src/modules/oracles/RLDAaveOracle.sol";
 
 contract RLDAaveOracleTest is Test {
     RLDAaveOracle oracle;
@@ -16,7 +16,7 @@ contract RLDAaveOracleTest is Test {
     uint256 constant MIN_PRICE = 1e14; // $0.0001 or 0.01 cents
 
     function setUp() public {
-        oracle = new RLDAaveOracle(POOL, USDC);
+        oracle = new RLDAaveOracle();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -47,9 +47,9 @@ contract RLDAaveOracleTest is Test {
         string memory rpcUrl = vm.envString("MAINNET_RPC_URL");
         vm.createSelectFork(rpcUrl);
         // addresses are hardcoded in contract, so new deployment works on fork
-        RLDAaveOracle realOracle = new RLDAaveOracle(POOL, USDC);
+        RLDAaveOracle realOracle = new RLDAaveOracle();
 
-        uint256 price = realOracle.getIndexPrice();
+        uint256 price = realOracle.getIndexPrice(POOL, USDC);
 
         console.log("--- RLD Oracle Live Data ---");
         console.log("Spot Index Price (WAD):", price);
@@ -64,9 +64,9 @@ contract RLDAaveOracleTest is Test {
         vm.createSelectFork(rpcUrl);
         
         address USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-        RLDAaveOracle usdtOracle = new RLDAaveOracle(POOL, USDT);
+        RLDAaveOracle usdtOracle = new RLDAaveOracle();
 
-        uint256 price = usdtOracle.getIndexPrice();
+        uint256 price = usdtOracle.getIndexPrice(POOL, USDT);
 
         // Fetch raw data for debugging/verification
         IAavePool.ReserveData memory data = IAavePool(POOL).getReserveData(USDT);
@@ -93,7 +93,7 @@ contract RLDAaveOracleTest is Test {
         uint128 rate = 5e25; 
         _mockPoolRate(rate);
 
-        uint256 price = oracle.getIndexPrice();
+        uint256 price = oracle.getIndexPrice(POOL, USDC);
         console.log("Scenario 1: 5% APY");
         console.log("Input Rate (RAY):", rate);
         console.log("Output Price (WAD):", price);
@@ -106,7 +106,7 @@ contract RLDAaveOracleTest is Test {
         // 50% = 50e25
         rate = 50e25;
         _mockPoolRate(rate);
-        price = oracle.getIndexPrice();
+        price = oracle.getIndexPrice(POOL, USDC);
         console.log("\nScenario 2: 50% APY");
         console.log("Input Rate (RAY):", rate);
         console.log("Output Price (WAD):", price);
@@ -122,7 +122,7 @@ contract RLDAaveOracleTest is Test {
         uint128 rate = 2e27;
         _mockPoolRate(rate);
         
-        uint256 price = oracle.getIndexPrice();
+        uint256 price = oracle.getIndexPrice(POOL, USDC);
         console.log("Input Rate (RAY):", rate, "(200% APY)");
         console.log("Output Price (WAD):", price);
         console.log("Expected Price (WAD): 100000000000000000000 ($100.00)");
@@ -135,7 +135,7 @@ contract RLDAaveOracleTest is Test {
         // Rate: 0%
         // Should be floor at $0.0001 (1e14)
         _mockPoolRate(0);
-        uint256 price = oracle.getIndexPrice();
+        uint256 price = oracle.getIndexPrice(POOL, USDC);
         console.log("Scenario 1: 0% APY");
         console.log("Input Rate (RAY): 0");
         console.log("Output Price (WAD):", price);
@@ -146,7 +146,7 @@ contract RLDAaveOracleTest is Test {
         // Rate: Extremely low but non-zero (1 wei in RAY)
         // 1 * 100 / 1e9 = 0 (integer division) -> Floor
         _mockPoolRate(1);
-        price = oracle.getIndexPrice();
+        price = oracle.getIndexPrice(POOL, USDC);
         
         console.log("\nScenario 2: 1 wei RAY (near 0%)");
         console.log("Input Rate (RAY): 1");
@@ -170,7 +170,7 @@ contract RLDAaveOracleTest is Test {
         rate = uint128(bound(rate, 1e21, 1e27));
         _mockPoolRate(rate);
 
-        uint256 price = oracle.getIndexPrice();
+        uint256 price = oracle.getIndexPrice(POOL, USDC);
         uint256 expected = (uint256(rate) * K_SCALAR) / 1e9;
 
         assertEq(price, expected, "Fuzzed math mismatch");
@@ -183,7 +183,7 @@ contract RLDAaveOracleTest is Test {
         rate = uint128(bound(rate, 1e27 + 1, type(uint128).max));
         _mockPoolRate(rate);
 
-        uint256 price = oracle.getIndexPrice();
+        uint256 price = oracle.getIndexPrice(POOL, USDC);
         assertEq(price, 100e18, "Should satisfy cap for high rates");
     }
 
@@ -194,7 +194,7 @@ contract RLDAaveOracleTest is Test {
         rate = uint128(bound(rate, 0, 1e21 - 1));
         _mockPoolRate(rate);
 
-        uint256 price = oracle.getIndexPrice();
+        uint256 price = oracle.getIndexPrice(POOL, USDC);
         assertEq(price, MIN_PRICE, "Should satisfy floor for low rates");
     }
 
@@ -208,12 +208,12 @@ contract RLDAaveOracleTest is Test {
         // 1. Fork Mainnet
         string memory rpcUrl = vm.envString("MAINNET_RPC_URL");
         vm.createSelectFork(rpcUrl);
-        RLDAaveOracle realOracle = new RLDAaveOracle(POOL, USDC);
+        RLDAaveOracle realOracle = new RLDAaveOracle();
 
         // 2. Snapshot Initial State
         IAavePool.ReserveData memory initialData = IAavePool(POOL).getReserveData(USDC);
         uint256 initialRate = initialData.currentVariableBorrowRate;
-        uint256 initialPrice = realOracle.getIndexPrice();
+        uint256 initialPrice = realOracle.getIndexPrice(POOL, USDC);
 
         console.log("\n--- PoC: Flash Volatility Quantification ---");
         console.log("Initial Borrow Rate (RAY):", initialRate);
@@ -262,7 +262,7 @@ contract RLDAaveOracleTest is Test {
         // 5. Check New Rate
         IAavePool.ReserveData memory finalData = IAavePool(POOL).getReserveData(USDC);
         uint256 finalRate = finalData.currentVariableBorrowRate;
-        uint256 finalPrice = realOracle.getIndexPrice();
+        uint256 finalPrice = realOracle.getIndexPrice(POOL, USDC);
 
         console.log("--- AFTER Borrowing 99% of Pool ---");
         console.log("Total Borrowed:           ", borrowAmount / 1e6, "M USDC");
