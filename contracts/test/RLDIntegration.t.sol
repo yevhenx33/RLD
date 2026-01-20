@@ -82,9 +82,6 @@ contract RLDIntegrationTest is Test {
             address(underlying), 
             address(collateral), 
             IRLDCore.MarketType.RLP,
-            alice, // Fee Recipient
-            0, // Mint Fee
-            0, // Redeem Fee
             1.5e18, // Min CR (150%)
             1.1e18, // Maintenance (110%)
             address(0),
@@ -96,7 +93,7 @@ contract RLDIntegrationTest is Test {
         console.log("Market Created. ID:", vm.toString(MarketId.unwrap(id)));
         console.log("Fee Recipient: Alice");
         
-        verifyFees(id);
+
 
         // 2. User Entry (Bob)
         console.log("\n=== STEP 2: Bob Enters (Mint) ===");
@@ -235,9 +232,6 @@ contract RLDIntegrationTest is Test {
             address(underlying), 
             address(collateral), 
             IRLDCore.MarketType.RLP, 
-            alice,
-            0,
-            0,
             1.5e18, 
             1.1e18, 
             address(0),
@@ -245,7 +239,7 @@ contract RLDIntegrationTest is Test {
         );
         vm.stopPrank();
 
-        verifyFees(id);
+
         
         rateOracle.setPrice(5e18); // Set Rate to 5.0 for Liquidation Scenario
         
@@ -330,7 +324,7 @@ contract RLDIntegrationTest is Test {
         console.log("  > Liquidator Balance:", collateral.balanceOf(liquidator));
         vm.stopPrank();
 
-        verifyFees(id);
+
         
         rateOracle.setPrice(5e18); // Set Rate to 5.0 for Liquidation Scenariocations
         assertEq(posAfter.debtPrincipal, 500e18); // 1000 - 500
@@ -358,7 +352,7 @@ contract RLDIntegrationTest is Test {
         vm.startPrank(alice);
         (MarketId id, , , , ) = factory.deployMarket(
             pool, address(underlying), address(collateral), 
-            IRLDCore.MarketType.RLP, alice, 0, 0, 
+            IRLDCore.MarketType.RLP, 
             1.5e18, 1.1e18, address(0), bytes32(uint256(1.05e18))
         );
         vm.stopPrank();
@@ -430,9 +424,5 @@ contract RLDIntegrationTest is Test {
         }
     }
 
-    function verifyFees(MarketId id) internal view {
-        IRLDCore.MarketConfig memory p = core.getMarketConfig(id);
-        console.log("Mint Fee Bps:", p.mintFeeBps);
-        console.log("Redeem Fee Bps:", p.redeemFeeBps);
-    }
+
 }

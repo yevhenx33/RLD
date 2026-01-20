@@ -180,46 +180,7 @@ contract RLDCore is IRLDCore, RLDStorage {
             // Better: Define IHook in IRLDCore/IHook.
         }
 
-        // 3. Fee Logic
-        if (deltaDebt != 0) {
-            uint256 feeBps = deltaDebt > 0 ? config.mintFeeBps : config.redeemFeeBps;
-            
-            if (feeBps > 0) {
-                // Calculate Debt Value involved
-                uint256 principal = deltaDebt > 0 ? uint256(deltaDebt) : uint256(-deltaDebt);
-                uint256 normFactor = uint256(state.normalizationFactor);
-                
-                // Get Prices
-                uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
-                    addresses.underlyingPool, 
-                    addresses.underlyingToken
-                );
-                
-                uint256 spotPrice = ISpotOracle(addresses.spotOracle).getSpotPrice(
-                    addresses.collateralToken, 
-                    addresses.underlyingToken
-                );
 
-                // Fee Value = Principal * Norm * Index * FeeBps
-                uint256 feeValue = principal.mulWad(normFactor).mulWad(indexPrice) * feeBps / 10000;
-                uint256 feeCollateral = feeValue.divWad(spotPrice);
-                
-                if (feeCollateral > 0) {
-                     // Deduct from User
-                     // Check for underflow manually or let safe cast handle it? 
-                     // Explicit check for safety
-                    if (pos.collateral < feeCollateral) revert("Insufficient Collateral for Fee");
-                    
-                    pos.collateral -= uint128(feeCollateral);
-                    
-                    // Transfer to FeeHook (if set) or stick in contract?
-                    // Proposal: Send to feeHook. If feeHook is 0, burns (stuck in contract).
-                    if (addresses.feeHook != address(0)) {
-                         IERC20(addresses.collateralToken).transfer(addresses.feeHook, feeCollateral);
-                    }
-                }
-            }
-        }
 
         // 4. Check Hook (CDS Lock)
         if (addresses.hook != address(0)) {

@@ -18,9 +18,7 @@ interface IRLDMarketFactory {
         address underlyingToken,
         address collateralToken,
         IRLDCore.MarketType marketType,
-        address feeRecipient,
-        uint16 mintFeeBps,
-        uint16 redeemFeeBps,
+
         uint64 minColRatio,
         uint64 maintenanceMargin,
         address liquidationModule,
@@ -32,9 +30,7 @@ interface IRLDMarketFactory {
         address underlyingToken,
         address collateralToken,
         IRLDCore.MarketType marketType,
-        address feeRecipient,
-        uint16 mintFeeBps,
-        uint16 redeemFeeBps,
+
         uint64 minColRatio,
         uint64 maintenanceMargin,
         address liquidationModule,

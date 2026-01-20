@@ -68,9 +68,6 @@ contract RLDMarketFactory is IRLDMarketFactory {
         address underlyingToken,
         address collateralToken,
         IRLDCore.MarketType marketType,
-        address feeRecipient,
-        uint16 mintFeeBps,
-        uint16 redeemFeeBps,
         uint64 minColRatio,
         uint64 maintenanceMargin,
         address liquidationModule,
@@ -93,20 +90,16 @@ contract RLDMarketFactory is IRLDMarketFactory {
             spotOracle: CHAINLINK_SPOT_ORACLE,
             markOracle: MARK_ORACLE,
             fundingModel: STD_FUNDING_MODEL,
-            feeHook: address(0), // Set to factory or specific hook?
+            feeHook: address(0), 
             hook: address(cdsHook),
             defaultOracle: DEFAULT_ORACLE,
             liquidationModule: module
         });
 
-        // Use feeRecipient for feeHook if desired, or keep as 0 for now until fee logic is strict.
-        // Actually, previous implementation used feeRecipient logic.
-        addresses.feeHook = feeRecipient;
+
 
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
             marketType: marketType,
-            mintFeeBps: mintFeeBps,
-            redeemFeeBps: redeemFeeBps,
             minColRatio: minColRatio,
             maintenanceMargin: maintenanceMargin,
             liquidationParams: liquidationParams
@@ -131,9 +124,6 @@ contract RLDMarketFactory is IRLDMarketFactory {
         address underlyingToken,
         address collateralToken, // Passed explicitly (e.g., aUSDC)
         IRLDCore.MarketType marketType,
-        address feeRecipient,
-        uint16 mintFeeBps,
-        uint16 redeemFeeBps,
         uint64 minColRatio,
         uint64 maintenanceMargin,
         address liquidationModule,
@@ -191,12 +181,10 @@ contract RLDMarketFactory is IRLDMarketFactory {
             defaultOracle: DEFAULT_ORACLE,
             liquidationModule: module
         });
-        addresses.feeHook = feeRecipient;
+
 
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
             marketType: marketType,
-            mintFeeBps: mintFeeBps,
-            redeemFeeBps: redeemFeeBps,
             minColRatio: minColRatio,
             maintenanceMargin: maintenanceMargin,
             liquidationParams: liquidationParams
@@ -215,7 +203,7 @@ contract RLDMarketFactory is IRLDMarketFactory {
         defaultOracle = DEFAULT_ORACLE;
     }
 
-    function deployBondVault(MarketId marketId) external override returns (address vault) {
+    function deployBondVault(MarketId /*marketId*/) external override returns (address vault) {
         // vault = new SyntheticBond(marketId, CORE);
         // return address(vault);
         return address(0);

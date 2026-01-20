@@ -27,8 +27,7 @@ interface IRLDCore {
 
     struct MarketConfig {
         MarketType marketType;
-        uint16 mintFeeBps;
-        uint16 redeemFeeBps;
+
         uint64 minColRatio;
         uint64 maintenanceMargin;
         bytes32 liquidationParams; // Packed params for the module

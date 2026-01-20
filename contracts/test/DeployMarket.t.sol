@@ -79,9 +79,6 @@ poolManager = new PoolManager(address(this));
             address(usdc),
             address(usdc), // collateralToken (using USDC as mock collateral)
             IRLDCore.MarketType.RLP,
-            address(this), // feeRecipient
-            10, // mintFee
-            10, // redeemFee
             minCol, // minCol
             maintenance, // maintenance
             address(0), // liquidator

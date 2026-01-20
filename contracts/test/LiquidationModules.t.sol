@@ -28,8 +28,7 @@ contract LiquidationModulesTest is Test {
 
         config = IRLDCore.MarketConfig({
             marketType: IRLDCore.MarketType.RLP,
-            mintFeeBps: 0,
-            redeemFeeBps: 0,
+
             minColRatio: 1.5e18,
             maintenanceMargin: 1.1e18, // 110%
             liquidationParams: bytes32(0) 

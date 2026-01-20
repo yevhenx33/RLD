@@ -127,8 +127,7 @@ contract RLDCoreTest is Test {
 
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
             marketType: IRLDCore.MarketType.RLP,
-            mintFeeBps: 0,
-            redeemFeeBps: 0,
+
             minColRatio: 1.5e18,
             maintenanceMargin: 1.1e18,
             liquidationParams: bytes32(uint256(1.05e18))
@@ -213,54 +212,7 @@ contract RLDCoreTest is Test {
         core.lock(data);
     }
 
-    function test_Fees_Mint() public {
-        // Create Market with 1% Mint Fee (100 bps)
-        IRLDCore.MarketAddresses memory feeAddresses = IRLDCore.MarketAddresses({
-            collateralToken: address(collateral),
-            underlyingToken: address(underlying),
-            underlyingPool: address(0x2), 
-            rateOracle: address(oracle),
-            spotOracle: address(oracle),
-            markOracle: address(oracle),
-            fundingModel: address(funding),
-            feeHook: address(this),
-            hook: address(0),
-            defaultOracle: address(oracle),
-            liquidationModule: address(staticLiq)
-        });
 
-         IRLDCore.MarketConfig memory feeConfig = IRLDCore.MarketConfig({
-            marketType: IRLDCore.MarketType.RLP,
-            mintFeeBps: 100, // 1%
-            redeemFeeBps: 0,
-            minColRatio: 1.5e18,
-            maintenanceMargin: 1.1e18,
-            liquidationParams: bytes32(uint256(1.05e18))
-        });
-
-        MarketId feeMarketId = core.createMarket(feeAddresses, feeConfig);
-
-        collateral.mint(address(this), 200e18);
-        collateral.approve(address(core), 200e18);
-
-        // Deposit 200, Mint 100 Debt.
-        // Fee = 100 * 1% = 1 Debt Unit.
-        // In Collateral Terms (Price 1:1) = 1 Collateral Unit.
-        // User should have 200 - 1 = 199 Collateral remaining in position.
-        
-        bytes memory data = abi.encode(1, int256(200e18), int256(100e18), feeMarketId); 
-        // Note: lockAcquired needs to handle variable marketId. 
-        // I'll update lockAcquired to decode marketId or just use storage variable.
-        // Making lockAcquired flexible:
-        core.lock(data);
-
-        IRLDCore.Position memory pos = core.getPosition(feeMarketId, address(this));
-        assertEq(pos.collateral, 199e18); // 200 - 1 fee
-        assertEq(pos.debtPrincipal, 100e18);
-        
-        // Check Fee Received
-        assertEq(collateral.balanceOf(address(this)), 1e18); // Fee matches
-    }
     
     // Updated lockAcquired to handle marketId from data
     // Removed lockAcquiredNew
