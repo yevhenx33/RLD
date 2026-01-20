@@ -45,6 +45,14 @@ contract MockERC20 is IERC20 {
         balanceOf[to] += amount;
         return true;
     }
+
+    function symbol() external pure returns (string memory) {
+        return "MOCK";
+    }
+
+    function name() external pure returns (string memory) {
+        return "Mock Token";
+    }
 }
 
 contract MockOracle is IRLDOracle, ISpotOracle, IDefaultOracle {
@@ -77,8 +85,8 @@ contract MockOracle is IRLDOracle, ISpotOracle, IDefaultOracle {
 
 contract MockFunding is IFundingModel {
     function calculateFunding(
-        uint256 /*markPrice*/,
-        uint256 /*indexPrice*/,
+        bytes32 /*marketId*/,
+        address /*core*/,
         uint256 lastNormFactor,
         uint48 /*lastTimestamp*/
     ) external pure returns (uint256, int256) {
@@ -92,6 +100,7 @@ contract RLDCoreTest is Test {
     RLDCore core;
     MockERC20 collateral;
     MockERC20 underlying;
+    MockERC20 positionToken;
     MockOracle oracle;
     MockFunding funding;
 
@@ -103,6 +112,7 @@ contract RLDCoreTest is Test {
         core = new RLDCore();
         collateral = new MockERC20();
         underlying = new MockERC20();
+        positionToken = new MockERC20();
         oracle = new MockOracle();
         funding = new MockFunding();
         staticLiq = new StaticLiquidationModule();
@@ -121,7 +131,8 @@ contract RLDCoreTest is Test {
             feeHook: address(0),
             hook: address(0),
             defaultOracle: address(oracle),
-            liquidationModule: address(staticLiq)
+            liquidationModule: address(staticLiq),
+            positionToken: address(positionToken)
         });
 
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({

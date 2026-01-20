@@ -14,6 +14,7 @@ import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {IRLDHook} from "../interfaces/IRLDHook.sol";
 import {ILiquidationModule} from "../interfaces/ILiquidationModule.sol";
 import {IDefaultOracle} from "../interfaces/IDefaultOracle.sol";
+import {WrappedRLP} from "../tokens/WrappedRLP.sol";
 
 /// @title RLD Core Singleton
 /// @dev The Hyperstructure managing all RLD Markets.
@@ -41,6 +42,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         if (addresses.spotOracle == address(0)) revert("Invalid Spot Oracle");
         if (addresses.markOracle == address(0)) revert("Invalid Mark Oracle");
         if (addresses.fundingModel == address(0)) revert("Invalid Funding Model");
+        if (addresses.positionToken == address(0)) revert("Invalid Position Token");
         
         // Use addresses to generate ID to ensure uniqueness per config
         MarketId id = MarketId.wrap(keccak256(abi.encode(
@@ -170,9 +172,6 @@ contract RLDCore is IRLDCore, RLDStorage {
         // Note: CDSHook logic needs to run *before* transfers technically? 
         // Hook signature: beforeModifyPosition(id, sender, deltaCol, deltaDebt)
         if (addresses.hook != address(0)) {
-            // We define a generic interface for Hooks?
-            // Let's assume CDSHook interface for now or generic IHook
-            // Since we know it's CDSHook:
             // IHook(params.hook).beforeModifyPosition(id, msg.sender, deltaCollateral, deltaDebt);
             // I need to confirm interface linkage. 
             // CDSHook.sol has `beforeModifyPosition`.
@@ -180,6 +179,17 @@ contract RLDCore is IRLDCore, RLDStorage {
             // Let's rely on low-level call or define IHook interface.
             // For MVP, if hook set, we try to call it?
             // Better: Define IHook in IRLDCore/IHook.
+        }
+
+        // 3.5 Tokenize Debt (WrappedRLP)
+        if (addresses.positionToken != address(0)) {
+            if (deltaDebt > 0) {
+                // Mint (Short Position)
+                WrappedRLP(addresses.positionToken).mint(msg.sender, uint256(deltaDebt));
+            } else if (deltaDebt < 0) {
+                // Burn (Repay Position)
+                WrappedRLP(addresses.positionToken).burn(msg.sender, uint256(-deltaDebt));
+            }
         }
 
 
@@ -268,29 +278,10 @@ contract RLDCore is IRLDCore, RLDStorage {
         MarketState storage state = marketStates[id];
         MarketAddresses storage addresses = marketAddresses[id];
         
-        // 1. Get Prices
-        // Note: Mark Price comes from Uniswap V4 (via params.feeHook or separate poolId storage)
-        // For MVP, we assume FundingModel handles the Mark Price fetch or we pass it?
-        // Architecture Design: FundingModel should be smart enough to fetch Mark if we pass the pool data.
-        // Or we pass 0 here and let FundingModel figure it out if it knows the pool.
-        // Let's assume we need to pass Mark Price.
-        // TODO: Need `params.uniswapPoolId` in MarketParams to fetch Mark Price here via UniswapIntegration.
-        // Adding placeholder `0` for markPrice now.
-        
-        uint256 markPrice = ISpotOracle(addresses.markOracle).getSpotPrice(
-            addresses.collateralToken, 
-            addresses.underlyingToken
-        );
-        
-        uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
-            addresses.underlyingPool, 
-            addresses.underlyingToken
-        );
-
-        // 2. Calculate New State
+        // 1. Calculate New State via External Model
         (uint256 newNormFactor, ) = IFundingModel(addresses.fundingModel).calculateFunding(
-            markPrice,
-            indexPrice,
+            MarketId.unwrap(id),
+            address(this),
             state.normalizationFactor,
             state.lastUpdateTimestamp
         );

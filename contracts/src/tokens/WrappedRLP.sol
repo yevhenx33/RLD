@@ -17,20 +17,14 @@ contract WrappedRLP is ERC20, Owned, Initializable {
         _disableInitializers();
     }
 
-    function initialize(address _underlying) external initializer {
+    function initialize(address _underlying, string memory _collateralSymbol) external initializer {
         owner = msg.sender;
         emit OwnershipTransferred(address(0), msg.sender);
         
         underlying = _underlying;
         
-        // Auto-set Name and Symbol based on underlying?
-        // Cloning copies bytecode, including hardcoded "Wrapped RLP Impl".
-        // But Solmate ERC20 uses storage for name/symbol (assigned in constructor).
-        // Since constructor didn't run effectively for storage, name/symbol are empty.
-        // We MUST set them here.
-        string memory underlyingSymbol = ERC20(_underlying).symbol();
-        name = string(abi.encodePacked("Wrapped ", underlyingSymbol));
-        symbol = string(abi.encodePacked("w", underlyingSymbol));
+        name = string(abi.encodePacked("Wrapped RLP ", _collateralSymbol));
+        symbol = string(abi.encodePacked("wRLP", _collateralSymbol));
         // decimals is immutable (18) and shared by clones via bytecode.
     }
 

@@ -23,6 +23,7 @@ interface IRLDCore {
         address hook;
         address defaultOracle;
         address liquidationModule;
+        address positionToken; // ERC20 token representing debt (WrappedRLP)
     }
 
     struct MarketConfig {
