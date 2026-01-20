@@ -29,7 +29,10 @@ contract RLDFactoryTest is Test {
             address(funding),
             address(oracle), // Spot
             address(oracle), // Rate
-            address(oracle)  // Default
+            address(oracle), // Default
+            address(0),      // PoolManager (Mock)
+            address(0),      // TWAMM (Mock)
+            address(oracle)  // MarkOracle
         );
     }
 

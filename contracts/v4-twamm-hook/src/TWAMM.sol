@@ -31,6 +31,8 @@ import {PoolGetters} from "@lib/PoolGetters.sol";
 import {OrderPool} from "@lib/OrderPool.sol";
 import {TransferHelper} from "@lib/TransferHelper.sol";
 
+import {TwapOracle} from "@src/libraries/TwapOracle.sol";
+
 uint256 constant RATE_SCALER = 1e18;
 
 /**
@@ -54,6 +56,8 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
     using TickBitmap for mapping(int16 => uint256);
     using StateLibrary for IPoolManager;
     using TransientStateLibrary for IPoolManager;
+    using TwapOracle for mapping(uint256 => TwapOracle.Observation);
+    using TwapOracle for TwapOracle.State;
 
     bytes internal constant ZERO_BYTES = bytes("");
 
@@ -62,6 +66,9 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
 
     mapping(PoolId poolId => TWAMMState twammState) internal twammStates;
     mapping(Currency token => mapping(address owner => uint256 amountOwed)) public tokensOwed;
+
+    mapping(PoolId => mapping(uint256 => TwapOracle.Observation)) public observations;
+    mapping(PoolId => TwapOracle.State) public oracleStates;
 
     /// @notice If non-zero, the hook has been killed and can no longer be used to create TWAMM orders.
     ///         Swaps & Liquidity Actions will continue to operate normally.
@@ -121,6 +128,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
 
         // one-time initialization enforced in PoolManager
         initialize(_getTWAMM(key));
+        _initializeOracle(key);
 
         return BaseHook.beforeInitialize.selector;
     }
@@ -132,6 +140,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
         IPoolManager.ModifyLiquidityParams calldata,
         bytes calldata
     ) external override onlyPoolManager returns (bytes4) {
+        _updateOracle(key);
         executeTWAMMOrders(key);
 
         return BaseHook.beforeAddLiquidity.selector;
@@ -143,6 +152,8 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
         IPoolManager.ModifyLiquidityParams calldata,
         bytes calldata
     ) external override onlyPoolManager returns (bytes4) {
+        // Look up the oracle state and update it
+        _updateOracle(key);
         // Liquidity removal must always be unblocked.
         try this.executeTWAMMOrders(key) {} catch {}
 
@@ -155,6 +166,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
         onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
     {
+        _updateOracle(key);
         executeTWAMMOrders(key);
 
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
@@ -792,47 +804,39 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
                 );
 
                 params.pool.sqrtPriceX96 = initializedSqrtPrice;
-                if (params.zeroForOne) {
-                    liquidityNetAtTick = -liquidityNetAtTick;
-                }
-                params.pool.liquidity = LiquidityMath.addDelta(params.pool.liquidity, liquidityNetAtTick);
 
                 unchecked {
                     totalEarnings += params.zeroForOne ? swapDelta1 : swapDelta0;
                     amountSelling -= params.zeroForOne ? swapDelta0 : swapDelta1;
                 }
-            } else {
-                if (params.zeroForOne) {
-                    totalEarnings += SqrtPriceMath.getAmount1Delta(
-                        params.pool.sqrtPriceX96, finalSqrtPriceX96, params.pool.liquidity, true
-                    );
-                    params.pool.maxSwap0For1 += Math.mulDiv(params.secondsElapsed, sellRateCurrent, RATE_SCALER);
-                } else {
-                    totalEarnings += SqrtPriceMath.getAmount0Delta(
-                        params.pool.sqrtPriceX96, finalSqrtPriceX96, params.pool.liquidity, true
-                    );
-                    params.pool.maxSwap1For0 += Math.mulDiv(params.secondsElapsed, sellRateCurrent, RATE_SCALER);
+
+                unchecked {
+                    if (params.zeroForOne) liquidityNetAtTick = -liquidityNetAtTick;
                 }
+                params.pool.liquidity = LiquidityMath.addDelta(params.pool.liquidity, liquidityNetAtTick);
 
-                // Simplified for: (totalEarnings * FixedPoint96.Q96) / (orderPool.sellRateCurrent / RATE_SCALER);
-                uint256 accruedEarningsFactor =
-                    Math.mulDiv(totalEarnings * FixedPoint96.Q96, RATE_SCALER, orderPool.sellRateCurrent);
-
-                self.orderPool0For1.advanceToInterval(
-                    params.nextTimestamp, params.zeroForOne ? accruedEarningsFactor : 0
-                );
-                self.orderPool1For0.advanceToInterval(
-                    params.nextTimestamp, params.zeroForOne ? 0 : accruedEarningsFactor
-                );
-
-                params.pool.sqrtPriceX96 = finalSqrtPriceX96;
-
-                break;
+                unchecked {
+                    params.pool.sqrtPriceX96 = params.zeroForOne ? initializedSqrtPrice - 1 : initializedSqrtPrice;
+                }
+                continue;
             }
+
+            params.pool.sqrtPriceX96 = finalSqrtPriceX96;
+            break;
         }
+
+        totalEarnings = Math.mulDiv(
+            amountSelling,
+            FixedPoint96.Q96,
+            orderPool.sellRateCurrent
+        );
+
+        orderPool.commit(totalEarnings, amountSelling);
 
         return params.pool;
     }
+
+
 
     function _isCrossingInitializedTick(
         PoolParamsOnExecute memory pool,
@@ -886,5 +890,34 @@ contract TWAMM is BaseHook, Owned, ITWAMM {
 
     function _getIntervalTime(uint256 timestamp) internal view returns (uint256) {
         return timestamp - (timestamp % expirationInterval);
+    }
+
+    function _initializeOracle(PoolKey calldata key) internal {
+        PoolId poolId = key.toId();
+        observations[poolId].initialize(oracleStates[poolId], uint32(block.timestamp));
+    }
+
+    function _updateOracle(PoolKey memory key) internal {
+        PoolId poolId = key.toId();
+        (, int24 tick, , ) = poolManager.getSlot0(poolId);
+        observations[poolId].write(oracleStates[poolId], uint32(block.timestamp), tick);
+    }
+
+    /// @inheritdoc ITWAMM
+    function observe(PoolId poolId, uint32[] calldata secondsAgos)
+        external
+        view
+        returns (int56[] memory tickCumulatives)
+    {
+        return observations[poolId].observe(oracleStates[poolId], uint32(block.timestamp), secondsAgos, _getTick(poolId));
+    }
+
+    /// @inheritdoc ITWAMM
+    function increaseCardinality(PoolId poolId, uint16 next) external returns (uint16 cardinalityNext) {
+        return observations[poolId].grow(oracleStates[poolId], next);
+    }
+
+    function _getTick(PoolId poolId) internal view returns (int24 tick) {
+        (, tick, , ) = poolManager.getSlot0(poolId);
     }
 }

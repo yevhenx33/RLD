@@ -17,6 +17,7 @@ interface IRLDCore {
         address underlyingPool;
         address rateOracle;
         address spotOracle;
+        address markOracle;
         address fundingModel;
         address feeHook;
         address hook;

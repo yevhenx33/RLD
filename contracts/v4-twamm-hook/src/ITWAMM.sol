@@ -282,4 +282,19 @@ interface ITWAMM {
     /// @param key The pool key associated with the TWAMM.
     /// @param targetTimestamp The timestamp until which to process outstanding TWAMM orders (must be >= lastVirtualOrderTimestamp and <= block.timestamp).
     function executeTWAMMOrders(PoolKey memory key, uint256 targetTimestamp) external;
+
+    /// @notice Returns the accumulator values as of each time seconds ago from the given time in the array of `secondsAgos`
+    /// @param poolId The ID of the pool
+    /// @param secondsAgos Each amount of time to look back, in seconds, at which point to return an observation
+    /// @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each `secondsAgo`
+    function observe(PoolId poolId, uint32[] calldata secondsAgos)
+        external
+        view
+        returns (int56[] memory tickCumulatives);
+
+    /// @notice Increases the cardinality of the oracle array
+    /// @param poolId The ID of the pool
+    /// @param next The new length of the oracle array, independent of population
+    /// @return cardinalityNext The new length of the oracle array
+    function increaseCardinality(PoolId poolId, uint16 next) external returns (uint16 cardinalityNext);
 }

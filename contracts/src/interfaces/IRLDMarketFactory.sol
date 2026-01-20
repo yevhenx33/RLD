@@ -27,6 +27,22 @@ interface IRLDMarketFactory {
         bytes32 liquidationParams
     ) external returns (MarketId marketId, address oracle, address spotOracle, address defaultOracle, bytes32 poolId);
 
+    function deployMarketV4(
+        address underlyingPool,
+        address underlyingToken,
+        address collateralToken,
+        IRLDCore.MarketType marketType,
+        address feeRecipient,
+        uint16 mintFeeBps,
+        uint16 redeemFeeBps,
+        uint64 minColRatio,
+        uint64 maintenanceMargin,
+        address liquidationModule,
+        bytes32 liquidationParams,
+        uint160 initSqrtPrice,
+        uint32 oraclePeriod
+    ) external returns (MarketId marketId, address oracle, address spotOracle, address defaultOracle, bytes32 poolId);
+
     /// @notice Deploys a Synthetic Bond Vault for an existing market.
     /// @param marketId The market to bond against.
     /// @return vault The address of the deployed ERC-4626 Vault.

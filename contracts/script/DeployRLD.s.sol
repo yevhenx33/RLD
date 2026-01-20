@@ -9,6 +9,11 @@ import "../src/modules/oracles/ChainlinkSpotOracle.sol";
 import "../src/modules/oracles/DefaultOracle.sol";
 import "../src/modules/funding/StandardFundingModel.sol";
 import "../src/modules/liquidation/DutchLiquidationModule.sol";
+import {PoolManager} from "@uniswap/v4-core/src/PoolManager.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {HookMiner} from "../lib/v4-periphery/src/utils/HookMiner.sol";
+import {TWAMM} from "v4-twamm-hook/src/TWAMM.sol";
 
 contract DeployRLD is Script {
     struct NetworkConfig {
@@ -40,7 +45,7 @@ contract DeployRLD is Script {
         // address targetAsset = config.usdc;
 
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        // address operator = vm.addr(deployerPrivateKey);
+        address deployer = vm.addr(deployerPrivateKey); // Get deployer address
 
         vm.startBroadcast(deployerPrivateKey);
 
@@ -56,13 +61,34 @@ contract DeployRLD is Script {
         // 3. Deploy Core
         RLDCore core = new RLDCore();
 
+        // 3.1 Deploy V4 Infrastructure
+PoolManager poolManager = new PoolManager(deployer);
+        
+        // Mine salt for TWAMM
+        uint160 flags = uint160(
+            Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
+                | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
+        );
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            deployer, 
+            flags, 
+            type(TWAMM).creationCode, 
+            abi.encode(IPoolManager(address(poolManager)), 3600, deployer)
+        );
+        
+        TWAMM twamm = new TWAMM{salt: salt}(IPoolManager(address(poolManager)), 3600, deployer);
+        require(address(twamm) == hookAddress, "Hook address mismatch");
+
         // 4. Deploy Factory
         RLDMarketFactory factory = new RLDMarketFactory(
             address(core), 
             address(fundingModel), 
             address(spotOracle),
             address(rateOracle),
-            address(defaultOracle)
+            address(defaultOracle),
+            address(poolManager),
+            address(twamm),
+            address(spotOracle)
         );
 
         console.log("RLD Core deployed at:", address(core));

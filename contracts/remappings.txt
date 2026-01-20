@@ -1,7 +1,9 @@
-@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+@openzeppelin/contracts/=lib/openzeppelin-v5/contracts/
+@lib/=v4-twamm-hook/src/libraries/
+@src/=v4-twamm-hook/src/
 @uniswap/v3-core/=lib/v3-core/
 @uniswap/v3-periphery/=lib/v3-periphery/
-v4-twamm-hook/=v4-twamm-hook/src/
+v4-twamm-hook/=v4-twamm-hook/
 @uniswap/v4-core/=v4-twamm-hook/lib/v4-core/
 v4-core/=v4-twamm-hook/lib/v4-core/
 v4-periphery/=v4-twamm-hook/lib/v4-periphery/
