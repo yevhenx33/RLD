@@ -86,7 +86,7 @@ contract RLDFactoryTest is Test {
             bytes32(uint256(1.05e18))
         );
 
-        vm.expectRevert("Market Already Exists");
+        vm.expectRevert(RLDMarketFactory.MarketAlreadyExists.selector);
         factory.deployMarket(
             pool,
             address(underlying),

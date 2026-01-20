@@ -16,6 +16,7 @@ import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {ITWAMM} from "v4-twamm-hook/src/ITWAMM.sol";
 import {WrappedRLP} from "../tokens/WrappedRLP.sol";
 import {UniswapV4OracleAdapter} from "../modules/oracles/UniswapV4OracleAdapter.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 /// @title RLDMarketFactory
 /// @notice Permissionless factory for "One-Click" RLD Markets.
@@ -28,6 +29,10 @@ contract RLDMarketFactory is IRLDMarketFactory {
     
     using PoolIdLibrary for PoolKey;
     
+    event MarketDeployed(MarketId indexed id, address indexed pool, address underlying, IRLDCore.MarketType marketType);
+    error Unauthorized();
+    error MarketAlreadyExists();
+    
     // Default Implementations (Immutable for creating clones, or just use references if stateless)
     // For MVP, we pass deployed addresses or deploy new instances if needed.
     // Ideally we have a registry. For now, we hardcode standard modules logic or deploy them.
@@ -38,6 +43,10 @@ contract RLDMarketFactory is IRLDMarketFactory {
     address public immutable DEFAULT_ORACLE; // Singleton logic
     address public immutable STATIC_LIQ_MODULE;
     address public immutable MARK_ORACLE; // For legacy support
+    address public immutable CDS_HOOK;
+    address public immutable WRAPPED_RLP_IMPL;
+    
+    // Pool -> Funding -> MarketType -> MarketId
 
     // Pool -> Funding -> MarketType -> MarketId
     mapping(address => mapping(address => mapping(IRLDCore.MarketType => MarketId))) public canonicalMarkets;
@@ -61,6 +70,8 @@ contract RLDMarketFactory is IRLDMarketFactory {
         twamm = ITWAMM(_twamm);
         MARK_ORACLE = markOracle;
         STATIC_LIQ_MODULE = address(new StaticLiquidationModule());
+        CDS_HOOK = address(new CDSHook());
+        WRAPPED_RLP_IMPL = address(new WrappedRLP());
     }
 
     function deployMarket(
@@ -76,9 +87,7 @@ contract RLDMarketFactory is IRLDMarketFactory {
         
         oracle = AAVE_RATE_ORACLE;
         spotOracle = CHAINLINK_SPOT_ORACLE; 
-        // 2. Deploy Hooks
-        CDSHook cdsHook = new CDSHook();
-
+        
         address module = liquidationModule == address(0) ? STATIC_LIQ_MODULE : liquidationModule;
         
         // 3. Create Market Params (Using passed MarketType)
@@ -91,7 +100,7 @@ contract RLDMarketFactory is IRLDMarketFactory {
             markOracle: MARK_ORACLE,
             fundingModel: STD_FUNDING_MODEL,
             feeHook: address(0), 
-            hook: address(cdsHook),
+            hook: CDS_HOOK,
             defaultOracle: DEFAULT_ORACLE,
             liquidationModule: module
         });
@@ -107,7 +116,7 @@ contract RLDMarketFactory is IRLDMarketFactory {
         
         // 4. Register & Validate Constraints
         if (MarketId.unwrap(canonicalMarkets[underlyingPool][STD_FUNDING_MODEL][marketType]) != bytes32(0)) {
-            revert("Market Already Exists");
+            revert MarketAlreadyExists();
         }
 
         marketId = CORE.createMarket(addresses, config);
@@ -129,23 +138,27 @@ contract RLDMarketFactory is IRLDMarketFactory {
         address liquidationModule,
         bytes32 liquidationParams,
         uint160 initSqrtPrice,
-        uint32 oraclePeriod
+        uint32 oraclePeriod,
+        uint24 poolFee,
+        int24 tickSpacing
     ) external override returns (MarketId marketId, address oracle, address spotOracle, address defaultOracle, bytes32 poolId) {
-        // 1. Deploy wRLP
-        WrappedRLP wRLP = new WrappedRLP(underlyingToken);
+        // 1. Deploy wRLP (Clone)
+        address wRLPAddr = Clones.clone(WRAPPED_RLP_IMPL);
+        WrappedRLP(wRLPAddr).initialize(underlyingToken);
+        
         // Note: wRLP is the tokenized debt/position, NOT the collateral.
         // collateralToken is passed as argument.
 
         // 2. Setup V4 Pool params
-        Currency currency0 = Currency.wrap(address(wRLP));
+        Currency currency0 = Currency.wrap(wRLPAddr);
         Currency currency1 = Currency.wrap(underlyingToken);
         if (currency0 > currency1) (currency0, currency1) = (currency1, currency0);
 
         PoolKey memory key = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 3000, 
-            tickSpacing: 60,
+            fee: poolFee, 
+            tickSpacing: tickSpacing,
             hooks: IHooks(address(twamm))
         });
         
@@ -165,7 +178,6 @@ contract RLDMarketFactory is IRLDMarketFactory {
         spotOracle = CHAINLINK_SPOT_ORACLE; // Use Standard Spot Oracle for Collateral (e.g. aUSDC/USDC)
         
         // 4. Create Market Params
-        CDSHook cdsHook = new CDSHook();
         address module = liquidationModule == address(0) ? STATIC_LIQ_MODULE : liquidationModule;
 
         IRLDCore.MarketAddresses memory addresses = IRLDCore.MarketAddresses({
@@ -177,7 +189,7 @@ contract RLDMarketFactory is IRLDMarketFactory {
             markOracle: address(oracleAdapter), // Funding/Debt Oracle (V4 TWAP)
             fundingModel: STD_FUNDING_MODEL,
             feeHook: address(0),
-            hook: address(cdsHook),
+            hook: CDS_HOOK,
             defaultOracle: DEFAULT_ORACLE,
             liquidationModule: module
         });
@@ -191,16 +203,18 @@ contract RLDMarketFactory is IRLDMarketFactory {
         });
 
         if (MarketId.unwrap(canonicalMarkets[underlyingPool][STD_FUNDING_MODEL][marketType]) != bytes32(0)) {
-            revert("Market Already Exists");
+            revert MarketAlreadyExists();
         }
 
         marketId = CORE.createMarket(addresses, config);
         canonicalMarkets[underlyingPool][STD_FUNDING_MODEL][marketType] = marketId;
 
         // 5. Link wRLP
-        wRLP.setMarketId(marketId);
+        WrappedRLP(wRLPAddr).setMarketId(marketId);
         
         defaultOracle = DEFAULT_ORACLE;
+        
+        emit MarketDeployed(marketId, underlyingPool, underlyingToken, marketType);
     }
 
     function deployBondVault(MarketId /*marketId*/) external override returns (address vault) {

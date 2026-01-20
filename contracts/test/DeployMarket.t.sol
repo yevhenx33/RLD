@@ -84,7 +84,9 @@ poolManager = new PoolManager(address(this));
             address(0), // liquidator
             bytes32(0), // params
             79228162514264337593543950336, // initSqrtPrice (1:1)
-            3600 // oraclePeriod
+            3600, // oraclePeriod
+            3000, // poolFee
+            60    // tickSpacing
         );
         
         emit log_bytes32(MarketId.unwrap(id));
