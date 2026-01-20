@@ -87,8 +87,7 @@ contract DeployMarketTest is Test {
             address(rateOracle),
             address(defaultOracle),
             address(poolManager),
-            address(twamm),
-            address(spotOracle)
+            address(twamm)
         );
         
         usdc = new MockERC20("USDC", "USDC", 6);
@@ -129,12 +128,14 @@ contract DeployMarketTest is Test {
         assertTrue(addrs.collateralToken == address(aUSDC));
         
         // Verify Oracles
-        address adapter = addrs.markOracle;
-        assertTrue(adapter == factory.SINGLETON_V4_ORACLE());
+        // Verify Oracles
+        address singletonAddr = factory.SINGLETON_V4_ORACLE();
+        assertEq(addrs.markOracle, singletonAddr, "Step 6: Mark Oracle must be Singleton");
         assertTrue(addrs.spotOracle == address(spotOracle)); 
+        assertTrue(addrs.curator == address(0));
         
         // Verify Singleton Registration
-        UniswapV4SingletonOracle singleton = UniswapV4SingletonOracle(adapter);
+        UniswapV4SingletonOracle singleton = UniswapV4SingletonOracle(singletonAddr);
         (PoolKey memory key, PoolId pid, ITWAMM t, uint32 p, bool set) = singleton.poolSettings(addrs.positionToken);
         
         assertTrue(set);

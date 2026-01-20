@@ -17,9 +17,9 @@ interface IRLDCore {
         address underlyingPool;
         address rateOracle;
         address spotOracle;
-        address markOracle;
+        address markOracle; // Restored (Required by FundingModel)
         address fundingModel;
-        address feeHook;
+        address curator; // Renamed from feeHook
         address hook;
         address defaultOracle;
         address liquidationModule;

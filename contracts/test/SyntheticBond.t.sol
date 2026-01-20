@@ -167,10 +167,9 @@ contract SyntheticBondTest is Test {
             address(funding), 
             address(oracle), 
             address(oracle),
-            address(oracle),
+            address(0), // markOracle removed
             address(pm), 
-            address(twamm), 
-            address(oracle)
+            address(twamm)
         );
     }
     

@@ -40,7 +40,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         if (addresses.underlyingToken == address(0)) revert("Invalid Underlying");
         if (addresses.rateOracle == address(0)) revert("Invalid Rate Oracle");
         if (addresses.spotOracle == address(0)) revert("Invalid Spot Oracle");
-        if (addresses.markOracle == address(0)) revert("Invalid Mark Oracle");
+        // markOracle check removed
         if (addresses.fundingModel == address(0)) revert("Invalid Funding Model");
         if (addresses.positionToken == address(0)) revert("Invalid Position Token");
         
@@ -434,7 +434,7 @@ contract RLDCore is IRLDCore, RLDStorage {
     function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, address liquidationModule, bytes32 liquidationParams) external override {
         MarketAddresses storage addresses = marketAddresses[id];
         if (addresses.collateralToken == address(0)) revert("Invalid Market");
-        if (msg.sender != addresses.feeHook) revert("Unauthorized"); // Only Curator
+        if (msg.sender != addresses.curator) revert("Unauthorized"); // Only Curator
         
         // Input Validation (Basic sanity checks)
         if (maintenanceMargin < 1e18) revert("Unsafe Margin"); // < 100%

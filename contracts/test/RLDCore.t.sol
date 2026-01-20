@@ -128,7 +128,7 @@ contract RLDCoreTest is Test {
             spotOracle: address(oracle),
             markOracle: address(oracle),
             fundingModel: address(funding),
-            feeHook: address(0),
+            curator: address(0),
             hook: address(0),
             defaultOracle: address(oracle),
             liquidationModule: address(staticLiq),

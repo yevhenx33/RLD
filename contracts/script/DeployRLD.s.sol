@@ -87,8 +87,7 @@ PoolManager poolManager = new PoolManager(deployer);
             address(rateOracle),
             address(defaultOracle),
             address(poolManager),
-            address(twamm),
-            address(spotOracle)
+            address(twamm)
         );
 
         console.log("RLD Core deployed at:", address(core));

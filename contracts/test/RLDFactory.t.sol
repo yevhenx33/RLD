@@ -31,8 +31,7 @@ contract RLDFactoryTest is Test {
             address(oracle), // Rate
             address(oracle), // Default
             address(0),      // PoolManager (Mock)
-            address(0),      // TWAMM (Mock)
-            address(oracle)  // MarkOracle
+            address(0)      // TWAMM (Mock)
         );
     }
 
@@ -56,7 +55,9 @@ contract RLDFactoryTest is Test {
         assertTrue(p.marketType == IRLDCore.MarketType.RLP);
         
         // Verify Registry
-        assertTrue(MarketId.unwrap(factory.canonicalMarkets(pool, address(funding), IRLDCore.MarketType.RLP)) != bytes32(0));
+        // Verify Registry
+        bytes32 key = factory.getCanonicalId(pool, address(underlying), IRLDCore.MarketType.RLP);
+        assertTrue(MarketId.unwrap(factory.canonicalMarkets(key)) != bytes32(0));
     }
 
     function test_DeployMarket_CDS() public {
@@ -71,7 +72,8 @@ contract RLDFactoryTest is Test {
             bytes32(uint256(1.05e18))
         );
         
-        assertTrue(MarketId.unwrap(factory.canonicalMarkets(pool, address(funding), IRLDCore.MarketType.CDS)) != bytes32(0));
+        bytes32 key = factory.getCanonicalId(pool, address(underlying), IRLDCore.MarketType.CDS);
+        assertTrue(MarketId.unwrap(factory.canonicalMarkets(key)) != bytes32(0));
     }
 
     function test_Revert_Duplicate() public {
