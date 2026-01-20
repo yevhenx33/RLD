@@ -40,22 +40,41 @@ contract ChainlinkSpotOracle is ISpotOracle {
             // Or maybe we use ETH/USD and USDC/USD? 
             // Simplifying: Assume we manually registered a feed that gives Price of Collateral in Underlying.
             // e.g., ETH/USDC feed.
-            revert("Reverse Feed Not Implemented");
-        }
-
-        // 2. Read Feed
-        (, int256 answer,,,) = IChainlinkFeed(feed).latestRoundData();
-        if (answer <= 0) revert("Invalid Price");
-
-        uint8 decimals = IChainlinkFeed(feed).decimals();
-        
-        // 3. Normalize to 1e18
-        if (decimals < 18) {
-            price = uint256(answer) * (10 ** (18 - decimals));
-        } else if (decimals > 18) {
-            price = uint256(answer) / (10 ** (decimals - 18));
+            // 2. Read Feed (Inverse)
+            (, int256 answer,,,) = IChainlinkFeed(feed).latestRoundData();
+            if (answer <= 0) revert("Invalid Price");
+            
+            uint8 decimals = IChainlinkFeed(feed).decimals();
+            uint256 directPrice;
+            
+            // Normalize direct price to 1e18 first
+            if (decimals < 18) {
+                directPrice = uint256(answer) * (10 ** (18 - decimals));
+            } else if (decimals > 18) {
+                directPrice = uint256(answer) / (10 ** (decimals - 18));
+            } else {
+                directPrice = uint256(answer);
+            }
+            
+            // 3. Invert Price
+            // Price = 1 / DirectPrice. 
+            // Since DirectPrice is WAD (1e18), Inverse = 1e36 / DirectPrice
+            price = 1e36 / directPrice;
         } else {
-            price = uint256(answer);
+            // 2. Read Feed (Direct)
+            (, int256 answer,,,) = IChainlinkFeed(feed).latestRoundData();
+            if (answer <= 0) revert("Invalid Price");
+
+            uint8 decimals = IChainlinkFeed(feed).decimals();
+            
+            // 3. Normalize to 1e18
+            if (decimals < 18) {
+                price = uint256(answer) * (10 ** (18 - decimals));
+            } else if (decimals > 18) {
+                price = uint256(answer) / (10 ** (decimals - 18));
+            } else {
+                price = uint256(answer);
+            }
         }
     }
 }

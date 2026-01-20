@@ -9,6 +9,8 @@ import {RLDStorage} from "./RLDStorage.sol";
 import {TransientStorage} from "../libraries/TransientStorage.sol";
 import {FixedPointMath} from "../libraries/FixedPointMath.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {IRLDHook} from "../interfaces/IRLDHook.sol";
 import {ILiquidationModule} from "../interfaces/ILiquidationModule.sol";
 import {IDefaultOracle} from "../interfaces/IDefaultOracle.sol";
@@ -17,6 +19,7 @@ import {IDefaultOracle} from "../interfaces/IDefaultOracle.sol";
 /// @dev The Hyperstructure managing all RLD Markets.
 contract RLDCore is IRLDCore, RLDStorage {
     using FixedPointMath for uint256;
+    using SafeTransferLib for ERC20;
 
     // Actually IRLDCore defines them. RLDCore implements IRLDCore.
     // If we want them in ABI, declaring them here is fine.
@@ -149,13 +152,12 @@ contract RLDCore is IRLDCore, RLDStorage {
             
             if (deltaCollateral > 0) {
                 // User depositing collateral
-                // SafeTransferFrom usually recommended, using standard for now
-                IERC20(addresses.collateralToken).transferFrom(msg.sender, address(this), uint256(deltaCollateral));
+                ERC20(addresses.collateralToken).safeTransferFrom(msg.sender, address(this), uint256(deltaCollateral));
             } else {
                 // User withdrawing collateral
                 // uint256(-delta)
                 uint256 amountToWithdraw = uint256(-deltaCollateral);
-                IERC20(addresses.collateralToken).transfer(msg.sender, amountToWithdraw);
+                ERC20(addresses.collateralToken).safeTransfer(msg.sender, amountToWithdraw);
             }
         }
 
@@ -418,7 +420,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         // Cost = Principal * NormFactor * IndexPrice
         uint256 costInUnderlying = uint256(debtToCover).mulWad(state.normalizationFactor).mulWad(indexPrice);
 
-        IERC20(addresses.underlyingToken).transferFrom(msg.sender, address(this), costInUnderlying);
+        ERC20(addresses.underlyingToken).safeTransferFrom(msg.sender, address(this), costInUnderlying);
         
         // D. Cap Seize
         if (totalSeized > pos.collateral) {
@@ -428,7 +430,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         pos.collateral -= uint128(totalSeized);
         
         // Transfer Collateral to Liquidator
-        IERC20(addresses.collateralToken).transfer(msg.sender, totalSeized);
+        ERC20(addresses.collateralToken).safeTransfer(msg.sender, totalSeized);
         
         emit PositionModified(id, user, -int256(totalSeized), -int256(debtToCover));
     }

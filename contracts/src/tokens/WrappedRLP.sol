@@ -13,7 +13,7 @@ contract WrappedRLP is ERC20, Owned, Initializable {
     error MarketIdAlreadySet();
     error NotMarket();
 
-    constructor() ERC20("Wrapped RLP Impl", "wRLP-IMPL", 18) Owned(address(0)) {
+    constructor() ERC20("Wrapped RLP Impl", "wRLP-IMPL", 18) Owned(msg.sender) {
         _disableInitializers();
     }
 
