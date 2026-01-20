@@ -36,7 +36,9 @@ interface IRLDMarketFactory {
         address liquidationModule,
         bytes32 liquidationParams,
         uint160 initSqrtPrice,
-        uint32 oraclePeriod
+        uint32 oraclePeriod,
+        uint24 poolFee,
+        int24 tickSpacing
     ) external returns (MarketId marketId, address oracle, address spotOracle, address defaultOracle, bytes32 poolId);
 
     /// @notice Deploys a Synthetic Bond Vault for an existing market.

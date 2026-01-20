@@ -12,8 +12,8 @@ contract CDSHook {
     /*                                           STATE                                              */
     /* ============================================================================================ */
 
-    // Mapping: User -> Timestamp when they can withdraw
-    mapping(address => uint256) public withdrawalUnlockTime;
+    // Mapping: MarketId -> User -> Timestamp when they can withdraw
+    mapping(MarketId => mapping(address => uint256)) public withdrawalUnlockTime;
     
     // Constant: 7 Days
     uint256 public constant LOCK_PERIOD = 7 days;
@@ -27,8 +27,8 @@ contract CDSHook {
     /* ============================================================================================ */
 
     /// @notice User calls this to start the cooldown timer.
-    function requestWithdrawal() external {
-        withdrawalUnlockTime[msg.sender] = block.timestamp + LOCK_PERIOD;
+    function requestWithdrawal(MarketId id) external {
+        withdrawalUnlockTime[id][msg.sender] = block.timestamp + LOCK_PERIOD;
     }
 
     /// @notice Called by RLDCore before modifying a position.
@@ -36,7 +36,7 @@ contract CDSHook {
     /// @param sender The user modifying the position (or the lock holder).
     /// @param deltaCollateral Content of the change.
     function beforeModifyPosition(
-        MarketId /*id*/, 
+        MarketId id, 
         address sender, 
         int256 deltaCollateral, 
         int256 /*deltaDebt*/
@@ -45,7 +45,7 @@ contract CDSHook {
         if (deltaCollateral >= 0) return;
 
         // 2. If Withdrawing -> Check Lock
-        uint256 unlockTime = withdrawalUnlockTime[sender];
+        uint256 unlockTime = withdrawalUnlockTime[id][sender];
         
         // If unlockTime is 0, they never requested.
         // If block.timestamp < unlockTime, they are still waiting.

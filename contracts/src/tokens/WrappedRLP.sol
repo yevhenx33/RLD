@@ -4,16 +4,34 @@ pragma solidity ^0.8.26;
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {MarketId} from "../interfaces/IRLDCore.sol";
+import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
-contract WrappedRLP is ERC20, Owned {
+contract WrappedRLP is ERC20, Owned, Initializable {
     MarketId public marketId;
-    address public immutable underlying;
+    address public underlying;
 
     error MarketIdAlreadySet();
     error NotMarket();
 
-    constructor(address _underlying) ERC20("Wrapped RLP", "wRLP", 18) Owned(msg.sender) {
+    constructor() ERC20("Wrapped RLP Impl", "wRLP-IMPL", 18) Owned(address(0)) {
+        _disableInitializers();
+    }
+
+    function initialize(address _underlying) external initializer {
+        owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
+        
         underlying = _underlying;
+        
+        // Auto-set Name and Symbol based on underlying?
+        // Cloning copies bytecode, including hardcoded "Wrapped RLP Impl".
+        // But Solmate ERC20 uses storage for name/symbol (assigned in constructor).
+        // Since constructor didn't run effectively for storage, name/symbol are empty.
+        // We MUST set them here.
+        string memory underlyingSymbol = ERC20(_underlying).symbol();
+        name = string(abi.encodePacked("Wrapped ", underlyingSymbol));
+        symbol = string(abi.encodePacked("w", underlyingSymbol));
+        // decimals is immutable (18) and shared by clones via bytecode.
     }
 
     function setMarketId(MarketId _id) external onlyOwner {

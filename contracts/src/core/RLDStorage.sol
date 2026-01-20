@@ -13,14 +13,14 @@ abstract contract RLDStorage is IRLDCore {
     /* ============================================================================================ */
 
     /// @notice Params Defines the immutable DNA of a market.
-    mapping(MarketId => MarketAddresses) public marketAddresses;
-    mapping(MarketId => MarketConfig) public marketConfigs;
+    mapping(MarketId id => MarketAddresses addresses) public marketAddresses;
+    mapping(MarketId id => MarketConfig config) public marketConfigs;
 
     /// @notice State Tracks the dynamic variables of a market.
-    mapping(MarketId => MarketState) public marketStates;
+    mapping(MarketId id => MarketState state) public marketStates;
 
     /// @notice Positions Tracks user debt and collateral per market.
-    mapping(MarketId => mapping(address => Position)) public positions;
+    mapping(MarketId id => mapping(address user => Position pos)) public positions;
 
     /* ============================================================================================ */
     /*                                       TRANSIENT STORAGE                                      */
