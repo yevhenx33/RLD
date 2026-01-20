@@ -3,7 +3,6 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {RLDCore} from "../src/core/RLDCore.sol";
-import {RLDMarketFactory} from "../src/core/RLDMarketFactory.sol";
 import {IRLDCore, MarketId} from "../src/interfaces/IRLDCore.sol";
 import {IRLDOracle} from "../src/interfaces/IRLDOracle.sol";
 import {ISpotOracle} from "../src/interfaces/ISpotOracle.sol";

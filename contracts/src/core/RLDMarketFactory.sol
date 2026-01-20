@@ -122,9 +122,7 @@ contract RLDMarketFactory is IRLDMarketFactory {
         marketId = CORE.createMarket(addresses, config);
         canonicalMarkets[underlyingPool][STD_FUNDING_MODEL][marketType] = marketId;
         
-        // 5. Initialize Uniswap Pool (Placeholder)
-        poolId = bytes32(0); 
-        // 5. Initialize Uniswap Pool (Placeholder)
+        // 5. Initialize Uniswap Pool (Empty for Classic Market)
         poolId = bytes32(0); 
     }
 
