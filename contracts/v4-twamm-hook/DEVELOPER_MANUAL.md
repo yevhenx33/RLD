@@ -35,7 +35,7 @@ The system consists of the Hook contract (`TWAMM.sol`) acting as an intermediary
 ```mermaid
 graph TD
     User[User / Trader]
-    Hook[TWAMM Hook (TWAMM.sol)]
+    Hook[TWAMM Hook]
     PM[Uniswap V4 PoolManager]
     LP[Liquidity Providers]
 
