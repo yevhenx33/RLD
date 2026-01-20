@@ -68,7 +68,7 @@ graph TD
 ### 1. Sell Rate
 
 The core unit of a TWAMM order is the **Sell Rate**.
-$$ \text{SellRate} = \frac{\text{AmountIn}}{\text{Duration}} $$
+$\text{SellRate} = \frac{\text{AmountIn}}{\text{Duration}}$
 It represents how many tokens are being sold per second.
 
 ### 2. Order Pools
@@ -84,7 +84,7 @@ Because orders are pooled, we track "Earnings per Sell Rate" (similar to Fee Gro
 
 - **`earningsFactor`**: Cumulative earnings per unit of sell rate.
 - When a user syncs their order, their owed tokens are calculated as:
-  $$ \text{Owed} = (\text{CurrentEarningsFactor} - \text{OrderLastEarningsFactor}) \times \text{OrderSellRate} $$
+  $$\text{Owed} = (\text{CurrentEarningsFactor} - \text{OrderLastEarningsFactor}) \times \text{OrderSellRate}$$
 
 ### 4. Intervals
 
