@@ -36,6 +36,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         if (addresses.underlyingToken == address(0)) revert("Invalid Underlying");
         if (addresses.rateOracle == address(0)) revert("Invalid Rate Oracle");
         if (addresses.spotOracle == address(0)) revert("Invalid Spot Oracle");
+        if (addresses.markOracle == address(0)) revert("Invalid Mark Oracle");
         if (addresses.fundingModel == address(0)) revert("Invalid Funding Model");
         
         // Use addresses to generate ID to ensure uniqueness per config
@@ -313,7 +314,10 @@ contract RLDCore is IRLDCore, RLDStorage {
         // TODO: Need `params.uniswapPoolId` in MarketParams to fetch Mark Price here via UniswapIntegration.
         // Adding placeholder `0` for markPrice now.
         
-        uint256 markPrice = 0; // Fetch from UniswapIntegration
+        uint256 markPrice = ISpotOracle(addresses.markOracle).getSpotPrice(
+            addresses.collateralToken, 
+            addresses.underlyingToken
+        );
         
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
             addresses.underlyingPool, 

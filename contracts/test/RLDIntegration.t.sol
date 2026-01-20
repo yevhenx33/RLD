@@ -40,7 +40,10 @@ contract RLDIntegrationTest is Test {
             address(funding),
             address(spotOracle),
             address(rateOracle),
-            address(defaultOracle)
+            address(defaultOracle),
+            address(0),      // PoolManager
+            address(0),      // TWAMM
+            address(spotOracle) // MarkOracle
         );
         
         spotOracle.setPrice(1e18); 

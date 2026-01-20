@@ -35,4 +35,7 @@ library OrderPool {
             self.sellRateAccounted = 0;
         }
     }
+    function commit(State storage self, uint256 earningsFactor, uint256 usedSellRate) internal {
+        advanceWithoutCommit(self, earningsFactor, usedSellRate);
+    }
 }
