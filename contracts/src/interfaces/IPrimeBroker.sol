@@ -16,4 +16,24 @@ interface IPrimeBroker {
     
     /// @notice Emitted when a generic execution is performed.
     event Execute(address indexed target, bytes data);
+
+    /* ============================================================================================ */
+    /*                                        NFT METADATA                                          */
+    /* ============================================================================================ */
+
+    enum BondType { YIELD, HEDGE }
+
+    struct BondMetadata {
+        uint256 rate;           // The fixed rate/yield (WAD, e.g., 0.05e18 = 5%)
+        uint256 maturityDate;   // Timestamp of bond expiration
+        uint256 principal;      // The size of the bond (in Underlying tokens)
+        BondType bondType;      // YIELD (Lender) or HEDGE (Borrower)
+    }
+
+    /// @notice Sets the metadata for the Bond NFT.
+    /// @dev Callable only by the Owner.
+    function setBondMetadata(BondMetadata calldata metadata) external;
+
+    /// @notice Returns the metadata for the Bond NFT.
+    function getBondMetadata() external view returns (BondMetadata memory);
 }

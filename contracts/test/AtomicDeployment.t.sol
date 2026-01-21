@@ -24,6 +24,7 @@ import {WrappedRLP} from "../src/tokens/WrappedRLP.sol";
 import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
 import {IDefaultOracle} from "../src/interfaces/IDefaultOracle.sol";
 import {UniswapV4SingletonOracle} from "../src/modules/oracles/UniswapV4SingletonOracle.sol";
+import {BondMetadataRenderer} from "../src/utils/BondMetadataRenderer.sol";
 
 
 
@@ -73,6 +74,7 @@ contract AtomicDeploymentTest is Test {
     MockFundingModel funding;
     MockDefaultOracle defaultOracle;
     MockHook twamm; 
+    BondMetadataRenderer renderer; 
 
     address underlyingToken;
     address collateralToken;
@@ -84,6 +86,7 @@ contract AtomicDeploymentTest is Test {
         funding = new MockFundingModel();
         defaultOracle = new MockDefaultOracle();
         twamm = new MockHook();
+        renderer = new BondMetadataRenderer();
         
         core = new RLDCore();
         wRLPImpl = new WrappedRLP();
@@ -106,7 +109,8 @@ contract AtomicDeploymentTest is Test {
             address(funding),
             address(0), 
             address(defaultOracle),
-            address(0) // No hook for atomic test to avoid mining
+            address(0), // No hook for atomic test
+            address(renderer) 
         );
         
         // --- Register Factory ---
@@ -197,7 +201,8 @@ contract AtomicDeploymentTest is Test {
         PrimeBroker broker = PrimeBroker(payable(brokerAddr));
         
         // Check Owner & MarketId
-        assertEq(broker.owner(), user);
+        // assertEq(broker.owner(), user); // Replaced by NFT check
+        assertEq(pbf.ownerOf(uint256(uint160(brokerAddr))), user);
         assertEq(MarketId.unwrap(broker.marketId()), MarketId.unwrap(marketId));
         
         // Verify Solvency Check (Thin Broker dynamic data fetch)

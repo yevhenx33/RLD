@@ -25,6 +25,8 @@ import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
 import {IDefaultOracle} from "../src/interfaces/IDefaultOracle.sol";
 import {UniswapV4SingletonOracle} from "../src/modules/oracles/UniswapV4SingletonOracle.sol";
 
+import {BondMetadataRenderer} from "../src/utils/BondMetadataRenderer.sol";
+
 // --- Mocks ---
 
 contract MockOracle is ISpotOracle, IRLDOracle {
@@ -73,6 +75,7 @@ contract GenericExecutionTest is Test {
     MockFundingModel funding;
     MockDefaultOracle defaultOracle;
     MockHook twamm; 
+    BondMetadataRenderer renderer;
 
     address underlyingToken;
     address collateralToken;
@@ -85,6 +88,7 @@ contract GenericExecutionTest is Test {
         funding = new MockFundingModel();
         defaultOracle = new MockDefaultOracle();
         twamm = new MockHook();
+        renderer = new BondMetadataRenderer();
         
         core = new RLDCore();
         wRLPImpl = new WrappedRLP();
@@ -107,7 +111,8 @@ contract GenericExecutionTest is Test {
             address(funding),
             address(0), 
             address(defaultOracle),
-            address(0) 
+            address(0),
+            address(renderer)
         );
         
         core.setFactory(address(marketFactory));

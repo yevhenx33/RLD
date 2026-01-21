@@ -36,6 +36,7 @@ contract RLDMarketFactory {
     address public immutable STD_FUNDING_MODEL;
     address public immutable CDS_HOOK;
     address public immutable DEFAULT_ORACLE;
+    address public immutable METADATA_RENDERER;
 
     /* ============================================================================================ */
     /*                                            STORAGE                                           */
@@ -94,7 +95,8 @@ contract RLDMarketFactory {
         address fundingModel,
         address cdsHook,
         address defaultOracle,
-        address twamm
+        address twamm,
+        address metadataRenderer
     ) {
         CORE = core;
         POOL_MANAGER = poolManager;
@@ -105,6 +107,7 @@ contract RLDMarketFactory {
         CDS_HOOK = cdsHook;
         DEFAULT_ORACLE = defaultOracle;
         TWAMM = twamm;
+        METADATA_RENDERER = metadataRenderer;
     }
 
     /* ============================================================================================ */
@@ -122,7 +125,7 @@ contract RLDMarketFactory {
 
         // 3. Infrastructure Phase (Atomic Trust)
         address verifier;
-        (brokerFactory, verifier) = _deployInfrastructure(futureId);
+        (brokerFactory, verifier) = _deployInfrastructure(futureId, params);
 
         // 4. Asset Phase
         address wRLP = _deployPositionToken(params.collateralToken, params.underlyingToken);
@@ -171,9 +174,19 @@ contract RLDMarketFactory {
         )));
     }
 
-    function _deployInfrastructure(MarketId id) internal returns (address factory, address verifier) {
+    function _deployInfrastructure(MarketId id, DeployParams calldata params) internal returns (address factory, address verifier) {
         // Deploy Factory specific to this MarketID
-        PrimeBrokerFactory pbFactory = new PrimeBrokerFactory(PRIME_BROKER_IMPL, id);
+        string memory symbol = ERC20(params.underlyingToken).symbol();
+        string memory name = string(abi.encodePacked("RLD Fixed Bond: ", symbol));
+        string memory nftSymbol = string(abi.encodePacked("RLD-", symbol));
+
+        PrimeBrokerFactory pbFactory = new PrimeBrokerFactory(
+            PRIME_BROKER_IMPL, 
+            id,
+            name,
+            nftSymbol,
+            METADATA_RENDERER
+        );
         factory = address(pbFactory);
         
         // Deploy Verifier linked to this Factory

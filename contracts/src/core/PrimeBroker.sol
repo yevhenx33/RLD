@@ -7,6 +7,10 @@ import {IBrokerModule} from "../interfaces/IBrokerModule.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 
+interface IERC721 {
+    function ownerOf(uint256 tokenId) external view returns (address);
+}
+
 /// @title Prime Broker V1 (Thin Version)
 /// @notice "Smart Margin Account" protecting RLD Protocol.
 /// @dev Optimized for cloning and Core-based data fetching.
@@ -28,7 +32,9 @@ contract PrimeBroker is IPrimeBroker {
     /* ============================================================================================ */
 
     // Market Identity
-    address public owner;
+    // address public owner; // Replaced by NFT Ownership
+    address public factory;
+    BondMetadata public bondMetadata;
     MarketId public marketId;
     
     // Cached Configuration (Gas Savings for Solvency Checks)
@@ -54,7 +60,8 @@ contract PrimeBroker is IPrimeBroker {
     }
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "Not Owner");
+        // TokenID is the uint256 representation of the Broker's address
+        require(IERC721(factory).ownerOf(uint256(uint160(address(this)))) == msg.sender, "Not Owner");
         _;
     }
 
@@ -67,18 +74,22 @@ contract PrimeBroker is IPrimeBroker {
         V4_MODULE = _v4Module;
         TWAMM_MODULE = _twammModule;
         POSM = _posm;
+        TWAMM_MODULE = _twammModule;
+        POSM = _posm;
+        // FACTORY = _factory; // Removed immutable
         
         // Lock the implementation contract
         initialized = true;
     }
 
     function initialize(
-        address _owner,
-        MarketId _marketId
+        MarketId _marketId,
+        address _factory
     ) external {
         require(!initialized, "Initialized");
-        owner = _owner;
+        // owner = _owner; // Managed by NFT
         marketId = _marketId;
+        factory = _factory;
         
         // Caching: Fetch tokens once to save gas on every future interaction
         IRLDCore.MarketAddresses memory vars = IRLDCore(CORE).getMarketAddresses(_marketId);
@@ -209,5 +220,17 @@ contract PrimeBroker is IPrimeBroker {
     function _encodeModuleData(uint256 id, address inputToken, address outputToken) internal view returns (bytes memory) {
          // Optimization: Use cached values to avoid calling Core.
          return abi.encode(id, hook, rateOracle, inputToken, outputToken);
+    }
+
+    /* ============================================================================================ */
+    /*                                        METADATA LOGIC                                        */
+    /* ============================================================================================ */
+
+    function getBondMetadata() external view override returns (BondMetadata memory) {
+        return bondMetadata;
+    }
+
+    function setBondMetadata(BondMetadata calldata _metadata) external override onlyOwner {
+        bondMetadata = _metadata;
     }
 }
