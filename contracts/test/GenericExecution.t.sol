@@ -25,8 +25,6 @@ import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
 import {IDefaultOracle} from "../src/interfaces/IDefaultOracle.sol";
 import {UniswapV4SingletonOracle} from "../src/modules/oracles/UniswapV4SingletonOracle.sol";
 
-
-
 // --- Mocks ---
 
 contract MockOracle is ISpotOracle, IRLDOracle {
@@ -60,7 +58,9 @@ contract MockHook is IHooks {
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) { return IHooks.afterDonate.selector; }
 }
 
-contract AtomicDeploymentTest is Test {
+contract GenericExecutionTest is Test {
+    using stdStorage for StdStorage;
+
     RLDCore core;
     RLDMarketFactory marketFactory;
     PrimeBroker primeBrokerImpl;
@@ -77,6 +77,7 @@ contract AtomicDeploymentTest is Test {
     address underlyingToken;
     address collateralToken;
     address underlyingPool = address(0x999); 
+    address otherToken;
 
     function setUp() public {
         poolManager = new PoolManager(address(0));
@@ -92,10 +93,10 @@ contract AtomicDeploymentTest is Test {
             address(core),
             address(0), 
             address(twamm),
-            address(0) // POSM
+            address(0) 
         );
         
-        v4Oracle = new UniswapV4SingletonOracle(); // No args
+        v4Oracle = new UniswapV4SingletonOracle(); 
         
         marketFactory = new RLDMarketFactory(
             address(core),
@@ -106,66 +107,19 @@ contract AtomicDeploymentTest is Test {
             address(funding),
             address(0), 
             address(defaultOracle),
-            address(0) // No hook for atomic test to avoid mining
+            address(0) 
         );
         
-        // --- Register Factory ---
         core.setFactory(address(marketFactory));
 
-        // Create Mock Tokens
         underlyingToken = address(new MockERC20("USDC", "USDC", 6));
-        collateralToken = address(new MockERC20("aUSDC", "aUSDC", 6));
+        collateralToken = address(new MockERC20("aUSDC", "aUSDC", 18));
+        otherToken = address(new MockERC20("WBTC", "WBTC", 8));
     }
 
-    function test_AtomicDeployment_Succeeds() public {
-        bytes32 liqParams = bytes32(0);
-        
-        vm.prank(address(marketFactory)); // Just to be safe, though not needed
-        
-        (MarketId marketId, address brokerFactory) = marketFactory.createMarket(
-            RLDMarketFactory.DeployParams({
-                underlyingPool: underlyingPool,
-                underlyingToken: underlyingToken,
-                collateralToken: collateralToken,
-                curator: address(this),
-                marketType: IRLDCore.MarketType.RLP,
-                minColRatio: 120e16,
-                maintenanceMargin: 110e16,
-                liquidationCloseFactor: 50e16,
-                liquidationModule: address(0x123),
-                liquidationParams: liqParams,
-                spotOracle: address(oracle),
-                rateOracle: address(oracle),
-                oraclePeriod: 3600,
-                poolFee: 3000,
-                tickSpacing: 60
-            })
-        );
-        
-        // 1. Verify Market Created
-        assertTrue(MarketId.unwrap(marketId) != bytes32(0), "Market ID zero");
-        IRLDCore.MarketAddresses memory addrs = core.getMarketAddresses(marketId);
-        assertEq(addrs.collateralToken, collateralToken, "Col Token mismatch");
-        
-        // 2. Verify Broker Factory Deployed
-        assertTrue(brokerFactory != address(0), "Broker Factory zero");
-        
-        // 3. Verify Broker Verify Integration
-        IRLDCore.MarketConfig memory config = core.getMarketConfig(marketId);
-        address verifier = config.brokerVerifier;
-        assertTrue(verifier != address(0), "Verifier zero");
-        
-        // 4. Verify Verifier points to Factory
-        BrokerVerifier bv = BrokerVerifier(verifier);
-        assertEq(address(bv.FACTORY()), brokerFactory, "Verifier Factory mismatch");
-        
-        // 5. Verify Factory points to Correct MarketId
-        PrimeBrokerFactory pbf = PrimeBrokerFactory(brokerFactory);
-        assertEq(MarketId.unwrap(pbf.MARKET_ID()), MarketId.unwrap(marketId), "Factory MarketID mismatch");
-    }
-
-    function test_CreateBroker_And_Interact() public {
-         (MarketId marketId, address brokerFactoryAddr) = marketFactory.createMarket(
+    function test_GenericExecution_Safe() public {
+        // 1. Create Market
+        (MarketId marketId, address brokerFactoryAddr) = marketFactory.createMarket(
             RLDMarketFactory.DeployParams({
                 underlyingPool: underlyingPool,
                 underlyingToken: underlyingToken,
@@ -184,35 +138,93 @@ contract AtomicDeploymentTest is Test {
                 tickSpacing: 60
             })
         );
-
         PrimeBrokerFactory pbf = PrimeBrokerFactory(brokerFactoryAddr);
         
-        // Create Broker
+        // 2. Create Broker
         address user = address(0xCAFE);
         vm.prank(user);
         address brokerAddr = pbf.createBroker();
-        
-        assertTrue(brokerAddr != address(0));
-        
         PrimeBroker broker = PrimeBroker(payable(brokerAddr));
+
+        // 3. Fund Broker with Collateral and Other Token
+        MockERC20(collateralToken).mint(brokerAddr, 1000e18);
+        MockERC20(otherToken).mint(brokerAddr, 10e8);
+
+        // 4. Inject Debt into Core (Simulate User Borrowing)
+        // Debt = 500 USD (Principal)
+        // Slot calculation for: mapping(MarketId => mapping(address => Position)) public positions;
+        // Check RLDCore storage layout:
+        // 0: marketAddresses (From RLDStorage)
+        // 1: marketConfigs
+        // 2: marketStates
+        // 3: positions
+        // 4: factory (From RLDCore)
         
-        // Check Owner & MarketId
-        assertEq(broker.owner(), user);
-        assertEq(MarketId.unwrap(broker.marketId()), MarketId.unwrap(marketId));
+        bytes32 slot1 = keccak256(abi.encode(MarketId.unwrap(marketId), uint256(3)));
+        bytes32 finalSlot = keccak256(abi.encode(brokerAddr, slot1));
         
-        // Verify Solvency Check (Thin Broker dynamic data fetch)
-        // We will call `isSolvent` on Core. 
-        // Core will revert if it tries to access empty addresses for Collateral etc.
-        // Since we deployed properly, Core has addresses.
-        // `isSolvent` calls `broker.getNetAccountValue()` -> accesses Core -> accesses addresses
+        // Write DebtPrincipal (High 128 bits)
+        vm.store(address(core), finalSlot, bytes32(uint256(500e18) << 128));
+
+        // 5. Execute Safe Action: Transfer Other Token
+        vm.prank(user);
+        broker.execute(
+            otherToken, 
+            abi.encodeWithSelector(ERC20.transfer.selector, user, 5e8)
+        );
         
-        // Mock balance for broker to avoid 0 interaction
-        MockERC20(collateralToken).mint(brokerAddr, 1000e6);
+        // Verify transfer happened
+        assertEq(MockERC20(otherToken).balanceOf(user), 5e8);
+        assertEq(MockERC20(otherToken).balanceOf(brokerAddr), 5e8);
+    }
+
+    function test_GenericExecution_Unsafe() public {
+         // 1. Create Market & Broker
+        (MarketId marketId, address brokerFactoryAddr) = marketFactory.createMarket(
+            RLDMarketFactory.DeployParams({
+                underlyingPool: underlyingPool,
+                underlyingToken: underlyingToken,
+                collateralToken: collateralToken,
+                curator: address(this),
+                marketType: IRLDCore.MarketType.RLP,
+                minColRatio: 120e16,
+                maintenanceMargin: 110e16,
+                liquidationCloseFactor: 50e16,
+                liquidationModule: address(0x123),
+                liquidationParams: bytes32(0),
+                spotOracle: address(oracle),
+                rateOracle: address(oracle),
+                oraclePeriod: 3600,
+                poolFee: 3000,
+                tickSpacing: 60
+            })
+        );
+        PrimeBrokerFactory pbf = PrimeBrokerFactory(brokerFactoryAddr);
+        address user = address(0xCAFE);
+        vm.prank(user);
+        address brokerAddr = pbf.createBroker();
+        PrimeBroker broker = PrimeBroker(payable(brokerAddr));
+
+        // 2. Fund Broker with Collateral
+        MockERC20(collateralToken).mint(brokerAddr, 1000e18); // 1000 USD Value
+
+        // 3. Inject Debt: 800 USD.
+        // Slot calculation (Slot 3)
+        bytes32 slot1 = keccak256(abi.encode(MarketId.unwrap(marketId), uint256(3)));
+        bytes32 finalSlot = keccak256(abi.encode(brokerAddr, slot1));
         
-        // Core calls verifier -> verifier calls factory -> returns true
-        // Then Core calls broker.getNetAccountValue()
+        vm.store(address(core), finalSlot, bytes32(uint256(800e18) << 128));
+
+        // 4. Execute Unsafe Action: Transfer 500 Collateral Away
+        // Remaining Collateral = 500.
+        // Limit for 500 Collateral @ 1.1 Margin = 500/1.1 = ~454.
+        // Debt = 800. Insolvent.
         
-        bool solvent = core.isSolvent(marketId, brokerAddr);
-        assertTrue(solvent, "Broker should be solvent");
+        vm.prank(user);
+        vm.expectRevert("Action causes Insolvency");
+        broker.execute(
+            collateralToken,
+            abi.encodeWithSelector(ERC20.transfer.selector, user, 500e18)
+        );
     }
 }

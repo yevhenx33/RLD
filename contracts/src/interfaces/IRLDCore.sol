@@ -97,6 +97,7 @@ interface IRLDCore {
     /// @notice Returns the position of a user in a market
     function getPosition(MarketId id, address user) external view returns (Position memory);
 
+
     /* ============================================================================================ */
     /*                                      FLASH ACCOUNTING                                        */
     /* ============================================================================================ */

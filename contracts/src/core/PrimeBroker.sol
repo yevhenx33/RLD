@@ -31,6 +31,12 @@ contract PrimeBroker is IPrimeBroker {
     address public owner;
     MarketId public marketId;
     
+    // Cached Configuration (Gas Savings for Solvency Checks)
+    address public collateralToken;
+    address public underlyingToken;
+    address public rateOracle;
+    address public hook;
+    
     // Active Assets (V1 Limit: One of each)
     uint256 public activeTokenId; // V4 Position
     uint256 public activeOrderId; // TWAMM Order
@@ -61,6 +67,9 @@ contract PrimeBroker is IPrimeBroker {
         V4_MODULE = _v4Module;
         TWAMM_MODULE = _twammModule;
         POSM = _posm;
+        
+        // Lock the implementation contract
+        initialized = true;
     }
 
     function initialize(
@@ -70,6 +79,14 @@ contract PrimeBroker is IPrimeBroker {
         require(!initialized, "Initialized");
         owner = _owner;
         marketId = _marketId;
+        
+        // Caching: Fetch tokens once to save gas on every future interaction
+        IRLDCore.MarketAddresses memory vars = IRLDCore(CORE).getMarketAddresses(_marketId);
+        collateralToken = vars.collateralToken;
+        underlyingToken = vars.underlyingToken;
+        rateOracle = vars.rateOracle;
+        hook = vars.hook;
+        
         initialized = true;
     }
 
@@ -78,32 +95,18 @@ contract PrimeBroker is IPrimeBroker {
     /* ============================================================================================ */
 
     function getNetAccountValue() external view override returns (uint256 totalValue) {
-        IRLDCore.MarketAddresses memory vars = IRLDCore(CORE).getMarketAddresses(marketId);
-
         // 1. Cash Balance (Collateral)
-        totalValue += ERC20(vars.collateralToken).balanceOf(address(this));
+        totalValue += ERC20(collateralToken).balanceOf(address(this));
 
         // 2. TWAMM Value
         if (activeOrderId != 0) {
-            bytes memory data = abi.encode(
-                activeOrderId,
-                vars.hook,
-                vars.rateOracle,
-                vars.collateralToken, // Input (Sell Collateral)
-                vars.underlyingToken  // Output (Buy Debt)
-            );
+            bytes memory data = _encodeModuleData(activeOrderId, collateralToken, underlyingToken);
             totalValue += IBrokerModule(TWAMM_MODULE).getValue(data);
         }
 
         // 3. V4 Value
         if (activeTokenId != 0) {
-            bytes memory data = abi.encode(
-                activeTokenId,
-                POSM,
-                vars.rateOracle,
-                vars.collateralToken,
-                vars.underlyingToken
-            );
+            bytes memory data = _encodeModuleData(activeTokenId, collateralToken, underlyingToken);
             totalValue += IBrokerModule(V4_MODULE).getValue(data);
         }
     }
@@ -113,16 +116,14 @@ contract PrimeBroker is IPrimeBroker {
     /* ============================================================================================ */
 
     function seize(uint256 value, address recipient) external override onlyCore {
-        IRLDCore.MarketAddresses memory vars = IRLDCore(CORE).getMarketAddresses(marketId);
         uint256 remaining = value;
-        
-        address collateral = vars.collateralToken; // Gas saving
+        address _collateral = collateralToken; // Gas saving: stack variable
 
         // 1. Priority: Cash
-        uint256 cash = ERC20(collateral).balanceOf(address(this));
+        uint256 cash = ERC20(_collateral).balanceOf(address(this));
         if (cash > 0) {
             uint256 take = cash >= remaining ? remaining : cash;
-            ERC20(collateral).safeTransfer(recipient, take);
+            ERC20(_collateral).safeTransfer(recipient, take);
             remaining -= take;
         }
         
@@ -130,29 +131,16 @@ contract PrimeBroker is IPrimeBroker {
 
         // 2. Priority: TWAMM
         if (activeOrderId != 0) {
-            bytes memory data = abi.encode(
-                activeOrderId,
-                vars.hook,
-                vars.rateOracle,
-                collateral,
-                vars.underlyingToken
-            );
+            bytes memory data = _encodeModuleData(activeOrderId, _collateral, underlyingToken);
             uint256 seized = IBrokerModule(TWAMM_MODULE).seize(remaining, recipient, data);
             
-            // Check overflow safe math
             if (seized >= remaining) return;
             remaining -= seized;
         }
 
         // 3. Priority: V4 LP
         if (activeTokenId != 0) {
-            bytes memory data = abi.encode(
-                activeTokenId,
-                POSM,
-                vars.rateOracle,
-                collateral,
-                vars.underlyingToken
-            );
+            bytes memory data = _encodeModuleData(activeTokenId, _collateral, underlyingToken);
             IBrokerModule(V4_MODULE).seize(remaining, recipient, data);
         }
     }
@@ -162,6 +150,22 @@ contract PrimeBroker is IPrimeBroker {
         require(activeTokenId == 0, "Slot Full");
         // IERC721(POSM).safeTransferFrom(msg.sender, address(this), tokenId);
         activeTokenId = tokenId;
+    }
+
+    /// @notice Executes arbitrary calls to external contracts.
+    /// @dev Protected by a post-execution solvency check.
+    /// @param target The address to call.
+    /// @param data The calldata to send.
+    function execute(address target, bytes calldata data) external onlyOwner {
+        // 1. Interaction
+        (bool success, ) = target.call(data);
+        require(success, "Interaction Failed");
+
+        emit Execute(target, data);
+
+        // 2. Safety Valve: Solvency Check
+        // If the interaction (e.g., selling collateral for worthless tokens) made the broker insolvent, revert.
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Action causes Insolvency");
     }
     
     /* ============================================================================================ */
@@ -192,11 +196,18 @@ contract PrimeBroker is IPrimeBroker {
         
         // Collateral: Core: `ERC20.safeTransferFrom(msg.sender, address(this), amount)`.
         if (deltaCollateral > 0) {
-            // Need to fetch collateral token address to approve
-            address collateral = IRLDCore(CORE).getMarketAddresses(marketId).collateralToken;
-            ERC20(collateral).approve(CORE, uint256(deltaCollateral));
+            ERC20(collateralToken).approve(CORE, uint256(deltaCollateral));
         }
         
         return "";
+    }
+
+    /* ============================================================================================ */
+    /*                                         INTERNAL HELPERS                                     */
+    /* ============================================================================================ */
+
+    function _encodeModuleData(uint256 id, address inputToken, address outputToken) internal view returns (bytes memory) {
+         // Optimization: Use cached values to avoid calling Core.
+         return abi.encode(id, hook, rateOracle, inputToken, outputToken);
     }
 }

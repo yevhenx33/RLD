@@ -10,7 +10,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {PrimeBrokerFactory} from "../vaults/PrimeBrokerFactory.sol";
+import {PrimeBrokerFactory} from "./PrimeBrokerFactory.sol";
 import {BrokerVerifier} from "../modules/verifier/BrokerVerifier.sol";
 import {UniswapV4SingletonOracle} from "../modules/oracles/UniswapV4SingletonOracle.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
