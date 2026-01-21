@@ -54,6 +54,7 @@ interface IRLDCore {
     event PositionModified(MarketId indexed id, address indexed user, int256 deltaCollateral, int256 deltaDebt);
     event MarketSettled(MarketId indexed id, uint256 finalPrice, uint256 finalNormFactor);
     event LockAcquired(MarketId indexed id, address indexed user);
+    event SecurityUpdate(MarketId indexed id, bytes32 indexed updateType, address indexed actor);
 
     /* ============================================================================================ */
     /*                                          FUNCTIONS                                           */
@@ -115,7 +116,12 @@ interface IRLDCore {
     /// @notice Liquidates an insolvent position (Legacy/Direct mode).
     function liquidate(MarketId id, address user, uint256 debtToCover) external;
 
-    /// @notice Updates the Risk Parameters for a Market.
-    /// @dev Only callable    /// @notice Updates risk parameters (Curator only).
+    /// @notice Updates risk parameters (Curator only).
     function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, address liquidationModule, bytes32 liquidationParams) external;
+
+    /// @notice Updates the Market Curator (Governance Handover).
+    function setCurator(MarketId id, address newCurator) external;
+
+    /// @notice Updates Oracle Sources (Emergency Switch).
+    function updateOracles(MarketId id, address rateOracle, address spotOracle, address defaultOracle) external;
 }

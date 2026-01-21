@@ -142,7 +142,7 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         Position storage pos = positions[id][msg.sender];
         MarketAddresses storage addresses = marketAddresses[id];
-        MarketConfig storage config = marketConfigs[id];
+
 
         // 2. Apply Changes & Transfers
         if (deltaCollateral != 0) {
@@ -238,43 +238,27 @@ contract RLDCore is IRLDCore, RLDStorage {
         MarketState memory state = marketStates[id];
         MarketConfig memory config = marketConfigs[id];
 
-         // True Debt = Principal * NormalizationFactor
+        // 1. Verify Broker Status (Strict Enforce)
+        // If the user is NOT a valid broker, they are treated as having 0 value against their debt.
+        if (config.brokerVerifier == address(0)) return false; // Market must have a verifier
+        if (!IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) return false; // User must be a broker
+
+        // 2. Calculate Liabilities (RLD Debt)
+        // True Debt = Principal * NormalizationFactor
         uint256 trueDebt = uint256(pos.debtPrincipal).mulWad(state.normalizationFactor);
-        
-        // --- Broker Mode ---
-        if (config.brokerVerifier != address(0)) {
-            if (IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) {
-                // Trust the Broker's reported value (Code is verified)
-                uint256 totalValue = IPrimeBroker(user).getNetAccountValue();
-                
-                // Get Debt Value
-                uint256 brokerIndexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
-                    addresses.underlyingPool, 
-                    addresses.underlyingToken
-                );
-                uint256 brokerDebtValue = trueDebt.mulWad(brokerIndexPrice);
-                
-                return totalValue >= brokerDebtValue.mulWad(minRatio);
-            }
-        }
-        
-        // --- Standard Mode ---
         
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
             addresses.underlyingPool, 
             addresses.underlyingToken
         );
-        
         uint256 debtValue = trueDebt.mulWad(indexPrice);
 
-        uint256 spotPrice = ISpotOracle(addresses.spotOracle).getSpotPrice(
-            addresses.collateralToken, 
-            addresses.underlyingToken
-        );
-        
-        uint256 collateralValue = uint256(pos.collateral).mulWad(spotPrice);
-        
-        return collateralValue >= debtValue.mulWad(minRatio);
+        // 3. Get Assets (Delegated to Broker)
+        // Trust the Broker's reported value (Code is verified)
+        uint256 totalValue = IPrimeBroker(user).getNetAccountValue();
+                
+        // 4. Solvency Equation
+        return totalValue >= debtValue.mulWad(minRatio);
     }
 
     function _applyFunding(MarketId id) internal {
@@ -332,7 +316,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         emit MarketSettled(id, 0, 0); 
     }
 
-    /// @notice Liquidates an insolvent position (Legacy/Direct mode).
+    /// @notice Liquidates an insolvent position (Broker-Only).
     function liquidate(MarketId id, address user, uint256 debtToCover) external override {
         _applyFunding(id);
 
@@ -345,83 +329,45 @@ contract RLDCore is IRLDCore, RLDStorage {
         // 1. Verify Insolvency (Maintenance Margin)
         if (_isSolvent(id, user, uint256(config.maintenanceMargin))) revert("User Solvent");
         
+        // 2. Verify Broker Status (Strict)
+        if (config.brokerVerifier == address(0) || !IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) {
+             revert("Invalid Broker");
+        }
+
         Position storage pos = positions[id][user];
         
-        // 1.5 Liquidation Cap (50% Close Factor)
+        // 3. Liquidation Cap (50% Close Factor)
         if (debtToCover > uint256(pos.debtPrincipal) / 2) revert("Close Factor Exceeded");
         
-
-        // A. Convert Underlying Amount -> Principal Amount
+        // 4. Calculate Cost (Debt Value)
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
             addresses.underlyingPool, 
             addresses.underlyingToken
         );
         
-        // Decrement Debt
+        // Cost = DebtToCover * NormFactor * IndexPrice
+        uint256 brokerCost = uint256(debtToCover).mulWad(state.normalizationFactor).mulWad(indexPrice);
+
+        // 5. Decrement Debt (Core Accounting)
         pos.debtPrincipal -= uint128(debtToCover);
 
-        // --- Broker Branch ---
-        if (config.brokerVerifier != address(0)) {
-             if (IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) {
-                // 1. Calculation
-                uint256 brokerCost = uint256(debtToCover).mulWad(state.normalizationFactor).mulWad(indexPrice);
-                
-                // 2. Burn Liquidator wRLP
-                if (addresses.positionToken != address(0)) {
-                     WrappedRLP(addresses.positionToken).burn(msg.sender, debtToCover);
-                } else {
-                     ERC20(addresses.underlyingToken).safeTransferFrom(msg.sender, address(this), brokerCost);
-                }
-
-                // 3. Seize from Broker
-                uint256 seizeValue = brokerCost * 105 / 100; 
-
-                IPrimeBroker(user).seize(seizeValue, msg.sender);
-                
-                emit PositionModified(id, user, 0, -int256(debtToCover));
-                return;
-             }
+        // 6. Settle Cost (Liquidator pays)
+        // If wRLP is used, we burn it. Else we take underlying.
+        if (addresses.positionToken != address(0)) {
+                WrappedRLP(addresses.positionToken).burn(msg.sender, debtToCover);
+        } else {
+                ERC20(addresses.underlyingToken).safeTransferFrom(msg.sender, address(this), brokerCost);
         }
 
-        // --- Standard Mode (Legacy) ---
-        uint256 spotPrice = ISpotOracle(addresses.spotOracle).getSpotPrice(
-            addresses.collateralToken, 
-            addresses.underlyingToken
-        );
+        // 7. Seize Assets (Delegated to Broker)
+        // Liquidator receives 105% of cost value directly from the Broker
+        uint256 seizeValue = brokerCost * 105 / 100; 
 
-        ILiquidationModule.PriceData memory priceData = ILiquidationModule.PriceData({
-            indexPrice: indexPrice,
-            spotPrice: spotPrice,
-            normalizationFactor: state.normalizationFactor
-        });
-
-        ( , uint256 totalSeized) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
-            debtToCover,
-            uint256(pos.collateral),
-            uint256(pos.debtPrincipal) + debtToCover, // userDebtOriginal
-            priceData,
-            config,
-            config.liquidationParams
-        );
+        IPrimeBroker(user).seize(seizeValue, msg.sender);
         
-        // C. Calculate Cost in Underlying (to transfer from Liquidator)
-        // Cost = Principal * NormFactor * IndexPrice
-        uint256 costInUnderlying = uint256(debtToCover).mulWad(state.normalizationFactor).mulWad(indexPrice);
-
-        ERC20(addresses.underlyingToken).safeTransferFrom(msg.sender, address(this), costInUnderlying);
-        
-        // D. Cap Seize
-        if (totalSeized > pos.collateral) {
-            totalSeized = pos.collateral; // Cap at max collateral (Bad debt scenario)
-        }
-        
-        pos.collateral -= uint128(totalSeized);
-        
-        // Transfer Collateral to Liquidator
-        ERC20(addresses.collateralToken).safeTransfer(msg.sender, totalSeized);
-        
-        emit PositionModified(id, user, -int256(totalSeized), -int256(debtToCover));
+        emit PositionModified(id, user, 0, -int256(debtToCover));
     }
+
 
     function isSolvent(MarketId id, address user) external view override returns (bool) {
         MarketConfig storage config = marketConfigs[id];
@@ -443,5 +389,28 @@ contract RLDCore is IRLDCore, RLDStorage {
         config.maintenanceMargin = maintenanceMargin;
         config.liquidationParams = liquidationParams;
         addresses.liquidationModule = liquidationModule;
+        
+        emit SecurityUpdate(id, "RiskParams", msg.sender);
+    }
+
+    function setCurator(MarketId id, address newCurator) external override {
+        MarketAddresses storage addresses = marketAddresses[id];
+        if (msg.sender != addresses.curator) revert("Unauthorized");
+        if (newCurator == address(0)) revert("Invalid Curator");
+        
+        addresses.curator = newCurator;
+        emit SecurityUpdate(id, "Curator", newCurator);
+    }
+
+    function updateOracles(MarketId id, address rateOracle, address spotOracle, address defaultOracle) external override {
+        MarketAddresses storage addresses = marketAddresses[id];
+        if (msg.sender != addresses.curator) revert("Unauthorized");
+        
+        // Prevent setting to 0 if provided
+        if (rateOracle != address(0)) addresses.rateOracle = rateOracle;
+        if (spotOracle != address(0)) addresses.spotOracle = spotOracle;
+        if (defaultOracle != address(0)) addresses.defaultOracle = defaultOracle;
+        
+        emit SecurityUpdate(id, "Oracles", msg.sender);
     }
 }

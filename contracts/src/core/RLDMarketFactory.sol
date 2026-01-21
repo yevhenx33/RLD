@@ -57,6 +57,7 @@ contract RLDMarketFactory {
         address underlyingPool;     // The Uniswap V4 Pool storing the underlying asset
         address underlyingToken;    // The base asset (e.g., USDC)
         address collateralToken;    // The collateral asset (e.g., aUSDC)
+        address curator;            // The market curator (risk manager)
         
         // --- Market Type ---
         IRLDCore.MarketType marketType; // e.g., RLP, CDS
@@ -237,7 +238,7 @@ contract RLDMarketFactory {
             spotOracle: params.spotOracle, 
             markOracle: SINGLETON_V4_ORACLE,
             fundingModel: STD_FUNDING_MODEL,
-            curator: address(0), 
+            curator: params.curator, 
             hook: CDS_HOOK,
             defaultOracle: DEFAULT_ORACLE,
             liquidationModule: params.liquidationModule,

@@ -94,6 +94,12 @@ contract MockFunding is IFundingModel {
     }
 }
 
+contract MockBrokerVerifier {
+    function isValidBroker(address) external pure returns (bool) {
+        return true;
+    }
+}
+
 // --- TEST SUITE ---
 
 contract RLDCoreTest is Test {
@@ -103,10 +109,14 @@ contract RLDCoreTest is Test {
     MockERC20 positionToken;
     MockOracle oracle;
     MockFunding funding;
+    MockBrokerVerifier verifier;
 
     MarketId marketId;
 
     StaticLiquidationModule staticLiq;
+    
+    // Broker Mock State
+    uint256 public mockNav;
 
     function setUp() public {
         core = new RLDCore();
@@ -116,6 +126,7 @@ contract RLDCoreTest is Test {
         oracle = new MockOracle();
         funding = new MockFunding();
         staticLiq = new StaticLiquidationModule();
+        verifier = new MockBrokerVerifier();
 
         oracle.setPrice(1e18); // 1:1 price initially
 
@@ -141,10 +152,26 @@ contract RLDCoreTest is Test {
             minColRatio: 1.5e18,
             maintenanceMargin: 1.1e18,
             liquidationParams: bytes32(uint256(1.05e18)),
-            brokerVerifier: address(0)
+            brokerVerifier: address(verifier)
         });
 
         marketId = core.createMarket(addresses, config);
+        
+        // Default safe NAV
+        mockNav = 10000e18; 
+    }
+    
+    // --- IPrimeBroker Implementation ---
+    function getNetAccountValue() external view returns (uint256) {
+        return mockNav;
+    }
+    
+    function seize(uint256 value, address recipient) external {
+        // Mock seize
+    }
+
+    function setMockNav(uint256 _nav) public {
+        mockNav = _nav;
     }
 
     // Helper for locking
@@ -180,6 +207,10 @@ contract RLDCoreTest is Test {
         collateral.approve(address(core), 200e18);
 
         // Deposit 200, Mint 100 Debt (Ratio 2.0 > 1.1)
+        // With Broker Mode, RLD checks `getNetAccountValue()` against Debt Value.
+        // Debt = 100. Price = 1.0. Debt Value = 100.
+        // NAV = 10000 (Default). 10000 >= 100 * 1.1 (110). OK.
+        
         bytes memory data = abi.encode(1, int256(200e18), int256(100e18), marketId);
         core.lock(data);
 
@@ -193,9 +224,12 @@ contract RLDCoreTest is Test {
 
         // Deposit 100, Mint 100 Debt. 
         // Ratio Requirement 1.1x. 
-        // 100 Collateral * 1.0 Price = 100 Value
-        // 100 Debt * 1.0 Price * 1.1 Ratio = 110 Required
-        // Should Fail.
+        // 100 Debt * 1.0 Price * 1.1 Ratio = 110 Required Value
+        
+        // Set NAV to be LOW to simulate insolvency.
+        // We need failing NAV. e.g. 109.
+        setMockNav(109e18);
+
         bytes memory data = abi.encode(1, int256(100e18), int256(100e18), marketId);
         
         vm.expectRevert("Insolvent");
@@ -222,9 +256,4 @@ contract RLDCoreTest is Test {
         vm.expectRevert("Market Settled");
         core.lock(data);
     }
-
-
-    
-    // Updated lockAcquired to handle marketId from data
-    // Removed lockAcquiredNew
 }
