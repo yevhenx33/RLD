@@ -13,4 +13,7 @@ interface IPrimeBroker {
     /// @param value The value (in Underlying terms) to seize.
     /// @param recipient The liquidator address to receive the seized assets.
     function seize(uint256 value, address recipient) external;
+    
+    /// @notice Emitted when a generic execution is performed.
+    event Execute(address indexed target, bytes data);
 }
