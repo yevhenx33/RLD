@@ -151,6 +151,7 @@ contract RLDCoreTest is Test {
 
             minColRatio: 1.5e18,
             maintenanceMargin: 1.1e18,
+            liquidationCloseFactor: 0.5e18,
             liquidationParams: bytes32(uint256(1.05e18)),
             brokerVerifier: address(verifier)
         });

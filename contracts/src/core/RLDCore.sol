@@ -336,8 +336,8 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         Position storage pos = positions[id][user];
         
-        // 3. Liquidation Cap (50% Close Factor)
-        if (debtToCover > uint256(pos.debtPrincipal) / 2) revert("Close Factor Exceeded");
+        // 3. Liquidation Cap (Configurable Close Factor)
+        if (debtToCover > uint256(pos.debtPrincipal).mulWad(uint256(config.liquidationCloseFactor))) revert("Close Factor Exceeded");
         
         // 4. Calculate Cost (Debt Value)
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
@@ -359,11 +359,34 @@ contract RLDCore is IRLDCore, RLDStorage {
                 ERC20(addresses.underlyingToken).safeTransferFrom(msg.sender, address(this), brokerCost);
         }
 
-        // 7. Seize Assets (Delegated to Broker)
-        // Liquidator receives 105% of cost value directly from the Broker
-        uint256 seizeValue = brokerCost * 105 / 100; 
+        // 6. Settle Cost (Liquidator pays)
+        // Liquidator must pay: debtToCover * price (in underlying) -> This logic is implicit,
+        // Assuming Liquidator calls this function, they must have approved wRLP or Underlying to be burned/transferred?
+        // Wait, the current logic is:
+        // uint256 brokerCost = debtToCover * norm * index
+        // This 'brokerCost' IS the value (in terms of underlying/collateral) that is being repaid.
 
-        IPrimeBroker(user).seize(seizeValue, msg.sender);
+        // 7. Calculate Seize Amount via Module
+        ILiquidationModule.PriceData memory priceData = ILiquidationModule.PriceData({
+            indexPrice: indexPrice,
+            spotPrice: 1e18, // Assume IndexPrice is in Collateral terms (Relative Price)
+            normalizationFactor: state.normalizationFactor
+        });
+
+        // Current RLDCore tracks Debt, not Collateral. Collateral is in Broker.
+        // We pass 0 for userCollateral/userDebt as the module uses params + priceData for calculation.
+        ( , uint256 totalSeized) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
+            debtToCover, 
+            0, // userCollateral (not tracked in core)
+            0, // userDebt (not tracked in core simply)
+            priceData, 
+            config, 
+            config.liquidationParams
+        );
+        
+        // 8. Seize Assets (Delegated to Broker)
+        // Liquidator receives computed value directly from the Broker
+        IPrimeBroker(user).seize(totalSeized, msg.sender);
         
         emit PositionModified(id, user, 0, -int256(debtToCover));
     }
@@ -374,7 +397,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         return _isSolvent(id, user, uint256(config.maintenanceMargin));
     }
 
-    function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, address liquidationModule, bytes32 liquidationParams) external override {
+    function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, uint64 liquidationCloseFactor, address liquidationModule, bytes32 liquidationParams) external override {
         MarketAddresses storage addresses = marketAddresses[id];
         if (addresses.collateralToken == address(0)) revert("Invalid Market");
         if (msg.sender != addresses.curator) revert("Unauthorized"); // Only Curator
@@ -382,11 +405,12 @@ contract RLDCore is IRLDCore, RLDStorage {
         // Input Validation (Basic sanity checks)
         if (maintenanceMargin < 1e18) revert("Unsafe Margin"); // < 100%
         if (minColRatio < maintenanceMargin) revert("Invalid Ratios"); 
-        // Bonus validation is now module specific, can't check generic byte32.
+        if (liquidationCloseFactor > 1e18) revert("Invalid Close Factor"); // Max 100%
         
         MarketConfig storage config = marketConfigs[id];
         config.minColRatio = minColRatio;
         config.maintenanceMargin = maintenanceMargin;
+        config.liquidationCloseFactor = liquidationCloseFactor;
         config.liquidationParams = liquidationParams;
         addresses.liquidationModule = liquidationModule;
         

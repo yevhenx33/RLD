@@ -31,6 +31,8 @@ interface IRLDCore {
 
         uint64 minColRatio;
         uint64 maintenanceMargin;
+        uint64 liquidationCloseFactor; // e.g., 50% (5e17)
+        // liquidationIncentive moved to module params
         bytes32 liquidationParams; // Packed params for the module
         address brokerVerifier; // Trusted Verifier for Prime Brokers (Immutable)
     }
@@ -117,7 +119,7 @@ interface IRLDCore {
     function liquidate(MarketId id, address user, uint256 debtToCover) external;
 
     /// @notice Updates risk parameters (Curator only).
-    function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, address liquidationModule, bytes32 liquidationParams) external;
+    function updateRiskParams(MarketId id, uint64 minColRatio, uint64 maintenanceMargin, uint64 liquidationCloseFactor, address liquidationModule, bytes32 liquidationParams) external;
 
     /// @notice Updates the Market Curator (Governance Handover).
     function setCurator(MarketId id, address newCurator) external;

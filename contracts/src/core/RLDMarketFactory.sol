@@ -65,6 +65,7 @@ contract RLDMarketFactory {
         // --- Risk Parameters ---
         uint64 minColRatio;         // e.g., 1.2e18 (120%)
         uint64 maintenanceMargin;   // e.g., 1.1e18 (110%)
+        uint64 liquidationCloseFactor; // e.g., 0.5e18 (50%)
         address liquidationModule;  // Module responsible for liquidating positions
         bytes32 liquidationParams;  // Encoded params for the liquidationmodule
         
@@ -154,6 +155,7 @@ contract RLDMarketFactory {
         // Logic Checks (Sharp Edge: Insolvent Params)
         require(params.minColRatio > 1e18, "MinCol < 100%"); // Must be over-collateralized
         require(params.minColRatio > params.maintenanceMargin, "Risk Config Error");
+        require(params.liquidationCloseFactor > 0 && params.liquidationCloseFactor <= 1e18, "Invalid CloseFactor"); // 0-100%
         
         // V4 Spec Checks (Sharp Edge: Configuration Cliffs)
         require(params.tickSpacing > 0, "Invalid TickSpacing");
@@ -249,6 +251,7 @@ contract RLDMarketFactory {
             marketType: params.marketType,
             minColRatio: params.minColRatio,
             maintenanceMargin: params.maintenanceMargin,
+            liquidationCloseFactor: params.liquidationCloseFactor,
             liquidationParams: params.liquidationParams,
             brokerVerifier: verifier
         });
