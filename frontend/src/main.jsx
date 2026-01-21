@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
 import "./index.css";
-import { WalletProvider } from './context/WalletContext.jsx';
+import { WalletProvider } from "./context/WalletContext.jsx";
 import Layout from "./components/Layout";
 
 // Lazy Load Secondary Pages
@@ -11,6 +11,7 @@ const Bonds = lazy(() => import("./components/Bonds"));
 const Markets = lazy(() => import("./components/Markets"));
 const Research = lazy(() => import("./components/Research"));
 const Article = lazy(() => import("./components/Article"));
+const Portfolio = lazy(() => import("./components/Portfolio"));
 
 const Loading = () => (
   <div className="h-screen w-full flex items-center justify-center bg-black text-gray-500 font-mono text-xs animate-pulse">
@@ -87,10 +88,18 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   </Suspense>
                 }
               />
+              <Route
+                path="/portfolio"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <Portfolio />
+                  </Suspense>
+                }
+              />
             </Route>
           </Routes>
         </BrowserRouter>
       </WalletProvider>
     </ErrorBoundary>
-  </React.StrictMode>
+  </React.StrictMode>,
 );
