@@ -2,14 +2,14 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {RLDCore} from "../src/core/RLDCore.sol";
-import {IRLDCore, MarketId} from "../src/interfaces/IRLDCore.sol";
-import {IRLDOracle} from "../src/interfaces/IRLDOracle.sol";
-import {ISpotOracle} from "../src/interfaces/ISpotOracle.sol";
+import {RLDCore} from "../src/rld/core/RLDCore.sol";
+import {IRLDCore, MarketId} from "../src/shared/interfaces/IRLDCore.sol";
+import {IRLDOracle} from "../src/shared/interfaces/IRLDOracle.sol";
+import {ISpotOracle} from "../src/shared/interfaces/ISpotOracle.sol";
 
-import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
-import {IERC20} from "../src/interfaces/IERC20.sol";
-import {StaticLiquidationModule} from "../src/modules/liquidation/StaticLiquidationModule.sol";
+import {IFundingModel} from "../src/shared/interfaces/IFundingModel.sol";
+import {IERC20} from "../src/shared/interfaces/IERC20.sol";
+import {StaticLiquidationModule} from "../src/rld/modules/liquidation/StaticLiquidationModule.sol";
 
 // --- MOCKS ---
 

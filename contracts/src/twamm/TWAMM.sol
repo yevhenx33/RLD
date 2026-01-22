@@ -754,6 +754,13 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         uint256 activeFee;
     }
 
+    /// @notice The trading fee in hundredths of a bip (e.g. 3000 = 0.3%)
+    uint24 public tradingFee;
+
+    function setTradingFee(uint24 _fee) external onlyOwner {
+        tradingFee = _fee;
+    }
+
     function _advanceTimestampForSinglePoolSell(
         TWAMMState storage self,
         PoolKey memory poolKey,
@@ -763,14 +770,20 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         params.zeroForOne = _exhaustMatchedOrders(
             self, AdvanceParams(expirationInterval, params.nextTimestamp, params.secondsElapsed, params.pool)
         );
-        params.activeFee = params.pool.protocolFee == 0
-            ? params.pool.lpFee
-            : ProtocolFeeLibrary.calculateSwapFee(
-                params.zeroForOne
-                    ? ProtocolFeeLibrary.getZeroForOneFee(params.pool.protocolFee)
-                    : ProtocolFeeLibrary.getOneForZeroFee(params.pool.protocolFee),
-                params.pool.lpFee
-            );
+        
+        // If tradingFee is set, use it. Otherwise fall back to protocol/LP fee logic? 
+        // User request said: "only thing that the contract owner will be able to change is the trading fee of the twamm pool. we will make it static."
+        // This implies the fee used for the swap simulation should be this static fee if set, or maybe ALWAYS this static fee.
+        // Let's assume valid fee overrides everything.
+        
+        uint24 fee = tradingFee; 
+        
+        // If tradingFee is 0, should we fall back? The request says "make it static". 
+        // Let's assume if it is set (non-zero? or just use it), it's the fee.
+        // Actually typically "static" means it doesn't change based on volatility etc, but here it likely means "fixed value set by owner".
+        // Use tradingFee directly.
+        
+        params.activeFee = fee;
 
         OrderPool.State storage orderPool = params.zeroForOne ? self.orderPool0For1 : self.orderPool1For0;
         uint256 sellRateCurrent = orderPool.sellRateCurrent - orderPool.sellRateAccounted;

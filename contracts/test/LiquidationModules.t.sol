@@ -2,11 +2,11 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {StaticLiquidationModule} from "../src/modules/liquidation/StaticLiquidationModule.sol";
-import {DutchLiquidationModule} from "../src/modules/liquidation/DutchLiquidationModule.sol";
-import {ILiquidationModule} from "../src/interfaces/ILiquidationModule.sol";
-import {IRLDCore} from "../src/interfaces/IRLDCore.sol";
-import {FixedPointMath} from "../src/libraries/FixedPointMath.sol";
+import {StaticLiquidationModule} from "../src/rld/modules/liquidation/StaticLiquidationModule.sol";
+import {DutchLiquidationModule} from "../src/rld/modules/liquidation/DutchLiquidationModule.sol";
+import {ILiquidationModule} from "../src/shared/interfaces/ILiquidationModule.sol";
+import {IRLDCore} from "../src/shared/interfaces/IRLDCore.sol";
+import {FixedPointMath} from "../src/shared/libraries/FixedPointMath.sol";
 
 contract LiquidationModulesTest is Test {
     using FixedPointMath for uint256;

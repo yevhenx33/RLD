@@ -2,8 +2,8 @@
 pragma solidity ^0.8.26;
 
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
-import {IPrimeBroker} from "../interfaces/IPrimeBroker.sol";
-import {PrimeBroker} from "../core/PrimeBroker.sol";
+import {IPrimeBroker} from "../shared/interfaces/IPrimeBroker.sol";
+import {PrimeBroker} from "../rld/broker/PrimeBroker.sol";
 
 /// @title BondMetadataRenderer
 /// @notice Generates dynamic on-chain SVG metadata for RLD Smart Bond NFTs.

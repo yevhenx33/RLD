@@ -2,11 +2,11 @@
 pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
-import {PrimeBroker} from "../src/core/PrimeBroker.sol";
-import {PrimeBrokerFactory} from "../src/core/PrimeBrokerFactory.sol";
+import {PrimeBroker} from "../src/rld/broker/PrimeBroker.sol";
+import {PrimeBrokerFactory} from "../src/rld/core/PrimeBrokerFactory.sol";
 import {BondMetadataRenderer} from "../src/utils/BondMetadataRenderer.sol";
-import {IPrimeBroker} from "../src/interfaces/IPrimeBroker.sol";
-import {RLDCore, MarketId} from "../src/core/RLDCore.sol";
+import {IPrimeBroker} from "../src/shared/interfaces/IPrimeBroker.sol";
+import {RLDCore, MarketId} from "../src/rld/core/RLDCore.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {LibString} from "solmate/src/utils/LibString.sol";
 
