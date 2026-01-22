@@ -6,7 +6,7 @@ import {RLDCore} from "../src/core/RLDCore.sol";
 import {IRLDCore, MarketId} from "../src/interfaces/IRLDCore.sol";
 import {IRLDOracle} from "../src/interfaces/IRLDOracle.sol";
 import {ISpotOracle} from "../src/interfaces/ISpotOracle.sol";
-import {IDefaultOracle} from "../src/interfaces/IDefaultOracle.sol";
+
 import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
 import {IERC20} from "../src/interfaces/IERC20.sol";
 import {StaticLiquidationModule} from "../src/modules/liquidation/StaticLiquidationModule.sol";
@@ -55,7 +55,7 @@ contract MockERC20 is IERC20 {
     }
 }
 
-contract MockOracle is IRLDOracle, ISpotOracle, IDefaultOracle {
+contract MockOracle is IRLDOracle, ISpotOracle {
     uint256 public price;
     bool public defaulted;
 
@@ -63,9 +63,7 @@ contract MockOracle is IRLDOracle, ISpotOracle, IDefaultOracle {
         price = _price;
     }
 
-    function setDefault(bool _defaulted) external {
-        defaulted = _defaulted;
-    }
+
 
     // IRLDOracle
     function getIndexPrice(address, address) external view returns (uint256) {
@@ -77,10 +75,7 @@ contract MockOracle is IRLDOracle, ISpotOracle, IDefaultOracle {
         return price;
     }
 
-    // IDefaultOracle
-    function isDefaulted(address, address, bytes32) external view returns (bool) {
-        return defaulted;
-    }
+
 }
 
 contract MockFunding is IFundingModel {
@@ -143,20 +138,19 @@ contract RLDCoreTest is Test {
             markOracle: address(oracle),
             fundingModel: address(funding),
             curator: address(0),
-            hook: address(0),
-            defaultOracle: address(oracle),
+
             liquidationModule: address(staticLiq),
             positionToken: address(positionToken)
         });
 
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
-            marketType: IRLDCore.MarketType.RLP,
+
 
             minColRatio: 1.5e18,
             maintenanceMargin: 1.1e18,
             liquidationCloseFactor: 0.5e18,
             liquidationParams: bytes32(uint256(1.05e18)),
-            bankruptcyParams: bytes32(0),
+
             brokerVerifier: address(verifier)
         });
 
@@ -192,7 +186,6 @@ contract RLDCoreTest is Test {
         assertTrue(core.isValidMarket(marketId));
         IRLDCore.MarketState memory state = core.getMarketState(marketId);
         assertEq(state.normalizationFactor, 1e18);
-        assertEq(state.isSettled, false);
     }
 
     function test_ModifyPosition_Deposit() public {
@@ -248,21 +241,5 @@ contract RLDCoreTest is Test {
         core.modifyPosition(marketId, 10e18, 0);
     }
 
-    function test_SettleMarket() public {
-        // 1. Not Defaulted
-        vm.expectRevert(abi.encodeWithSelector(IRLDCore.InvalidParam.selector, "Not Defaulted"));
-        core.settleMarket(marketId);
 
-        // 2. Default & Settle
-        oracle.setDefault(true);
-        core.settleMarket(marketId);
-
-        // 3. Confirm operations locked
-        collateral.mint(address(this), 10e18);
-        collateral.approve(address(core), 10e18); // Approve to verify it's not failing on transfer
-        
-        bytes memory data = abi.encode(1, int256(10e18), int256(0), marketId);
-        vm.expectRevert(IRLDCore.MarketSettledError.selector);
-        core.lock(data);
-    }
 }

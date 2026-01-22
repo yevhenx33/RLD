@@ -9,7 +9,7 @@ interface IRLDCore {
     /*                                           STRUCTS                                            */
     /* ============================================================================================ */
 
-    enum MarketType { RLP, CDS }
+
 
     struct MarketAddresses {
         address collateralToken;
@@ -20,28 +20,28 @@ interface IRLDCore {
         address markOracle; // Restored (Required by FundingModel)
         address fundingModel;
         address curator; // Renamed from feeHook
-        address hook;
-        address defaultOracle;
+
+
         address liquidationModule;
         address positionToken; // ERC20 token representing debt (WrappedRLP)
     }
 
     struct MarketConfig {
-        MarketType marketType;
+
 
         uint64 minColRatio;
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor; // e.g., 50% (5e17)
         // liquidationIncentive moved to module params
         bytes32 liquidationParams; // Packed params for the module
-        bytes32 bankruptcyParams; // Packed params for DefaultOracle (Util/Rate thresholds)
+
         address brokerVerifier; // Trusted Verifier for Prime Brokers (Immutable)
     }
 
     struct MarketState {
         uint128 normalizationFactor; // Debt Scaler (starts at 1e18)
         uint48 lastUpdateTimestamp;
-        bool isSettled;              // True if Global Settlement triggered
+
     }
 
     struct Position {
@@ -53,8 +53,8 @@ interface IRLDCore {
     /*                                           EVENTS                                             */
     /* ============================================================================================ */
     // --- Events ---
-    event MarketCreated(MarketId indexed id, address indexed collateral, address indexed underlying, address pool, MarketType marketType); // Indexed pool
-    event MarketSettled(MarketId indexed id, uint256 timestamp, uint256 price);
+    event MarketCreated(MarketId indexed id, address indexed collateral, address indexed underlying, address pool); // Indexed pool
+
     event PositionModified(MarketId indexed id, address indexed user, int256 deltaCollateral, int256 deltaDebt);
     event SecurityUpdate(MarketId indexed id, string indexed action, address indexed operator);
     
@@ -63,7 +63,7 @@ interface IRLDCore {
     error InvalidMarket();
     error InvalidParam(string param);
     error MarketAlreadyExists();
-    error MarketSettledError();
+
     error NotLocked();
     error Insolvent(address user);
     error UserSolvent(address user);
@@ -125,8 +125,7 @@ interface IRLDCore {
     /*                                      SETTLEMENT / LIQ                                        */
     /* ============================================================================================ */
 
-    /// @notice Triggers Global Settlement if the Market is Defaulted.
-    function settleMarket(MarketId id) external;
+
 
     /// @notice Liquidates an insolvent position (Legacy/Direct mode).
     /// @notice Liquidates an insolvent position (Legacy/Direct mode).
@@ -139,5 +138,5 @@ interface IRLDCore {
     function setCurator(MarketId id, address newCurator) external;
 
     /// @notice Updates Oracle Sources (Emergency Switch).
-    function updateOracles(MarketId id, address rateOracle, address spotOracle, address defaultOracle) external;
+    function updateOracles(MarketId id, address rateOracle, address spotOracle) external;
 }

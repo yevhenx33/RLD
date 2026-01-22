@@ -18,11 +18,12 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
+import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {ISpotOracle} from "../src/interfaces/ISpotOracle.sol";
 import {IRLDOracle} from "../src/interfaces/IRLDOracle.sol";
 import {PositionToken} from "../src/tokens/PositionToken.sol";
 import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
-import {IDefaultOracle} from "../src/interfaces/IDefaultOracle.sol";
+
 import {UniswapV4SingletonOracle} from "../src/modules/oracles/UniswapV4SingletonOracle.sol";
 import {BondMetadataRenderer} from "../src/utils/BondMetadataRenderer.sol";
 
@@ -44,19 +45,17 @@ contract MockFundingModel is IFundingModel {
     }
 }
 
-contract MockDefaultOracle is IDefaultOracle {
-    function isDefaulted(address, address, bytes32) external pure returns (bool) { return false; }
-}
+
 
 contract MockHook is IHooks {
     function beforeInitialize(address, PoolKey calldata, uint160) external pure returns (bytes4) { return IHooks.beforeInitialize.selector; }
     function afterInitialize(address, PoolKey calldata, uint160, int24) external pure returns (bytes4) { return IHooks.afterInitialize.selector; }
-    function beforeAddLiquidity(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, bytes calldata) external pure returns (bytes4) { return IHooks.beforeAddLiquidity.selector; }
-    function afterAddLiquidity(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, BalanceDelta, BalanceDelta, bytes calldata) external pure returns (bytes4, BalanceDelta) { return (IHooks.afterAddLiquidity.selector, BalanceDelta.wrap(0)); }
-    function beforeRemoveLiquidity(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, bytes calldata) external pure returns (bytes4) { return IHooks.beforeRemoveLiquidity.selector; }
-    function afterRemoveLiquidity(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, BalanceDelta, BalanceDelta, bytes calldata) external pure returns (bytes4, BalanceDelta) { return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0)); }
-    function beforeSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata) external pure returns (bytes4, BeforeSwapDelta, uint24) { return (IHooks.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0); }
-    function afterSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata) external pure returns (bytes4, int128) { return (IHooks.afterSwap.selector, 0); }
+    function beforeAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata) external pure returns (bytes4) { return IHooks.beforeAddLiquidity.selector; }
+    function afterAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, BalanceDelta, BalanceDelta, bytes calldata) external pure returns (bytes4, BalanceDelta) { return (IHooks.afterAddLiquidity.selector, BalanceDelta.wrap(0)); }
+    function beforeRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata) external pure returns (bytes4) { return IHooks.beforeRemoveLiquidity.selector; }
+    function afterRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, BalanceDelta, BalanceDelta, bytes calldata) external pure returns (bytes4, BalanceDelta) { return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0)); }
+    function beforeSwap(address, PoolKey calldata, SwapParams calldata, bytes calldata) external pure returns (bytes4, BeforeSwapDelta, uint24) { return (IHooks.beforeSwap.selector, BeforeSwapDelta.wrap(0), 0); }
+    function afterSwap(address, PoolKey calldata, SwapParams calldata, BalanceDelta, bytes calldata) external pure returns (bytes4, int128) { return (IHooks.afterSwap.selector, 0); }
     function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) { return IHooks.beforeDonate.selector; }
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) { return IHooks.afterDonate.selector; }
 }
@@ -72,7 +71,7 @@ contract AtomicDeploymentTest is Test {
     
     MockOracle oracle;
     MockFundingModel funding;
-    MockDefaultOracle defaultOracle;
+
     MockHook twamm; 
     BondMetadataRenderer renderer; 
 
@@ -84,7 +83,7 @@ contract AtomicDeploymentTest is Test {
         poolManager = new PoolManager(address(0));
         oracle = new MockOracle();
         funding = new MockFundingModel();
-        defaultOracle = new MockDefaultOracle();
+
         twamm = new MockHook();
         renderer = new BondMetadataRenderer();
         
@@ -107,11 +106,8 @@ contract AtomicDeploymentTest is Test {
             address(primeBrokerImpl),
             address(v4Oracle),
             address(funding),
-            address(0), 
-            address(defaultOracle),
             address(0), // No hook for atomic test
-            address(renderer),
-            address(0) // weth
+            address(renderer)
         );
         
         // --- Register Factory ---
@@ -133,13 +129,13 @@ contract AtomicDeploymentTest is Test {
                 underlyingToken: underlyingToken,
                 collateralToken: collateralToken,
                 curator: address(this),
-                marketType: IRLDCore.MarketType.RLP,
+
                 minColRatio: 120e16,
                 maintenanceMargin: 110e16,
                 liquidationCloseFactor: 50e16,
                 liquidationModule: address(0x123),
                 liquidationParams: liqParams,
-                bankruptcyParams: bytes32(0),
+
                 spotOracle: address(oracle),
                 rateOracle: address(oracle),
                 oraclePeriod: 3600,
@@ -177,13 +173,13 @@ contract AtomicDeploymentTest is Test {
                 underlyingToken: underlyingToken,
                 collateralToken: collateralToken,
                 curator: address(this),
-                marketType: IRLDCore.MarketType.RLP,
+
                 minColRatio: 120e16,
                 maintenanceMargin: 110e16,
                 liquidationCloseFactor: 50e16,
                 liquidationModule: address(0x123),
                 liquidationParams: bytes32(0),
-                bankruptcyParams: bytes32(0),
+
                 spotOracle: address(oracle),
                 rateOracle: address(oracle),
                 oraclePeriod: 3600,

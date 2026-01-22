@@ -47,7 +47,7 @@ contract PrimeBroker is IPrimeBroker {
     address public collateralToken;
     address public underlyingToken;
     address public rateOracle;
-    address public hook;
+
     
     // Active Assets (V1 Limit: One of each)
     uint256 public activeTokenId; // V4 Position
@@ -103,7 +103,7 @@ contract PrimeBroker is IPrimeBroker {
         collateralToken = vars.collateralToken;
         underlyingToken = vars.underlyingToken;
         rateOracle = vars.rateOracle;
-        hook = vars.hook;
+
         
         initialized = true;
     }
@@ -153,7 +153,7 @@ contract PrimeBroker is IPrimeBroker {
             // Broker handles seizure directly to fix auth
              
             // a. Cancel Order
-            (uint256 buyTokensOwed, uint256 sellTokensRefund) = ITWAMM(hook).cancelOrder(activeTwammOrder.key, activeTwammOrder.orderKey);
+            (uint256 buyTokensOwed, uint256 sellTokensRefund) = ITWAMM(TWAMM_MODULE).cancelOrder(activeTwammOrder.key, activeTwammOrder.orderKey);
             
             // b. Identify Tokens
             address sellToken = activeTwammOrder.orderKey.zeroForOne 
@@ -244,10 +244,10 @@ contract PrimeBroker is IPrimeBroker {
         ERC20(inputToken).safeTransferFrom(msg.sender, address(this), params.amountIn);
         
         // 2. Approve Hook
-        ERC20(inputToken).approve(hook, params.amountIn);
+        ERC20(inputToken).approve(TWAMM_MODULE, params.amountIn);
         
         // 3. Submit
-        (bytes32 orderId, ITWAMM.OrderKey memory key) = ITWAMM(hook).submitOrder(params);
+        (bytes32 orderId, ITWAMM.OrderKey memory key) = ITWAMM(TWAMM_MODULE).submitOrder(params);
         
         // 4. Update State
         activeTwammOrder = TwammOrderInfo({
@@ -316,13 +316,13 @@ contract PrimeBroker is IPrimeBroker {
 
     function _encodeModuleData(uint256 id, address inputToken, address outputToken) internal view returns (bytes memory) {
          // Optimization: Use cached values to avoid calling Core.
-         return abi.encode(id, hook, rateOracle, inputToken, outputToken);
+         return abi.encode(id, TWAMM_MODULE, rateOracle, inputToken, outputToken);
     }
     
     function _encodeTwammData(TwammOrderInfo memory info) internal view returns (bytes memory) {
         // Matches VerifyParams in TwammBrokerModule
         return abi.encode(
-            hook,
+            TWAMM_MODULE,
             info.key,
             info.orderKey,
             // Oracle used for valuation (we use the rateOracle or spotOracle from Core? 

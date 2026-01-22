@@ -16,7 +16,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../src/interfaces/ISpotOracle.sol";
 import {PositionToken} from "../src/tokens/PositionToken.sol";
 import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
-import {IDefaultOracle} from "../src/interfaces/IDefaultOracle.sol";
+
 import {UniswapV4SingletonOracle} from "../src/modules/oracles/UniswapV4SingletonOracle.sol";
 import {BondMetadataRenderer} from "../src/utils/BondMetadataRenderer.sol";
 import {PoolManager} from "v4-core/src/PoolManager.sol";
@@ -108,9 +108,7 @@ contract MockFundingModel is IFundingModel {
     }
 }
 
-contract MockDefaultOracle is IDefaultOracle {
-    function isDefaulted(address, address, bytes32) external view returns (bool) { return false; }
-}
+
 
 contract TwammIntegrationTest is Test {
     using stdStorage for StdStorage;
@@ -148,7 +146,7 @@ contract TwammIntegrationTest is Test {
 
         // Factory
         MockFundingModel funding = new MockFundingModel();
-        MockDefaultOracle defaultOracle = new MockDefaultOracle();
+
         PoolManager poolManager = new PoolManager(address(0));
         PositionToken positionTokenImpl = new PositionToken();
         UniswapV4SingletonOracle v4Oracle = new UniswapV4SingletonOracle(); 
@@ -161,11 +159,8 @@ contract TwammIntegrationTest is Test {
             address(primeBrokerImpl),
             address(v4Oracle),
             address(funding),
-            address(0), 
-            address(defaultOracle),
             address(0),
-            address(renderer),
-            address(weth)
+            address(renderer)
         );
         core.setFactory(address(marketFactory));
         
@@ -180,13 +175,13 @@ contract TwammIntegrationTest is Test {
                 underlyingToken: address(usdc), // 1 USD
                 collateralToken: address(weth), // 2000 USD
                 curator: address(this),
-                marketType: IRLDCore.MarketType.RLP,
+
                 minColRatio: 120e16, // 1.2
                 maintenanceMargin: 110e16, // 1.1
                 liquidationCloseFactor: 50e16,
                 liquidationModule: address(0x123),
                 liquidationParams: bytes32(0),
-                bankruptcyParams: bytes32(0),
+
                 spotOracle: address(oracle),
                 rateOracle: address(oracle), // Price Oracle for Valuation
                 oraclePeriod: 3600,

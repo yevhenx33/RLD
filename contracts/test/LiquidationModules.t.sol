@@ -27,14 +27,13 @@ contract LiquidationModulesTest is Test {
         dutchModule = new DutchLiquidationModule();
 
         config = IRLDCore.MarketConfig({
-            marketType: IRLDCore.MarketType.RLP,
 
             minColRatio: 1.5e18,
 
             maintenanceMargin: 1.1e18, // 110%
             liquidationCloseFactor: 0.5e18,
             liquidationParams: bytes32(0),
-            bankruptcyParams: bytes32(0),
+
             brokerVerifier: address(0)
         });
 

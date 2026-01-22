@@ -11,25 +11,24 @@ interface IRLDMarketFactory {
     /// @return marketId The ID of the created market.
     /// @return oracle The deployed Rate Oracle address.
     /// @return spotOracle The deployed Spot Oracle address.
-    /// @return defaultOracle The deployed Default Oracle address.
     /// @return poolId The deployed Uniswap V4 Pool ID.
     function deployMarket(
         address underlyingPool,
         address underlyingToken,
         address collateralToken,
-        IRLDCore.MarketType marketType,
+
 
         uint64 minColRatio,
         uint64 maintenanceMargin,
         address liquidationModule,
         bytes32 liquidationParams
-    ) external returns (MarketId marketId, address oracle, address spotOracle, address defaultOracle, bytes32 poolId);
+    ) external returns (MarketId marketId, address oracle, address spotOracle, bytes32 poolId);
 
     function deployMarketV4(
         address underlyingPool,
         address underlyingToken,
         address collateralToken,
-        IRLDCore.MarketType marketType,
+
 
         uint64 minColRatio,
         uint64 maintenanceMargin,
@@ -41,7 +40,7 @@ interface IRLDMarketFactory {
         uint32 oraclePeriod,
         uint24 poolFee,
         int24 tickSpacing
-    ) external returns (MarketId marketId, address oracle, address deployedSpotOracle, address defaultOracle, bytes32 poolId);
+    ) external returns (MarketId marketId, address oracle, address deployedSpotOracle, bytes32 poolId);
 
     /// @notice Deploys a Synthetic Bond Vault for an existing market.
     /// @param marketId The market to bond against.

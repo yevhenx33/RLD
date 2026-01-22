@@ -11,9 +11,8 @@ import {FixedPointMath} from "../libraries/FixedPointMath.sol";
 import {IERC20} from "../interfaces/IERC20.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
-import {IRLDHook} from "../interfaces/IRLDHook.sol";
 import {ILiquidationModule} from "../interfaces/ILiquidationModule.sol";
-import {IDefaultOracle} from "../interfaces/IDefaultOracle.sol";
+
 import {PositionToken} from "../tokens/PositionToken.sol";
 import {IBrokerVerifier} from "../interfaces/IBrokerVerifier.sol";
 import {IPrimeBroker} from "../interfaces/IPrimeBroker.sol";
@@ -58,8 +57,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         MarketId id = MarketId.wrap(keccak256(abi.encode(
             addresses.collateralToken,
             addresses.underlyingToken,
-            addresses.underlyingPool, // Pool distinguishes markets
-            config.marketType
+            addresses.underlyingPool // Pool distinguishes markets
         )));
 
         if (marketAddresses[id].collateralToken != address(0)) revert MarketAlreadyExists();
@@ -68,11 +66,10 @@ contract RLDCore is IRLDCore, RLDStorage {
         marketConfigs[id] = config;
         marketStates[id] = MarketState({
             normalizationFactor: 1e18, 
-            lastUpdateTimestamp: uint48(block.timestamp),
-            isSettled: false
+            lastUpdateTimestamp: uint48(block.timestamp)
         });
 
-        emit MarketCreated(id, addresses.collateralToken, addresses.underlyingToken, addresses.underlyingPool, config.marketType);
+        emit MarketCreated(id, addresses.collateralToken, addresses.underlyingToken, addresses.underlyingPool);
         return id;
     }
 
@@ -161,8 +158,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         // Only the lock holder (vault/user) can modify their own position
         // Or specific authorized operators (TODO: Add operator logic later)
         
-        MarketState storage state = marketStates[id];
-        if (state.isSettled) revert MarketSettledError();
+
 
         // 1. Update Funding (Lazy)
         _applyFunding(id);
@@ -192,9 +188,7 @@ contract RLDCore is IRLDCore, RLDStorage {
              pos.debtPrincipal = uint128(newDebt);
         }
 
-        if (addresses.hook != address(0)) {
-            // IHook(params.hook).beforeModifyPosition(id, msg.sender, deltaCollateral, deltaDebt);
-        }
+
 
         // 3.5 Tokenize Debt (WrappedRLP)
         if (addresses.positionToken != address(0)) {
@@ -209,10 +203,7 @@ contract RLDCore is IRLDCore, RLDStorage {
 
 
 
-        // 4. Check Hook (CDS Lock)
-        if (addresses.hook != address(0)) {
-            IRLDHook(addresses.hook).beforeModifyPosition(id, msg.sender, deltaCollateral, deltaDebt);
-        }
+
 
         bytes32 actionKey = keccak256(abi.encode(id, msg.sender, ACTION_SALT));
         uint256 currentType = TransientStorage.tload(actionKey);
@@ -317,39 +308,13 @@ contract RLDCore is IRLDCore, RLDStorage {
     /*                                      SETTLEMENT / LIQ                                        */
     /* ============================================================================================ */
 
-    /// @notice Triggers Global Settlement if the Market is Defaulted.
-    function settleMarket(MarketId id) external override {
-        MarketState storage state = marketStates[id];
-        if (state.isSettled) revert MarketSettledError();
-        
-        MarketAddresses storage addresses = marketAddresses[id];
-        
-        // Check Default Oracle (The "Bank Run" detector)
-        if (addresses.defaultOracle != address(0)) {
-            bool isDefaulted = IDefaultOracle(addresses.defaultOracle).isDefaulted(
-                addresses.underlyingPool, 
-                addresses.underlyingToken,
-                marketConfigs[id].bankruptcyParams
-            );
-            if (!isDefaulted) revert InvalidParam("Not Defaulted");
-        } else {
-            // If no default oracle, settlement is manual or disabled (revert for safety)
-            revert InvalidParam("No Default Oracle");
-        }
 
-        // Trigger Settlement
-        state.isSettled = true;
-        
-        // We could snapshot prices here, but simpler to just lock the market state.
-        emit MarketSettled(id, 0, 0); 
-    }
 
     /// @notice Liquidates an insolvent position (Broker-Only).
     function liquidate(MarketId id, address user, uint256 debtToCover) external override {
         _applyFunding(id);
 
         MarketState storage state = marketStates[id];
-        if (state.isSettled) revert MarketSettledError();
         
         MarketAddresses storage addresses = marketAddresses[id];
         MarketConfig storage config = marketConfigs[id];
@@ -452,13 +417,12 @@ contract RLDCore is IRLDCore, RLDStorage {
         emit SecurityUpdate(id, "Curator", newCurator);
     }
 
-    function updateOracles(MarketId id, address rateOracle, address spotOracle, address defaultOracle) external override onlyCurator(id) {
+    function updateOracles(MarketId id, address rateOracle, address spotOracle) external override onlyCurator(id) {
         MarketAddresses storage addresses = marketAddresses[id];
         
         // Prevent setting to 0 if provided
         if (rateOracle != address(0)) addresses.rateOracle = rateOracle;
         if (spotOracle != address(0)) addresses.spotOracle = spotOracle;
-        if (defaultOracle != address(0)) addresses.defaultOracle = defaultOracle;
         
         emit SecurityUpdate(id, "Oracles", msg.sender);
     }

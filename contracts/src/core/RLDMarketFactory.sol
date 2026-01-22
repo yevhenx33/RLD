@@ -34,10 +34,8 @@ contract RLDMarketFactory {
     
     // Default Modules
     address public immutable STD_FUNDING_MODEL;
-    address public immutable CDS_HOOK;
-    address public immutable DEFAULT_ORACLE;
+
     address public immutable METADATA_RENDERER;
-    address public immutable WETH;
 
     /* ============================================================================================ */
     /*                                            STORAGE                                           */
@@ -62,7 +60,7 @@ contract RLDMarketFactory {
         address curator;            // The market curator (risk manager)
         
         // --- Market Type ---
-        IRLDCore.MarketType marketType; // e.g., RLP, CDS
+
         
         // --- Risk Parameters ---
         uint64 minColRatio;         // e.g., 1.2e18 (120%)
@@ -70,7 +68,7 @@ contract RLDMarketFactory {
         uint64 liquidationCloseFactor; // e.g., 0.5e18 (50%)
         address liquidationModule;  // Module responsible for liquidating positions
         bytes32 liquidationParams;  // Encoded params for the liquidationmodule
-        bytes32 bankruptcyParams;   // Encoded params for DefaultOracle
+
         
         // --- Oracle Configuration ---
         address spotOracle;         // External Oracle for Spot Price (Chainlink)
@@ -95,11 +93,8 @@ contract RLDMarketFactory {
         address primeBrokerImpl,
         address v4Oracle,
         address fundingModel,
-        address cdsHook,
-        address defaultOracle,
         address twamm,
-        address metadataRenderer,
-        address weth
+        address metadataRenderer
     ) {
         CORE = core;
         POOL_MANAGER = poolManager;
@@ -107,10 +102,8 @@ contract RLDMarketFactory {
         PRIME_BROKER_IMPL = primeBrokerImpl;
         SINGLETON_V4_ORACLE = v4Oracle;
         STD_FUNDING_MODEL = fundingModel;
-        CDS_HOOK = cdsHook;
-        DEFAULT_ORACLE = defaultOracle;
+
         METADATA_RENDERER = metadataRenderer;
-        WETH = weth;
     }
 
     /* ============================================================================================ */
@@ -143,8 +136,8 @@ contract RLDMarketFactory {
         if (MarketId.unwrap(marketId) != MarketId.unwrap(futureId)) revert IDMismatch();
     }
 
-    function getCanonicalId(address pool, address token, IRLDCore.MarketType mType) public pure returns (bytes32) {
-        return keccak256(abi.encode(pool, token, mType));
+    function getCanonicalId(address pool, address token) public pure returns (bytes32) {
+        return keccak256(abi.encode(pool, token));
     }
 
     /* ============================================================================================ */
@@ -167,18 +160,14 @@ contract RLDMarketFactory {
         require(params.tickSpacing > 0, "Invalid TickSpacing");
         require(params.oraclePeriod > 0, "Invalid OraclePeriod");
 
-        // CDS Logic Checks
-        if (params.marketType == IRLDCore.MarketType.CDS) {
-            require(params.collateralToken == WETH, "CDS requires WETH collateral");
-        }
+
     }
 
     function _precomputeId(DeployParams calldata params) internal pure returns (MarketId) {
         return MarketId.wrap(keccak256(abi.encode(
             params.collateralToken,
             params.underlyingToken,
-            params.underlyingPool,
-            params.marketType
+            params.underlyingPool
         )));
     }
 
@@ -208,16 +197,10 @@ contract RLDMarketFactory {
         string memory name;
         string memory symbol;
 
-        if (params.marketType == IRLDCore.MarketType.CDS) {
-            // CDS Naming: wCDSaUSDC (assuming aUSDC underlying)
-            name = string(abi.encodePacked("RLD CDS Position: ", underlyingSymbol));
-            symbol = string(abi.encodePacked("wCDS", underlyingSymbol));
-        } else {
             // RLP Naming: wRLP-aUSDC
             string memory colSymbol = ERC20(params.collateralToken).symbol();
             name = string(abi.encodePacked("Wrapped RLP Position: ", colSymbol));
             symbol = string(abi.encodePacked("wRLP", colSymbol));
-        }
         
         PositionToken(tokenAddr).initialize(params.underlyingToken, name, symbol);
     }
@@ -262,7 +245,7 @@ contract RLDMarketFactory {
         address verifier
     ) internal returns (MarketId marketId) {
         // Register & Validate Constraints
-        bytes32 canonicalKey = getCanonicalId(params.underlyingPool, params.underlyingToken, params.marketType);
+        bytes32 canonicalKey = getCanonicalId(params.underlyingPool, params.underlyingToken);
         
         if (MarketId.unwrap(canonicalMarkets[canonicalKey]) != bytes32(0)) {
             revert MarketAlreadyExists();
@@ -277,19 +260,19 @@ contract RLDMarketFactory {
             markOracle: SINGLETON_V4_ORACLE,
             fundingModel: STD_FUNDING_MODEL,
             curator: params.curator, 
-            hook: CDS_HOOK,
-            defaultOracle: DEFAULT_ORACLE,
+ 
+
             liquidationModule: params.liquidationModule,
             positionToken: positionToken
         });
 
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
-            marketType: params.marketType,
+
             minColRatio: params.minColRatio,
             maintenanceMargin: params.maintenanceMargin,
             liquidationCloseFactor: params.liquidationCloseFactor,
             liquidationParams: params.liquidationParams,
-            bankruptcyParams: params.bankruptcyParams,
+
             brokerVerifier: verifier
         });
 
