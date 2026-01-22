@@ -43,6 +43,9 @@ contract PrimeBroker is IPrimeBroker {
     uint256 public activeTokenId; // V4 Position
     TwammOrderInfo public activeTwammOrder; // TWAMM Order
     
+    // Operators
+    mapping(address => bool) public operators;
+    
     // Init check
     bool private initialized;
 
@@ -54,6 +57,12 @@ contract PrimeBroker is IPrimeBroker {
     modifier onlyOwner() {
         // TokenID is the uint256 representation of the Broker's address
         require(IERC721(factory).ownerOf(uint256(uint160(address(this)))) == msg.sender, "Not Owner");
+        _;
+    }
+
+    modifier onlyAuthorized() {
+        address owner = IERC721(factory).ownerOf(uint256(uint160(address(this))));
+        require(msg.sender == owner || operators[msg.sender], "Not Authorized");
         _;
     }
 
@@ -183,13 +192,13 @@ contract PrimeBroker is IPrimeBroker {
     }
     
     // Transfer logic placeholder
-    function deposit(uint256 tokenId) external onlyOwner {
+    function deposit(uint256 tokenId) external onlyAuthorized {
         require(activeTokenId == 0, "Slot Full");
         // IERC721(POSM).safeTransferFrom(msg.sender, address(this), tokenId);
         activeTokenId = tokenId;
     }
 
-    function submitTwammOrder(ITWAMM.SubmitOrderParams calldata params) external onlyOwner {
+    function submitTwammOrder(ITWAMM.SubmitOrderParams calldata params) external onlyAuthorized {
         require(activeTwammOrder.orderId == bytes32(0), "Slot Full");
         
         // 1. Transfer In (if needed)
@@ -222,7 +231,7 @@ contract PrimeBroker is IPrimeBroker {
     /// @dev Protected by a post-execution solvency check.
     /// @param target The address to call.
     /// @param data The calldata to send.
-    function execute(address target, bytes calldata data) external onlyOwner {
+    function execute(address target, bytes calldata data) external onlyAuthorized {
         // 1. Interaction
         (bool success, ) = target.call(data);
         require(success, "Interaction Failed");
@@ -235,7 +244,7 @@ contract PrimeBroker is IPrimeBroker {
     }
     
     // Generic execute for Core interaction
-    function modifyPosition(bytes32 rawMarketId, int256 deltaCollateral, int256 deltaDebt) external onlyOwner {
+    function modifyPosition(bytes32 rawMarketId, int256 deltaCollateral, int256 deltaDebt) external onlyAuthorized {
         MarketId id = MarketId.wrap(rawMarketId);
         require(MarketId.unwrap(id) == MarketId.unwrap(marketId), "Wrong Market");
         
@@ -289,7 +298,13 @@ contract PrimeBroker is IPrimeBroker {
         return bondMetadata;
     }
 
-    function setBondMetadata(BondMetadata calldata _metadata) external override onlyOwner {
+    function setBondMetadata(BondMetadata calldata _metadata) external override onlyAuthorized {
         bondMetadata = _metadata;
     }
+
+    function setOperator(address operator, bool active) external override onlyOwner {
+        operators[operator] = active;
+        emit OperatorUpdated(operator, active);
+    }
+
 }
