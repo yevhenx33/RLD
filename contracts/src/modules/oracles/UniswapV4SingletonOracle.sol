@@ -9,7 +9,7 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {ITWAMM} from "v4-twamm-hook/src/ITWAMM.sol";
+import {ITWAMM} from "../../twamm/ITWAMM.sol";
 
 /// @title UniswapV4SingletonOracle
 /// @notice Single Oracle Contract that manages rate queries for multiple V4 Pools.

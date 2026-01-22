@@ -1,13 +1,11 @@
 @openzeppelin/contracts/=lib/openzeppelin-v5/contracts/
-@lib/=v4-twamm-hook/src/libraries/
-@src/=v4-twamm-hook/src/
+openzeppelin-contracts/=lib/openzeppelin-contracts/
 @uniswap/v3-core/=lib/v3-core/
 @uniswap/v3-periphery/=lib/v3-periphery/
-v4-twamm-hook/=v4-twamm-hook/
 @uniswap/v4-core/=lib/v4-core/
 v4-core/=lib/v4-core/
 v4-periphery/=lib/v4-periphery/
 solmate/=lib/solmate/
-permit2/=v4-twamm-hook/lib/v4-periphery/lib/permit2/
-ds-test/=lib/forge-std/lib/ds-test/src/
 forge-std/=lib/forge-std/src/
+permit2/=lib/permit2/
+ds-test/=lib/solmate/lib/ds-test/src/

@@ -9,7 +9,7 @@ import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
-import {ITWAMM} from "v4-twamm-hook/src/ITWAMM.sol";
+import {ITWAMM} from "../twamm/ITWAMM.sol";
 
 /// @notice Library for interacting with Uniswap V4.
 library UniswapIntegration {

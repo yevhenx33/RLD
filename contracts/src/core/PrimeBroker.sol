@@ -9,7 +9,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {ITWAMM} from "v4-twamm-hook/src/ITWAMM.sol";
+import {ITWAMM} from "../twamm/ITWAMM.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../interfaces/ISpotOracle.sol";
 

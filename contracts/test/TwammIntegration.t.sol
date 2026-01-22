@@ -8,7 +8,7 @@ import {PrimeBrokerFactory} from "../src/core/PrimeBrokerFactory.sol";
 import {PrimeBroker} from "../src/core/PrimeBroker.sol";
 import {TwammBrokerModule} from "../src/modules/broker/TwammBrokerModule.sol";
 import {IRLDCore, MarketId} from "../src/interfaces/IRLDCore.sol";
-import {ITWAMM} from "v4-twamm-hook/src/ITWAMM.sol";
+import {ITWAMM} from "../src/twamm/ITWAMM.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
