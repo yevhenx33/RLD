@@ -157,10 +157,14 @@ def generate_report():
                 change_str = " (➖ 0.00%)"
                 if past:
                     old_rate = past.get('apy', 0)
-                    delta = rate - old_rate
-                    sign = "+" if delta >= 0 else ""
-                    arrow = "⬆️" if delta > 0.05 else ("⬇️" if delta < -0.05 else "➖")
-                    change_str = f" ({arrow} {sign}{delta:.2f}%)"
+                    if old_rate > 0:
+                        delta_pct = ((rate - old_rate) / old_rate) * 100
+                        sign = "+" if delta_pct >= 0 else ""
+                        # Threshold 0.5% relative change for arrow (consistent with ETH)
+                        arrow = "⬆️" if delta_pct > 0.5 else ("⬇️" if delta_pct < -0.5 else "➖")
+                        change_str = f" ({arrow} {sign}{delta_pct:.2f}%)"
+                    else:
+                         change_str = " (➖ 0.00%)"
                 report += f"• **{symbol}**: `{rate:.2f}%`{change_str}\n"
             else:
                 report += f"• **{symbol}**: `N/A`\n"
