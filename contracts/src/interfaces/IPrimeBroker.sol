@@ -1,9 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {ITWAMM} from "v4-twamm-hook/src/ITWAMM.sol";
+
 /// @title Prime Broker Interface
 /// @notice Interface for the "Smart Margin Account" that holds assets.
 interface IPrimeBroker {
+    struct TwammOrderInfo {
+        PoolKey key;
+        ITWAMM.OrderKey orderKey;
+        bytes32 orderId;
+    }
+
+    /// @notice Submits a TWAMM order on behalf of the user and registers it as collateral.
+    /// @param params The order parameters.
+    function submitTwammOrder(ITWAMM.SubmitOrderParams calldata params) external;
     /// @notice Returns the total Net Asset Value of the account in Underlying terms.
     /// @dev Used by RLDCore for solvency checks.
     function getNetAccountValue() external view returns (uint256);

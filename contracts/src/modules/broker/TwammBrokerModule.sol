@@ -30,71 +30,41 @@ contract TwammBrokerModule is IBrokerModule {
     function getValue(bytes calldata data) external view returns (uint256) {
         VerifyParams memory params = abi.decode(data, (VerifyParams));
         
-        // 1. Get Order State
-        ITWAMM.Order memory order = ITWAMM(params.hook).getOrder(params.key, params.orderKey);
-        
-        if (order.sellRate == 0) return 0;
-        
-        uint256 expiration = params.orderKey.expiration;
-        if (block.timestamp >= expiration) return 0;
-        
-        uint256 remainingSeconds = expiration - block.timestamp;
-        uint256 remainingSellAmount = (order.sellRate * remainingSeconds) / 1e18; // RATE_SCALER is 1e18
+        // 1. Get Cancel State (Earnings + Refund)
+        // This calculates exactly what we would get if we cancelled right now.
+        // It handles expiration correctly (refund = 0, earnings = max) and active orders.
+        (uint256 buyTokensOwed, uint256 sellTokensRefund) = ITWAMM(params.hook).getCancelOrderState(params.key, params.orderKey);
         
         uint256 totalValue = 0;
         
+        // 2. Identify Tokens
         address sellToken = params.orderKey.zeroForOne 
             ? Currency.unwrap(params.key.currency0) 
             : Currency.unwrap(params.key.currency1);
             
-        if (remainingSellAmount > 0) {
+        address buyToken = params.orderKey.zeroForOne 
+            ? Currency.unwrap(params.key.currency1) 
+            : Currency.unwrap(params.key.currency0);
+            
+        // 3. Value the Refund (Unsold Principal)
+        if (sellTokensRefund > 0) {
             uint256 price = ISpotOracle(params.oracle).getSpotPrice(sellToken, params.underlyingToken);
-            totalValue += remainingSellAmount.mulWadDown(price);
+            totalValue += sellTokensRefund.mulWadDown(price);
+        }
+        
+        // 4. Value the Earnings (Bought Tokens)
+        if (buyTokensOwed > 0) {
+             uint256 price = ISpotOracle(params.oracle).getSpotPrice(buyToken, params.underlyingToken);
+             totalValue += buyTokensOwed.mulWadDown(price);
         }
         
         return totalValue;
     }
 
     /// @notice Seizes assets by Cancel & Claim.
-    function seize(uint256 amount, address recipient, bytes calldata data) external returns (uint256 seizedValue) {
-        VerifyParams memory params = abi.decode(data, (VerifyParams));
-
-        ITWAMM(params.hook).cancelOrder(params.key, params.orderKey);
-        
-        uint256 realizedValue = 0;
-        
-        address[2] memory tokens = [params.collateralToken, params.underlyingToken];
-        
-        for (uint256 i = 0; i < 2; i++) {
-            address token = tokens[i];
-            uint256 balance = ERC20(token).balanceOf(address(this));
-            
-            if (balance > 0) {
-                // Calculate Value
-                uint256 price = ISpotOracle(params.oracle).getSpotPrice(token, params.underlyingToken);
-                uint256 val = balance.mulWadDown(price);
-                
-                uint256 needed = amount - seizedValue;
-                if (needed == 0) break;
-                
-                uint256 transferAmount;
-                uint256 valueToSend;
-                
-                if (val <= needed) {
-                    transferAmount = balance;
-                    valueToSend = val;
-                } else {
-                    // val > needed. We need partial.
-                    // transferAmount = balance * (needed / val)
-                    transferAmount = balance.mulDivUp(needed, val);
-                    valueToSend = needed;
-                }
-                
-                ERC20(token).safeTransfer(recipient, transferAmount);
-                seizedValue += valueToSend;
-            }
-        }
-        
-        return seizedValue;
+    /// @notice Seizes assets by Cancel & Claim.
+    /// @dev Logic moved to PrimeBroker to handle ownership/authorization. This module is now Read-Only for TWAMM.
+    function seize(uint256, address, bytes calldata) external pure returns (uint256) {
+        return 0; // Handled by Broker directly
     }
 }
