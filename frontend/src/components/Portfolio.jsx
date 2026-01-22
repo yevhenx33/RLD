@@ -168,17 +168,29 @@ function FilterDropdown({ label, options, selected, onChange }) {
   );
 }
 
+// --- CONSTANTS ---
+const TOKEN_LOGOS = {
+  USDC: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png",
+  DAI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x6B175474E89094C44Da98b954EedeAC495271d0F/logo.png",
+  USDT: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png",
+};
+
 // --- COMPONENTS ---
 const BondCard = ({ nft }) => {
   const isMatured = nft.status === "MATURED";
   const daysRemaining = calculateRemainingDays(nft.maturityDate);
+  const TokenIcon = TOKEN_LOGOS[nft.currency] || TOKEN_LOGOS["USDC"]; // Fallback
 
   return (
-    <div className="group relative h-full bg-[#0a0a0a] border border-white/10 hover:border-white/20 transition-colors flex flex-col">
+    <div className="group relative h-full bg-[#0a0a0a] border border-white/10 hover:border-white/20 transition-colors flex flex-col w-full max-w-[400px] mx-auto md:max-w-none">
       {/* Header: Identity with distinct background */}
       <div className="bg-white/5 px-5 py-3 border-b border-white/5 flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-white/20" />
+          <img
+            src={TokenIcon}
+            alt={nft.currency}
+            className="w-5 h-5 rounded-full"
+          />
           <span className="font-mono text-sm text-gray-200 font-medium">
             {nft.currency} Bond
           </span>
@@ -188,53 +200,47 @@ const BondCard = ({ nft }) => {
 
       {/* Body: Structured Data with Dividers */}
       <div className="flex-1 px-5 py-2 flex flex-col divide-y divide-white/5">
-        {/* Row 1: Principal - The Anchor */}
+        {/* Row 1: Fixed APY - The Anchor */}
         <div className="py-4">
           <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">
-            Principal
+            Fixed APY
           </div>
-          <div className="text-xl text-white font-mono font-light tracking-tight">
-            {Number(nft.principal).toLocaleString()} {nft.currency}
+          <div className="text-3xl text-cyan-400 font-mono font-light tracking-tight">
+            {nft.rate.toFixed(2)}%
           </div>
         </div>
 
-        {/* Row 2: Yield & Return - High Value Info */}
+        {/* Row 2: Principal & Maturity */}
         <div className="py-4 grid grid-cols-2 gap-4">
           <div>
             <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">
-              Fixed APY
+              Principal
             </div>
-            <div className="text-base text-cyan-400 font-mono">
-              {nft.rate.toFixed(2)}%
+            <div className="text-base text-white font-mono">
+              {Number(nft.principal).toLocaleString()} {nft.currency}
             </div>
           </div>
           <div className="text-right">
             <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">
-              Est. Return
+              Maturity
             </div>
             <div className="text-base text-gray-300 font-mono">
-              +
-              {(
-                (nft.principal * (nft.rate / 100) * (365 - daysRemaining)) /
-                365
-              ).toFixed(2)}
+              {formatDate(nft.maturityDate)}
             </div>
           </div>
         </div>
 
-        {/* Row 3: Timeline - Context */}
+        {/* Row 3: Protocol & Expiration */}
         <div className="py-4 mt-auto grid grid-cols-2 gap-4">
           <div>
             <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">
-              Maturity
+              Protocol
             </div>
-            <div className="text-sm text-gray-400 font-mono">
-              {formatDate(nft.maturityDate)}
-            </div>
+            <div className="text-sm text-gray-400 font-mono">AAVE V3</div>
           </div>
           <div className="text-right">
             <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">
-              Status
+              Expiration
             </div>
             <div
               className={`text-sm font-mono ${
