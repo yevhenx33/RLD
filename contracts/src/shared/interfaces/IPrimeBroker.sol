@@ -29,6 +29,15 @@ interface IPrimeBroker {
     /// @notice Emitted when a generic execution is performed.
     event Execute(address indexed target, bytes data);
 
+    /// @notice Emitted when an operator is updated.
+    event OperatorUpdated(address indexed operator, bool active);
+
+    /// @notice Sets an operator for the Prime Broker.
+    /// @dev Operators can perform all actions except ownership transfer.
+    /// @param operator The address to set as operator.
+    /// @param active True to authorize, false to deauthorize.
+    function setOperator(address operator, bool active) external;
+
     /* ============================================================================================ */
     /*                                        NFT METADATA                                          */
     /* ============================================================================================ */
