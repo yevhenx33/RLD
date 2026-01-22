@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {IRLDCore, MarketId} from "../interfaces/IRLDCore.sol";
-import {WrappedRLP} from "../tokens/WrappedRLP.sol";
+import {PositionToken} from "../tokens/PositionToken.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol"; 
 import {IRLDOracle} from "../interfaces/IRLDOracle.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -27,7 +27,7 @@ contract RLDMarketFactory {
 
     address public immutable CORE;
     address public immutable POOL_MANAGER;
-    address public immutable WRAPPED_RLP_IMPL;
+    address public immutable POSITION_TOKEN_IMPL;
     address public immutable PRIME_BROKER_IMPL; 
     address public immutable SINGLETON_V4_ORACLE; 
     address public immutable TWAMM;
@@ -37,6 +37,7 @@ contract RLDMarketFactory {
     address public immutable CDS_HOOK;
     address public immutable DEFAULT_ORACLE;
     address public immutable METADATA_RENDERER;
+    address public immutable WETH;
 
     /* ============================================================================================ */
     /*                                            STORAGE                                           */
@@ -69,6 +70,7 @@ contract RLDMarketFactory {
         uint64 liquidationCloseFactor; // e.g., 0.5e18 (50%)
         address liquidationModule;  // Module responsible for liquidating positions
         bytes32 liquidationParams;  // Encoded params for the liquidationmodule
+        bytes32 bankruptcyParams;   // Encoded params for DefaultOracle
         
         // --- Oracle Configuration ---
         address spotOracle;         // External Oracle for Spot Price (Chainlink)
@@ -89,25 +91,26 @@ contract RLDMarketFactory {
     constructor(
         address core, 
         address poolManager, 
-        address wRLPImpl,
+        address positionTokenImpl,
         address primeBrokerImpl,
         address v4Oracle,
         address fundingModel,
         address cdsHook,
         address defaultOracle,
         address twamm,
-        address metadataRenderer
+        address metadataRenderer,
+        address weth
     ) {
         CORE = core;
         POOL_MANAGER = poolManager;
-        WRAPPED_RLP_IMPL = wRLPImpl;
+        POSITION_TOKEN_IMPL = positionTokenImpl;
         PRIME_BROKER_IMPL = primeBrokerImpl;
         SINGLETON_V4_ORACLE = v4Oracle;
         STD_FUNDING_MODEL = fundingModel;
         CDS_HOOK = cdsHook;
         DEFAULT_ORACLE = defaultOracle;
-        TWAMM = twamm;
         METADATA_RENDERER = metadataRenderer;
+        WETH = weth;
     }
 
     /* ============================================================================================ */
@@ -128,13 +131,13 @@ contract RLDMarketFactory {
         (brokerFactory, verifier) = _deployInfrastructure(futureId, params);
 
         // 4. Asset Phase
-        address wRLP = _deployPositionToken(params.collateralToken, params.underlyingToken);
+        address positionToken = _deployPositionToken(params);
 
         // 5. Market Mechanics Phase (Uniswap V4)
-        _initializePool(wRLP, params);
+        _initializePool(positionToken, params);
 
         // 6. Registration Phase (Settlement)
-        marketId = _registerMarket(params, wRLP, verifier);
+        marketId = _registerMarket(params, positionToken, verifier);
 
         // 7. Post-Condition Check (Critical Security Invariant)
         if (MarketId.unwrap(marketId) != MarketId.unwrap(futureId)) revert IDMismatch();
@@ -148,7 +151,7 @@ contract RLDMarketFactory {
     /*                                     INTERNAL FUNCTIONS                                       */
     /* ============================================================================================ */
 
-    function _validateParams(DeployParams calldata params) internal pure {
+    function _validateParams(DeployParams calldata params) internal view {
         // Critical Address Checks (Sharp Edge: Dangerous Defaults)
         require(params.underlyingPool != address(0), "Invalid Pool");
         require(params.underlyingToken != address(0), "Invalid Underlying");
@@ -163,6 +166,11 @@ contract RLDMarketFactory {
         // V4 Spec Checks (Sharp Edge: Configuration Cliffs)
         require(params.tickSpacing > 0, "Invalid TickSpacing");
         require(params.oraclePeriod > 0, "Invalid OraclePeriod");
+
+        // CDS Logic Checks
+        if (params.marketType == IRLDCore.MarketType.CDS) {
+            require(params.collateralToken == WETH, "CDS requires WETH collateral");
+        }
     }
 
     function _precomputeId(DeployParams calldata params) internal pure returns (MarketId) {
@@ -193,20 +201,35 @@ contract RLDMarketFactory {
         verifier = address(new BrokerVerifier(factory));
     }
 
-    function _deployPositionToken(address collateralToken, address underlyingToken) internal returns (address wRLPAddr) {
-        wRLPAddr = Clones.clone(WRAPPED_RLP_IMPL);
-        string memory colSymbol = ERC20(collateralToken).symbol();
-        WrappedRLP(wRLPAddr).initialize(underlyingToken, colSymbol); 
+    function _deployPositionToken(DeployParams calldata params) internal returns (address tokenAddr) {
+        tokenAddr = Clones.clone(POSITION_TOKEN_IMPL);
+        string memory underlyingSymbol = ERC20(params.underlyingToken).symbol();
+
+        string memory name;
+        string memory symbol;
+
+        if (params.marketType == IRLDCore.MarketType.CDS) {
+            // CDS Naming: wCDSaUSDC (assuming aUSDC underlying)
+            name = string(abi.encodePacked("RLD CDS Position: ", underlyingSymbol));
+            symbol = string(abi.encodePacked("wCDS", underlyingSymbol));
+        } else {
+            // RLP Naming: wRLP-aUSDC
+            string memory colSymbol = ERC20(params.collateralToken).symbol();
+            name = string(abi.encodePacked("Wrapped RLP Position: ", colSymbol));
+            symbol = string(abi.encodePacked("wRLP", colSymbol));
+        }
+        
+        PositionToken(tokenAddr).initialize(params.underlyingToken, name, symbol);
     }
 
-    function _initializePool(address wRLP, DeployParams calldata params) internal returns (bytes32) {
-        Currency currency0 = Currency.wrap(wRLP);
+    function _initializePool(address positionToken, DeployParams calldata params) internal returns (bytes32) {
+        Currency currency0 = Currency.wrap(positionToken);
         Currency currency1 = Currency.wrap(params.underlyingToken);
         if (currency0 > currency1) (currency0, currency1) = (currency1, currency0);
 
         // Rate Verification
         uint256 indexPrice = IRLDOracle(params.rateOracle).getIndexPrice(params.underlyingPool, params.underlyingToken);
-        if (Currency.wrap(wRLP) == currency1) {
+        if (Currency.wrap(positionToken) == currency1) {
              indexPrice = 1e36 / indexPrice;
         }
 
@@ -224,7 +247,7 @@ contract RLDMarketFactory {
         
         // Register with Singleton Oracle
         UniswapV4SingletonOracle(SINGLETON_V4_ORACLE).registerPool(
-            wRLP,
+            positionToken,
             key,
             TWAMM,
             params.oraclePeriod
@@ -235,7 +258,7 @@ contract RLDMarketFactory {
 
     function _registerMarket(
         DeployParams calldata params, 
-        address wRLPAddr, 
+        address positionToken, 
         address verifier
     ) internal returns (MarketId marketId) {
         // Register & Validate Constraints
@@ -257,7 +280,7 @@ contract RLDMarketFactory {
             hook: CDS_HOOK,
             defaultOracle: DEFAULT_ORACLE,
             liquidationModule: params.liquidationModule,
-            positionToken: wRLPAddr
+            positionToken: positionToken
         });
 
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
@@ -266,15 +289,16 @@ contract RLDMarketFactory {
             maintenanceMargin: params.maintenanceMargin,
             liquidationCloseFactor: params.liquidationCloseFactor,
             liquidationParams: params.liquidationParams,
+            bankruptcyParams: params.bankruptcyParams,
             brokerVerifier: verifier
         });
 
         marketId = IRLDCore(CORE).createMarket(addresses, config);
         canonicalMarkets[canonicalKey] = marketId;
         
-        // Link wRLP
-        WrappedRLP(wRLPAddr).setMarketId(marketId);
-        WrappedRLP(wRLPAddr).transferOwnership(CORE);
+        // Link PositionToken
+        PositionToken(positionToken).setMarketId(marketId);
+        PositionToken(positionToken).transferOwnership(CORE);
         
         emit MarketDeployed(marketId, params.underlyingPool, params.underlyingToken);
     }

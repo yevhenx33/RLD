@@ -14,7 +14,7 @@ import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../src/interfaces/ISpotOracle.sol";
-import {WrappedRLP} from "../src/tokens/WrappedRLP.sol";
+import {PositionToken} from "../src/tokens/PositionToken.sol";
 import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
 import {IDefaultOracle} from "../src/interfaces/IDefaultOracle.sol";
 import {UniswapV4SingletonOracle} from "../src/modules/oracles/UniswapV4SingletonOracle.sol";
@@ -109,7 +109,7 @@ contract MockFundingModel is IFundingModel {
 }
 
 contract MockDefaultOracle is IDefaultOracle {
-    function isDefaulted(address, address) external view returns (bool) { return false; }
+    function isDefaulted(address, address, bytes32) external view returns (bool) { return false; }
 }
 
 contract TwammIntegrationTest is Test {
@@ -150,21 +150,22 @@ contract TwammIntegrationTest is Test {
         MockFundingModel funding = new MockFundingModel();
         MockDefaultOracle defaultOracle = new MockDefaultOracle();
         PoolManager poolManager = new PoolManager(address(0));
-        WrappedRLP wRLPImpl = new WrappedRLP();
+        PositionToken positionTokenImpl = new PositionToken();
         UniswapV4SingletonOracle v4Oracle = new UniswapV4SingletonOracle(); 
         BondMetadataRenderer renderer = new BondMetadataRenderer();
         
         marketFactory = new RLDMarketFactory(
             address(core),
             address(poolManager),
-            address(wRLPImpl),
+            address(positionTokenImpl),
             address(primeBrokerImpl),
             address(v4Oracle),
             address(funding),
             address(0), 
             address(defaultOracle),
             address(0),
-            address(renderer)
+            address(renderer),
+            address(weth)
         );
         core.setFactory(address(marketFactory));
         
@@ -185,6 +186,7 @@ contract TwammIntegrationTest is Test {
                 liquidationCloseFactor: 50e16,
                 liquidationModule: address(0x123),
                 liquidationParams: bytes32(0),
+                bankruptcyParams: bytes32(0),
                 spotOracle: address(oracle),
                 rateOracle: address(oracle), // Price Oracle for Valuation
                 oraclePeriod: 3600,

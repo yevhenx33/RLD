@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "../src/core/RLDCore.sol";
 import "../src/core/RLDMarketFactory.sol";
+import "../src/tokens/PositionToken.sol";
 import "../src/modules/oracles/RLDAaveOracle.sol";
 import "../src/modules/oracles/ChainlinkSpotOracle.sol";
 import "../src/modules/oracles/DefaultOracle.sol";
@@ -80,14 +81,20 @@ PoolManager poolManager = new PoolManager(deployer);
         require(address(twamm) == hookAddress, "Hook address mismatch");
 
         // 4. Deploy Factory
+        PositionToken positionTokenImpl = new PositionToken();
+        
         RLDMarketFactory factory = new RLDMarketFactory(
-            address(core), 
-            address(fundingModel), 
-            address(spotOracle),
-            address(rateOracle),
-            address(defaultOracle),
+            address(core),
             address(poolManager),
-            address(twamm)
+            address(positionTokenImpl),
+            address(0), // primeBrokerImpl (Need to deploy?)
+            address(0), // v4Oracle (Need to deploy?)
+            address(fundingModel),
+            address(0), // cdsHook
+            address(defaultOracle),
+            address(twamm),
+            address(0), // metadataRenderer
+            config.weth
         );
 
         console.log("RLD Core deployed at:", address(core));

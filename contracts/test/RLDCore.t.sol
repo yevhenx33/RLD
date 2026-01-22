@@ -78,7 +78,7 @@ contract MockOracle is IRLDOracle, ISpotOracle, IDefaultOracle {
     }
 
     // IDefaultOracle
-    function isDefaulted(address, address) external view returns (bool) {
+    function isDefaulted(address, address, bytes32) external view returns (bool) {
         return defaulted;
     }
 }
@@ -156,6 +156,7 @@ contract RLDCoreTest is Test {
             maintenanceMargin: 1.1e18,
             liquidationCloseFactor: 0.5e18,
             liquidationParams: bytes32(uint256(1.05e18)),
+            bankruptcyParams: bytes32(0),
             brokerVerifier: address(verifier)
         });
 

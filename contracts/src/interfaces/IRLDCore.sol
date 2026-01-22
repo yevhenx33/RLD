@@ -34,6 +34,7 @@ interface IRLDCore {
         uint64 liquidationCloseFactor; // e.g., 50% (5e17)
         // liquidationIncentive moved to module params
         bytes32 liquidationParams; // Packed params for the module
+        bytes32 bankruptcyParams; // Packed params for DefaultOracle (Util/Rate thresholds)
         address brokerVerifier; // Trusted Verifier for Prime Brokers (Immutable)
     }
 

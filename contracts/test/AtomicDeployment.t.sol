@@ -20,7 +20,7 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
 import {ISpotOracle} from "../src/interfaces/ISpotOracle.sol";
 import {IRLDOracle} from "../src/interfaces/IRLDOracle.sol";
-import {WrappedRLP} from "../src/tokens/WrappedRLP.sol";
+import {PositionToken} from "../src/tokens/PositionToken.sol";
 import {IFundingModel} from "../src/interfaces/IFundingModel.sol";
 import {IDefaultOracle} from "../src/interfaces/IDefaultOracle.sol";
 import {UniswapV4SingletonOracle} from "../src/modules/oracles/UniswapV4SingletonOracle.sol";
@@ -45,7 +45,7 @@ contract MockFundingModel is IFundingModel {
 }
 
 contract MockDefaultOracle is IDefaultOracle {
-    function isDefaulted(address, address) external view returns (bool) { return false; }
+    function isDefaulted(address, address, bytes32) external pure returns (bool) { return false; }
 }
 
 contract MockHook is IHooks {
@@ -67,7 +67,7 @@ contract AtomicDeploymentTest is Test {
     PrimeBroker primeBrokerImpl;
     
     PoolManager poolManager;
-    WrappedRLP wRLPImpl;
+    PositionToken positionTokenImpl;
     UniswapV4SingletonOracle v4Oracle;
     
     MockOracle oracle;
@@ -89,7 +89,7 @@ contract AtomicDeploymentTest is Test {
         renderer = new BondMetadataRenderer();
         
         core = new RLDCore();
-        wRLPImpl = new WrappedRLP();
+        positionTokenImpl = new PositionToken();
         
         primeBrokerImpl = new PrimeBroker(
             address(core),
@@ -103,14 +103,15 @@ contract AtomicDeploymentTest is Test {
         marketFactory = new RLDMarketFactory(
             address(core),
             address(poolManager),
-            address(wRLPImpl),
+            address(positionTokenImpl),
             address(primeBrokerImpl),
             address(v4Oracle),
             address(funding),
             address(0), 
             address(defaultOracle),
             address(0), // No hook for atomic test
-            address(renderer) 
+            address(renderer),
+            address(0) // weth
         );
         
         // --- Register Factory ---
@@ -138,6 +139,7 @@ contract AtomicDeploymentTest is Test {
                 liquidationCloseFactor: 50e16,
                 liquidationModule: address(0x123),
                 liquidationParams: liqParams,
+                bankruptcyParams: bytes32(0),
                 spotOracle: address(oracle),
                 rateOracle: address(oracle),
                 oraclePeriod: 3600,
@@ -181,6 +183,7 @@ contract AtomicDeploymentTest is Test {
                 liquidationCloseFactor: 50e16,
                 liquidationModule: address(0x123),
                 liquidationParams: bytes32(0),
+                bankruptcyParams: bytes32(0),
                 spotOracle: address(oracle),
                 rateOracle: address(oracle),
                 oraclePeriod: 3600,

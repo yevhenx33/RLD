@@ -14,7 +14,7 @@ import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {IRLDHook} from "../interfaces/IRLDHook.sol";
 import {ILiquidationModule} from "../interfaces/ILiquidationModule.sol";
 import {IDefaultOracle} from "../interfaces/IDefaultOracle.sol";
-import {WrappedRLP} from "../tokens/WrappedRLP.sol";
+import {PositionToken} from "../tokens/PositionToken.sol";
 import {IBrokerVerifier} from "../interfaces/IBrokerVerifier.sol";
 import {IPrimeBroker} from "../interfaces/IPrimeBroker.sol";
 
@@ -200,10 +200,10 @@ contract RLDCore is IRLDCore, RLDStorage {
         if (addresses.positionToken != address(0)) {
             if (deltaDebt > 0) {
                 // Mint (Short Position)
-                WrappedRLP(addresses.positionToken).mint(msg.sender, uint256(deltaDebt));
+                PositionToken(addresses.positionToken).mint(msg.sender, uint256(deltaDebt));
             } else if (deltaDebt < 0) {
                 // Burn (Repay Position)
-                WrappedRLP(addresses.positionToken).burn(msg.sender, uint256(-deltaDebt));
+                PositionToken(addresses.positionToken).burn(msg.sender, uint256(-deltaDebt));
             }
         }
 
@@ -328,7 +328,8 @@ contract RLDCore is IRLDCore, RLDStorage {
         if (addresses.defaultOracle != address(0)) {
             bool isDefaulted = IDefaultOracle(addresses.defaultOracle).isDefaulted(
                 addresses.underlyingPool, 
-                addresses.underlyingToken
+                addresses.underlyingToken,
+                marketConfigs[id].bankruptcyParams
             );
             if (!isDefaulted) revert InvalidParam("Not Defaulted");
         } else {
@@ -381,7 +382,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         // 6. Settle Cost (Liquidator pays)
         // If wRLP is used, we burn it. Else we take underlying.
         if (addresses.positionToken != address(0)) {
-                WrappedRLP(addresses.positionToken).burn(msg.sender, debtToCover);
+                PositionToken(addresses.positionToken).burn(msg.sender, debtToCover);
         } else {
                 ERC20(addresses.underlyingToken).safeTransferFrom(msg.sender, address(this), brokerCost);
         }
