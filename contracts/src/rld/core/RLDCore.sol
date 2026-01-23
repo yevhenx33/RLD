@@ -155,8 +155,6 @@ contract RLDCore is IRLDCore, RLDStorage {
         // Only the lock holder (vault/user) can modify their own position
         // Or specific authorized operators (TODO: Add operator logic later)
         
-
-
         // 1. Update Funding (Lazy)
         _applyFunding(id);
 
@@ -202,7 +200,6 @@ contract RLDCore is IRLDCore, RLDStorage {
         }
         
         _addTouchedPosition(id, msg.sender);
-
 
         emit PositionModified(id, msg.sender, deltaCollateral, deltaDebt);
     }
@@ -339,7 +336,7 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         // Current RLDCore tracks Debt, not Collateral. Collateral is in Broker.
         // We pass 0 for userCollateral/userDebt as the module uses params + priceData for calculation.
-        ( , uint256 totalSeized) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
+        ( , uint256 seizeAmount) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
             debtToCover, 
             0, // userCollateral (not tracked in core)
             0, // userDebt (not tracked in core simply)
@@ -350,7 +347,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         
         // 8. Seize Assets (Delegated to Broker)
         // Liquidator receives computed value directly from the Broker
-        IPrimeBroker(user).seize(totalSeized, msg.sender);
+        IPrimeBroker(user).seize(seizeAmount, msg.sender);
         
         emit PositionModified(id, user, 0, -int256(debtToCover));
     }

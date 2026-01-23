@@ -15,6 +15,7 @@ import {BrokerVerifier} from "../modules/verifier/BrokerVerifier.sol";
 import {UniswapV4SingletonOracle} from "../modules/oracles/UniswapV4SingletonOracle.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
+import {TWAMM as TwammHook} from "../../twamm/TWAMM.sol";
 
 
 contract RLDMarketFactory {
@@ -60,6 +61,8 @@ contract RLDMarketFactory {
         address curator;            // The market curator (risk manager)
         
         // --- Market Type ---
+        string positionTokenName;   // e.g. "Wrapped RLP Position: aUSDC"
+        string positionTokenSymbol; // e.g. "wRLP-aUSDC"
 
         
         // --- Risk Parameters ---
@@ -192,17 +195,7 @@ contract RLDMarketFactory {
 
     function _deployPositionToken(DeployParams calldata params) internal returns (address tokenAddr) {
         tokenAddr = Clones.clone(POSITION_TOKEN_IMPL);
-        string memory underlyingSymbol = ERC20(params.underlyingToken).symbol();
-
-        string memory name;
-        string memory symbol;
-
-            // RLP Naming: wRLP-aUSDC
-            string memory colSymbol = ERC20(params.collateralToken).symbol();
-            name = string(abi.encodePacked("Wrapped RLP Position: ", colSymbol));
-            symbol = string(abi.encodePacked("wRLP", colSymbol));
-        
-        PositionToken(tokenAddr).initialize(params.underlyingToken, name, symbol);
+        PositionToken(tokenAddr).initialize(params.underlyingToken, params.positionTokenName, params.positionTokenSymbol);
     }
 
     function _initializePool(address positionToken, DeployParams calldata params) internal returns (bytes32) {
@@ -227,6 +220,27 @@ contract RLDMarketFactory {
         });
         
         IPoolManager(POOL_MANAGER).initialize(key, initSqrtPrice);
+        
+        // --- Limit Price Boundaries (0.0001 to 100) ---
+        uint160 minSqrt; 
+        uint160 maxSqrt;
+        uint256 Q96 = 1 << 96;
+
+        if (currency0 == Currency.wrap(positionToken)) {
+             // RLP is Token0
+             // Min Price = 0.0001 (1e-4). Sqrt = 0.01 (1e-2)
+             minSqrt = uint160(Q96 / 100);
+             // Max Price = 100 (1e2). Sqrt = 10 (1e1)
+             maxSqrt = uint160(Q96 * 10);
+        } else {
+             // RLP is Token1. P = 1/P_RLP
+             // Min Price = 1/100 = 0.01. Sqrt = 0.1 (1/10)
+             minSqrt = uint160(Q96 / 10);
+             // Max Price = 1/0.0001 = 10000 (1e4). Sqrt = 100 (1e2)
+             maxSqrt = uint160(Q96 * 100);
+        }
+        TwammHook(TWAMM).setPriceBounds(key, minSqrt, maxSqrt);
+        // ----------------------------------------------
         
         // Register with Singleton Oracle
         UniswapV4SingletonOracle(SINGLETON_V4_ORACLE).registerPool(

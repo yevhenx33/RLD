@@ -20,7 +20,7 @@ contract DutchLiquidationModule is ILiquidationModule {
         PriceData calldata priceData, 
         IRLDCore.MarketConfig calldata config,
         bytes32 liquidationParams
-    ) external pure override returns (uint256 bonusCollateral, uint256 totalSeized) {
+    ) external pure override returns (uint256 bonusCollateral, uint256 seizeAmount) {
         
         // 1. Unpack Params
         uint256 params = uint256(liquidationParams);
@@ -57,11 +57,11 @@ contract DutchLiquidationModule is ILiquidationModule {
         
         // Reward = Cost * (1 + Bonus)
         uint256 rewardValue = costInUnderlying.mulWad(1e18 + bonus);
-        totalSeized = rewardValue.divWad(priceData.spotPrice);
+        seizeAmount = rewardValue.divWad(priceData.spotPrice);
 
         uint256 costInCol = costInUnderlying.divWad(priceData.spotPrice);
-        if (totalSeized > costInCol) {
-            bonusCollateral = totalSeized - costInCol;
+        if (seizeAmount > costInCol) {
+            bonusCollateral = seizeAmount - costInCol;
         } else {
             bonusCollateral = 0;
         }

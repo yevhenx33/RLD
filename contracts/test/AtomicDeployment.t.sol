@@ -58,6 +58,8 @@ contract MockHook is IHooks {
     function afterSwap(address, PoolKey calldata, SwapParams calldata, BalanceDelta, bytes calldata) external pure returns (bytes4, int128) { return (IHooks.afterSwap.selector, 0); }
     function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) { return IHooks.beforeDonate.selector; }
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) { return IHooks.afterDonate.selector; }
+    
+    function setPriceBounds(PoolKey calldata, uint160, uint160) external {}
 }
 
 contract AtomicDeploymentTest is Test {
@@ -130,6 +132,9 @@ contract AtomicDeploymentTest is Test {
                 collateralToken: collateralToken,
                 curator: address(this),
 
+                positionTokenName: "Wrapped RLP Position: aUSDC",
+                positionTokenSymbol: "wRLPaUSDC",
+
                 minColRatio: 120e16,
                 maintenanceMargin: 110e16,
                 liquidationCloseFactor: 50e16,
@@ -178,6 +183,8 @@ contract AtomicDeploymentTest is Test {
                 maintenanceMargin: 110e16,
                 liquidationCloseFactor: 50e16,
                 liquidationModule: address(0x123),
+                positionTokenName: "Wrapped RLP Position: aUSDC",
+                positionTokenSymbol: "wRLPaUSDC",
                 liquidationParams: bytes32(0),
 
                 spotOracle: address(oracle),

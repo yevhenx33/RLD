@@ -77,6 +77,19 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
     ///         Swaps & Liquidity Actions will continue to operate normally.
     uint256 public killedAt;
 
+    struct PriceBounds {
+        uint160 min;
+        uint160 max;
+    }
+    mapping(PoolId => PriceBounds) public priceBounds;
+
+    function setPriceBounds(PoolKey calldata key, uint160 min, uint160 max) external {
+        PriceBounds storage bounds = priceBounds[key.toId()];
+        if (bounds.max != 0) revert("Bounds already set");
+        bounds.min = min;
+        bounds.max = max;
+    }
+
     constructor(IPoolManager _manager, uint256 _expirationInterval, address initialOwner)
         BaseHook(_manager)
         Owned(initialOwner)
@@ -107,7 +120,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
             afterAddLiquidity: false,
             afterRemoveLiquidity: false,
             beforeSwap: true,
-            afterSwap: false,
+            afterSwap: true,
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: false,
@@ -132,11 +145,18 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
     function _beforeAddLiquidity(
         address,
         PoolKey calldata key,
-        ModifyLiquidityParams calldata,
+        ModifyLiquidityParams calldata params,
         bytes calldata
     ) internal override returns (bytes4) {
         _updateOracle(key);
         executeTWAMMOrders(key);
+
+        PriceBounds memory bounds = priceBounds[key.toId()];
+        if (bounds.min != 0) {
+            uint160 lowerSqrt = TickMath.getSqrtRatioAtTick(params.tickLower);
+            uint160 upperSqrt = TickMath.getSqrtRatioAtTick(params.tickUpper);
+            if (lowerSqrt < bounds.min || upperSqrt > bounds.max) revert("LP Range Out of Bounds");
+        }
 
         return BaseHook.beforeAddLiquidity.selector;
     }
@@ -164,6 +184,21 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         executeTWAMMOrders(key);
 
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+
+    function _afterSwap(address, PoolKey calldata key, SwapParams calldata, BalanceDelta, bytes calldata)
+        internal
+        override
+        returns (bytes4, int128)
+    {
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(key.toId());
+        
+        PriceBounds memory bounds = priceBounds[key.toId()];
+        if (bounds.min != 0) {
+             if (sqrtPriceX96 < bounds.min || sqrtPriceX96 > bounds.max) revert("Price Out of Bounds");
+        }
+
+        return (BaseHook.afterSwap.selector, 0);
     }
 
     /// @inheritdoc ITWAMM

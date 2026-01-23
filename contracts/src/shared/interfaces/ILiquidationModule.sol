@@ -18,7 +18,7 @@ interface ILiquidationModule {
     /// @param config The market's configuration params.
     /// @param liquidationParams The module-specific params stored in MarketConfig.
     /// @return bonusCollateral The amount of EXTRA collateral to seize (Bonus).
-    /// @return totalSeized The TOTAL collateral to seize (Base Cost + Bonus).
+    /// @return seizeAmount The TOTAL collateral to seize (Base Cost + Bonus).
     function calculateSeizeAmount(
         uint256 debtToCover,
         uint256 userCollateral,
@@ -26,5 +26,5 @@ interface ILiquidationModule {
         PriceData calldata priceData, 
         IRLDCore.MarketConfig calldata config,
         bytes32 liquidationParams
-    ) external view returns (uint256 bonusCollateral, uint256 totalSeized);
+    ) external view returns (uint256 bonusCollateral, uint256 seizeAmount);
 }
