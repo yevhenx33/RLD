@@ -110,9 +110,9 @@ The RLP is designed as a **Rate-Tracking CDP System**. Users deposit collateral 
   - **Powers (v1 Status)**: **None** (Phantom Role).
   - **Implementation**: While `RLDCore.sol` defines an `onlyCurator` modifier, a code audit reveals that no functions actually use this modifier. The `curator` field is initialized during `createMarket` but remains inert.
 - **Immutability Analysis**:
-  - **Risk Configs**: `minColRatio`, `maintenanceMargin` are Immutable. They cannot be updated.
+  - **Risk Configs**: `minColRatio`, `maintenanceMargin`, `liquidationCloseFactor`, and `fundingPeriod` are Immutable. They cannot be updated.
   - **Oracles**: The `rateOracle` and `spotOracle` addresses are Immutable.
-  - **Conclusion**: RLD v1 Markets are "Set and Forget". The protocol relies entirely on the initial parameterization being correct. If market conditions change drastically (requiring higher LTVs), a **New Market** must be deployed.
+  - **Conclusion**: RLD v1 Markets are "Set and Forget". The protocol relies entirely on the initial parameterization being correct. If market conditions change drastically (requiring higher LTVs or different funding periods), a **New Market** must be deployed.
 
 ---
 

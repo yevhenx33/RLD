@@ -47,12 +47,8 @@ contract FundingMathTest is Test {
     }
 
     function _mockConfig() internal {
-        // Core Config is not used for period in current impl, but we might fix that later.
-        // For now, StandardFundingModel has hardcoded period? 
-        // Or we should verify it USES the period.
-        // The implementation I saw uses hardcoded "1 days" in rate calculation.
-        // The test expects 30 days.
         IRLDCore.MarketConfig memory config;
+        config.fundingPeriod = FUNDING_PERIOD;
         vm.mockCall(core, abi.encodeWithSelector(IRLDCore.getMarketConfig.selector), abi.encode(config));
     }
 

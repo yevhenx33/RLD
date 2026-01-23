@@ -160,7 +160,8 @@ contract TwammIntegrationTest is Test {
             address(v4Oracle),
             address(funding),
             address(0),
-            address(renderer)
+            address(renderer),
+            30 days
         );
         core.setFactory(address(marketFactory));
         

@@ -44,6 +44,7 @@ contract DutchAuctionMathTest is Test {
             minColRatio: 0, 
             maintenanceMargin: 1.1e18,
             liquidationCloseFactor: 0,
+            fundingPeriod: 30 days,
             liquidationParams: bytes32(0),
             brokerVerifier: address(0)
         });
@@ -80,7 +81,7 @@ contract DutchAuctionMathTest is Test {
         });
         
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
-            minColRatio: 0, maintenanceMargin: 1.1e18, liquidationCloseFactor: 0, liquidationParams: bytes32(0), brokerVerifier: address(0)
+            minColRatio: 0, maintenanceMargin: 1.1e18, liquidationCloseFactor: 0, fundingPeriod: 30 days, liquidationParams: bytes32(0), brokerVerifier: address(0)
         });
 
         // Slope 100 (1.0x). Base 0.
@@ -109,7 +110,7 @@ contract DutchAuctionMathTest is Test {
         });
         
         IRLDCore.MarketConfig memory config = IRLDCore.MarketConfig({
-            minColRatio: 0, maintenanceMargin: 1.1e18, liquidationCloseFactor: 0, liquidationParams: bytes32(0), brokerVerifier: address(0)
+            minColRatio: 0, maintenanceMargin: 1.1e18, liquidationCloseFactor: 0, fundingPeriod: 30 days, liquidationParams: bytes32(0), brokerVerifier: address(0)
         });
 
         // Max Discount 10% (1000 bps)

@@ -32,6 +32,7 @@ interface IRLDCore {
         uint64 minColRatio;
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor; // e.g., 50% (5e17)
+        uint32 fundingPeriod; // Added: Configurable Funding Period (e.g. 30 days)
         // liquidationIncentive moved to module params
         bytes32 liquidationParams; // Packed params for the module
 

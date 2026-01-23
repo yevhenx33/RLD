@@ -26,6 +26,8 @@ contract RLDMarketFactory {
     /*                                          IMMUTABLES                                          */
     /* ============================================================================================ */
 
+    uint32 public immutable FUNDING_PERIOD;
+
     address public immutable CORE;
     address public immutable POOL_MANAGER;
     address public immutable POSITION_TOKEN_IMPL;
@@ -97,7 +99,8 @@ contract RLDMarketFactory {
         address v4Oracle,
         address fundingModel,
         address twamm,
-        address metadataRenderer
+        address metadataRenderer,
+        uint32 _fundingPeriod
     ) {
         CORE = core;
         POOL_MANAGER = poolManager;
@@ -105,8 +108,10 @@ contract RLDMarketFactory {
         PRIME_BROKER_IMPL = primeBrokerImpl;
         SINGLETON_V4_ORACLE = v4Oracle;
         STD_FUNDING_MODEL = fundingModel;
+        TWAMM = twamm;
 
         METADATA_RENDERER = metadataRenderer;
+        FUNDING_PERIOD = _fundingPeriod;
     }
 
     /* ============================================================================================ */
@@ -285,6 +290,7 @@ contract RLDMarketFactory {
             minColRatio: params.minColRatio,
             maintenanceMargin: params.maintenanceMargin,
             liquidationCloseFactor: params.liquidationCloseFactor,
+            fundingPeriod: FUNDING_PERIOD, // Set from immutable
             liquidationParams: params.liquidationParams,
 
             brokerVerifier: verifier

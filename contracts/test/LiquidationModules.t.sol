@@ -32,6 +32,7 @@ contract LiquidationModulesTest is Test {
 
             maintenanceMargin: 1.1e18, // 110%
             liquidationCloseFactor: 0.5e18,
+            fundingPeriod: 30 days,
             liquidationParams: bytes32(0),
 
             brokerVerifier: address(0)

@@ -57,6 +57,8 @@ contract MockHook is IHooks {
     function afterSwap(address, PoolKey calldata, SwapParams calldata, BalanceDelta, bytes calldata) external pure returns (bytes4, int128) { return (IHooks.afterSwap.selector, 0); }
     function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) { return IHooks.beforeDonate.selector; }
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) { return IHooks.afterDonate.selector; }
+    
+    function setPriceBounds(PoolKey calldata, uint160, uint160) external {}
 }
 
 contract GenericExecutionTest is Test {
@@ -86,7 +88,11 @@ contract GenericExecutionTest is Test {
         oracle = new MockOracle();
         funding = new MockFundingModel();
 
-        twamm = new MockHook();
+        MockHook impl = new MockHook();
+        address hookAddr = address(0x4444);
+        vm.etch(hookAddr, address(impl).code);
+        twamm = MockHook(hookAddr);
+
         renderer = new BondMetadataRenderer();
         
         core = new RLDCore();
@@ -108,8 +114,9 @@ contract GenericExecutionTest is Test {
             address(primeBrokerImpl),
             address(v4Oracle),
             address(funding),
-            address(0), 
-            address(renderer)
+            address(twamm), 
+            address(renderer),
+            30 days
         );
         
         core.setFactory(address(marketFactory));

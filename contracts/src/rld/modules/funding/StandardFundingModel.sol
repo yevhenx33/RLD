@@ -59,16 +59,20 @@ contract StandardFundingModel is IFundingModel {
         
         if (indexPrice == 0 || markPrice == 0) return (currentNormalizationFactor, 0);
 
-        // 3. Calculate Normalized Funding Rate
+        // 3. Fetch Config
+        IRLDCore.MarketConfig memory config = IRLDCore(core).getMarketConfig(MarketId.wrap(marketId));
+        uint256 fundingPeriod = config.fundingPeriod;
+        if (fundingPeriod == 0) fundingPeriod = 30 days; // Safety Default
+
+        // 4. Calculate Normalized Funding Rate
         // Rate = (Mark - Index) / Index
         int256 priceDiff = int256(markPrice) - int256(indexPrice);
         int256 baseRate = (priceDiff * 1e18) / int256(indexPrice); // Instantaneous deviation
         
-        // 4. Time Delta
+        // 5. Time Delta
         uint256 dt = block.timestamp - lastUpdateTimestamp;
-        uint256 fundingPeriod = 30 days; // Standard Period
         
-        // 5. Exponential Scaling
+        // 6. Exponential Scaling
         // Coeff = -1 * Rate * (dt / Period)
         // Note: Sign is INVERTED. Mark > Index => Debt DECREASES.
         int256 exponent = -baseRate * int256(dt) / int256(fundingPeriod);

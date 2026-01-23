@@ -109,7 +109,8 @@ contract AtomicDeploymentTest is Test {
             address(v4Oracle),
             address(funding),
             address(0), // No hook for atomic test
-            address(renderer)
+            address(renderer),
+            30 days
         );
         
         // --- Register Factory ---
