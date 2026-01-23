@@ -127,7 +127,8 @@ contract GenericExecutionTest is Test {
                 underlyingToken: underlyingToken,
                 collateralToken: collateralToken,
                 curator: address(this),
-
+                positionTokenName: "Wrapped RLP",
+                positionTokenSymbol: "wRLP", // Added
                 minColRatio: 120e16,
                 maintenanceMargin: 110e16,
                 liquidationCloseFactor: 50e16,
@@ -189,7 +190,8 @@ contract GenericExecutionTest is Test {
                 underlyingToken: underlyingToken,
                 collateralToken: collateralToken,
                 curator: address(this),
-
+                positionTokenName: "Wrapped RLP",
+                positionTokenSymbol: "wRLP", // Added
                 minColRatio: 120e16,
                 maintenanceMargin: 110e16,
                 liquidationCloseFactor: 50e16,

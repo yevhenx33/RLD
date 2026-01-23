@@ -81,7 +81,7 @@ contract AtomicDeploymentTest is Test {
     address collateralToken;
     address underlyingPool = address(0x999); 
 
-    function setUp() public {
+    function setUp() public virtual {
         poolManager = new PoolManager(address(0));
         oracle = new MockOracle();
         funding = new MockFundingModel();
@@ -118,6 +118,35 @@ contract AtomicDeploymentTest is Test {
         // Create Mock Tokens
         underlyingToken = address(new MockERC20("USDC", "USDC", 6));
         collateralToken = address(new MockERC20("aUSDC", "aUSDC", 6));
+    }
+
+    function getGlobalDeployParams(
+        address _pool,
+        address _underlying,
+        address _collateral,
+        address _curator,
+        address _spotOracle,
+        address _rateOracle,
+        address _liqModule
+    ) internal pure returns (RLDMarketFactory.DeployParams memory) {
+        return RLDMarketFactory.DeployParams({
+            underlyingPool: _pool,
+            underlyingToken: _underlying,
+            collateralToken: _collateral,
+            curator: _curator,
+            positionTokenName: "Wrapped RLP Position: aUSDC",
+            positionTokenSymbol: "wRLPaUSDC",
+            minColRatio: 120e16,
+            maintenanceMargin: 110e16,
+            liquidationCloseFactor: 50e16,
+            liquidationModule: _liqModule,
+            liquidationParams: bytes32(0),
+            spotOracle: _spotOracle,
+            rateOracle: _rateOracle,
+            oraclePeriod: 3600,
+            poolFee: 3000,
+            tickSpacing: 60
+        });
     }
 
     function test_AtomicDeployment_Succeeds() public {

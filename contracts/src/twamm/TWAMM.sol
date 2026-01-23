@@ -153,8 +153,8 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
 
         PriceBounds memory bounds = priceBounds[key.toId()];
         if (bounds.min != 0) {
-            uint160 lowerSqrt = TickMath.getSqrtRatioAtTick(params.tickLower);
-            uint160 upperSqrt = TickMath.getSqrtRatioAtTick(params.tickUpper);
+            uint160 lowerSqrt = TickMath.getSqrtPriceAtTick(params.tickLower);
+            uint160 upperSqrt = TickMath.getSqrtPriceAtTick(params.tickUpper);
             if (lowerSqrt < bounds.min || upperSqrt > bounds.max) revert("LP Range Out of Bounds");
         }
 
@@ -226,7 +226,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
                 feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
                 // Take from user
                 if (feeAmount > 0) {
-                    feeCurrency.transferFrom(sender, address(this), feeAmount);
+                    IERC20Minimal(Currency.unwrap(feeCurrency)).transferFrom(sender, address(this), feeAmount);
                     collectedFees[feeCurrency] += feeAmount;
                 }
             } else {

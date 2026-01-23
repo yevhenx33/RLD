@@ -175,7 +175,8 @@ contract TwammIntegrationTest is Test {
                 underlyingToken: address(usdc), // 1 USD
                 collateralToken: address(weth), // 2000 USD
                 curator: address(this),
-
+                positionTokenName: "Wrapped RLP",
+                positionTokenSymbol: "wRLP", // Added
                 minColRatio: 120e16, // 1.2
                 maintenanceMargin: 110e16, // 1.1
                 liquidationCloseFactor: 50e16,

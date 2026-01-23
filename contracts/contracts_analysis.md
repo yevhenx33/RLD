@@ -434,3 +434,38 @@ The Curator (Owner) has granular control over protocol revenue.
 3.  **Claiming**:
     - The Curator calls `TWAMM.claimProtocolFees(currency, recipient)`.
     - The contract pushes accumulated fees to the specified Treasury address.
+
+---
+
+## 8. Code Audit Findings (Verified v1.0)
+
+This section documents specific findings from a line-by-line review of the codebase against the architecture verification.
+
+### A. Security & Logic Verification
+
+- **Liquidation Safety**: The `RLDCore.liquidate` function **strictly enforces** the `liquidationCloseFactor`. `if (debtToCover > principal * closeFactor) revert CloseFactorExceeded();`. This confirms the safety valve preventing total seizures in a single block.
+- **Flash Lock Integrity**: `RLDCore` correctly uses `TransientStorage` keys (`LOCK_HOLDER_KEY`, `TOUCHED_COUNT_KEY`) to manage the lock lifecycle. Usage of `tstore`/`tload` ensures gas efficiency for the "Sandwich" operations.
+- **Solvency Trust Model**: `RLDCore` relies entirely on `IPrimeBroker(user).getNetAccountValue()`. This highlights the critical importance of the `BrokerVerifier` which remains the **primary defense** against malicious brokers.
+
+### B. Confirmed Implementation Gaps / Issues
+
+1.  **Metadata Unit Mismatch (`BondMetadataRenderer.sol`)**:
+    - _Issue_: `string.concat(meta.principal.toString(), " WEI")`.
+    - _Finding_: The renderer hardcodes the suffix "WEI". If a user creates a bond with `100,000e6` (100k USDC), the UI will display "100000000000 WEI" instead of "100,000 USDC", potentially confusing buyers.
+2.  **Unverified Metadata (`PrimeBroker.sol`)**:
+    - _Issue_: `setBondMetadata`.
+    - _Finding_: Confirmed that users can set any `BondMetadata` struct without validation. A user effectively "Labels" their own position.
+3.  **No Global Settlement**:
+    - _Finding_: Confirmed absence of `emergencyShutdown` or `globalSettlement` in `RLDCore`. The `CDS` protection mentioned in the Whitepaper relies solely on the `DutchLiquidationModule` incentives in V1.
+
+### C. File Structure Validation
+
+- The `contracts` folder structure perfectly matches the modular architecture described:
+  - `src/rld/core`: `RLDCore`, `RLDMarketFactory`.
+  - `src/rld/broker`: `PrimeBroker` (The isolated vault).
+  - `src/twamm`: `TWAMM` (The hook).
+  - `src/rld/modules`: Correctly separates `Liquidation`, `Broker`, `Oracle` logic.
+
+### D. Conclusion
+
+The codebase is a faithful implementation of the **Rate-Level Perp (RLP)** engine described in the Whitepaper. The core financial primitives (Flash Accounting, Hub-and-Spoke Debt, Modular Liquidation) are fully functional. The implementation gaps (Global Settlement, Auto-Metadata) are consistent with a V1 "MVP" scope.

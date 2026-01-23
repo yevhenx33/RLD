@@ -41,12 +41,10 @@ contract StandardFundingModel is IFundingModel {
             return (currentNormalizationFactor, 0);
         }
         
-        // 1. Fetch Market Addresses from Core
+        // 1. Fetch Market Addresses
         IRLDCore.MarketAddresses memory addresses = IRLDCore(core).getMarketAddresses(MarketId.wrap(marketId));
         
         // 2. Query Oracles
-        
-        // Mark Price (Base = PositionToken if exists, else Collateral)
         address priceBase = addresses.positionToken != address(0) ? addresses.positionToken : addresses.collateralToken;
         
         uint256 markPrice = ISpotOracle(addresses.markOracle).getSpotPrice(
@@ -59,26 +57,28 @@ contract StandardFundingModel is IFundingModel {
             addresses.underlyingToken
         );
         
-        // 3. Calculate Time Delta
-        uint256 dt = block.timestamp - lastUpdateTimestamp;
-        
-        // 4. Safety Checks
         if (indexPrice == 0 || markPrice == 0) return (currentNormalizationFactor, 0);
 
-        // 5. Calculate Funding Rate
-        // RatePerSecond = ((Mark - Index) / Index) / 1 days
+        // 3. Calculate Normalized Funding Rate
+        // Rate = (Mark - Index) / Index
         int256 priceDiff = int256(markPrice) - int256(indexPrice);
+        int256 baseRate = (priceDiff * 1e18) / int256(indexPrice); // Instantaneous deviation
         
-        int256 ratePerSecond = (priceDiff * 1e18) / int256(indexPrice);
-        ratePerSecond = ratePerSecond / 1 days; 
-
-        // 6. Update Normalization Factor
-        int256 factorChange = (int256(currentNormalizationFactor) * ratePerSecond * int256(dt)) / 1e18;
-        int256 newFactorInt = int256(currentNormalizationFactor) + factorChange;
+        // 4. Time Delta
+        uint256 dt = block.timestamp - lastUpdateTimestamp;
+        uint256 fundingPeriod = 30 days; // Standard Period
         
-        if (newFactorInt < 0) newNormalizationFactor = 0; 
-        else newNormalizationFactor = uint256(newFactorInt);
+        // 5. Exponential Scaling
+        // Coeff = -1 * Rate * (dt / Period)
+        // Note: Sign is INVERTED. Mark > Index => Debt DECREASES.
+        int256 exponent = -baseRate * int256(dt) / int256(fundingPeriod);
         
-        fundingRate = ratePerSecond * 365 days; // Return APY
+        // 6. Apply Change
+        // NewFactor = OldFactor * Exp(Exponent)
+        int256 multiplier = FixedPointMath.expWad(exponent);
+        
+        newNormalizationFactor = uint256(currentNormalizationFactor).mulWadDown(uint256(multiplier));
+        
+        fundingRate = baseRate; // Just report deviation
     }
 }
