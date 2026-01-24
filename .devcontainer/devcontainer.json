@@ -2,7 +2,9 @@
   "name": "RLD Protocol DevBox",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
   "features": {
-    "ghcr.io/foundry-rs/foundry/foundry:latest": {}
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "configureZshAsDefaultShell": true
+    }
   },
   "customizations": {
     "vscode": {
@@ -18,5 +20,5 @@
       ]
     }
   },
-  "postCreateCommand": "forge install && npm install"
+  "postCreateCommand": "curl -L https://foundry.paradigm.xyz | bash && /home/vscode/.foundry/bin/foundryup && npm install"
 }
