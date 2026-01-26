@@ -327,4 +327,59 @@ contract FundingMathTest is Test {
         // rather than reverting or weird behavior.
         // It is acceptable for it to be exactly 0 (underflow saturation).
     }
+
+    // =========================================================================
+    // GOLDEN DATA VERIFICATION
+    // =========================================================================
+    
+    struct ScenarioResult {
+        string name;
+        uint256 mark;
+        uint256 index;
+        uint48 dt;
+        uint256 expectedNorm;
+    }
+
+    struct ReferenceData {
+        ScenarioResult[] static_scenarios;
+        ScenarioResult[] fuzz_vectors;
+    }
+
+    function test_VerificationFromJSON() public {
+        string memory root = vm.projectRoot();
+        string memory path = string.concat(root, "/test/verification/reference_outputs.json");
+        string memory json = vm.readFile(path);
+        
+        // 1. Verify Static Scenarios
+        bytes memory rawStatic = vm.parseJson(json, ".static");
+        ScenarioResult[] memory staticResults = abi.decode(rawStatic, (ScenarioResult[]));
+        
+        _mockConfig();
+        console.log("--- Verified Static Scenarios ---");
+        for (uint256 i = 0; i < staticResults.length; i++) {
+            _runScenario(staticResults[i]);
+        }
+
+        // 2. Verify Fuzz Vectors (Paranoid Mode)
+        bytes memory rawFuzz = vm.parseJson(json, ".fuzz");
+        ScenarioResult[] memory fuzzResults = abi.decode(rawFuzz, (ScenarioResult[]));
+        
+        console.log("--- Verified Fuzz Vectors (1000) ---");
+        for (uint256 i = 0; i < fuzzResults.length; i++) {
+            _runScenario(fuzzResults[i]); 
+        }
+    }
+
+    function _runScenario(ScenarioResult memory s) internal {
+        _mockOracles(s.mark, s.index);
+        vm.warp(block.timestamp + s.dt);
+        
+        (uint256 actualNorm, ) = model.calculateFunding(bytes32(0), core, START_NORM, uint48(block.timestamp - s.dt));
+        
+        if (s.expectedNorm > 1e16) {
+             assertApproxEqRel(actualNorm, s.expectedNorm, 1e14, "Relative deviation too large"); 
+        } else {
+             assertApproxEqAbs(actualNorm, s.expectedNorm, 1e12, "Absolute deviation too large");
+        }
+    }
 }

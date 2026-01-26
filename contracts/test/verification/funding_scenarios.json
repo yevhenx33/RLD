@@ -1,0 +1,39 @@
+{
+  "scenarios": [
+    {
+      "name": "Scenario A: Normal Market (1% Premium)",
+      "mark": 5.05,
+      "index": 5.0,
+      "dt": 86400,
+      "description": "Shorts earn small yield"
+    },
+    {
+      "name": "Scenario B: Bull Run (50% Premium)",
+      "mark": 7.5,
+      "index": 5.0,
+      "dt": 86400,
+      "description": "Massive payout to shorts"
+    },
+    {
+      "name": "Scenario C: Bear Crash (20% Discount)",
+      "mark": 4.0,
+      "index": 5.0,
+      "dt": 86400,
+      "description": "Borrowers pay funding"
+    },
+    {
+      "name": "Scenario D: Death Spiral (99% Discount)",
+      "mark": 0.05,
+      "index": 5.0,
+      "dt": 86400,
+      "description": "Extreme discount stability check"
+    },
+    {
+      "name": "Scenario E: Moon (1000 Mark)",
+      "mark": 1000.0,
+      "index": 5.0,
+      "dt": 86400,
+      "description": "Debt wipeout edge case"
+    }
+  ]
+}
