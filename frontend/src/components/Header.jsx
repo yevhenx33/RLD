@@ -41,8 +41,8 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
               <span className="text-white/10">//</span>
 
               <Link
-                to="/"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/" ? "text-white cursor-default" : "text-gray-400 hover:text-white cursor-pointer"}`}
+                to="/app"
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/app" ? "text-white cursor-default" : "text-gray-400 hover:text-white cursor-pointer"}`}
               >
                 TERMINAL
               </Link>

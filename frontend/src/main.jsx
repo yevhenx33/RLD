@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import App from "./App";
+import LandingPage from "./LandingPage";
 import "./index.css";
 import { WalletProvider } from "./context/WalletContext.jsx";
 import Layout from "./components/Layout";
@@ -54,8 +55,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
       <WalletProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/" element={<LandingPage />} />
             <Route element={<Layout />}>
-              <Route path="/" element={<App />} />
+              <Route path="/app" element={<App />} />
               <Route
                 path="/bonds"
                 element={
