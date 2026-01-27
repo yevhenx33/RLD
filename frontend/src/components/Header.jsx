@@ -29,12 +29,16 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
         <header className="max-w-[1800px] mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-5 pl-1">
             {/* LOGO */}
-            <div className="flex items-center gap-2">
+            {/* LOGO */}
+            <Link
+              to="/"
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            >
               <div className="w-3 h-3 bg-white"></div>
               <h1 className="text-sm font-bold tracking-widest uppercase">
                 RLD
               </h1>
-            </div>
+            </Link>
 
             {/* DESKTOP NAV */}
             <div className="hidden md:flex text-[12px] items-center gap-1 font-bold tracking-[0.15em] uppercase">

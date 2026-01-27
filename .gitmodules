@@ -10,3 +10,6 @@
 [submodule "contracts/lib/permit2"]
 	path = contracts/lib/permit2
 	url = https://github.com/uniswap/permit2
+[submodule "contracts/lib/openzeppelin-v5"]
+	path = contracts/lib/openzeppelin-v5
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts

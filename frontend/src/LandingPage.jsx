@@ -47,30 +47,28 @@ const LandingPage = () => {
         {/* HERO WRAPPER (Hero + Stats = Full Screen minus Header) */}
         <div className="min-h-[calc(100vh-80px)] flex flex-col border-t border-white/10">
           {/* HERO SECTION */}
-          <section className="border-b border-white/10 p-12 md:p-24 flex-1 flex flex-col justify-center relative overflow-hidden">
+          <section className="border-b border-white/10 p-6 md:p-24 flex-1 flex flex-col justify-center relative overflow-hidden">
             {/* Background Grid Decoration */}
             <div className="absolute inset-0 pattern-grid opacity-20 pointer-events-none" />
 
-            <div className="space-y-6 relative z-10">
-              <div className="flex items-center gap-3 text-white-500 text-xs font-bold tracking-[0.3em] uppercase">
+            <div className="space-y-4 md:space-y-6 relative z-10">
+              <div className="flex items-center gap-3 text-gray-500 text-xs font-bold tracking-[0.3em] uppercase">
                 <Terminal size={14} />
                 Deployment: Testnet
               </div>
 
-              <h1 className="text-5xl md:text-7xl font-bold tracking-tighter leading-[0.9] text-white uppercase max-w-4xl">
-                The Interest Rate
-                <br />
-                <span className="text-gray-600">Layer of DeFi.</span>
+              <h1 className="text-3xl md:text-5xl font-bold tracking-tighter leading-[0.9] text-white uppercase max-w-4xl">
+                Rate-Level Derivatives
               </h1>
 
-              <p className="max-w-xl text-md font-bold leading-relaxed text-white tracking-wide border-l-2 border-white pl-4">
+              <p className="max-w-xl text-md md:text-md text-gray-600 font-bold leading-relaxed tracking-wide border-l-2 border-gray-600 pl-4">
                 Trade Rates. Fix Yields. Insure Solvency.
               </p>
 
-              <div className="pt-8 flex gap-4">
+              <div className="pt-4 flex gap-4">
                 <Link
                   to="/app"
-                  className="w-64 h-14 bg-white font-bold hover:bg-gray-200 text-black flex items-center justify-between px-6 text-sm tracking-[0.2em] uppercase group transition-all"
+                  className="w-full md:w-64 h-12 md:h-14 bg-white font-bold hover:bg-gray-200 text-black flex items-center justify-between px-4 md:px-6 text-xs md:text-sm tracking-[0.2em] uppercase group transition-all"
                 >
                   Launch App
                   <ArrowRight
@@ -80,7 +78,7 @@ const LandingPage = () => {
                 </Link>
                 <a
                   href="/whitepaper"
-                  className="w-64 h-14 border border-white/20 hover:border-white text-gray-400 hover:text-white flex items-center justify-between px-6 text-sm font-bold tracking-[0.2em] uppercase transition-all"
+                  className="w-full md:w-64 h-12 md:h-14 border border-white/20 hover:border-white text-gray-400 hover:text-white flex items-center justify-between px-4 md:px-6 text-xs md:text-sm font-bold tracking-[0.2em] uppercase transition-all"
                 >
                   Documentation
                   <ExternalLink size={16} />
@@ -101,12 +99,14 @@ const LandingPage = () => {
               label="Avg_Market_Rate"
               value="8.42%" //TODO: Update to real value
               change="Debt-weighted"
+              className="hidden md:flex"
             />
             <StatBox
               label="LIVE_MARKETS"
               value="3"
               change="AAVE, Morpho, Euler"
               color="text-green-500"
+              className="hidden md:flex"
             />
           </div>
         </div>
@@ -114,7 +114,7 @@ const LandingPage = () => {
         {/* PRIMITIVES SECTION - UNIT410 STYLE LISTS */}
         <section className="grid grid-cols-1 md:grid-cols-12 divide-x divide-white/10">
           {/* LEFT: HEADER */}
-          <div className="col-span-12 md:col-span-4 p-12 border-b md:border-b-0 border-white/10 sticky top-16 h-fit bg-[#050505]">
+          <div className="col-span-12 md:col-span-4 p-6 md:p-12 border-b md:border-b-0 border-white/10 relative md:sticky md:top-16 h-fit bg-[#050505]">
             <h2 className="text-2xl font-light text-white tracking-tight mb-4">
               CORE_PRIMITIVES
             </h2>
@@ -205,36 +205,47 @@ const LandingPage = () => {
         </section>
 
         {/* FOOTER */}
-        <footer className="border-t border-white/10 p-12 grid grid-cols-1 md:grid-cols-4 gap-12 bg-[#050505]">
-          <div className="space-y-4">
-            <div className="text-xs font-bold tracking-[0.2em] flex items-center gap-2 text-white">
-              <div className="w-2 h-2 bg-gray-500 rounded-none" />
-              RLD_PROTOCOL
+        {/* FOOTER */}
+        <footer className="border-t border-white/10 relative bg-[#050505] overflow-hidden">
+          {/* Background Grid Decoration */}
+          <div className="absolute inset-0 pattern-grid opacity-10 pointer-events-none" />
+
+          <div className="p-6 md:p-12 grid grid-cols-1 md:grid-cols-4 gap-8 md:gap-10 relative z-10">
+            <div className="space-y-4">
+              <div className="text-[13px] font-bold tracking-[0.2em] flex items-center gap-2 text-white">
+                <div className="w-2 h-2 bg-gray-500 rounded-none" />
+                RLD
+              </div>
+              <p className="text-[11px] text-gray-600 leading-relaxed max-w-xs">
+                Interest Rate Derivatives Layer.
+                <br />
+                Powered by Ethereum.
+              </p>
             </div>
-            <p className="text-[10px] text-gray-600 leading-relaxed max-w-xs">
-              Decentralized Interest Rate Derivatives Layer.
-              <br />
-              Built on Ethereum. Powered by Uniswap V4.
-            </p>
+
+            <FooterList title="Protocol" items={["Whitepaper", "Research "]} />
+            <FooterList
+              title="Interface"
+              items={["Terminal", "Analytics", "Documentation", "Status"]}
+            />
+            <FooterList
+              title="Community"
+              items={["Twitter", "Telegram", "Github"]}
+            />
           </div>
 
-          <FooterList
-            title="Protocol"
-            items={[
-              "Whitepaper",
-              "Contract Audits",
-              "Bug Bounty",
-              "Governance",
-            ]}
-          />
-          <FooterList
-            title="Interface"
-            items={["Terminal", "Analytics", "Documentation", "Status"]}
-          />
-          <FooterList
-            title="Community"
-            items={["Twitter", "Discord", "Github", "Mirror"]}
-          />
+          {/* Bottom Bar */}
+          <div className="border-t border-white/10 p-6 md:px-12 py-6 flex flex-col md:flex-row justify-between items-center text-xs md:text-[10px] text-gray-600 uppercase tracking-widest relative z-10">
+            <div>© 2025 RLD Protocol. All rights reserved.</div>
+            <div className="flex gap-6 mt-4 md:mt-0">
+              <a href="#" className="hover:text-white transition-colors">
+                Privacy Policy
+              </a>
+              <a href="#" className="hover:text-white transition-colors">
+                Terms of Service
+              </a>
+            </div>
+          </div>
         </footer>
       </div>
     </div>
@@ -242,16 +253,24 @@ const LandingPage = () => {
 };
 
 // Sub-components for cleaner code
-const StatBox = ({ label, value, change, color = "text-white" }) => (
-  <div className="p-6 md:p-8 flex flex-col justify-between h-32 hover:bg-white/[0.02] transition-colors">
+const StatBox = ({
+  label,
+  value,
+  change,
+  color = "text-white",
+  className = "",
+}) => (
+  <div
+    className={`p-4 md:p-8 flex flex-col justify-between h-24 md:h-32 hover:bg-white/[0.02] transition-colors ${className}`}
+  >
     <div className="text-[10px] text-gray-500 uppercase tracking-widest">
       {label}
     </div>
     <div>
-      <div className={`text-2xl font-light tracking-tight ${color}`}>
+      <div className={`text-xl md:text-2xl font-light tracking-tight ${color}`}>
         {value}
       </div>
-      <div className="text-[10px] text-gray-600 mt-1 uppercase tracking-widest">
+      <div className="text-[9px] md:text-[10px] text-gray-600 mt-1 uppercase tracking-widest">
         {change}
       </div>
     </div>
@@ -296,13 +315,13 @@ const LandingSectionFeature = ({
   return (
     <div
       id={id}
-      className="group min-h-[50vh] flex flex-col justify-center p-12 hover:bg-white/[0.02] transition-colors relative"
+      className="group min-h-[50vh] flex flex-col justify-center px-6 pb-6 pt-12 md:p-12 hover:bg-white/[0.02] transition-colors relative"
     >
-      <div className="absolute top-4 right-4 text-[10px] font-bold text-gray-700 tracking-widest">
+      <div className="absolute top-4 right-4 text-[10px] font-bold text-gray-700 tracking-widest z-10">
         [{index}]
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+      <div className="flex flex-col-reverse lg:grid lg:grid-cols-2 gap-12">
         {/* LEFT: Content */}
         <div className="flex flex-col">
           <div className="mb-6 flex items-center gap-3">
@@ -544,7 +563,7 @@ const LandingChart = () => {
 
 const FooterList = ({ title, items }) => (
   <div className="space-y-4">
-    <div className="text-[10px] text-white font-bold uppercase tracking-widest border-b border-white/10 pb-2 w-fit">
+    <div className="text-[11px] text-white font-bold uppercase tracking-widest border-b border-white/10 pb-2 w-fit">
       {title}
     </div>
     <ul className="space-y-2">
@@ -552,7 +571,7 @@ const FooterList = ({ title, items }) => (
         <li key={item}>
           <a
             href="#"
-            className="text-[10px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors hover:pl-1 block"
+            className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors hover:pl-1 block"
           >
             [{item}]
           </a>
