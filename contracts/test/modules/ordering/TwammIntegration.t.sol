@@ -19,7 +19,7 @@ import {IFundingModel} from "../../../src/shared/interfaces/IFundingModel.sol";
 import {IPrimeBroker} from "../../../src/shared/interfaces/IPrimeBroker.sol";
 
 import {UniswapV4SingletonOracle} from "../../../src/rld/modules/oracles/UniswapV4SingletonOracle.sol";
-import {BondMetadataRenderer} from "../../../src/utils/BondMetadataRenderer.sol";
+
 import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
@@ -157,7 +157,7 @@ contract TwammIntegrationTest is Test {
         PoolManager poolManager = new PoolManager(address(0));
         PositionToken positionTokenImpl = new PositionToken();
         UniswapV4SingletonOracle v4Oracle = new UniswapV4SingletonOracle(); 
-        BondMetadataRenderer renderer = new BondMetadataRenderer();
+        address renderer = address(0);
         
         marketFactory = new RLDMarketFactory(
             address(core),

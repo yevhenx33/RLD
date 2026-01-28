@@ -156,15 +156,9 @@ contract PrimeBrokerFactory is ERC721 {
     /*                                       ERC721 METADATA                                        */
     /* ============================================================================================ */
 
-    /// @notice Returns the metadata URI for a Bond NFT.
-    /// @dev Delegates to the RENDERER contract if set.
-    /// @param tokenId The token ID to get metadata for
-    /// @return The metadata URI (data URI or URL), or empty string if no renderer
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
         require(ownerOf(tokenId) != address(0), "NOT_MINTED");
-
-        if (RENDERER == address(0)) return "";
-        return IBondMetadataRenderer(RENDERER).render(tokenId, address(uint160(tokenId)));
+        return ""; // Metadata is handled off-chain or by frontend dynamic rendering
     }
 
     /* ============================================================================================ */
