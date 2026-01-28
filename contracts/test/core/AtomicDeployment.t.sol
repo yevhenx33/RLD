@@ -25,7 +25,7 @@ import {PositionToken} from "../../src/rld/tokens/PositionToken.sol";
 import {IFundingModel} from "../../src/shared/interfaces/IFundingModel.sol";
 
 import {UniswapV4SingletonOracle} from "../../src/rld/modules/oracles/UniswapV4SingletonOracle.sol";
-import {BondMetadataRenderer} from "../../src/utils/BondMetadataRenderer.sol";
+
 
 
 
@@ -75,7 +75,7 @@ contract AtomicDeploymentTest is Test {
     MockFundingModel funding;
 
     MockHook twamm; 
-    BondMetadataRenderer renderer; 
+    address renderer = address(0); 
 
     address underlyingToken;
     address collateralToken;
@@ -87,7 +87,7 @@ contract AtomicDeploymentTest is Test {
         funding = new MockFundingModel();
 
         twamm = new MockHook();
-        renderer = new BondMetadataRenderer();
+
         
         core = new RLDCore();
         positionTokenImpl = new PositionToken();

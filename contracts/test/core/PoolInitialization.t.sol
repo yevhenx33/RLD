@@ -7,7 +7,7 @@ import {RLDCore} from "../../src/rld/core/RLDCore.sol";
 import {PositionToken} from "../../src/rld/tokens/PositionToken.sol";
 import {PrimeBroker} from "../../src/rld/broker/PrimeBroker.sol";
 import {UniswapV4SingletonOracle} from "../../src/rld/modules/oracles/UniswapV4SingletonOracle.sol";
-import {BondMetadataRenderer} from "../../src/utils/BondMetadataRenderer.sol";
+
 
 import {IRLDOracle} from "../../src/shared/interfaces/IRLDOracle.sol";
 import {ISpotOracle} from "../../src/shared/interfaces/ISpotOracle.sol";
@@ -44,7 +44,7 @@ contract PoolInitializationTest is Test {
     PositionToken positionTokenImpl;
     PrimeBroker primeBrokerImpl;
     UniswapV4SingletonOracle v4Oracle;
-    BondMetadataRenderer renderer;
+    address renderer = address(0);
 
     // --- Mocks ---
     MockOracle oracle;
@@ -67,7 +67,7 @@ contract PoolInitializationTest is Test {
         
         fundingModel = new MockFundingModel();
         twammHook = new MockTwammHook();
-        renderer = new BondMetadataRenderer();
+
         
         // Deploy core contracts
         core = new RLDCore();

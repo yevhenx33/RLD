@@ -126,10 +126,7 @@ contract PrimeBroker is IPrimeBroker {
     /// @dev Used for NFT-based ownership lookup: factory.ownerOf(tokenId)
     address public factory;
 
-    /// @notice Optional metadata describing this broker as a "bond"
-    /// @dev Used by UI/renderers to display bond-like information
-    /// Not enforced by the contract - purely informational
-    BondMetadata public bondMetadata;
+    /// Metadata removed - rendering handles dynamically
 
     /// @notice Which market this broker operates in
     /// @dev Each broker is bound to exactly one market at initialization
@@ -773,30 +770,10 @@ contract PrimeBroker is IPrimeBroker {
     }
 
     /* ============================================================================================ */
-    /*                                  BOND METADATA (OPTIONAL)                                   */
+    /*                                  BOND METADATA REMOVED                                      */
     /* ============================================================================================ */
-
-    /// @notice Gets the optional bond metadata for this broker
-    /// @dev Used by UI/renderers to display bond-like information
-    /// This is purely informational - not enforced by the contract
-    /// @return The BondMetadata struct
-    function getBondMetadata() external view override returns (BondMetadata memory) {
-        return bondMetadata;
-    }
-
-    /// @notice Sets the bond metadata for this broker
-    /// @dev Optional - used for UI display purposes
-    ///
-    /// Example metadata:
-    /// - rate: 5% (5e16)
-    /// - maturityDate: 1 year from now
-    /// - principal: 1000 ETH
-    /// - bondType: YIELD or HEDGE
-    ///
-    /// @param _metadata The new bond metadata
-    function setBondMetadata(BondMetadata calldata _metadata) external override onlyAuthorized {
-        bondMetadata = _metadata;
-    }
+    // Metadata storage removed to prevent trust issues.
+    // Bond information should be verified dynamically from chain state.
 
     /* ============================================================================================ */
     /*                                   OPERATOR MANAGEMENT                                       */

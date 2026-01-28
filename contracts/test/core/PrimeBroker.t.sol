@@ -678,56 +678,7 @@ contract PrimeBrokerTest is Test {
     }
 
     // ========================================================================
-    // BOND METADATA TESTS
-    // ========================================================================
-    
-    function test_SetBondMetadata() public {
-        IPrimeBroker.BondMetadata memory metadata = IPrimeBroker.BondMetadata({
-            rate: 5e16, // 5%
-            maturityDate: block.timestamp + 365 days,
-            principal: 1000e18,
-            bondType: IPrimeBroker.BondType.YIELD
-        });
-        
-        vm.prank(owner);
-        broker.setBondMetadata(metadata);
-        
-        IPrimeBroker.BondMetadata memory stored = broker.getBondMetadata();
-        assertEq(stored.rate, 5e16);
-        assertEq(stored.principal, 1000e18);
-        assertEq(uint8(stored.bondType), uint8(IPrimeBroker.BondType.YIELD));
-    }
-    
-    function test_Revert_SetBondMetadata_NotAuthorized() public {
-        IPrimeBroker.BondMetadata memory metadata = IPrimeBroker.BondMetadata({
-            rate: 5e16,
-            maturityDate: block.timestamp + 365 days,
-            principal: 1000e18,
-            bondType: IPrimeBroker.BondType.YIELD
-        });
-        
-        vm.prank(attacker);
-        vm.expectRevert("Not Authorized");
-        broker.setBondMetadata(metadata);
-    }
-    
-    function test_OperatorCanSetBondMetadata() public {
-        vm.prank(owner);
-        broker.setOperator(operator, true);
-        
-        IPrimeBroker.BondMetadata memory metadata = IPrimeBroker.BondMetadata({
-            rate: 5e16,
-            maturityDate: block.timestamp + 365 days,
-            principal: 1000e18,
-            bondType: IPrimeBroker.BondType.HEDGE
-        });
-        
-        vm.prank(operator);
-        broker.setBondMetadata(metadata);
-        
-        IPrimeBroker.BondMetadata memory stored = broker.getBondMetadata();
-        assertEq(uint8(stored.bondType), uint8(IPrimeBroker.BondType.HEDGE));
-    }
+    // BOND METADATA TESTS REMOVED (Metadata functionality deleted)
 
     // ========================================================================
     // OPERATOR MANAGEMENT TESTS
