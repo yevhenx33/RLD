@@ -46,8 +46,7 @@ interface IRLDCore {
     }
 
     struct Position {
-        uint128 collateral;
-        uint128 debtPrincipal;
+        uint128 debtPrincipal; // Collateral tracking removed - solvency delegated to PrimeBroker
     }
 
     /* ============================================================================================ */

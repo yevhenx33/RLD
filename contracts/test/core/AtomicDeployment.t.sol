@@ -153,8 +153,7 @@ contract AtomicDeploymentTest is Test {
     function test_AtomicDeployment_Succeeds() public {
         bytes32 liqParams = bytes32(0);
         
-        vm.prank(address(marketFactory)); // Just to be safe, though not needed
-        
+        // Test contract is owner (deployed the factory), no prank needed
         (MarketId marketId, address brokerFactory) = marketFactory.createMarket(
             RLDMarketFactory.DeployParams({
                 underlyingPool: underlyingPool,

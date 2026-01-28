@@ -99,7 +99,7 @@ contract BondNFTTest is Test {
         
         // Old owner cannot update
         vm.prank(user);
-        vm.expectRevert("Not Owner"); 
+        vm.expectRevert("Not Authorized"); 
         broker.setBondMetadata(IPrimeBroker.BondMetadata(200, 0, 0, IPrimeBroker.BondType.YIELD));
         
         // New owner CAN update

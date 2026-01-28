@@ -174,8 +174,8 @@ contract GenericExecutionTest is Test {
         bytes32 slot1 = keccak256(abi.encode(MarketId.unwrap(marketId), uint256(3)));
         bytes32 finalSlot = keccak256(abi.encode(brokerAddr, slot1));
         
-        // Write DebtPrincipal (High 128 bits)
-        vm.store(address(core), finalSlot, bytes32(uint256(500e18) << 128));
+        // Write DebtPrincipal (now the only field in Position struct, no shift needed)
+        vm.store(address(core), finalSlot, bytes32(uint256(500e18)));
 
         // 5. Execute Safe Action: Transfer Other Token
         vm.prank(user);
@@ -225,8 +225,8 @@ contract GenericExecutionTest is Test {
         // Slot calculation (Slot 3)
         bytes32 slot1 = keccak256(abi.encode(MarketId.unwrap(marketId), uint256(3)));
         bytes32 finalSlot = keccak256(abi.encode(brokerAddr, slot1));
-        
-        vm.store(address(core), finalSlot, bytes32(uint256(800e18) << 128));
+        // Write debtPrincipal (now the only field in Position struct, no shift needed)
+        vm.store(address(core), finalSlot, bytes32(uint256(800e18)));
 
         // 4. Execute Unsafe Action: Transfer 500 Collateral Away
         // Remaining Collateral = 500.
