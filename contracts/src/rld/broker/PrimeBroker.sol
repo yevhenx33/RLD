@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import {IPrimeBroker} from "../../shared/interfaces/IPrimeBroker.sol";
 import {IRLDCore, MarketId} from "../../shared/interfaces/IRLDCore.sol";
-import {IBrokerModule} from "../../shared/interfaces/IBrokerModule.sol";
+import {IValuationModule} from "../../shared/interfaces/IValuationModule.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
@@ -13,6 +13,13 @@ import {ITWAMM} from "../../twamm/ITWAMM.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../../shared/interfaces/ISpotOracle.sol";
 import {IRLDOracle} from "../../shared/interfaces/IRLDOracle.sol";
+
+// Uniswap V4 Imports
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {LiquidityAmounts} from "../../shared/libraries/LiquidityAmounts.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {PositionInfo, PositionInfoLibrary} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
 
 /// @dev Minimal ERC721 interface for ownership checks
 interface IERC721 {
@@ -86,6 +93,8 @@ interface IERC721 {
 ///
 contract PrimeBroker is IPrimeBroker {
     using SafeTransferLib for ERC20;
+    using PositionInfoLibrary for PositionInfo;
+    using FixedPointMathLib for uint256;
 
     /* ============================================================================================ */
     /*                                         IMMUTABLES                                          */
@@ -96,12 +105,12 @@ contract PrimeBroker is IPrimeBroker {
     /// Used for: solvency checks, position modifications, lock pattern
     address public immutable CORE;
 
-    /// @notice The Uniswap V4 LP valuation module
-    /// @dev Implements IBrokerModule - getValue() and seize() for V4 positions
+    /// @notice The module for valuing V4 LP positions
+    /// @dev Implements IValuationModule - getValue() for V4 positions
     address public immutable V4_MODULE;
 
-    /// @notice The TWAMM order valuation module  
-    /// @dev Implements IBrokerModule - getValue() for TWAMM orders
+    /// @notice The module for valuing TWAMM orders
+    /// @dev Implements IValuationModule - getValue() for TWAMM orders
     /// WARNING: This is the VALUATION module, not the TWAMM hook itself
     address public immutable TWAMM_MODULE;
 
@@ -222,8 +231,8 @@ contract PrimeBroker is IPrimeBroker {
     /// The constructor locks the implementation to prevent direct use
     ///
     /// @param _core RLDCore singleton address - the protocol's central contract
-    /// @param _v4Module IBrokerModule for Uniswap V4 LP position valuation
-    /// @param _twammModule IBrokerModule for TWAMM order valuation
+    /// @param _v4Module IValuationModule for Uniswap V4 LP position valuation
+    /// @param _twammModule IValuationModule for TWAMM order valuation
     /// @param _posm Universal V4 Position Manager for NFT ownership checks
     constructor(address _core, address _v4Module, address _twammModule, address _posm) {
         CORE = _core;
@@ -330,7 +339,7 @@ contract PrimeBroker is IPrimeBroker {
         // Module calls hook.getCancelOrderState() to get refund + earnings values
         if (activeTwammOrder.orderId != bytes32(0)) {
             bytes memory data = _encodeTwammData(activeTwammOrder);
-            totalValue += IBrokerModule(TWAMM_MODULE).getValue(data);
+            totalValue += IValuationModule(TWAMM_MODULE).getValue(data);
         }
 
         // ┌─────────────────────────────────────────────────────────────────┐
@@ -339,8 +348,8 @@ contract PrimeBroker is IPrimeBroker {
         // Delegate to V4 valuation module
         // Module queries position liquidity and calculates token values
         if (activeTokenId != 0) {
-            bytes memory data = _encodeModuleData(activeTokenId, collateralToken, underlyingToken);
-            totalValue += IBrokerModule(V4_MODULE).getValue(data);
+            bytes memory data = _encodeModuleData(activeTokenId);
+            totalValue += IValuationModule(V4_MODULE).getValue(data);
         }
     }
 
@@ -381,120 +390,134 @@ contract PrimeBroker is IPrimeBroker {
     /// 3. Return SeizeOutput{collateralSeized: X, wRLPExtracted: Y}
     /// ```
     ///
-    /// @param value The total value to seize (in collateral terms)
-    /// @param recipient Where to send seized collateral (typically liquidator)
-    /// @return output Breakdown of what was seized (collateral vs wRLP)
-    function seize(uint256 value, address recipient) external override onlyCore returns (SeizeOutput memory output) {
-        uint256 remaining = value;
-        address _collateral = collateralToken; // Gas: stack variable
-        address _positionToken = positionToken; // wRLP address
-
+    function seize(uint256 value, address recipient) 
+        external 
+        override 
+        onlyCore 
+        returns (SeizeOutput memory output) 
+    {
         // ┌─────────────────────────────────────────────────────────────────┐
-        // │ PRIORITY 1: SEIZE CASH (collateralToken balance)                │
+        // │ PHASE 1: UNLOCK LIQUIDITY (Sourcing)                            │
         // └─────────────────────────────────────────────────────────────────┘
-        // Fastest path - direct ERC20 transfer
-        uint256 cash = ERC20(_collateral).balanceOf(address(this));
-        if (cash > 0) {
-            uint256 take = cash >= remaining ? remaining : cash;
-            ERC20(_collateral).safeTransfer(recipient, take);
-            output.collateralSeized += take;
-            remaining -= take;
-        }
+        // Ensure we have enough liquid assets (Cash + wRLP) to cover 'value'
+        _unlockLiquidity(value);
         
-        if (remaining == 0) return output;
-
         // ┌─────────────────────────────────────────────────────────────────┐
-        // │ PRIORITY 2: SEIZE TWAMM ORDER                                   │
+        // │ PHASE 2: SWEEP ASSETS (Settlement)                              │
         // └─────────────────────────────────────────────────────────────────┘
-        // Cancel the order to recover tokens, then route appropriately
+        // Distribute assets to cover debt
+        return _sweepAssets(value, recipient);
+    }
+
+    /* ============================================================================================ */
+    /*                                     INTERNAL SEIZE HELPERS                                  */
+    /* ============================================================================================ */
+
+    function _unlockLiquidity(uint256 targetValue) internal {
+        // 1. Check current liquid resources (Cash + wRLP)
+        uint256 currentLiquid = _getLiquidValue();
+        if (currentLiquid >= targetValue) return;
+
+        // 2. Unlock TWAMM (Price Check)
         if (activeTwammOrder.orderId != bytes32(0)) {
-            // Step A: Cancel the order - returns unsold tokens + earned tokens
-            (uint256 buyTokensOwed, uint256 sellTokensRefund) = ITWAMM(TWAMM_MODULE).cancelOrder(activeTwammOrder.key, activeTwammOrder.orderKey);
+            _cancelTwammOrder();
+            currentLiquid = _getLiquidValue();
+            if (currentLiquid >= targetValue) return;
+        }
+
+        // 3. Unlock V4 (Price Check)
+        if (activeTokenId != 0) {
+            uint256 missing = targetValue - currentLiquid;
+            _unwindV4Position(missing);
+        }
+    }
+
+    function _sweepAssets(uint256 value, address recipient) internal returns (SeizeOutput memory output) {
+        uint256 remaining = value;
+        
+        // Priority 1: Burn wRLP (Direct Debt Reduction)
+        uint256 wRlpBal = ERC20(positionToken).balanceOf(address(this));
+        if (wRlpBal > 0) {
+            uint256 price = ISpotOracle(rateOracle).getSpotPrice(positionToken, collateralToken);
+            uint256 wRlpValue = wRlpBal.mulWadDown(price);
             
-            // Step B: Identify which tokens are sell/buy
-            // zeroForOne = true means selling token0 for token1
-            address sellToken = activeTwammOrder.orderKey.zeroForOne 
-                ? Currency.unwrap(activeTwammOrder.key.currency0) 
-                : Currency.unwrap(activeTwammOrder.key.currency1);
-            address buyToken = activeTwammOrder.orderKey.zeroForOne 
-                ? Currency.unwrap(activeTwammOrder.key.currency1) 
-                : Currency.unwrap(activeTwammOrder.key.currency0);
-                
-            // Step C: Clear tracking state
-            delete activeTwammOrder;
+            uint256 takeVal = wRlpValue > remaining ? remaining : wRlpValue;
+            uint256 takeAmt = wRlpBal; // Default all
             
-            // Step D: Process sellTokensRefund (unsold tokens returned)
-            if (sellTokensRefund > 0) {
-                uint256 price = _getOraclePrice(sellToken, underlyingToken);
-                uint256 val = FixedPointMathLib.mulWadDown(sellTokensRefund, price);
-                
-                uint256 takeAmt = sellTokensRefund;
-                uint256 takeVal = val;
-                
-                // Cap at remaining value needed
-                if (val > remaining) {
-                    takeAmt = FixedPointMathLib.mulDivUp(sellTokensRefund, remaining, val);
-                    takeVal = remaining;
-                }
-                
-                // Route based on token type:
-                // - collateralToken → liquidator (bonus)
-                // - positionToken (wRLP) → Core (debt offset)
-                // - other → stay in broker
-                if (sellToken == _collateral) {
-                    ERC20(sellToken).safeTransfer(recipient, takeAmt);
-                    output.collateralSeized += takeAmt;
-                } else if (sellToken == _positionToken) {
-                    // wRLP goes to Core (msg.sender) for burning
-                    ERC20(sellToken).safeTransfer(msg.sender, takeAmt);
-                    output.wRLPExtracted += takeAmt;
-                }
-                // else: other tokens stay in broker (not transferred)
-                
-                remaining -= takeVal;
+            if (wRlpValue > remaining) {
+                takeAmt = takeVal.divWadDown(price);
             }
             
-            if (remaining == 0) return output;
-            
-            // Step E: Process buyTokensOwed (earned tokens from TWAMM execution)
-            if (buyTokensOwed > 0) {
-                uint256 price = _getOraclePrice(buyToken, underlyingToken);
-                uint256 val = FixedPointMathLib.mulWadDown(buyTokensOwed, price);
-                
-                uint256 takeAmt = buyTokensOwed;
-                uint256 takeVal = val;
-                
-                if (val > remaining) {
-                    takeAmt = FixedPointMathLib.mulDivUp(buyTokensOwed, remaining, val);
-                    takeVal = remaining;
-                }
-                
-                // Same routing logic as sellTokensRefund
-                if (buyToken == _collateral) {
-                    ERC20(buyToken).safeTransfer(recipient, takeAmt);
-                    output.collateralSeized += takeAmt;
-                } else if (buyToken == _positionToken) {
-                    ERC20(buyToken).safeTransfer(msg.sender, takeAmt);
-                    output.wRLPExtracted += takeAmt;
-                }
-                
-                remaining -= takeVal;
-            }
+            ERC20(positionToken).safeTransfer(CORE, takeAmt);
+            output.wRLPExtracted += takeAmt;
+            remaining -= takeVal;
         }
         
         if (remaining == 0) return output;
-
-        // ┌─────────────────────────────────────────────────────────────────┐
-        // │ PRIORITY 3: SEIZE V4 LP POSITION                                │
-        // └─────────────────────────────────────────────────────────────────┘
-        // Delegate to V4 module for complex LP position handling
-        // TODO: Update V4 module to return SeizeOutput for proper wRLP routing
-        if (activeTokenId != 0) {
-            bytes memory data = _encodeModuleData(activeTokenId, _collateral, underlyingToken);
-            IBrokerModule(V4_MODULE).seize(remaining, recipient, data);
+        
+        // Priority 2: Pay Collateral (Liquidator Bonus)
+        uint256 cashBal = ERC20(collateralToken).balanceOf(address(this));
+        if (cashBal > 0) {
+            uint256 takeAmt = cashBal > remaining ? remaining : cashBal;
+            ERC20(collateralToken).safeTransfer(recipient, takeAmt);
+            
+            output.collateralSeized += takeAmt;
+            remaining -= takeAmt;
         }
         
-        return output;
+        // Note: Other tokens (ETH, etc.) remain in broker as they are not accepted for liquidation payment
+    }
+
+    function _getLiquidValue() internal view returns (uint256) {
+        uint256 val = ERC20(collateralToken).balanceOf(address(this));
+        
+        uint256 wRlpBal = ERC20(positionToken).balanceOf(address(this));
+        if (wRlpBal > 0) {
+             uint256 price = ISpotOracle(rateOracle).getSpotPrice(positionToken, collateralToken);
+             val += wRlpBal.mulWadDown(price);
+        }
+        return val;
+    }
+
+    function _cancelTwammOrder() internal {
+        // Cancel order - tokens return to this contract (msg.sender)
+        ITWAMM(address(activeTwammOrder.key.hooks)).cancelOrder(
+            activeTwammOrder.key, 
+            activeTwammOrder.orderKey
+        );
+        delete activeTwammOrder;
+    }
+
+    function _unwindV4Position(uint256 targetAmount) internal {
+        // 1. Value the position
+        bytes memory valData = _encodeModuleData(activeTokenId);
+        uint256 totalValue = IValuationModule(V4_MODULE).getValue(valData);
+        if (totalValue == 0) return;
+
+        // 2. Calculate amount to remove
+        uint128 totalLiquidity = IPositionManager(POSM).getPositionLiquidity(activeTokenId);
+        uint128 liquidityToRemove = totalLiquidity;
+        
+        if (totalValue > targetAmount) {
+            liquidityToRemove = uint128(uint256(totalLiquidity).mulDivUp(targetAmount, totalValue));
+        }
+        if (liquidityToRemove == 0) return;
+
+        // 3. Execute Unwind (Decrease -> TakePair)
+        bytes memory actions = abi.encodePacked(uint8(0x01), uint8(0x11));
+        
+        bytes[] memory params = new bytes[](2);
+        params[0] = abi.encode(activeTokenId, liquidityToRemove, uint128(0), uint128(0), bytes(""));
+        
+        (PoolKey memory poolKey, ) = IPositionManager(POSM).getPoolAndPositionInfo(activeTokenId);
+        params[1] = abi.encode(poolKey.currency0, poolKey.currency1, address(this)); 
+        
+        IPositionManager(POSM).modifyLiquidities(abi.encode(actions, params), block.timestamp + 60);
+
+        // 4. Update State
+        if (liquidityToRemove == totalLiquidity) {
+            activeTokenId = 0;
+        }
     }
 
     /* ============================================================================================ */
@@ -720,25 +743,24 @@ contract PrimeBroker is IPrimeBroker {
 
     /// @dev Encodes data for V4_MODULE.getValue() and seize()
     /// @param id The V4 position NFT ID
-    /// @param inputToken The input token for valuation
-    /// @param outputToken The output token for valuation
     /// @return Encoded bytes for module consumption
-    function _encodeModuleData(uint256 id, address inputToken, address outputToken) internal view returns (bytes memory) {
+    function _encodeModuleData(uint256 id) internal view returns (bytes memory) {
          // Uses cached values to avoid calling Core
-         return abi.encode(id, TWAMM_MODULE, rateOracle, inputToken, outputToken);
+         return abi.encode(id, POSM, rateOracle, collateralToken);
     }
     
     /// @dev Encodes data for TWAMM_MODULE.getValue()
     /// @param info The TWAMM order info
     /// @return Encoded bytes matching TwammBrokerModule.VerifyParams
     function _encodeTwammData(TwammOrderInfo memory info) internal view returns (bytes memory) {
+        // NOTE: Order must match TwammBrokerModule.VerifyParams struct:
+        // (hook, key, orderKey, oracle, valuationToken)
         return abi.encode(
-            TWAMM_MODULE,
-            info.key,
-            info.orderKey,
-            rateOracle, 
-            collateralToken,
-            underlyingToken
+            address(info.key.hooks),  // hook - The TWAMM hook address
+            info.key,                  // key - PoolKey
+            info.orderKey,             // orderKey - OrderKey
+            rateOracle,                // oracle - for pricing
+            collateralToken            // valuationToken - Target currency (e.g. USDC)
         );
     }
     

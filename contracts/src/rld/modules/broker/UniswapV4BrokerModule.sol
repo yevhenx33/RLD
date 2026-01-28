@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {IBrokerModule} from "../../../shared/interfaces/IBrokerModule.sol";
+import {IValuationModule} from "../../../shared/interfaces/IValuationModule.sol";
 import {ISpotOracle} from "../../../shared/interfaces/ISpotOracle.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -14,25 +14,50 @@ import {PositionInfo, PositionInfoLibrary} from "v4-periphery/src/libraries/Posi
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 
 /// @title Uniswap V4 Broker Module
-/// @notice Valuates V4 Positions via Oracle and implements Unwind-and-Send Seizure.
-contract UniswapV4BrokerModule is IBrokerModule {
+/// @author RLD Protocol
+/// @notice Read-only valuation module for Uniswap V4 LP positions.
+///
+/// @dev ## Overview
+///
+/// This module calculates the current value of a V4 LP position for PrimeBroker solvency checks.
+/// It is a **pure valuation module** - all seize/unwind logic is handled by PrimeBroker directly
+/// to ensure proper authorization (Broker owns the NFT, not this module).
+///
+/// ## Valuation Logic
+///
+/// 1. Fetch position liquidity and ticks from V4 PositionManager
+/// 2. Fetch current pool tick from V4 PoolManager
+/// 3. Calculate underlying token amounts (amount0, amount1)
+/// 4. Price tokens using Oracle in terms of `valuationToken` (e.g. USDC)
+///
+/// ## Security Notes
+///
+/// 1. **Oracle Trust**: Values depend on the oracle price feed
+/// 2. **V4 State**: Relies on V4 contracts (PositionManager, PoolManager)
+/// 3. **Read-Only**: This module only reads state, cannot modify anything
+///
+contract UniswapV4BrokerModule is IValuationModule {
     using FixedPointMathLib for uint256;
     using PositionInfoLibrary for PositionInfo;
     using StateLibrary for IPoolManager;
 
+    /// @notice Parameters for V4 position valuation
+    /// @dev Encoded by PrimeBroker._encodeModuleData() and decoded here
     struct VerifyParams {
-        uint256 tokenId;
-        address positionManager;
-        address oracle;
-        address collateralToken; // Token0 or Token1
-        address underlyingToken; // Token1 or Token0
+        uint256 tokenId;        // V4 LP NFT ID
+        address positionManager;// V4 Position Manager (POSM)
+        address oracle;         // ISpotOracle
+        address valuationToken; // Target currency (e.g. collateralToken aka USDC)
     }
 
     /// @notice Returns the value of an LP Position using ORACLE PRICE.
-    function getValue(bytes calldata data) external view returns (uint256) {
+    /// @param data ABI-encoded VerifyParams struct
+    /// @return Total value of the position in valuationToken terms
+    function getValue(bytes calldata data) external view override returns (uint256) {
         VerifyParams memory params = abi.decode(data, (VerifyParams));
         
-        // 1. Get Position Info
+        // 1. Get Position Liquidity
+        // If 0 liquidity, value is 0
         uint128 liquidity = IPositionManager(params.positionManager).getPositionLiquidity(params.tokenId);
         if (liquidity == 0) return 0;
 
@@ -41,114 +66,33 @@ contract UniswapV4BrokerModule is IBrokerModule {
         int24 tickLower = info.tickLower();
         int24 tickUpper = info.tickUpper();
         
-        // 3. Get Current Tick (Safety: Used for composition, but priced via Oracle)
+        // 3. Get Current Tick
+        // Note: Using spot tick for valuation. Impermanent loss check is implicit in token amounts.
         IPoolManager pm = IPositionManager(params.positionManager).poolManager();
         (, int24 currentTick, , ) = pm.getSlot0(poolKey.toId());
         
         // 4. Calculate Token Amounts
-        uint160 sqrtRatioX96 = TickMath.getSqrtPriceAtTick(currentTick);
-        uint160 sqrtRatioAX96 = TickMath.getSqrtPriceAtTick(tickLower);
-        uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(tickUpper);
-        
         (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
-            sqrtRatioX96,
-            sqrtRatioAX96,
-            sqrtRatioBX96,
+            TickMath.getSqrtPriceAtTick(currentTick),
+            TickMath.getSqrtPriceAtTick(tickLower),
+            TickMath.getSqrtPriceAtTick(tickUpper),
             liquidity
         );
 
         uint256 value = 0;
+        
+        // 5. Price Token0
         if (amount0 > 0) {
-             uint256 price0 = ISpotOracle(params.oracle).getSpotPrice(Currency.unwrap(poolKey.currency0), params.underlyingToken);
+             uint256 price0 = ISpotOracle(params.oracle).getSpotPrice(Currency.unwrap(poolKey.currency0), params.valuationToken);
              value += amount0.mulWadDown(price0);
         }
+        
+        // 6. Price Token1
         if (amount1 > 0) {
-             uint256 price1 = ISpotOracle(params.oracle).getSpotPrice(Currency.unwrap(poolKey.currency1), params.underlyingToken);
+             uint256 price1 = ISpotOracle(params.oracle).getSpotPrice(Currency.unwrap(poolKey.currency1), params.valuationToken);
              value += amount1.mulWadDown(price1);
         }
         
         return value;
-    }
-
-    /// @notice Seizes liquidity by Unwinding and transferring tokens.
-    function seize(uint256 amount, address recipient, bytes calldata data) external returns (uint256 seizedValue) {
-        VerifyParams memory params = abi.decode(data, (VerifyParams));
-
-        // 1. Calculate Liquidity to Reduce
-        uint256 totalValue = this.getValue(data);
-        if (totalValue == 0) return 0;
-        
-        
-        uint128 totalLiquidity = IPositionManager(params.positionManager).getPositionLiquidity(params.tokenId);
-        
-        uint256 liquidityToRemove;
-        if (amount >= totalValue) {
-            liquidityToRemove = totalLiquidity; 
-        } else {
-            liquidityToRemove = uint256(totalLiquidity).mulDivUp(amount, totalValue);
-        }
-        
-        if (liquidityToRemove == 0) return 0;
-
-        // 2. Unwind (modifyLiquidities)
-        // Actions: DECREASE_LIQUIDITY (0x01) -> TAKE_PAIR (0x11)
-        bytes memory actions = abi.encodePacked(uint8(0x01), uint8(0x11));
-        
-        // DECREASE Params: (tokenId, liquidity, amount0Min, amount1Min, hookData)
-        bytes memory decreaseParams = abi.encode(
-            params.tokenId, 
-            liquidityToRemove, 
-            uint128(0), 
-            uint128(0), 
-            bytes("")
-        );
-        
-        (PoolKey memory poolKey, ) = IPositionManager(params.positionManager).getPoolAndPositionInfo(params.tokenId);
-        
-        bytes memory takeParams = abi.encode(
-            poolKey.currency0,
-            poolKey.currency1,
-            recipient
-        );
-        
-        bytes[] memory actionParams = new bytes[](2);
-        actionParams[0] = decreaseParams;
-        actionParams[1] = takeParams;
-        
-        bytes memory unlockData = abi.encode(actions, actionParams);
-        
-        // CALL Unwind
-        IPositionManager(params.positionManager).modifyLiquidities(unlockData, block.timestamp + 60);
-
-        IPoolManager pm = IPositionManager(params.positionManager).poolManager();
-        (, int24 currentTick, , ) = pm.getSlot0(poolKey.toId());
-        
-        (PoolKey memory pk, PositionInfo info) = IPositionManager(params.positionManager).getPoolAndPositionInfo(params.tokenId);
-        int24 tl = info.tickLower();
-        int24 tu = info.tickUpper();
-        
-        uint160 sqrtRatioX96 = TickMath.getSqrtPriceAtTick(currentTick);
-        uint160 sqrtRatioAX96 = TickMath.getSqrtPriceAtTick(tl);
-        uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(tu);
-        
-        (uint256 amount0, uint256 amount1) = LiquidityAmounts.getAmountsForLiquidity(
-            sqrtRatioX96,
-            sqrtRatioAX96,
-            sqrtRatioBX96,
-            uint128(liquidityToRemove)
-        );
-        
-        // Value it
-        uint256 realizedValue = 0;
-        if (amount0 > 0) {
-             uint256 price0 = ISpotOracle(params.oracle).getSpotPrice(Currency.unwrap(pk.currency0), params.underlyingToken);
-             realizedValue += amount0.mulWadDown(price0);
-        }
-        if (amount1 > 0) {
-             uint256 price1 = ISpotOracle(params.oracle).getSpotPrice(Currency.unwrap(pk.currency1), params.underlyingToken);
-             realizedValue += amount1.mulWadDown(price1);
-        }
-        
-        return realizedValue;
     }
 }

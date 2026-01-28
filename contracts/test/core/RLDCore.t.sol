@@ -9,7 +9,7 @@ import {ISpotOracle} from "../../src/shared/interfaces/ISpotOracle.sol";
 
 import {IFundingModel} from "../../src/shared/interfaces/IFundingModel.sol";
 import {IERC20} from "../../src/shared/interfaces/IERC20.sol";
-import {StaticLiquidationModule} from "../../src/rld/modules/liquidation/StaticLiquidationModule.sol";
+import {DutchLiquidationModule} from "../../src/rld/modules/liquidation/DutchLiquidationModule.sol";
 
 // --- MOCKS ---
 
@@ -108,7 +108,7 @@ contract RLDCoreTest is Test {
 
     MarketId marketId;
 
-    StaticLiquidationModule staticLiq;
+    DutchLiquidationModule dutchLiq;
     
     // Broker Mock State
     uint256 public mockNav;
@@ -119,7 +119,7 @@ contract RLDCoreTest is Test {
         positionToken = new MockERC20();
         oracle = new MockOracle();
         funding = new MockFunding();
-        staticLiq = new StaticLiquidationModule();
+        dutchLiq = new DutchLiquidationModule();
         verifier = new MockBrokerVerifier();
 
         oracle.setPrice(1e18); // 1:1 price initially
@@ -139,7 +139,7 @@ contract RLDCoreTest is Test {
             fundingModel: address(funding),
             curator: address(0),
 
-            liquidationModule: address(staticLiq),
+            liquidationModule: address(dutchLiq),
             positionToken: address(positionToken)
         });
 
