@@ -6,7 +6,7 @@ import {PrimeBroker} from "../../src/rld/broker/PrimeBroker.sol";
 import {PrimeBrokerFactory} from "../../src/rld/core/PrimeBrokerFactory.sol";
 import {IPrimeBroker} from "../../src/shared/interfaces/IPrimeBroker.sol";
 import {IRLDCore, MarketId} from "../../src/shared/interfaces/IRLDCore.sol";
-import {IBrokerModule} from "../../src/shared/interfaces/IBrokerModule.sol";
+import {IValuationModule} from "../../src/shared/interfaces/IValuationModule.sol";
 import {ISpotOracle} from "../../src/shared/interfaces/ISpotOracle.sol";
 import {IRLDOracle} from "../../src/shared/interfaces/IRLDOracle.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
@@ -92,8 +92,8 @@ contract MockRLDCore {
     }
 }
 
-/// @dev Mock broker module for getValue and seize
-contract MockBrokerModule is IBrokerModule {
+/// @dev Mock broker module for getValue
+contract MockBrokerModule is IValuationModule {
     uint256 public mockValue = 0;
     
     function setMockValue(uint256 _value) external {
@@ -102,11 +102,6 @@ contract MockBrokerModule is IBrokerModule {
     
     function getValue(bytes calldata) external view override returns (uint256) {
         return mockValue;
-    }
-    
-    function seize(uint256, address, bytes calldata) external override returns (uint256) {
-        // Mock implementation
-        return 0;
     }
 }
 

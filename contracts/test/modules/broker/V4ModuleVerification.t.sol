@@ -115,8 +115,7 @@ contract V4ModuleVerificationTest is Test {
             tokenId: 1, 
             positionManager: posm,
             oracle: oracle,
-            collateralToken: address(0),
-            underlyingToken: address(0)
+            valuationToken: address(0)
         });
         
         // Store scenario in storage for the callback

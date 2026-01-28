@@ -2,7 +2,6 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {StaticLiquidationModule} from "../../../src/rld/modules/liquidation/StaticLiquidationModule.sol";
 import {DutchLiquidationModule} from "../../../src/rld/modules/liquidation/DutchLiquidationModule.sol";
 import {ILiquidationModule} from "../../../src/shared/interfaces/ILiquidationModule.sol";
 import {IRLDCore} from "../../../src/shared/interfaces/IRLDCore.sol";
@@ -11,7 +10,6 @@ import {FixedPointMath} from "../../../src/shared/libraries/FixedPointMath.sol";
 contract LiquidationModulesTest is Test {
     using FixedPointMath for uint256;
 
-    StaticLiquidationModule staticModule;
     DutchLiquidationModule dutchModule;
 
     // Standard Inputs
@@ -23,7 +21,6 @@ contract LiquidationModulesTest is Test {
     ILiquidationModule.PriceData priceData;
 
     function setUp() public {
-        staticModule = new StaticLiquidationModule();
         dutchModule = new DutchLiquidationModule();
 
         config = IRLDCore.MarketConfig({
@@ -43,30 +40,6 @@ contract LiquidationModulesTest is Test {
             spotPrice: PRICE,
             normalizationFactor: 1e18
         });
-    }
-
-    function test_StaticLiquidation() public {
-        // Setup Params: Fixed Bonus 5% (1.05e18)
-        bytes32 params = bytes32(uint256(1.05e18));
-
-        // User Stats
-        uint256 userCollateral = 200e18;
-        uint256 userDebt = 150e18; 
-
-        (uint256 bonus, uint256 totalSeized) = staticModule.calculateSeizeAmount(
-            DEBT_TO_COVER, // 100
-            userCollateral,
-            userDebt,
-            priceData,
-            config,
-            params
-        );
-
-        // Expected Cost = 100 * 1.0 * 1.0 = 100
-        // Expected Reward = 100 * 1.05 = 105
-        // Total Seized = 105 / 1.0 = 105
-        assertEq(totalSeized, 105e18);
-        assertEq(bonus, 5e18);
     }
 
     function test_DutchLiquidation_LowInsolvency() public {

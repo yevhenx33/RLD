@@ -87,8 +87,7 @@ contract BrokerModuleVerificationTest is Test {
             key: key,
             orderKey: orderKey,
             oracle: oracle,
-            collateralToken: address(0), // Unused in this path
-            underlyingToken: underlying
+            valuationToken: underlying
         });
         
         // 4. Encode & Call
