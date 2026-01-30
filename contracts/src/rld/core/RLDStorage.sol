@@ -74,6 +74,10 @@ abstract contract RLDStorage is IRLDCore {
     /// @dev After this period, pending updates automatically take effect.
     uint256 public constant CONFIG_TIMELOCK = 7 days;
 
+    /// @notice Minimum liquidation amount to prevent dust liquidations and griefing.
+    /// @dev Set to $100 equivalent in 18 decimals.
+    uint256 public constant MIN_LIQUIDATION = 100e18;
+
     /* ============================================================================================ */
     /*                                       TRANSIENT STORAGE                                      */
     /* ============================================================================================ */

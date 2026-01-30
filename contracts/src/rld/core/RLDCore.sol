@@ -508,91 +508,156 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param user The user to liquidate (must be a PrimeBroker)
     /// @param debtToCover Amount of debt principal to liquidate
     function liquidate(MarketId id, address user, uint256 debtToCover) external override nonReentrant {
-        // 1. Apply Funding - Ensure normalization factor is current
         _applyFunding(id);
-
-        MarketState storage state = marketStates[id];
-        MarketAddresses storage addresses = marketAddresses[id];
+        
         MarketConfig memory config = _getEffectiveConfig(id);
         
-        // 2. Verify Insolvency
-        // Position must be below maintenance margin to be liquidatable
+        // 1. Validation
+        _validateLiquidationChecks(id, user, config);
+        _validateLiquidationAmount(debtToCover);
+
+        // 2. Debt Calculations & Updates
+        (uint256 principalToCover, uint256 normFactor) = _updateLiquidationDebt(id, user, debtToCover, config);
+
+        // 3. Seize Calculation via Oracle & Module
+        uint256 seizeAmount = _calculateLiquidationSeize(id, user, debtToCover, normFactor, config);
+
+        // 4. Execution & Settlement (with negative equity protection)
+        _settleLiquidation(id, user, seizeAmount, principalToCover, debtToCover, normFactor);
+    }
+
+    /* ============================================================================================ */
+    /*                                   LIQUIDATION HELPERS                                        */
+    /* ============================================================================================ */
+
+    function _validateLiquidationChecks(MarketId id, address user, MarketConfig memory config) internal view {
         if (_isSolvent(id, user, uint256(config.maintenanceMargin))) {
             revert UserSolvent(user);
         }
-        
-        // 3. Verify Broker Status
-        // Only valid brokers can be liquidated (they hold the collateral)
         if (config.brokerVerifier == address(0) || !IBrokerVerifier(config.brokerVerifier).isValidBroker(user)) {
             revert InvalidBroker(user);
         }
+    }
 
+    function _validateLiquidationAmount(uint256 debtToCover) internal pure {
+        if (debtToCover < MIN_LIQUIDATION) {
+            revert("Liquidation amount too small");
+        }
+    }
+
+    function _updateLiquidationDebt(
+        MarketId id, 
+        address user, 
+        uint256 debtToCover, 
+        MarketConfig memory config
+    ) internal returns (uint256 principalToCover, uint256 normFactor) {
+        // Cache storage
+        MarketState storage state = marketStates[id];
+        normFactor = state.normalizationFactor;
         Position storage pos = positions[id][user];
-        
-        // 4. Liquidation Cap (Close Factor)
-        // Prevents liquidating entire position in one tx (protects borrower)
-        if (debtToCover > uint256(pos.debtPrincipal).mulWad(uint256(config.liquidationCloseFactor))) {
+        uint128 principal = pos.debtPrincipal;
+
+        // Verify Close Factor against True Debt
+        uint256 trueDebt = uint256(principal).mulWad(normFactor);
+        if (debtToCover > trueDebt.mulWad(uint256(config.liquidationCloseFactor))) {
             revert CloseFactorExceeded();
         }
+
+        // Calculate Principal to burn
+        principalToCover = debtToCover.divWad(normFactor);
         
-        // 5. Calculate Debt Value
-        uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
+        // Update Storage (Optimistic Reduction)
+        pos.debtPrincipal = principal - uint128(principalToCover);
+    }
+
+    function _calculateLiquidationSeize(
+        MarketId id,
+        address user,
+        uint256 debtToCover,
+        uint256 normFactor,
+        MarketConfig memory config
+    ) internal view returns (uint256 seizeAmount) {
+         MarketAddresses storage addresses = marketAddresses[id];
+         
+         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
             addresses.underlyingPool, 
             addresses.underlyingToken
         );
         
-        // Cost = DebtToCover * NormFactor * IndexPrice
-        uint256 brokerCost = uint256(debtToCover).mulWad(state.normalizationFactor).mulWad(indexPrice);
-
-        // 6. Decrement Debt (optimistically - will be reduced by amount actually covered)
-        pos.debtPrincipal -= uint128(debtToCover);
-
-        // 7. Calculate Seize Amount
-        // Spot price: Use oracle if configured, else assume 1:1 parity
         uint256 spotPrice = addresses.spotOracle != address(0)
             ? ISpotOracle(addresses.spotOracle).getSpotPrice(addresses.collateralToken, addresses.underlyingToken)
             : 1e18;
-            
+
+        // PRICE PROTECTION: Use min(spot, index) for liquidator benefit (conservative debt valuation)
+        // and max(spot, index) for borrower protection (generous collateral valuation)
+        // This prevents arbitrage from price divergence
+        uint256 debtPrice = indexPrice < spotPrice ? indexPrice : spotPrice;
+        uint256 collateralPrice = indexPrice > spotPrice ? indexPrice : spotPrice;
+
         ILiquidationModule.PriceData memory priceData = ILiquidationModule.PriceData({
-            indexPrice: indexPrice,
-            spotPrice: spotPrice,
-            normalizationFactor: state.normalizationFactor
+            indexPrice: debtPrice,
+            spotPrice: collateralPrice,
+            normalizationFactor: normFactor
         });
 
-        // Pass real values for accurate bonus calculation
-        uint256 userAssetValue = IPrimeBroker(user).getNetAccountValue();
-        uint256 trueDebtValue = uint256(pos.debtPrincipal).mulWad(state.normalizationFactor).mulWad(indexPrice);
-        
-        ( , uint256 seizeAmount) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
+        // Use updated debt principal for remaining debt calculation
+        uint256 remainingTrueDebt = uint256(positions[id][user].debtPrincipal).mulWad(normFactor).mulWad(debtPrice);
+
+        ( , seizeAmount) = ILiquidationModule(addresses.liquidationModule).calculateSeizeAmount(
             debtToCover, 
-            userAssetValue,   // Real collateral value from broker
-            trueDebtValue,    // Real remaining debt value
+            IPrimeBroker(user).getNetAccountValue(),
+            remainingTrueDebt,
             priceData, 
             config, 
             config.liquidationParams
         );
+    }
+
+    function _settleLiquidation(
+        MarketId id,
+        address user,
+        uint256 seizeAmount,
+        uint256 principalToCover,
+        uint256 debtToCover,
+        uint256 normFactor
+    ) internal {
+        // NEGATIVE EQUITY PROTECTION: Cap seize at available collateral
+        uint256 availableCollateral = IPrimeBroker(user).getNetAccountValue();
+        uint256 actualSeizeAmount = seizeAmount;
+        uint256 actualPrincipalToCover = principalToCover;
         
-        // 8. Seize Assets - returns wRLP extracted from broker's positions
-        IPrimeBroker.SeizeOutput memory seizeOutput = IPrimeBroker(user).seize(seizeAmount, msg.sender);
+        if (seizeAmount > availableCollateral) {
+            // Adjust seize amount to available collateral
+            actualSeizeAmount = availableCollateral;
+            
+            // Proportionally reduce debt coverage
+            // actualDebtCovered = (availableCollateral * debtToCover) / seizeAmount
+            uint256 actualDebtCovered = availableCollateral.mulWad(debtToCover).divWad(seizeAmount);
+            actualPrincipalToCover = actualDebtCovered.divWad(normFactor);
+            
+            // Revert the optimistic debt reduction and apply correct amount
+            Position storage pos = positions[id][user];
+            pos.debtPrincipal = pos.debtPrincipal + uint128(principalToCover) - uint128(actualPrincipalToCover);
+        }
         
-        // 9. Use extracted wRLP to offset debt (cap at debtToCover)
-        uint256 wRLPFromBroker = seizeOutput.wRLPExtracted > debtToCover 
-            ? debtToCover 
+        IPrimeBroker.SeizeOutput memory seizeOutput = IPrimeBroker(user).seize(actualSeizeAmount, msg.sender);
+        
+        uint256 wRLPFromBroker = seizeOutput.wRLPExtracted > actualPrincipalToCover 
+            ? actualPrincipalToCover 
             : seizeOutput.wRLPExtracted;
         
-        // 10. Burn extracted wRLP (transferred from broker to Core)
+        address positionToken = marketAddresses[id].positionToken;
+        
         if (wRLPFromBroker > 0) {
-            PositionToken(addresses.positionToken).burn(address(this), wRLPFromBroker);
+            PositionToken(positionToken).burn(address(this), wRLPFromBroker);
         }
         
-        // 11. Burn remaining debt from liquidator
-        // Liquidator only needs to provide the delta not covered by broker's wRLP
-        uint256 liquidatorOwes = debtToCover - wRLPFromBroker;
+        uint256 liquidatorOwes = actualPrincipalToCover - wRLPFromBroker;
         if (liquidatorOwes > 0) {
-            PositionToken(addresses.positionToken).burn(msg.sender, liquidatorOwes);
+            PositionToken(positionToken).burn(msg.sender, liquidatorOwes);
         }
         
-        emit PositionModified(id, user, 0, -int256(debtToCover));
+        emit PositionModified(id, user, 0, -int256(actualPrincipalToCover));
     }
 
     /* ============================================================================================ */
