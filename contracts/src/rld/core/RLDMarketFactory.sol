@@ -68,7 +68,14 @@ contract RLDMarketFactory {
     uint32 public immutable FUNDING_PERIOD;
 
     /// @notice The RLDCore contract that manages all markets
-    address public immutable CORE;
+    /// @dev Initialized via initializeCore() after RLDCore deployment
+    address public CORE;
+    
+    /// @notice The deployer address with one-time initialization rights
+    address private immutable DEPLOYER;
+    
+    /// @notice Flag to prevent re-initialization of CORE
+    bool private coreInitialized;
     
     /// @notice Uniswap V4 PoolManager for pool operations
     address public immutable POOL_MANAGER;
@@ -199,10 +206,11 @@ contract RLDMarketFactory {
 
     /**
      * @notice Initializes the factory with all required protocol addresses
-     * @dev All addresses except TWAMM are validated to be non-zero
-     *      TWAMM can be address(0) for testing without V4 hooks
+     * @dev CORE address is NOT set in constructor - it will be initialized via initializeCore()
+     *      after RLDCore is deployed. This prevents CRITICAL-001 front-running vulnerability.
+     *      All other addresses except TWAMM are validated to be non-zero.
+     *      TWAMM can be address(0) for testing without V4 hooks.
      *
-     * @param core RLDCore contract address
      * @param poolManager Uniswap V4 PoolManager address
      * @param positionTokenImpl PositionToken implementation for cloning
      * @param primeBrokerImpl PrimeBroker implementation for cloning
@@ -213,7 +221,6 @@ contract RLDMarketFactory {
      * @param _fundingPeriod Funding period in seconds (e.g., 30 days = 2592000)
      */
     constructor(
-        address core, 
         address poolManager, 
         address positionTokenImpl,
         address primeBrokerImpl,
@@ -223,8 +230,11 @@ contract RLDMarketFactory {
         address metadataRenderer,
         uint32 _fundingPeriod
     ) {
+        // Store deployer for one-time CORE initialization
+        DEPLOYER = msg.sender;
+        
         // Validate all critical immutables (TWAMM can be 0 for testing)
-        require(core != address(0), "Invalid Core");
+        // NOTE: CORE is NOT validated here - it will be set via initializeCore()
         require(poolManager != address(0), "Invalid PoolManager");
         require(positionTokenImpl != address(0), "Invalid PositionTokenImpl");
         require(primeBrokerImpl != address(0), "Invalid PrimeBrokerImpl");
@@ -237,7 +247,8 @@ contract RLDMarketFactory {
         
         owner = msg.sender;
         
-        CORE = core;
+        // CORE will be initialized via initializeCore() after RLDCore deployment
+        CORE = address(0);
         POOL_MANAGER = poolManager;
         POSITION_TOKEN_IMPL = positionTokenImpl;
         PRIME_BROKER_IMPL = primeBrokerImpl;
@@ -251,6 +262,31 @@ contract RLDMarketFactory {
     /* ============================================================================================ */
     /*                                     EXTERNAL FUNCTIONS                                       */
     /* ============================================================================================ */
+
+    /**
+     * @notice Initializes the CORE address after RLDCore deployment
+     * @dev This enables atomic deployment pattern:
+     *      1. Deploy RLDMarketFactory (CORE = address(0))
+     *      2. Deploy RLDCore(factoryAddress) - factory set in constructor
+     *      3. Call factory.initializeCore(coreAddress) - completes the link
+     *
+     * @dev Security:
+     *      - Only callable by deployer (msg.sender from constructor)
+     *      - Can only be called once (coreInitialized flag)
+     *      - CORE address cannot be zero
+     *
+     * @param _core The deployed RLDCore contract address
+     *
+     * @custom:security This prevents CRITICAL-001 front-running vulnerability
+     */
+    function initializeCore(address _core) external {
+        require(msg.sender == DEPLOYER, "Not deployer");
+        require(!coreInitialized, "Already initialized");
+        require(_core != address(0), "Invalid core");
+        
+        CORE = _core;
+        coreInitialized = true;
+    }
 
     /**
      * @notice Deploys a new RLD market with full Uniswap V4 integration
@@ -276,6 +312,9 @@ contract RLDMarketFactory {
         onlyOwner 
         returns (MarketId marketId, address brokerFactory) 
     {
+        // 0. Ensure CORE is initialized
+        require(CORE != address(0), "Core not initialized");
+        
         // 1. Validation Phase (Fail Fast)
         _validateParams(params);
 
@@ -604,6 +643,7 @@ contract RLDMarketFactory {
             maintenanceMargin: params.maintenanceMargin,
             liquidationCloseFactor: params.liquidationCloseFactor,
             fundingPeriod: FUNDING_PERIOD,
+            debtCap: 0,  // Unlimited by default, curator can set later
             liquidationParams: params.liquidationParams,
             brokerVerifier: verifier
         });

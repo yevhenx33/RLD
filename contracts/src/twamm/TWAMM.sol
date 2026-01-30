@@ -26,6 +26,7 @@ import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/Pool
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 
+import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
 import {ITWAMM} from "./ITWAMM.sol";
 
 import {PoolGetters} from "./libraries/PoolGetters.sol";
@@ -145,7 +146,8 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
     /// @param _manager The Uniswap V4 PoolManager contract
     /// @param _expirationInterval Time interval for order expiration (e.g., 3600 for 1 hour)
     /// @param initialOwner Address that will own this contract (for admin functions)
-    constructor(IPoolManager _manager, uint256 _expirationInterval, address initialOwner)
+    /// @param _rldCore The RLDCore contract address (immutable after deployment)
+    constructor(IPoolManager _manager, uint256 _expirationInterval, address initialOwner, address _rldCore)
         BaseHook(_manager)
         Owned(initialOwner)
     {
@@ -154,6 +156,7 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         }
 
         expirationInterval = _expirationInterval;
+        rldCore = _rldCore;
     }
 
 
@@ -273,6 +276,32 @@ contract TWAMM is BaseHook, Owned, ITWAMM, IUnlockCallback {
         uint256 amount = collectedFees[currency];
         collectedFees[currency] = 0;
         currency.transfer(recipient, amount);
+    }
+
+    /* ============================================================================ */
+    /*                            CURATOR FEE MANAGEMENT                           */
+    /* ============================================================================ */
+
+    /// @notice RLDCore contract address (immutable, set only at deployment)
+    /// @dev Used to query curator status for markets
+    address public immutable rldCore;
+
+    /// @notice Updates the dynamic LP fee for a pool
+    /// @dev Only callable by the curator of the market that uses this pool
+    ///      Curator is determined by querying RLDCore for the market's curator address
+    /// @param marketId The RLD market ID that this pool belongs to
+    /// @param key The pool key
+    /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
+    function updateDynamicLPFee(MarketId marketId, PoolKey calldata key, uint24 newFee) external {
+        // Verify caller is the curator for this market
+        if (rldCore == address(0)) revert Unauthorized();
+        
+        IRLDCore.MarketAddresses memory addresses = IRLDCore(rldCore).getMarketAddresses(marketId);
+        if (msg.sender != addresses.curator) revert Unauthorized();
+        
+        // V4 max fee is 100% = 1000000 (in hundredths of bips)
+        // LPFeeLibrary will validate the actual fee value
+        poolManager.updateDynamicLPFee(key, newFee);
     }
 
     /* ... beforeAddLiquidity ... */

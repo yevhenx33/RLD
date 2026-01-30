@@ -61,14 +61,11 @@ contract FundingRateCalculationTest is Test, GlobalTestConfig {
         poolManager = new PoolManager(address(0));
         console.log("PoolManager deployed at:", address(poolManager));
         
-        core = new RLDCore();
-        console.log("RLDCore deployed at:", address(core));
-        
         positionTokenImpl = createPositionTokenImpl();
         console.log("PositionToken impl deployed at:", address(positionTokenImpl));
         
         primeBrokerImpl = new PrimeBroker(
-            address(core),
+            address(0),  // Core address will be set later
             address(0),
             address(0),
             address(0)
@@ -96,10 +93,10 @@ contract FundingRateCalculationTest is Test, GlobalTestConfig {
         );
         
         bytes memory creationCode = type(TWAMM).creationCode;
-        bytes memory constructorArgs = abi.encode(IPoolManager(address(poolManager)), TWAMM_INTERVAL, address(this));
+        bytes memory constructorArgs = abi.encode(IPoolManager(address(poolManager)), TWAMM_INTERVAL, address(this), address(0));
         
         (address hookAddress, bytes32 salt) = HookMiner.find(address(this), flags, creationCode, constructorArgs);
-        twamm = new TWAMM{salt: salt}(IPoolManager(address(poolManager)), TWAMM_INTERVAL, address(this));
+        twamm = new TWAMM{salt: salt}(IPoolManager(address(poolManager)), TWAMM_INTERVAL, address(this), address(0));
         
         require(address(twamm) == hookAddress, "Hook address mismatch");
         console.log("TWAMM Hook deployed at:", address(twamm));
@@ -110,9 +107,9 @@ contract FundingRateCalculationTest is Test, GlobalTestConfig {
         console.log("Underlying token (USDC):", address(underlying));
         console.log("Collateral token (aUSDC):", address(collateral));
         
-        // Deploy factory
+        // ATOMIC DEPLOYMENT PATTERN (CRITICAL-001 FIX)
+        // Step 1: Deploy factory with CORE = address(0)
         factory = new RLDMarketFactory(
-            address(core),
             address(poolManager),
             address(positionTokenImpl),
             address(primeBrokerImpl),
@@ -124,8 +121,12 @@ contract FundingRateCalculationTest is Test, GlobalTestConfig {
         );
         console.log("RLDMarketFactory deployed at:", address(factory));
         
-        // Authorize factory in core
-        core.setFactory(address(factory));
+        // Step 2: Deploy core with factory address (immutable)
+        core = new RLDCore(address(factory), address(poolManager), address(0));
+        console.log("RLDCore deployed at:", address(core));
+        
+        // Step 3: Initialize factory's CORE reference
+        factory.initializeCore(address(core));
         console.log("Factory authorized in core");
         
         console.log("\nSetup complete!\n");

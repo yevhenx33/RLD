@@ -27,26 +27,35 @@ interface IRLDCore {
     }
 
     struct MarketConfig {
-
-
         uint64 minColRatio;
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor; // e.g., 50% (5e17)
-        uint32 fundingPeriod; // Added: Configurable Funding Period (e.g. 30 days)
-        // liquidationIncentive moved to module params
+        uint32 fundingPeriod; // Configurable Funding Period (e.g. 30 days)
+        uint128 debtCap; // Maximum total debt allowed in this market (in debt token units)
         bytes32 liquidationParams; // Packed params for the module
-
         address brokerVerifier; // Trusted Verifier for Prime Brokers (Immutable)
     }
 
     struct MarketState {
         uint128 normalizationFactor; // Debt Scaler (starts at 1e18)
+        uint128 totalDebt; // Total debt principal across all positions
         uint48 lastUpdateTimestamp;
-
     }
 
     struct Position {
         uint128 debtPrincipal; // Collateral tracking removed - solvency delegated to PrimeBroker
+    }
+
+    /// @notice Pending risk parameter update with timelock
+    struct PendingRiskUpdate {
+        uint64 minColRatio;
+        uint64 maintenanceMargin;
+        uint64 liquidationCloseFactor;
+        uint32 fundingPeriod;
+        uint128 debtCap;
+        bytes32 liquidationParams;
+        uint48 executeAt; // Timestamp when update auto-applies
+        bool pending; // Whether an update is pending
     }
 
     /* ============================================================================================ */
@@ -58,11 +67,27 @@ interface IRLDCore {
     event PositionModified(MarketId indexed id, address indexed user, int256 deltaCollateral, int256 deltaDebt);
     event SecurityUpdate(MarketId indexed id, string indexed action, address indexed operator);
     
+    // Curator Events
+    event RiskUpdateProposed(
+        MarketId indexed id,
+        uint64 minColRatio,
+        uint64 maintenanceMargin,
+        uint64 liquidationCloseFactor,
+        uint32 fundingPeriod,
+        uint128 debtCap,
+        bytes32 liquidationParams,
+        uint48 executeAt
+    );
+    event RiskUpdateCancelled(MarketId indexed id);
+    event RiskUpdateApplied(MarketId indexed id);
+    event PoolFeeUpdated(MarketId indexed id, uint24 newFee);
+    
     // --- Errors ---
     error Unauthorized();
     error InvalidMarket();
     error InvalidParam(string param);
     error MarketAlreadyExists();
+    error DebtCapExceeded();
 
     error NotLocked();
     error Insolvent(address user);
@@ -128,8 +153,41 @@ interface IRLDCore {
 
 
     /// @notice Liquidates an insolvent position (Legacy/Direct mode).
-    /// @notice Liquidates an insolvent position (Legacy/Direct mode).
     function liquidate(MarketId id, address user, uint256 debtToCover) external;
 
+    /* ============================================================================================ */
+    /*                                      CURATOR FUNCTIONS                                       */
+    /* ============================================================================================ */
 
+    /// @notice Proposes a risk parameter update (auto-applies after 7 days)
+    /// @param id The market ID
+    /// @param minColRatio New minimum collateralization ratio
+    /// @param maintenanceMargin New maintenance margin
+    /// @param liquidationCloseFactor New liquidation close factor
+    /// @param fundingPeriod New funding period (1 day to 365 days)
+    /// @param debtCap New debt cap (0 = unlimited)
+    /// @param liquidationParams New liquidation parameters
+    function proposeRiskUpdate(
+        MarketId id,
+        uint64 minColRatio,
+        uint64 maintenanceMargin,
+        uint64 liquidationCloseFactor,
+        uint32 fundingPeriod,
+        uint128 debtCap,
+        bytes32 liquidationParams
+    ) external;
+
+    /// @notice Cancels a pending risk parameter update
+    /// @param id The market ID
+    function cancelRiskUpdate(MarketId id) external;
+
+    /// @notice Updates the Uniswap V4 pool fee (immediate, no timelock)
+    /// @param id The market ID
+    /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
+    function updatePoolFee(MarketId id, uint24 newFee) external;
+
+    /// @notice Gets the pending risk update for a market
+    /// @param id The market ID
+    /// @return The pending update struct
+    function getPendingRiskUpdate(MarketId id) external view returns (PendingRiskUpdate memory);
 }

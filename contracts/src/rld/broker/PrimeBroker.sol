@@ -37,7 +37,7 @@ interface IERC721 {
 ///
 /// 1. **Holds Assets** - Cash (collateral token), wRLP tokens, V4 LP positions, TWAMM orders
 /// 2. **Reports Value** - `getNetAccountValue()` calculates total asset value for solvency checks
-/// 3. **Enables Actions** - Generic `execute()` allows any DeFi interaction with solvency safety
+/// 3. **Enables Actions** - `executeWithApproval()` allows DeFi interactions with JIT approval pattern
 /// 4. **Supports Liquidation** - `seize()` extracts assets during liquidation with proper routing
 ///
 /// ## Architecture
@@ -59,14 +59,15 @@ interface IERC721 {
 /// │  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │    │
 /// │  │                                                                  │    │
 /// │  │  getNetAccountValue() → Sum of all asset values                 │    │
-/// │  │  execute(target, data) → Any DeFi call + solvency check         │    │
+/// │  │  executeWithApproval() → JIT approval + DeFi call + solvency    │    │
+/// │  │  withdrawCollateral() → Direct withdrawal with solvency check   │    │
 /// │  │  seize(amount, recipient) → Liquidation asset extraction        │    │
 /// │  └─────────────────────────────────────────────────────────────────┘    │
 /// │                               │                                          │
 /// │                               ▼                                          │
 /// │                    RLDCore (Solvency Checks)                           │
 /// │                               │                                          │
-/// │              isSolvent(broker) = value >= debt × ratio                  │
+/// │              isSolvent(broker) = netWorth >= debt × (ratio - 1)          │
 /// └─────────────────────────────────────────────────────────────────────────┘
 /// ```
 ///
@@ -77,6 +78,28 @@ interface IERC721 {
 /// - Whoever holds the NFT is the owner
 /// - Transferring the NFT transfers account ownership
 /// - Enables account trading on secondary markets (OpenSea, etc.)
+///
+/// ## Security Features (V1.1)
+///
+/// ### 1. JIT (Just-In-Time) Approval Pattern
+/// - `executeWithApproval()` grants temporary approvals that are revoked immediately
+/// - Prevents approval drain attacks
+/// - Blacklists critical tokens (collateral, position, underlying)
+///
+/// ### 2. Ownership Validation in NAV
+/// - V4 LP positions only counted if broker still owns the NFT
+/// - TWAMM orders only counted if orderKey.owner matches broker
+/// - Prevents over-leverage from transferred assets
+///
+/// ### 3. Direct Withdrawal Functions
+/// - `withdrawCollateral()`, `withdrawPositionToken()`, `withdrawUnderlying()`
+/// - Bypass token blacklist for legitimate withdrawals
+/// - Include solvency checks to prevent over-withdrawal
+///
+/// ### 4. NAV Double-Counting Fix
+/// - Core subtracts debt from assets to calculate net worth
+/// - Prevents infinite leverage from minted wRLP
+/// - See RLDCore._isSolvent() for details
 ///
 /// ## V1 Limitations
 ///
@@ -90,6 +113,8 @@ interface IERC721 {
 /// 2. Only Core can call seize() (liquidation only)
 /// 3. Only owner can modify the operator set
 /// 4. Operators and owner share the same permissions except operator management
+/// 5. JIT approvals are always revoked (no lingering allowances)
+/// 6. Asset ownership validated during NAV calculation
 ///
 contract PrimeBroker is IPrimeBroker {
     using SafeTransferLib for ERC20;
@@ -293,23 +318,36 @@ contract PrimeBroker is IPrimeBroker {
     ///
     /// 1. **Cash Balance** - Direct collateralToken balance (e.g., aUSDC)
     /// 2. **wRLP Tokens** - Position tokens valued at indexPrice (wRLP × price)
-    /// 3. **TWAMM Order** - Delegated to TWAMM_MODULE.getValue()
-    /// 4. **V4 LP Position** - Delegated to V4_MODULE.getValue()
+    /// 3. **TWAMM Order** - Delegated to TWAMM_MODULE.getValue() (with ownership check)
+    /// 4. **V4 LP Position** - Delegated to V4_MODULE.getValue() (with ownership check)
     ///
     /// ## Value Formula
     /// ```
     /// totalValue = collateralBalance 
     ///            + (wRLPBalance × indexPrice)
-    ///            + twammModule.getValue(orderData)
-    ///            + v4Module.getValue(positionData)
+    ///            + (twammOrder.owner == this ? twammModule.getValue() : 0)
+    ///            + (v4Position.owner == this ? v4Module.getValue() : 0)
     /// ```
     ///
-    /// ## V1 Limitations
-    /// - Only ONE V4 LP position is counted (activeTokenId)
-    /// - Only ONE TWAMM order is counted (activeTwammOrder)
-    /// - User must track their LARGEST position to avoid false insolvency
+    /// ## Ownership Validation (V1.1 Security Fix)
     ///
-    /// @return totalValue The total asset value in collateral token terms (e.g., USDC)
+    /// **Problem**: Users could transfer V4 LP NFTs or TWAMM orders to external addresses
+    /// while keeping them registered, inflating NAV and enabling over-leverage.
+    ///
+    /// **Solution**: Only count assets that broker actually owns:
+    /// - V4 LP: Check `POSM.ownerOf(tokenId) == address(this)`
+    /// - TWAMM: Check `orderKey.owner == address(this)`
+    ///
+    /// If ownership check fails, asset value = 0 (not counted in NAV).
+    ///
+    /// ## Important Notes
+    ///
+    /// - This function is VIEW-only (no state changes)
+    /// - Called during every solvency check
+    /// - Gas cost: ~50k-150k depending on active positions
+    /// - Index price used (not spot price) to prevent manipulation
+    ///
+    /// @return totalValue The total value of all assets in collateral token terms
     function getNetAccountValue() external view override returns (uint256 totalValue) {
         // ┌─────────────────────────────────────────────────────────────────┐
         // │ PRIORITY 1: CASH BALANCE (Collateral Token)                     │
