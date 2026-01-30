@@ -90,8 +90,11 @@ contract StandardFundingModel is IFundingModel {
             fundingPeriod = DEFAULT_FUNDING_PERIOD;
         }
 
-        // 4. Calculate funding rate: (Mark - Index) / Index
-        int256 priceDiff = int256(markPrice) - int256(indexPrice);
+        // 4. Calculate funding rate: ((Mark / NF) - Index) / Index
+        // Normalize mark price to be comparable with index
+        uint256 normalizedMarkPrice = FixedPointMathLib.divWad(markPrice, currentNormalizationFactor);
+        
+        int256 priceDiff = int256(normalizedMarkPrice) - int256(indexPrice);
         fundingRate = (priceDiff * 1e18) / int256(indexPrice);
         
         // 5. Calculate time delta
