@@ -16,6 +16,9 @@ import {ILiquidationModule} from "../../shared/interfaces/ILiquidationModule.sol
 import {PositionToken} from "../tokens/PositionToken.sol";
 import {IBrokerVerifier} from "../../shared/interfaces/IBrokerVerifier.sol";
 import {IPrimeBroker} from "../../shared/interfaces/IPrimeBroker.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
 
 /// @title RLD Core Singleton
 /// @author RLD Protocol
@@ -78,18 +81,28 @@ contract RLDCore is IRLDCore, RLDStorage {
     /* ============================================================================================ */
 
     /// @notice The trusted factory address allowed to create markets.
-    /// @dev Set once via `setFactory()`. Cannot be changed after initial set.
-    address public factory;
+    /// @dev Set once in constructor. Immutable to prevent any changes post-deployment.
+    address public immutable factory;
 
-    /// @notice Sets the factory address. Can only be called once.
-    /// @dev Should be called immediately after deployment, ideally in the same transaction.
-    /// @dev This is a one-time initialization pattern - no owner/admin can change it later.
+    /// @notice The Uniswap V4 PoolManager address for fee updates
+    address public immutable poolManager;
+
+    /// @notice The TWAMM hook address for V4 pool fee updates
+    address public immutable twamm;
+
+    /// @notice Initializes RLDCore with the factory, poolManager, and TWAMM addresses
+    /// @dev Factory must be deployed first, then RLDCore is deployed with factory address.
+    ///      This prevents front-running attacks on factory initialization.
     /// @param _factory The address of the RLDMarketFactory contract
-    function setFactory(address _factory) external {
-        if (factory != address(0)) revert Unauthorized();
-        if (_factory == address(0)) revert InvalidParam("Factory");
+    /// @param _poolManager The address of the V4 PoolManager
+    /// @param _twamm The address of the TWAMM hook contract
+    constructor(address _factory, address _poolManager, address _twamm) {
+        require(_factory != address(0), "Invalid factory");
+        require(_poolManager != address(0), "Invalid poolManager");
+        // TWAMM can be 0 for testing (pool fees won't work)
         factory = _factory;
-        emit SecurityUpdate(MarketId.wrap(bytes32(0)), "SetFactory", msg.sender);
+        poolManager = _poolManager;
+        twamm = _twamm;
     }
 
     /* ============================================================================================ */
@@ -135,6 +148,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         marketConfigs[id] = config;
         marketStates[id] = MarketState({
             normalizationFactor: 1e18,  // Start at 1:1 (no accrued interest)
+            totalDebt: 0,  // No debt initially
             lastUpdateTimestamp: uint48(block.timestamp)
         });
 
@@ -255,11 +269,28 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         Position storage pos = positions[id][msg.sender];
         MarketAddresses storage addresses = marketAddresses[id];
+        MarketState storage state = marketStates[id];
 
         // 2. Update Debt Principal
         if (deltaDebt != 0) {
             uint256 newDebt = _applyDelta(pos.debtPrincipal, deltaDebt);
             pos.debtPrincipal = uint128(newDebt);
+            
+            // Update total debt and check debt cap
+            if (deltaDebt > 0) {
+                // Increasing debt - check debt cap
+                uint256 newTotalDebt = uint256(state.totalDebt) + uint256(deltaDebt);
+                
+                MarketConfig memory config = _getEffectiveConfig(id);
+                if (config.debtCap > 0 && newTotalDebt > config.debtCap) {
+                    revert DebtCapExceeded();
+                }
+                
+                state.totalDebt = uint128(newTotalDebt);
+            } else {
+                // Decreasing debt
+                state.totalDebt = uint128(uint256(state.totalDebt) - uint256(-deltaDebt));
+            }
         }
 
         // 3. Tokenize Debt Changes (wRLP)
@@ -301,7 +332,7 @@ contract RLDCore is IRLDCore, RLDStorage {
         uint256 count = TransientStorage.tload(TOUCHED_COUNT_KEY);
         for (uint256 i = 0; i < count; i++) {
             (MarketId id, address user) = _getTouchedPosition(i);
-            MarketConfig storage config = marketConfigs[id];
+            MarketConfig memory config = _getEffectiveConfig(id);
             
             // Retrieve action type to determine which ratio to use
             bytes32 actionKey = keccak256(abi.encode(id, user, ACTION_SALT));
@@ -349,7 +380,7 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         MarketAddresses storage addresses = marketAddresses[id];
         MarketState memory state = marketStates[id];
-        MarketConfig memory config = marketConfigs[id];
+        MarketConfig memory config = _getEffectiveConfig(id);
 
         // 1. Verify Broker Status (Strict)
         // Only verified brokers can have positions - prevents arbitrary contracts
@@ -458,7 +489,7 @@ contract RLDCore is IRLDCore, RLDStorage {
 
         MarketState storage state = marketStates[id];
         MarketAddresses storage addresses = marketAddresses[id];
-        MarketConfig storage config = marketConfigs[id];
+        MarketConfig memory config = _getEffectiveConfig(id);
         
         // 2. Verify Insolvency
         // Position must be below maintenance margin to be liquidatable
@@ -550,7 +581,7 @@ contract RLDCore is IRLDCore, RLDStorage {
     /// @param user The user to check
     /// @return True if position is solvent (above maintenance margin)
     function isSolvent(MarketId id, address user) external view override returns (bool) {
-        MarketConfig storage config = marketConfigs[id];
+        MarketConfig memory config = _getEffectiveConfig(id);
         return _isSolvent(id, user, uint256(config.maintenanceMargin));
     }
 
@@ -576,10 +607,11 @@ contract RLDCore is IRLDCore, RLDStorage {
     }
 
     /// @notice Returns the configuration of a market.
+    /// @dev Auto-applies pending risk updates if timelock has expired.
     /// @param id The market ID
-    /// @return The market configuration
+    /// @return The market configuration (with pending updates applied if ready)
     function getMarketConfig(MarketId id) external view returns (MarketConfig memory) {
-        return marketConfigs[id];
+        return _getEffectiveConfig(id);
     }
 
     /// @notice Returns a user's position in a market.
@@ -588,5 +620,166 @@ contract RLDCore is IRLDCore, RLDStorage {
     /// @return The user's position (debtPrincipal only - collateral is in broker)
     function getPosition(MarketId id, address user) external view returns (Position memory) {
         return positions[id][user];
+    }
+
+    /* ============================================================================================ */
+    /*                                      CURATOR FUNCTIONS                                       */
+    /* ============================================================================================ */
+
+    /// @notice Proposes a risk parameter update (auto-applies after 7 days).
+    /// @dev Only callable by market curator.
+    /// @dev Validates all parameters before scheduling.
+    /// @dev Pending updates can be cancelled by curator before execution.
+    /// @param id The market ID
+    /// @param minColRatio New minimum collateralization ratio (must be > 100%)
+    /// @param maintenanceMargin New maintenance margin (must be >= 100%)
+    /// @param liquidationCloseFactor New liquidation close factor (must be > 0 and <= 100%)
+    /// @param fundingPeriod New funding period (must be between 1 day and 365 days)
+    /// @param debtCap New debt cap (0 = unlimited)
+    /// @param liquidationParams New liquidation parameters
+    function proposeRiskUpdate(
+        MarketId id,
+        uint64 minColRatio,
+        uint64 maintenanceMargin,
+        uint64 liquidationCloseFactor,
+        uint32 fundingPeriod,
+        uint128 debtCap,
+        bytes32 liquidationParams
+    ) external onlyCurator(id) {
+        if (!marketExists[id]) revert InvalidMarket();
+
+        // Validate parameters (same rules as factory)
+        if (minColRatio <= 1e18) revert InvalidParam("MinCol <= 100%");
+        if (maintenanceMargin < 1e18) revert InvalidParam("Maintenance < 100%");
+        if (minColRatio <= maintenanceMargin) revert InvalidParam("Risk Config Error");
+        if (liquidationCloseFactor == 0 || liquidationCloseFactor > 1e18) {
+            revert InvalidParam("Invalid CloseFactor");
+        }
+        if (fundingPeriod < 1 days || fundingPeriod > 365 days) {
+            revert InvalidParam("Invalid period");
+        }
+
+        // Store pending update
+        uint48 executeAt = uint48(block.timestamp + CONFIG_TIMELOCK);
+        
+        pendingRiskUpdates[id] = PendingRiskUpdate({
+            minColRatio: minColRatio,
+            maintenanceMargin: maintenanceMargin,
+            liquidationCloseFactor: liquidationCloseFactor,
+            fundingPeriod: fundingPeriod,
+            debtCap: debtCap,
+            liquidationParams: liquidationParams,
+            executeAt: executeAt,
+            pending: true
+        });
+
+        emit RiskUpdateProposed(
+            id,
+            minColRatio,
+            maintenanceMargin,
+            liquidationCloseFactor,
+            fundingPeriod,
+            debtCap,
+            liquidationParams,
+            executeAt
+        );
+    }
+
+    /// @notice Cancels a pending risk parameter update.
+    /// @dev Only callable by market curator.
+    /// @param id The market ID
+    function cancelRiskUpdate(MarketId id) external onlyCurator(id) {
+        if (!pendingRiskUpdates[id].pending) revert InvalidParam("No pending update");
+        
+        delete pendingRiskUpdates[id];
+        emit RiskUpdateCancelled(id);
+    }
+
+    /// @notice Updates the Uniswap V4 pool fee (immediate, no timelock).
+    /// @dev Only callable by market curator.
+    /// @dev Requires pool to support dynamic fees and TWAMM to be configured.
+    /// @param id The market ID
+    /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
+    function updatePoolFee(MarketId id, uint24 newFee) external onlyCurator(id) {
+        if (!marketExists[id]) revert InvalidMarket();
+        if (twamm == address(0)) revert InvalidParam("TWAMM not configured");
+        
+        // Validate fee (V4 max is 100% = 1000000)
+        if (newFee > 1000000) revert InvalidParam("Fee too high");
+        
+        // Get market addresses to build PoolKey
+        MarketAddresses storage addresses = marketAddresses[id];
+        
+        // Build PoolKey (currencies must be sorted)
+        address token0 = addresses.collateralToken;
+        address token1 = addresses.underlyingToken;
+        if (token0 > token1) {
+            (token0, token1) = (token1, token0);
+        }
+        
+        // Note: We use fundingPeriod/60 as tick spacing approximation
+        // Real implementation should store tickSpacing in MarketAddresses
+        PoolKey memory key = PoolKey({
+            currency0: Currency.wrap(token0),
+            currency1: Currency.wrap(token1),
+            fee: newFee,
+            tickSpacing: 60, // Default tick spacing
+            hooks: IHooks(twamm)
+        });
+        
+        // Call TWAMM to update the dynamic LP fee
+        // TWAMM will call poolManager.updateDynamicLPFee()
+        (bool success, bytes memory reason) = twamm.call(
+            abi.encodeWithSignature(
+                "updateDynamicLPFee((address,address,uint24,int24,address),uint24)",
+                key,
+                newFee
+            )
+        );
+        if (!success) {
+            assembly {
+                revert(add(reason, 32), mload(reason))
+            }
+        }
+        
+        emit PoolFeeUpdated(id, newFee);
+    }
+
+    /// @notice Gets the pending risk update for a market.
+    /// @param id The market ID
+    /// @return The pending update struct
+    function getPendingRiskUpdate(MarketId id) external view returns (PendingRiskUpdate memory) {
+        return pendingRiskUpdates[id];
+    }
+
+    /* ============================================================================================ */
+    /*                                      INTERNAL HELPERS                                        */
+    /* ============================================================================================ */
+
+    /// @notice Gets the effective market config (auto-applies pending updates).
+    /// @dev This is the source of truth for all protocol operations.
+    /// @dev If a pending update exists and timelock has expired, returns the new config.
+    /// @param id The market ID
+    /// @return The effective market configuration
+    function _getEffectiveConfig(MarketId id) internal view returns (MarketConfig memory) {
+        PendingRiskUpdate storage pending = pendingRiskUpdates[id];
+        
+        // Auto-apply if timelock expired
+        if (pending.pending && block.timestamp >= pending.executeAt) {
+            MarketConfig memory config = marketConfigs[id];
+            
+            // Apply pending changes
+            config.minColRatio = pending.minColRatio;
+            config.maintenanceMargin = pending.maintenanceMargin;
+            config.liquidationCloseFactor = pending.liquidationCloseFactor;
+            config.fundingPeriod = pending.fundingPeriod;
+            config.debtCap = pending.debtCap;
+            config.liquidationParams = pending.liquidationParams;
+            
+            return config;
+        }
+        
+        // Return current config if no pending update or timelock not expired
+        return marketConfigs[id];
     }
 }

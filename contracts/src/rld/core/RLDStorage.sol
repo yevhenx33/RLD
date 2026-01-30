@@ -66,6 +66,14 @@ abstract contract RLDStorage is IRLDCore {
     /// @dev Used for O(1) market existence checks instead of relying on address(0) sentinel.
     mapping(MarketId id => bool) public marketExists;
 
+    /// @notice Maps MarketId to pending risk parameter updates.
+    /// @dev Updates auto-apply after CONFIG_TIMELOCK (7 days) has elapsed.
+    mapping(MarketId id => PendingRiskUpdate) public pendingRiskUpdates;
+
+    /// @notice Timelock duration for risk parameter updates (7 days).
+    /// @dev After this period, pending updates automatically take effect.
+    uint256 public constant CONFIG_TIMELOCK = 7 days;
+
     /* ============================================================================================ */
     /*                                       TRANSIENT STORAGE                                      */
     /* ============================================================================================ */

@@ -62,10 +62,9 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
     function setUp() public {
         // Deploy infrastructure
         poolManager = new PoolManager(address(0));
-        core = new RLDCore();
         positionTokenImpl = createPositionTokenImpl();  // Use centralized helper
         primeBrokerImpl = new PrimeBroker(
-            address(core),
+            address(0),  // Core address will be set later
             address(0),
             address(0),
             address(0)
@@ -79,9 +78,9 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
         underlying = new MockERC20("USDC", "USDC", 6);
         collateral = new MockERC20("aUSDC", "aUSDC", 6);
         
-        // Deploy factory with valid params
+        // ATOMIC DEPLOYMENT PATTERN (CRITICAL-001 FIX)
+        // Step 1: Deploy factory with CORE = address(0)
         factory = new RLDMarketFactory(
-            address(core),
             address(poolManager),
             address(positionTokenImpl),
             address(primeBrokerImpl),
@@ -92,7 +91,11 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
             30 days     // Valid funding period
         );
         
-        core.setFactory(address(factory));
+        // Step 2: Deploy core with factory address (immutable)
+        core = new RLDCore(address(factory), address(poolManager), address(0));
+        
+        // Step 3: Initialize factory's CORE reference
+        factory.initializeCore(address(core));
     }
     
     // ============================================================================
@@ -301,7 +304,6 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
     function test_Revert_FundingPeriodTooLow() public {
         vm.expectRevert("Invalid period");
         new RLDMarketFactory(
-            address(core),
             address(poolManager),
             address(positionTokenImpl),
             address(primeBrokerImpl),
@@ -320,7 +322,6 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
     function test_Revert_FundingPeriodTooHigh() public {
         vm.expectRevert("Invalid period");
         new RLDMarketFactory(
-            address(core),
             address(poolManager),
             address(positionTokenImpl),
             address(primeBrokerImpl),
@@ -339,7 +340,6 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
     function test_FundingPeriodValid() public {
         // Test minimum (1 day)
         RLDMarketFactory factory1 = new RLDMarketFactory(
-            address(core),
             address(poolManager),
             address(positionTokenImpl),
             address(primeBrokerImpl),
@@ -353,7 +353,6 @@ contract RLDMarketFactoryTest is Test, GlobalTestConfig {
         
         // Test maximum (365 days)
         RLDMarketFactory factory2 = new RLDMarketFactory(
-            address(core),
             address(poolManager),
             address(positionTokenImpl),
             address(primeBrokerImpl),
