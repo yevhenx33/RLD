@@ -335,8 +335,14 @@ contract PrimeBroker is IPrimeBroker {
         // Delegate to TWAMM valuation module
         // Module calls hook.getCancelOrderState() to get refund + earnings values
         if (activeTwammOrder.orderId != bytes32(0)) {
-            bytes memory data = _encodeTwammData(activeTwammOrder);
-            totalValue += IValuationModule(TWAMM_MODULE).getValue(data);
+            // SECURITY: Verify order is still owned by this broker
+            // TWAMM orders are tied to orderKey.owner and cannot be transferred
+            // But we check defensively in case of edge cases
+            if (activeTwammOrder.orderKey.owner == address(this)) {
+                bytes memory data = _encodeTwammData(activeTwammOrder);
+                totalValue += IValuationModule(TWAMM_MODULE).getValue(data);
+            }
+            // If ownership check fails, order value = 0 (not counted)
         }
 
         // ┌─────────────────────────────────────────────────────────────────┐
@@ -345,8 +351,13 @@ contract PrimeBroker is IPrimeBroker {
         // Delegate to V4 valuation module
         // Module queries position liquidity and calculates token values
         if (activeTokenId != 0) {
-            bytes memory data = _encodeModuleData(activeTokenId);
-            totalValue += IValuationModule(V4_MODULE).getValue(data);
+            // SECURITY: Only count position if broker still owns it
+            // This prevents attack where user transfers NFT out after registering it
+            if (IERC721(POSM).ownerOf(activeTokenId) == address(this)) {
+                bytes memory data = _encodeModuleData(activeTokenId);
+                totalValue += IValuationModule(V4_MODULE).getValue(data);
+            }
+            // If ownership check fails, position value = 0 (not counted)
         }
     }
 
@@ -617,52 +628,108 @@ contract PrimeBroker is IPrimeBroker {
     /*                                    GENERIC EXECUTION                                        */
     /* ============================================================================================ */
 
-    /// @notice Executes an arbitrary call to an external contract
-    /// @dev The "Swiss Army Knife" of the broker - enables any DeFi interaction
+    /// @notice Executes an arbitrary call with Just-In-Time (JIT) approval pattern
+    /// @dev The "Swiss Army Knife" of the broker - enables any DeFi interaction with approval safety
     ///
-    /// ## How It Works
+    /// ## Security Model: Flash Approvals
     ///
-    /// 1. **Make the call** - target.call(data)
-    /// 2. **Emit event** - For off-chain tracking
-    /// 3. **Check solvency** - CRITICAL safety valve
+    /// This function implements a "flash approval" pattern inspired by EIP-1153 transient storage:
+    /// 1. **Grant** - Approve target for exact amount needed
+    /// 2. **Execute** - Perform the action
+    /// 3. **Revoke** - Force approval back to 0
+    /// 4. **Verify** - Check solvency
     ///
-    /// ## Safety Model
-    ///
-    /// The solvency check at the end is the broker's main protection:
-    /// - If the call drains collateral → revert "Action causes Insolvency"
-    /// - If the call swaps collateral for worthless tokens → revert
-    /// - If the call increases collateral → allowed
+    /// Approvals exist ONLY during the execution and are ALWAYS revoked, even if unused.
+    /// This prevents the Critical "Approval Drain" vulnerability where persistent approvals
+    /// could be exploited via transferFrom in a separate transaction.
     ///
     /// ## Example Uses
     ///
     /// ```solidity
-    /// // Swap on Uniswap
-    /// broker.execute(router, abi.encodeCall(Router.swap, (...)));
+    /// // Swap on Uniswap (needs approval)
+    /// broker.executeWithApproval(
+    ///     router, 
+    ///     abi.encodeCall(Router.swap, (...)),
+    ///     USDC,  // Token to approve
+    ///     1000e6 // Amount
+    /// );
     ///
-    /// // Provide liquidity on V4
-    /// broker.execute(posm, abi.encodeCall(POSM.mint, (...)));
-    ///
-    /// // Submit TWAMM order
-    /// broker.execute(twamm, abi.encodeCall(TWAMM.submitOrder, (...)));
-    ///
-    /// // Claim rewards
-    /// broker.execute(rewardContract, abi.encodeCall(Rewards.claim, (...)));
+    /// // Claim rewards (no approval needed)
+    /// broker.executeWithApproval(
+    ///     rewardContract, 
+    ///     abi.encodeCall(Rewards.claim, (...)),
+    ///     address(0), // No token
+    ///     0           // No amount
+    /// );
     /// ```
     ///
     /// @param target The contract address to call
     /// @param data The encoded function call data
-    function execute(address target, bytes calldata data) external onlyAuthorized {
-        // Step 1: Make the external call
+    /// @param approvalToken The token to approve (address(0) to skip approval)
+    /// @param approvalAmount The amount to approve (0 to skip approval)
+    function executeWithApproval(
+        address target, 
+        bytes calldata data,
+        address approvalToken,
+        uint256 approvalAmount
+    ) external onlyAuthorized {
+        // SECURITY: Prevent direct calls to token contracts
+        // Users must use the approval parameters to interact with tokens
+        // This prevents bypassing the JIT approval cleanup mechanism
+        require(
+            target != collateralToken &&
+            target != positionToken &&
+            target != underlyingToken,
+            "Use approval parameters for token interactions"
+        );
+        
+        // Step 1: Grant JIT Approval (if requested)
+        if (approvalToken != address(0) && approvalAmount > 0) {
+            ERC20(approvalToken).approve(target, approvalAmount);
+        }
+
+        // Step 2: Execute the external call
         (bool success, ) = target.call(data);
         require(success, "Interaction Failed");
 
-        // Step 2: Emit for off-chain indexing
+        // Step 3: Revoke Approval (force cleanup)
+        // This runs even if the target didn't use the full allowance
+        if (approvalToken != address(0) && approvalAmount > 0) {
+            ERC20(approvalToken).approve(target, 0);
+        }
+
+        // Step 4: Emit for off-chain indexing
         emit Execute(target, data);
 
-        // Step 3: CRITICAL SAFETY CHECK
+        // Step 5: CRITICAL SAFETY CHECK
         // If the interaction made the broker insolvent, the entire tx reverts
-        // This is the main protection against malicious/bad trades
         require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Action causes Insolvency");
+    }
+
+    /// @notice Executes multiple calls in a single transaction
+    /// @dev Standard multicall pattern - allows batching operations atomically
+    ///
+    /// ## Use Case: Leverage Looping
+    ///
+    /// ```solidity
+    /// bytes[] memory calls = new bytes[](4);
+    /// calls[0] = abi.encodeCall(modifyPosition, (marketId, 1000e6, 0));     // Deposit
+    /// calls[1] = abi.encodeCall(modifyPosition, (marketId, 0, 500e18));     // Borrow
+    /// calls[2] = abi.encodeCall(executeWithApproval, (router, swapData, wRLP, 500e18)); // Swap
+    /// calls[3] = abi.encodeCall(modifyPosition, (marketId, 500e6, 0));      // Re-deposit
+    /// broker.multicall(calls);
+    /// ```
+    ///
+    /// @param data Array of encoded function calls to this contract
+    /// @return results Array of return data from each call
+    function multicall(bytes[] calldata data) external returns (bytes[] memory results) {
+        results = new bytes[](data.length);
+        for (uint256 i = 0; i < data.length; i++) {
+            // Use delegatecall to preserve msg.sender and execute in this contract's context
+            (bool success, bytes memory result) = address(this).delegatecall(data[i]);
+            require(success, "Multicall: call failed");
+            results[i] = result;
+        }
     }
     
     /* ============================================================================================ */
@@ -735,6 +802,37 @@ contract PrimeBroker is IPrimeBroker {
     }
 
     /* ============================================================================================ */
+    /*                                    TOKEN WITHDRAWALS                                        */
+    /* ============================================================================================ */
+
+    /// @notice Withdraws collateral token to a specified recipient
+    /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
+    /// @param recipient The address to receive the tokens
+    /// @param amount The amount to withdraw
+    function withdrawCollateral(address recipient, uint256 amount) external onlyAuthorized {
+        ERC20(collateralToken).safeTransfer(recipient, amount);
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after withdrawal");
+    }
+
+    /// @notice Withdraws position token (wRLP) to a specified recipient
+    /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
+    /// @param recipient The address to receive the tokens
+    /// @param amount The amount to withdraw
+    function withdrawPositionToken(address recipient, uint256 amount) external onlyAuthorized {
+        ERC20(positionToken).safeTransfer(recipient, amount);
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after withdrawal");
+    }
+
+    /// @notice Withdraws underlying token to a specified recipient
+    /// @dev Bypasses the executeWithApproval blacklist for legitimate withdrawals
+    /// @param recipient The address to receive the tokens
+    /// @param amount The amount to withdraw
+    function withdrawUnderlying(address recipient, uint256 amount) external onlyAuthorized {
+        ERC20(underlyingToken).safeTransfer(recipient, amount);
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "Insolvent after withdrawal");
+    }
+
+    /* ============================================================================================ */
     /*                                    INTERNAL HELPERS                                         */
     /* ============================================================================================ */
 
@@ -768,12 +866,6 @@ contract PrimeBroker is IPrimeBroker {
     function _getOraclePrice(address quote, address base) internal view returns (uint256) {
         return ISpotOracle(rateOracle).getSpotPrice(quote, base);
     }
-
-    /* ============================================================================================ */
-    /*                                  BOND METADATA REMOVED                                      */
-    /* ============================================================================================ */
-    // Metadata storage removed to prevent trust issues.
-    // Bond information should be verified dynamically from chain state.
 
     /* ============================================================================================ */
     /*                                   OPERATOR MANAGEMENT                                       */

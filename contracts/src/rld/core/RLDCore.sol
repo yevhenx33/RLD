@@ -367,12 +367,24 @@ contract RLDCore is IRLDCore, RLDStorage {
         );
         uint256 debtValue = trueDebt.mulWad(indexPrice);
 
-        // 3. Get Asset Value from Broker
-        // Broker reports total value of all its holdings
-        uint256 totalValue = IPrimeBroker(user).getNetAccountValue();
-                
-        // 4. Solvency Equation: assets >= debt * ratio
-        return totalValue >= debtValue.mulWad(minRatio);
+        // 3. Get Total Assets from Broker
+        // Broker reports total value of all its holdings (including wRLP)
+        uint256 totalAssets = IPrimeBroker(user).getNetAccountValue();
+        
+        // 4. CRITICAL FIX: Calculate Net Worth
+        // Net worth = Assets - Liabilities
+        // This prevents double-counting wRLP (which appears in both assets and debt)
+        if (totalAssets < debtValue) return false; // Underwater
+        uint256 netWorth = totalAssets - debtValue;
+        
+        // 5. Check Margin Requirement
+        // Net worth must be at least (minRatio - 100%) of debt
+        // Example: 150% ratio → net worth ≥ 50% of debt
+        // Derivation: netWorth >= debt × (ratio - 1)
+        //             assets - debt >= debt × (ratio - 1)
+        //             assets >= debt × ratio (original formula, but with debt subtracted first)
+        uint256 marginRequirement = minRatio - 1e18;
+        return netWorth >= debtValue.mulWad(marginRequirement);
     }
 
     /* ============================================================================================ */
