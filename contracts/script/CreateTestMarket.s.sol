@@ -12,19 +12,19 @@ import {MarketId} from "../src/shared/interfaces/IRLDCore.sol";
  * @notice Creates a test aUSDC market and queries its data
  */
 contract CreateTestMarket is Script {
-    // Deployed protocol addresses
-    address constant CORE = 0x6B5CF024365D5d5d0786673780CA7E3F07f85B63;
-    address constant FACTORY = 0xAaC7D4A36DAb95955ef3c641c23F1fA46416CF71;
+    // Deployed protocol addresses (updated for block 24335184 fork)
+    address constant CORE = 0x62e5c8AA289a610bd16d38fF49e46B038623B29f;
+    address constant FACTORY = 0x11d51B9bec07CdCB55E845E14BB9784C11D8A6AC;
     
     // Mainnet addresses
     address constant AAVE_V3_POOL = 0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2;
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address constant AUSDC = 0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c;
     
-    // Deployed modules
-    address constant LIQUIDATION_MODULE = 0x01D4648B896F53183d652C02619c226727477C82;
-    address constant V4_ORACLE = 0xf4fa0d1C10c47cDe9F65D56c3eC977CbEb13449A;
-    address constant AAVE_ORACLE = 0xA343B1FC2897b8C49A72A9A0B2675cB9c7664e8c;
+    // Deployed modules (updated for block 24335184 fork)
+    address constant LIQUIDATION_MODULE = 0xFc02907822F655e06C0d3a28a634D18D9c2a5b90;
+    address constant V4_ORACLE = 0xa3ce5424489ed5D8cff238009c61ab48Ef852F6D;
+    address constant AAVE_ORACLE = 0x475102156b26305510F56234C6c9D21130FCFC4a;
     
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
@@ -42,21 +42,21 @@ contract CreateTestMarket is Script {
         // Create market params
         RLDMarketFactory.DeployParams memory params = RLDMarketFactory.DeployParams({
             underlyingPool: AAVE_V3_POOL,
-            underlyingToken: AUSDC,
-            collateralToken: USDC,
+            underlyingToken: USDC,
+            collateralToken: AUSDC,
             curator: deployer,
             positionTokenName: "Wrapped RLD LP aUSDC",
-            positionTokenSymbol: "wRLP-aUSDC",
-            minColRatio: 1.25e18,         // 125% min collateral ratio
+            positionTokenSymbol: "wRLPaUSDC",
+            minColRatio: 1.5e18,         // 125% min collateral ratio
             maintenanceMargin: 1.1e18,     // 110% maintenance margin
             liquidationCloseFactor: 0.5e18, // 50% max liquidation per call
             liquidationModule: LIQUIDATION_MODULE,
             liquidationParams: bytes32(0),
-            spotOracle: V4_ORACLE,
-            rateOracle: AAVE_ORACLE,
+            spotOracle: address(0),
+            rateOracle: AAVE_ORACLE, // index
             oraclePeriod: 1 hours,
-            poolFee: 3000,     // 0.3% fee
-            tickSpacing: 60
+            poolFee: 500,     // 0.05% fee
+            tickSpacing: 5
         });
         
         // Create the market

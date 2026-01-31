@@ -278,6 +278,53 @@ const SimulationDetail = () => {
           />
         </div>
 
+        {/* Price Feed Section */}
+        {data.prices && (
+          <div className="mb-8 p-6 border border-white/10 bg-gradient-to-r from-cyan-900/10 to-purple-900/10">
+            <div className="flex items-center gap-2 text-xs text-gray-500 uppercase tracking-widest mb-4">
+              <Activity size={12} className="text-cyan-400" />
+              Live Oracle Prices
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Index Price */}
+              <div className="flex items-center justify-between p-4 bg-black/30 border border-cyan-500/20">
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">
+                    Index Price
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    Rate Oracle (K=100 × Aave Rate)
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-light text-cyan-400 font-mono">
+                    {data.prices.index_price_display}
+                  </div>
+                  <div className="text-[10px] text-gray-600">per RLD paper</div>
+                </div>
+              </div>
+
+              {/* Mark Price */}
+              <div className="flex items-center justify-between p-4 bg-black/30 border border-purple-500/20">
+                <div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-1">
+                    Mark Price
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    From Spot Oracle (Pool TWAP)
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-light text-purple-400 font-mono">
+                    {data.prices.mark_price_display}
+                  </div>
+                  <div className="text-[10px] text-gray-600">pool TWAP</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Grid Layout */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           {/* Panel 1: Live Market State */}

@@ -124,7 +124,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         if (addresses.collateralToken == address(0)) revert InvalidParam("Collateral");
         if (addresses.underlyingToken == address(0)) revert InvalidParam("Underlying");
         if (addresses.rateOracle == address(0)) revert InvalidParam("Rate Oracle");
-        if (addresses.spotOracle == address(0)) revert InvalidParam("Spot Oracle");
+        //if (addresses.spotOracle == address(0)) revert InvalidParam("Spot Oracle");
         if (addresses.fundingModel == address(0)) revert InvalidParam("Funding");
         if (addresses.positionToken == address(0)) revert InvalidParam("Position Token");
         if (addresses.liquidationModule == address(0)) revert InvalidParam("LiqModule");

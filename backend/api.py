@@ -754,6 +754,57 @@ def get_simulation_detail_enriched(market_id: str):
             from datetime import datetime
             last_update_display = datetime.utcfromtimestamp(state_last_update).strftime('%Y-%m-%d %H:%M:%S UTC')
         
+        # Fetch live prices from oracles
+        prices = {
+            "index_price": None,
+            "index_price_display": "—",
+            "mark_price": None,
+            "mark_price_display": "—",
+            "price_error": None
+        }
+        
+        try:
+            # Minimal ABI for oracle price calls
+            rate_oracle_abi = [{"inputs":[{"name":"underlyingPool","type":"address"},{"name":"underlyingToken","type":"address"}],"name":"getIndexPrice","outputs":[{"name":"indexPrice","type":"uint256"}],"stateMutability":"view","type":"function"}]
+            spot_oracle_abi = [{"inputs":[{"name":"collateralToken","type":"address"},{"name":"underlyingToken","type":"address"}],"name":"getSpotPrice","outputs":[{"name":"price","type":"uint256"}],"stateMutability":"view","type":"function"}]
+            
+            # Fetch index price from rate oracle
+            rate_oracle_addr = market.get('rate_oracle')
+            underlying_pool = market.get('underlying_pool')
+            underlying_token = market.get('underlying_token')
+            
+            if rate_oracle_addr and underlying_pool and underlying_token:
+                rate_oracle = w3.eth.contract(address=rate_oracle_addr, abi=rate_oracle_abi)
+                try:
+                    index_price_raw = rate_oracle.functions.getIndexPrice(underlying_pool, underlying_token).call()
+                    prices["index_price"] = str(index_price_raw)
+                    # Index price is in WAD (1e18) representing dollar price
+                    # Per RLD paper: K=100, so 5% rate = $5.00 price
+                    # MIN_PRICE floor = 1e14 = $0.0001
+                    index_price_dollars = index_price_raw / 1e18
+                    prices["index_price_display"] = f"${index_price_dollars:.4f}"
+                except Exception as e:
+                    logging.warning(f"Failed to fetch index price: {e}")
+            
+            # Fetch mark/spot price from spot oracle
+            spot_oracle_addr = market.get('spot_oracle')
+            collateral_token = market.get('collateral_token')
+            
+            if spot_oracle_addr and collateral_token and underlying_token:
+                spot_oracle = w3.eth.contract(address=spot_oracle_addr, abi=spot_oracle_abi)
+                try:
+                    mark_price_raw = spot_oracle.functions.getSpotPrice(collateral_token, underlying_token).call()
+                    prices["mark_price"] = str(mark_price_raw)
+                    # Mark price is in WAD (1e18)
+                    mark_price_display = mark_price_raw / 1e18
+                    prices["mark_price_display"] = f"{mark_price_display:.6f}"
+                except Exception as e:
+                    logging.warning(f"Failed to fetch mark price: {e}")
+                    
+        except Exception as e:
+            prices["price_error"] = str(e)
+            logging.warning(f"Oracle price fetch error: {e}")
+        
         response = {
             "market_id": market_id,
             "tx_hash": market.get('tx_hash'),
@@ -784,6 +835,9 @@ def get_simulation_detail_enriched(market_id: str):
                 "last_update_timestamp": state_last_update,
                 "block_number": market.get('state_block')
             },
+            
+            # Live Prices from Oracles
+            "prices": prices,
             
             # Risk Parameters
             "risk_params": {

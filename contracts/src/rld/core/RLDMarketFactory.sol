@@ -370,7 +370,7 @@ contract RLDMarketFactory is ReentrancyGuard {
         require(params.underlyingToken != address(0), "Invalid Underlying");
         require(params.collateralToken != address(0), "Invalid Collateral");
         require(params.liquidationModule != address(0), "Invalid LiqModule");
-        require(params.spotOracle != address(0), "Invalid SpotOracle");
+        //require(params.spotOracle != address(0), "Invalid SpotOracle");
         require(params.rateOracle != address(0), "Invalid RateOracle");
         
         // Risk Parameter Logic Checks
