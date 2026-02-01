@@ -38,7 +38,7 @@ echo ""
 # =============================================================================
 # Step 1: Kill existing processes
 # =============================================================================
-echo -e "${CYAN}[1/8] Stopping existing processes...${NC}"
+echo -e "${CYAN}[1/9] Stopping existing processes...${NC}"
 
 pkill -9 -f anvil 2>/dev/null || true
 pkill -f "uvicorn api:app" 2>/dev/null || true
@@ -48,7 +48,7 @@ echo -e "${GREEN}✓ Processes stopped${NC}"
 # =============================================================================
 # Step 2: Start Anvil Fork
 # =============================================================================
-echo -e "${CYAN}[2/8] Starting Anvil fork on block $FORK_BLOCK...${NC}"
+echo -e "${CYAN}[2/9] Starting Anvil fork on block $FORK_BLOCK...${NC}"
 
 cd "$CONTRACTS_DIR"
 source .env
@@ -81,7 +81,7 @@ echo -e "${GREEN}✓ Anvil running on block $BLOCK_DEC${NC}"
 # =============================================================================
 # Step 3: Deploy Protocol
 # =============================================================================
-echo -e "${CYAN}[3/8] Deploying RLD Protocol contracts...${NC}"
+echo -e "${CYAN}[3/9] Deploying RLD Protocol contracts...${NC}"
 
 cd "$CONTRACTS_DIR"
 forge script script/DeployRLDFull.s.sol:DeployRLDFull \
@@ -103,7 +103,7 @@ echo "  RLDAaveOracle: $AAVE_ORACLE"
 # =============================================================================
 # Step 4: Create Test Market
 # =============================================================================
-echo -e "${CYAN}[4/8] Creating test market...${NC}"
+echo -e "${CYAN}[4/9] Creating test market...${NC}"
 
 cd "$CONTRACTS_DIR"
 forge script script/CreateTestMarket.s.sol:CreateTestMarket \
@@ -118,7 +118,7 @@ echo -e "${GREEN}✓ Test market created${NC}"
 # =============================================================================
 # Step 5: Extract Market ID
 # =============================================================================
-echo -e "${CYAN}[5/8] Extracting Market ID...${NC}"
+echo -e "${CYAN}[5/9] Extracting Market ID...${NC}"
 
 MARKET_ID=$(python3 << EOF
 from web3 import Web3
@@ -143,7 +143,7 @@ echo -e "${GREEN}✓ Market ID: $MARKET_ID${NC}"
 # =============================================================================
 # Step 6: Clean Databases
 # =============================================================================
-echo -e "${CYAN}[6/8] Cleaning databases...${NC}"
+echo -e "${CYAN}[6/9] Cleaning databases...${NC}"
 
 cd "$BACKEND_DIR"
 python3 << 'EOF'
@@ -165,7 +165,7 @@ echo -e "${GREEN}✓ Databases cleaned${NC}"
 # =============================================================================
 # Step 7: Start Backend
 # =============================================================================
-echo -e "${CYAN}[7/8] Starting backend API...${NC}"
+echo -e "${CYAN}[7/9] Starting backend API...${NC}"
 
 cd "$BACKEND_DIR"
 uvicorn api:app --host 0.0.0.0 --port 8000 --reload > /tmp/backend.log 2>&1 &
@@ -186,7 +186,7 @@ echo -e "${GREEN}✓ Backend running${NC}"
 # =============================================================================
 # Step 8: Register Market
 # =============================================================================
-echo -e "${CYAN}[8/8] Registering market with indexer...${NC}"
+echo -e "${CYAN}[8/9] Registering market with indexer...${NC}"
 
 sleep 2
 REGISTER_RESULT=$(curl -s -X POST "http://localhost:8000/market/register?market_id=$MARKET_ID")
@@ -199,6 +199,40 @@ MARKET_SYMBOL=$(echo "$MARKET_DATA" | python3 -c "import sys,json; print(json.lo
 INDEX_PRICE=$(echo "$MARKET_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('prices', {}).get('index_price_display', 'N/A'))")
 
 echo -e "${GREEN}✓ Market registered${NC}"
+
+# =============================================================================
+# Step 9: Check and Start Frontend
+# =============================================================================
+echo -e "${CYAN}[9/9] Checking frontend...${NC}"
+
+# Check if frontend is already running
+if curl -s http://localhost:5173 > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Frontend already running at http://localhost:5173${NC}"
+    FRONTEND_STATUS="already running"
+else
+    echo "  Frontend not running. Starting..." 
+    cd "$FRONTEND_DIR"
+    npm run dev > /tmp/frontend.log 2>&1 &
+    FRONTEND_PID=$!
+    echo "  Frontend PID: $FRONTEND_PID"
+    
+    # Wait for frontend to be ready
+    echo "  Waiting for frontend to initialize..."
+    for i in {1..30}; do
+        if curl -s http://localhost:5173 > /dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    
+    if curl -s http://localhost:5173 > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ Frontend started at http://localhost:5173${NC}"
+        FRONTEND_STATUS="started"
+    else
+        echo -e "${YELLOW}⚠ Frontend may still be initializing...${NC}"
+        FRONTEND_STATUS="starting"
+    fi
+fi
 
 # =============================================================================
 # Summary
@@ -215,11 +249,12 @@ echo -e "  ${GREEN}Fork Block:${NC}   $FORK_BLOCK"
 echo ""
 echo -e "  ${CYAN}Anvil:${NC}    http://localhost:8545"
 echo -e "  ${CYAN}Backend:${NC}  http://localhost:8000"
-echo -e "  ${CYAN}Frontend:${NC} http://localhost:5173 (run: cd frontend && npm run dev)"
+echo -e "  ${CYAN}Frontend:${NC} http://localhost:5173 ($FRONTEND_STATUS)"
 echo ""
 echo -e "  ${YELLOW}Logs:${NC}"
 echo -e "    Anvil:   tail -f $RLD_ROOT/anvil.log"
-echo -e "    Backend: tail -f /tmp/backend.log"
+echo -e "    Backend:  tail -f /tmp/backend.log"
+echo -e "    Frontend: tail -f /tmp/frontend.log"
 echo ""
 
 # Save deployment info

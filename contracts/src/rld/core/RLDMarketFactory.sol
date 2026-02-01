@@ -508,9 +508,10 @@ contract RLDMarketFactory is ReentrancyGuard {
 
         // Step 2: Fetch index price from oracle
         // Returns price in WAD: how many collateral tokens per 1 wRLP
+        // NOTE: Use underlyingToken (e.g., USDC) for Aave rate lookup, not collateralToken (aUSDC)
         uint256 indexPrice = IRLDOracle(params.rateOracle).getIndexPrice(
             params.underlyingPool, 
-            params.collateralToken
+            params.underlyingToken
         );
         
         // Validate oracle price matches TWAMM bounds

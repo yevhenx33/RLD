@@ -376,7 +376,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         // Example: 100 wRLP @ $2000/wRLP = $200,000 value
         uint256 wRLPBalance = ERC20(positionToken).balanceOf(address(this));
         if (wRLPBalance > 0) {
-            uint256 indexPrice = IRLDOracle(rateOracle).getIndexPrice(underlyingPool, collateralToken);
+            uint256 indexPrice = IRLDOracle(rateOracle).getIndexPrice(underlyingPool, underlyingToken);
             totalValue += FixedPointMathLib.mulWadDown(wRLPBalance, indexPrice);
         }
 

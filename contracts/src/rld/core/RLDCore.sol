@@ -410,7 +410,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         // Get price in collateral terms
         uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
             addresses.underlyingPool, 
-            addresses.collateralToken
+            addresses.underlyingToken
         );
         uint256 debtValue = trueDebt.mulWad(indexPrice);
 
