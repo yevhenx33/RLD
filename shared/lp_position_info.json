@@ -1,0 +1,10 @@
+{
+  "broker": "0x1ca127462ecb1f027b086c2f38b526ffee622b84",
+  "position_token": "0xfc7045175e14d22b064657e7a5a0382f9081e90b",
+  "deployer_wrlp": 200000,
+  "deployer_ausdc": 100086,
+  "market_id": "0x6b63870a1260fcb989a7459c5e537d9f8a1f76890dd88927f105de03d513b33c",
+  "twamm_hook": "0x7e0C07EEabb2459D70dba5b8d100Dca44c652aC0",
+  "v4_position_manager": "0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e",
+  "created_at": "2026-02-01T21:02:57Z"
+}

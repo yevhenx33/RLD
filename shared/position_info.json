@@ -1,0 +1,8 @@
+{
+  "broker": "0x7b2faf5a8e684ee7b83702b32d84607a33a45f76",
+  "collateral_ausdc": 5000043,
+  "debt_wrlp": 100000,
+  "nav_usdc": 5477560,
+  "market_id": "0x6b63870a1260fcb989a7459c5e537d9f8a1f76890dd88927f105de03d513b33c",
+  "created_at": "2026-02-01T20:50:18Z"
+}

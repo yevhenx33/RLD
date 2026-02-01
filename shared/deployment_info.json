@@ -1,12 +1,12 @@
 {
-  "fork_block": 24335184,
+  "fork_block": 24363333,
   "market_id": "0x6b63870a1260fcb989a7459c5e537d9f8a1f76890dd88927f105de03d513b33c",
-  "market_symbol": "wRLPaUSDC",
-  "index_price": "$4.9051",
+  "market_symbol": "Unknown",
+  "index_price": "N/A",
   "contracts": {
-    "RLDCore": "0x62e5c8aa289a610bd16d38ff49e46b038623b29f",
-    "RLDMarketFactory": "0x11d51b9bec07cdcb55e845e14bb9784c11d8a6ac",
-    "RLDAaveOracle": "0x475102156b26305510f56234c6c9d21130fcfc4a"
+    "RLDCore": "0x766542304e16e3585d569705b0eff4756efa6cac",
+    "RLDMarketFactory": "0xbf7877ccb45f6d792c581fcbdd1150cad486b284",
+    "RLDAaveOracle": "0x62e5c8aa289a610bd16d38ff49e46b038623b29f"
   },
-  "deployed_at": "2026-02-01T12:50:13Z"
+  "deployed_at": "2026-02-01T21:02:29Z"
 }
