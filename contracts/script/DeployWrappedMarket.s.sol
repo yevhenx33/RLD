@@ -24,7 +24,18 @@ contract DeployWrappedMarket is Script {
         address coreAddr = vm.parseJsonAddress(json, ".RLDCore");
         address factoryAddr = vm.parseJsonAddress(json, ".RLDMarketFactory");
         address liqModule = vm.parseJsonAddress(json, ".DutchLiquidationModule");
-        address aaveOracle = vm.parseJsonAddress(json, ".RLDAaveOracle");
+        
+        // Check if using mock oracle (for testnet with live rate sync)
+        bool useMockOracle = vm.envOr("USE_MOCK_ORACLE", false);
+        address rateOracle;
+        
+        if (useMockOracle) {
+            rateOracle = vm.envAddress("MOCK_ORACLE");
+            console.log("Using MockRLDAaveOracle:", rateOracle);
+        } else {
+            rateOracle = vm.parseJsonAddress(json, ".RLDAaveOracle");
+            console.log("Using RLDAaveOracle:", rateOracle);
+        }
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
@@ -62,7 +73,7 @@ contract DeployWrappedMarket is Script {
             liquidationModule: liqModule,
             liquidationParams: bytes32(0),
             spotOracle: address(0),
-            rateOracle: aaveOracle,
+            rateOracle: rateOracle,
             oraclePeriod: 1 hours,
             poolFee: 500,
             tickSpacing: 5

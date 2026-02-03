@@ -1,11 +1,12 @@
 {
-  "waUSDC": "0x2fe19128A8257182fdD77f90eA96D27cA342897A",
+  "waUSDC": "0xb9b0c96e4E7181926D2A7ed331C9C346dfa59b4D",
   "positionToken": "0xcF6c6272E9e353fc1F3e9A747A7B7AADE3c83389",
   "brokerFactory": "0x67eCFe4852561DF7a0D8869B06A0F82DBC655033",
-  "marketId": "0x12bd6ec818ecae6e8571bb097586328e1649ec9a036bc6a558f4dacb423e447c",
-  "token0": "0x2fe19128A8257182fdD77f90eA96D27cA342897A",
+  "marketId": "0x70db8689167d00ff0aff0b256f18ef17964d4d61d637c4387a3889dee4e5ed05",
+  "mockOracle": "0x2fe19128A8257182fdD77f90eA96D27cA342897A",
+  "token0": "0xb9b0c96e4E7181926D2A7ed331C9C346dfa59b4D",
   "token1": "0xcF6c6272E9e353fc1F3e9A747A7B7AADE3c83389",
   "zeroForOneLong": true,
-  "deployedAt": "2026-02-02T19:52:25Z",
-  "network": "mainnet-fork"
+  "deployedAt": "2026-02-03T15:38:09Z",
+  "network": "mainnet-fork-mock"
 }

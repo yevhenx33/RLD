@@ -470,6 +470,16 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         state.lastUpdateTimestamp = uint48(block.timestamp);
     }
 
+    /// @notice External wrapper to apply funding for testing purposes.
+    /// @dev TODO: REMOVE BEFORE PRODUCTION - This is only for testnet debugging.
+    /// @dev In production, funding is applied lazily during modifyPosition/liquidate.
+    /// @param id The market ID to apply funding for
+    function applyFunding(MarketId id) external {
+        require(marketExists[id], "Market does not exist");
+        _applyFunding(id);
+    }
+
+
     /// @notice Applies a signed delta to a value with underflow protection.
     /// @dev Used for adjusting collateral and debt values.
     /// @param start The starting value

@@ -25,3 +25,6 @@ backups/
 **/*.db
 **/*.db-shm
 **/*.db-wal
+
+# Forge broadcast artifacts
+contracts/broadcast/

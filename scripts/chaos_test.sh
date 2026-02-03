@@ -37,9 +37,10 @@ echo "  ⏰ Time warps: 1-60s per swap"
 echo ""
 
 # Fund trader generously for chaos
-WAUSDC_BAL=$(cast call --rpc-url "$RPC_URL" "$WAUSDC" 'balanceOf(address)(uint256)' "$USER_B_ADDRESS" | awk '{print $1}')
+WAUSDC_BAL=$(cast call --rpc-url "$RPC_URL" "$WAUSDC" 'balanceOf(address)(uint256)' "$USER_B_ADDRESS" 2>/dev/null | awk '{print $1}' || echo "0")
+WAUSDC_BAL=${WAUSDC_BAL:-0}
 
-if [ "$WAUSDC_BAL" -lt "50000000000" ]; then
+if [ "$WAUSDC_BAL" -lt "50000000000" ] 2>/dev/null || [ "$WAUSDC_BAL" = "0" ]; then
     echo -e "${YELLOW}Funding trader heavily for chaos...${NC}"
     
     USDC="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
