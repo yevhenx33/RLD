@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Terminal,
   Activity,
@@ -22,6 +22,7 @@ import {
   ChevronDown,
   AlertCircle,
 } from "lucide-react";
+import RLDPerformanceChart from "./RLDChart";
 
 // API base URL
 const INDEXER_API = import.meta.env.VITE_INDEXER_API || "http://localhost:8080";
@@ -209,163 +210,8 @@ const FundingDisplay = ({ indexPrice, markPrice }) => {
 };
 
 /**
- * Price Chart Component
+ * Price Chart Component - REMOVED: Now using RLDPerformanceChart
  */
-const PriceChart = ({ chartData }) => {
-  if (!chartData || chartData.length < 2) {
-    return (
-      <div className="h-[200px] flex items-center justify-center text-gray-600">
-        <div className="text-center">
-          <BarChart3 size={32} className="mx-auto mb-3 opacity-30" />
-          <div className="text-[11px] uppercase tracking-widest">
-            Collecting price history...
-          </div>
-          <div className="text-[10px] text-gray-700 mt-1">
-            Data appears after multiple blocks
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const indexPrices = chartData.map((d) => d.index_price || 0);
-  const markPrices = chartData.map((d) => d.mark_price || d.index_price || 0);
-  const allPrices = [...indexPrices, ...markPrices].filter((p) => p > 0);
-  const minPrice = Math.min(...allPrices) * 0.999;
-  const maxPrice = Math.max(...allPrices) * 1.001;
-  const range = maxPrice - minPrice || 0.01;
-  const height = 180;
-  const width = 500;
-
-  const indexPoints = chartData
-    .map((d, i) => {
-      const x = (i / (chartData.length - 1)) * width;
-      const y = height - ((d.index_price - minPrice) / range) * height;
-      return `${x},${y}`;
-    })
-    .join(" ");
-
-  const markPoints = chartData
-    .map((d, i) => {
-      const x = (i / (chartData.length - 1)) * width;
-      const price = d.mark_price || d.index_price;
-      const y = height - ((price - minPrice) / range) * height;
-      return `${x},${y}`;
-    })
-    .join(" ");
-
-  // Get time range
-  const firstTime = chartData[0]?.timestamp;
-  const lastTime = chartData[chartData.length - 1]?.timestamp;
-  const timeRange =
-    firstTime && lastTime
-      ? `${new Date(firstTime * 1000).toLocaleTimeString()} — ${new Date(lastTime * 1000).toLocaleTimeString()}`
-      : "";
-
-  return (
-    <div className="p-5">
-      <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-6 text-[10px]">
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-0.5 bg-cyan-400"></div>
-            <span className="text-gray-400 uppercase tracking-wider">
-              Index Price
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-0.5 bg-purple-400"></div>
-            <span className="text-gray-400 uppercase tracking-wider">
-              Mark Price
-            </span>
-          </div>
-        </div>
-        <div className="text-[10px] text-gray-600 font-mono">{timeRange}</div>
-      </div>
-
-      <div className="relative">
-        {/* Y-axis labels */}
-        <div className="absolute left-0 top-0 h-full flex flex-col justify-between text-[9px] text-gray-600 font-mono -ml-12 w-10 text-right">
-          <span>${maxPrice.toFixed(2)}</span>
-          <span>${((maxPrice + minPrice) / 2).toFixed(2)}</span>
-          <span>${minPrice.toFixed(2)}</span>
-        </div>
-
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
-          className="w-full h-[180px] ml-2"
-          preserveAspectRatio="none"
-        >
-          {/* Grid lines */}
-          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => (
-            <line
-              key={i}
-              x1="0"
-              y1={height * pct}
-              x2={width}
-              y2={height * pct}
-              stroke="rgba(255,255,255,0.03)"
-              strokeWidth="1"
-            />
-          ))}
-
-          {/* Mark price area fill */}
-          <polygon
-            points={`0,${height} ${markPoints} ${width},${height}`}
-            fill="url(#markGradient)"
-            opacity="0.3"
-          />
-
-          {/* Index price area fill */}
-          <polygon
-            points={`0,${height} ${indexPoints} ${width},${height}`}
-            fill="url(#indexGradient)"
-            opacity="0.2"
-          />
-
-          {/* Gradients */}
-          <defs>
-            <linearGradient id="indexGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.3" />
-              <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
-            </linearGradient>
-            <linearGradient id="markGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#a855f7" stopOpacity="0.3" />
-              <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-
-          {/* Mark price line */}
-          <polyline
-            points={markPoints}
-            fill="none"
-            stroke="#a855f7"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-
-          {/* Index price line */}
-          <polyline
-            points={indexPoints}
-            fill="none"
-            stroke="#22d3ee"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </div>
-
-      <div className="flex justify-between text-[10px] text-gray-600 mt-3 ml-2">
-        <span>{chartData.length} data points</span>
-        <span>
-          Block #{chartData[0]?.block_number?.toLocaleString()} → #
-          {chartData[chartData.length - 1]?.block_number?.toLocaleString()}
-        </span>
-      </div>
-    </div>
-  );
-};
 
 /**
  * Pool Metrics Panel - Human Readable
@@ -521,7 +367,7 @@ const LiveSimulation = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
+    const interval = setInterval(fetchData, 12000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -542,6 +388,34 @@ const LiveSimulation = () => {
     : 1;
   const accruedInterest = (1 - nfDecimal) * 100;
 
+  // Transform chart data for RLDPerformanceChart
+  // Note: /api/chart/price already returns formatted values (not raw wei)
+  // Filter out corrupted data where mark_price is obviously wrong (> $1000)
+  const transformedChartData = useMemo(() => {
+    if (!chartData || chartData.length === 0) return [];
+    return chartData
+      .filter((d) => d.index_price && d.index_price > 0)
+      .map((d) => {
+        // Validate mark_price - if it's absurdly high (> 1000), use index_price as fallback
+        const validMarkPrice =
+          d.mark_price && d.mark_price < 1000 ? d.mark_price : d.index_price;
+        return {
+          timestamp: d.timestamp,
+          indexPrice: d.index_price,
+          markPrice: validMarkPrice || d.index_price || 0,
+        };
+      });
+  }, [chartData]);
+
+  // Chart areas configuration
+  const chartAreas = useMemo(
+    () => [
+      { key: "indexPrice", color: "#22d3ee", name: "Index Price" },
+      { key: "markPrice", color: "#a855f7", name: "Mark Price" },
+    ],
+    [],
+  );
+
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono selection:bg-pink-500/30 selection:text-white">
       <div className="max-w-[1600px] mx-auto px-8 py-12">
@@ -551,10 +425,10 @@ const LiveSimulation = () => {
             <div>
               <div className="flex items-center gap-3 text-gray-500 text-[10px] font-bold tracking-[0.3em] uppercase mb-4">
                 <Terminal size={14} />
-                RLD Protocol // Live Simulation Dashboard
+                RLD Protocol // STATUS
               </div>
               <h1 className="text-5xl font-light tracking-tight text-white mb-3">
-                waUSDC Market
+                waUSDC Market Status
               </h1>
               <p className="text-gray-500 text-sm max-w-xl leading-relaxed">
                 Real-time monitoring of the RLD synthetic position market. Track
@@ -677,7 +551,27 @@ const LiveSimulation = () => {
               Index vs Mark price convergence
             </div>
           </div>
-          <PriceChart chartData={chartData} />
+          <div className="h-[300px] p-4">
+            {transformedChartData.length > 1 ? (
+              <RLDPerformanceChart
+                data={transformedChartData}
+                areas={chartAreas}
+                resolution="RAW"
+              />
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-600">
+                <div className="text-center">
+                  <BarChart3 size={32} className="mx-auto mb-3 opacity-30" />
+                  <div className="text-[11px] uppercase tracking-widest">
+                    Collecting price history...
+                  </div>
+                  <div className="text-[10px] text-gray-700 mt-1">
+                    Data appears after multiple blocks
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Details Grid */}
@@ -692,7 +586,7 @@ const LiveSimulation = () => {
             <Box size={12} />
             Latest: Block #{marketState.block_number?.toLocaleString() || "—"}
           </div>
-          <div>Data refreshes every 5 seconds</div>
+          <div>Data refreshes every 12 seconds</div>
         </footer>
       </div>
     </div>

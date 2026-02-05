@@ -90,6 +90,15 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
               >
                 SIMULATION
               </Link>
+
+              <span className="text-white/10">|</span>
+
+              <Link
+                to="/live"
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/live" ? "text-white cursor-default" : "text-gray-400 hover:text-white cursor-pointer"}`}
+              >
+                STATUS
+              </Link>
             </div>
           </div>
 
@@ -172,6 +181,12 @@ export default function Header({ latest, isCapped, ratesLoaded }) {
               <span className="py-2 text-gray-700 cursor-not-allowed">
                 CDS_[SOON]
               </span>
+              <Link
+                to="/live"
+                className={`py-2 ${location.pathname === "/live" ? "text-white" : "text-gray-500"}`}
+              >
+                STATUS
+              </Link>
             </nav>
           </div>
         )}

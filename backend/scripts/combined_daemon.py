@@ -75,7 +75,7 @@ RLD_CORE = os.getenv("RLD_CORE")
 MARKET_ID = os.getenv("MARKET_ID")
 
 SYNC_INTERVAL = 12  # seconds
-MM_THRESHOLD = 0.00001  # 0.001%
+MM_THRESHOLD = 0.01  # 1% = 100 basis points
 CONTRACTS_DIR = "/home/ubuntu/RLD/contracts"
 
 # ABIs
@@ -335,6 +335,14 @@ class CombinedDaemon:
         
         # 5. Execute arb if needed - use precise calculation
         if abs(spread) >= MM_THRESHOLD:
+            # Get balances for debugging
+            try:
+                wausdc_bal = self.waUSDC.functions.balanceOf(self.account.address).call()
+                wrlp_bal = self.wRLP.functions.balanceOf(self.account.address).call()
+                logger.info(f"   💰 Balances: waUSDC={wausdc_bal/1e6:.0f} | wRLP={wrlp_bal/1e6:.0f}")
+            except Exception as e:
+                logger.warning(f"   ⚠️  Could not fetch balances: {e}")
+            
             # Calculate exact swap amount to reach index price
             amount_in, zero_for_one, direction = self.calculate_swap_amount(index_price)
             

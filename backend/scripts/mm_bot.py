@@ -53,7 +53,7 @@ POSITION_TOKEN = os.getenv("POSITION_TOKEN")
 TWAMM_HOOK = os.getenv("TWAMM_HOOK")
 
 # MM Parameters
-THRESHOLD = 0.00001  # 0.001% = 1 basis point / 10
+THRESHOLD = 0.01     # 1% = 100 basis points
 SYNC_INTERVAL = 12   # seconds
 CONTRACTS_DIR = "/home/ubuntu/RLD/contracts"
 

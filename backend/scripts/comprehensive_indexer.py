@@ -487,6 +487,32 @@ class ComprehensiveIndexer:
         # Update indexer state
         update_last_indexed_block(block_number)
         
+        # 5. Log JSON state summary
+        json_state = {
+            'block': block_number,
+            'timestamp': block_timestamp,
+            'market': {
+                'normalization_factor': f"{market_state.get('normalization_factor', 0)/1e18:.12f}",
+                'total_debt': f"{market_state.get('total_debt', 0)/1e6:.2f}",
+                'index_price': f"${market_state.get('index_price', 0)/1e18:.4f}" if market_state.get('index_price', 0) > 0 else "N/A"
+            },
+            'pool': {
+                'mark_price': f"${pool_state.get('mark_price', 0):.4f}" if pool_state else "N/A",
+                'tick': pool_state.get('tick', 0) if pool_state else 0,
+                'liquidity': pool_state.get('liquidity', 0) if pool_state else 0
+            },
+            'brokers': [
+                {
+                    'address': p['broker'][:10] + '...',
+                    'collateral': f"${p.get('collateral', 0)/1e6:.0f}",
+                    'debt': f"{p.get('debt', 0)/1e6:.0f} wRLP"
+                }
+                for p in broker_positions
+            ],
+            'events_count': len(events)
+        }
+        logger.info(f"   📋 STATE: {json.dumps(json_state)}")
+        
         return snapshot
     
     async def index_range(self, from_block: int, to_block: int):

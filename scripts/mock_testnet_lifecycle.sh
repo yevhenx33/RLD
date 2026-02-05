@@ -77,6 +77,11 @@ USER_C_ADDRESS="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
 # MM User (User D) - Anvil account #3
 MM_USER_KEY="0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a"
 MM_USER_ADDRESS="0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
+# Chaotic Trader (User E) - Anvil account #4
+CHAOS_USER_KEY="0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba"
+CHAOS_USER_ADDRESS="0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
+CHAOS_CAPITAL=10000000  # $10M for chaotic trading
+CHAOS_WEI=$((CHAOS_CAPITAL * 1000000))
 
 # State variables (populated during execution)
 MOCK_ORACLE=""
@@ -592,6 +597,77 @@ cast send "$POSITION_TOKEN" "approve(address,uint256)" "$PERMIT2" "$(python3 -c 
 log_success "MM User swap approvals complete"
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 5.6: CHAOTIC TRADER SETUP (MISTER CHAOS)
+# ═══════════════════════════════════════════════════════════════════════════════
+log_phase "5.6" "CHAOTIC TRADER SETUP - \$${CHAOS_CAPITAL} CAPITAL"
+
+# Use fund_user helper (includes whale balance reset)
+fund_user "$CHAOS_USER_ADDRESS" "$CHAOS_WEI" "$CHAOS_USER_KEY" "Mister Chaos"
+
+# Get Chaos waUSDC balance
+CHAOS_WAUSDC=$(parse_output "$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$CHAOS_USER_ADDRESS" --rpc-url "$RPC_URL")")
+log_success "Chaos waUSDC: $((CHAOS_WAUSDC / 1000000))"
+
+# For wRLP: withdraw some from User A's broker (which has plenty of collateral)
+# User A broker has 95M+ waUSDC collateral and 0 wRLP (already withdrawn for LP)
+# So we'll mint from Chaos's own broker
+
+log_step "4" "Creating Chaos Broker for wRLP minting..."
+SALT=$(cast keccak "chaos-broker-$(date +%s)")
+CHAOS_BROKER_TX=$(cast send "$BROKER_FACTORY" "createBroker(bytes32)" "$SALT" \
+    --private-key "$CHAOS_USER_KEY" --rpc-url "$RPC_URL" --json)
+
+CHAOS_BROKER=$(echo "$CHAOS_BROKER_TX" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for log in data.get('logs', []):
+    topics = log.get('topics', [])
+    if topics and topics[0].lower() == '0xc418c83b1622e1e32aac5d6d2848134a7e89eb8e96c8514afd1757d25ee5ef71':
+        data_field = log.get('data', '')
+        if data_field.startswith('0x') and len(data_field) >= 66:
+            print('0x' + data_field[26:66])
+            break
+")
+log_success "Chaos Broker: $CHAOS_BROKER"
+
+# Transfer 50% waUSDC to broker for collateral (need collateral to mint)
+CHAOS_BROKER_DEPOSIT=$((CHAOS_WAUSDC / 2))
+log_step "5" "Depositing $((CHAOS_BROKER_DEPOSIT / 1000000)) waUSDC to broker..."
+cast send "$WAUSDC" "transfer(address,uint256)" "$CHAOS_BROKER" "$CHAOS_BROKER_DEPOSIT" \
+    --private-key "$CHAOS_USER_KEY" --rpc-url "$RPC_URL" > /dev/null
+
+# Calculate wRLP mint amount - mint ~$500k worth (conservative)
+CHAOS_MINT_TARGET=500000  # $500k worth of wRLP
+CHAOS_MINT_TOKENS=$(python3 -c "
+price_wad = $WRLP_PRICE_WAD
+target_usd = $CHAOS_MINT_TARGET
+tokens = int(target_usd * 1e18 / price_wad)
+tokens_wei = tokens * 1000000
+print(tokens_wei)
+")
+
+log_step "6" "Minting ~\$$CHAOS_MINT_TARGET worth of wRLP..."
+cast send "$CHAOS_BROKER" "modifyPosition(bytes32,int256,int256)" \
+    "$MARKET_ID" 0 "$CHAOS_MINT_TOKENS" \
+    --private-key "$CHAOS_USER_KEY" --rpc-url "$RPC_URL" > /dev/null
+
+# Withdraw wRLP to wallet
+CHAOS_BROKER_WRLP=$(parse_output "$(cast call "$POSITION_TOKEN" "balanceOf(address)(uint256)" "$CHAOS_BROKER" --rpc-url "$RPC_URL")")
+cast send "$CHAOS_BROKER" "withdrawPositionToken(address,uint256)" "$CHAOS_USER_ADDRESS" "$CHAOS_BROKER_WRLP" \
+    --private-key "$CHAOS_USER_KEY" --rpc-url "$RPC_URL" > /dev/null
+
+CHAOS_FINAL_WAUSDC=$(parse_output "$(cast call "$WAUSDC" "balanceOf(address)(uint256)" "$CHAOS_USER_ADDRESS" --rpc-url "$RPC_URL")")
+CHAOS_FINAL_WRLP=$(parse_output "$(cast call "$POSITION_TOKEN" "balanceOf(address)(uint256)" "$CHAOS_USER_ADDRESS" --rpc-url "$RPC_URL")")
+log_success "🎲 Mister Chaos: $((CHAOS_FINAL_WAUSDC / 1000000)) waUSDC + $((CHAOS_FINAL_WRLP / 1000000)) wRLP"
+
+log_step "7" "Approving swap contracts for Chaos..."
+cast send "$WAUSDC" "approve(address,uint256)" "$PERMIT2" "$(python3 -c 'print(2**256-1)')" \
+    --private-key "$CHAOS_USER_KEY" --rpc-url "$RPC_URL" > /dev/null
+cast send "$POSITION_TOKEN" "approve(address,uint256)" "$PERMIT2" "$(python3 -c 'print(2**256-1)')" \
+    --private-key "$CHAOS_USER_KEY" --rpc-url "$RPC_URL" > /dev/null
+log_success "Chaos swap approvals complete"
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # PHASE 6: VERIFICATION & START DAEMON
 # ═══════════════════════════════════════════════════════════════════════════════
 log_phase 6 "VERIFICATION & RATE SYNC DAEMON"
@@ -641,7 +717,7 @@ echo ""
 echo "  MockRLDAaveOracle: $MOCK_ORACLE"
 echo "  Current Rate:      ${APY}%"
 echo "  Sync Interval:     12 seconds"
-echo "  MM Threshold:      0.001%"
+echo "  MM Threshold:      1% (100bps)"
 echo ""
 echo -e "${CYAN}Copy these exports:${NC}"
 echo ""
@@ -652,6 +728,7 @@ echo "export MARKET_ID=$MARKET_ID"
 echo "export BROKER_FACTORY=$BROKER_FACTORY"
 echo "export USER_A_BROKER=$USER_A_BROKER"
 echo "export MOCK_ORACLE=$MOCK_ORACLE"
+echo "export CHAOS_USER_KEY=$CHAOS_USER_KEY"
 echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop the daemon${NC}"
 echo ""
