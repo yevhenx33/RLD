@@ -82,6 +82,7 @@ class RawEvent:
     log_index: int
     contract_address: str
     event_name: str
+    topics: Optional[list] = None  # Full list of topic hashes
     tx_index: Optional[int] = None
     event_signature: Optional[str] = None
     event_data: Optional[bytes] = None

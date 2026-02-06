@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from .config import IndexerConfig
 from .models import Block, RawEvent
 from .handlers.events import create_event_router, DecodedEvent
+from .contracts import EventDecoder, TOPIC_TO_EVENT
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class BlockProcessor:
         self.db = db
         self.reconciler = reconciler
         self.event_router = create_event_router()
+        self.event_decoder = EventDecoder()
         
     async def process_block(self, block_number: int) -> BlockResult:
         """Process a single block"""
@@ -143,6 +145,9 @@ class BlockProcessor:
         ]
         contracts = [c for c in contracts if c]  # Filter empty
         
+        if not contracts:
+            return []
+        
         logs = await self.rpc.eth_get_logs({
             "fromBlock": hex(block_number),
             "toBlock": hex(block_number),
@@ -151,14 +156,16 @@ class BlockProcessor:
         
         events = []
         for log in logs:
+            topics = log.get("topics", [])
             event = RawEvent(
                 block_number=block_number,
                 tx_hash=log["transactionHash"],
                 log_index=int(log["logIndex"], 16),
                 tx_index=int(log.get("transactionIndex", "0x0"), 16),
                 contract_address=log["address"],
-                event_name=self._get_event_name(log["topics"][0]),
-                event_signature=log["topics"][0],
+                event_name=self._get_event_name(topics[0]) if topics else "Unknown",
+                topics=topics,
+                event_signature=topics[0] if topics else None,
                 event_data=bytes.fromhex(log["data"][2:]) if log["data"] != "0x" else b"",
             )
             events.append(event)
@@ -167,8 +174,9 @@ class BlockProcessor:
     
     def _get_event_name(self, topic: str) -> str:
         """Map topic hash to event name"""
-        # In production, use precomputed mapping
-        return "Unknown"
+        if not topic.startswith("0x"):
+            topic = "0x" + topic
+        return TOPIC_TO_EVENT.get(topic, "Unknown")
     
     async def _process_event(self, raw_event: RawEvent):
         """Decode event and route to handler"""
@@ -189,7 +197,29 @@ class BlockProcessor:
     
     def _decode_event(self, raw: RawEvent) -> Optional[DecodedEvent]:
         """Decode raw event data to typed event"""
-        # In production, use ABI decoder
+        if not raw.topics:
+            return None
+            
+        # Build a log dict from the raw event for the decoder
+        decoded = self.event_decoder.decode_log({
+            "blockNumber": hex(raw.block_number),
+            "transactionHash": raw.tx_hash,
+            "logIndex": hex(raw.log_index),
+            "address": raw.contract_address,
+            "topics": raw.topics,
+            "data": "0x" + raw.event_data.hex() if raw.event_data else "0x",
+        })
+        
+        if decoded:
+            return DecodedEvent(
+                name=decoded.event_name,
+                block_number=decoded.block_number,
+                tx_hash=decoded.tx_hash,
+                log_index=decoded.log_index,
+                contract_address=decoded.contract_address,
+                args=decoded.args,
+                raw_data=raw.event_data or b"",
+            )
         return None
     
     async def _generate_snapshots(self, block_number: int):
