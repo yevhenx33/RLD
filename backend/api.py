@@ -5,7 +5,7 @@ from fastapi.security import APIKeyHeader
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import sqlite3
 import pandas as pd
 from datetime import datetime
@@ -1120,3 +1120,39 @@ def get_eth_prices(
             return []
         logging.error(f"ERROR in get_eth_prices: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
+# --- Database Download Endpoint (for migration) ---
+@app.get("/download/db/{filename}")
+async def download_database(filename: str, secret: str = Query(...)):
+    """
+    Download database files for migration.
+    Protected by a simple secret query parameter.
+    Usage: /download/db/aave_rates.db?secret=YOUR_SECRET
+    """
+    # Simple protection - set via env var or use default for migration
+    expected_secret = os.getenv("MIGRATION_SECRET", "***REDACTED_SECRET***")
+    if secret != expected_secret:
+        raise HTTPException(status_code=403, detail="Invalid secret")
+    
+    # Only allow specific files
+    allowed_files = ["aave_rates.db", "clean_rates.db", "yields.json"]
+    if filename not in allowed_files:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    # Check /var/lib/data first (Render persistent disk), then /app
+    file_path = f"/var/lib/data/{filename}"
+    if not os.path.exists(file_path):
+        file_path = f"/app/{filename}"
+    if not os.path.exists(file_path):
+        file_path = os.path.join(os.path.dirname(__file__), filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on server")
+    
+    logging.info(f"📦 Serving file for migration: {file_path}")
+    return FileResponse(
+        file_path,
+        filename=filename,
+        media_type="application/octet-stream"
+    )
