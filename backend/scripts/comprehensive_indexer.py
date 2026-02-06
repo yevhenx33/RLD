@@ -21,6 +21,7 @@ from comprehensive_indexer_db import (
     insert_pool_state,
     insert_event,
     insert_broker_position,
+    insert_transaction,
     get_last_indexed_block,
     update_last_indexed_block,
     get_block_summary,
@@ -76,7 +77,12 @@ RLD_CORE_ABI = [
         {"indexed": False, "name": "collateral", "type": "address"},
         {"indexed": False, "name": "underlying", "type": "address"},
         {"indexed": False, "name": "pool", "type": "address"}
-    ], "name": "MarketCreated", "type": "event"}
+    ], "name": "MarketCreated", "type": "event"},
+    {"anonymous": False, "inputs": [
+        {"indexed": True, "name": "id", "type": "bytes32"},
+        {"indexed": False, "name": "fundingFee", "type": "int256"},
+        {"indexed": False, "name": "newNormalizationFactor", "type": "uint256"}
+    ], "name": "FundingApplied", "type": "event"}
 ]
 
 POOL_MANAGER_ABI = [
@@ -379,6 +385,13 @@ class ComprehensiveIndexer:
         """Get all relevant events in a block."""
         events = []
         
+        # Get all logs for our contracts
+        contract_addresses = [
+            self.rld_core.address.lower(),
+            self.collateral_token.lower(),
+            self.position_token.lower()
+        ]
+        
         try:
             # PositionModified events
             pos_events = self.rld_core.events.PositionModified.get_logs(
@@ -391,6 +404,7 @@ class ComprehensiveIndexer:
                     'tx_hash': e['transactionHash'].hex(),
                     'log_index': e['logIndex'],
                     'market_id': e['args']['id'].hex(),
+                    'contract_address': e['address'],
                     'data': {
                         'user': e['args']['user'],
                         'deltaCollateral': str(e['args']['deltaCollateral']),
@@ -412,6 +426,7 @@ class ComprehensiveIndexer:
                     'tx_hash': e['transactionHash'].hex(),
                     'log_index': e['logIndex'],
                     'market_id': e['args']['id'].hex(),
+                    'contract_address': e['address'],
                     'data': {
                         'collateral': e['args']['collateral'],
                         'underlying': e['args']['underlying'],
@@ -421,7 +436,147 @@ class ComprehensiveIndexer:
         except Exception as e:
             logger.debug(f"Could not get MarketCreated events: {e}")
         
+        try:
+            # FundingApplied events
+            funding_events = self.rld_core.events.FundingApplied.get_logs(
+                from_block=block_number,
+                to_block=block_number
+            )
+            for e in funding_events:
+                events.append({
+                    'event_name': 'FundingApplied',
+                    'tx_hash': e['transactionHash'].hex(),
+                    'log_index': e['logIndex'],
+                    'market_id': e['args']['id'].hex(),
+                    'contract_address': e['address'],
+                    'data': {
+                        'fundingFee': str(e['args']['fundingFee']),
+                        'newNormalizationFactor': str(e['args']['newNormalizationFactor'])
+                    }
+                })
+        except Exception as e:
+            logger.debug(f"Could not get FundingApplied events: {e}")
+        
+        # Get all raw logs for our contracts to capture Transfer, Swap, etc.
+        try:
+            logs = self.w3.eth.get_logs({
+                'fromBlock': block_number,
+                'toBlock': block_number,
+                'address': [Web3.to_checksum_address(addr) for addr in contract_addresses]
+            })
+            
+            # Process raw logs (Transfer events, etc.)
+            transfer_topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+            approval_topic = Web3.keccak(text="Approval(address,address,uint256)").hex()
+            
+            for log in logs:
+                topic0 = log['topics'][0].hex() if log['topics'] else None
+                if topic0 == transfer_topic and len(log['topics']) >= 3:
+                    events.append({
+                        'event_name': 'Transfer',
+                        'tx_hash': log['transactionHash'].hex(),
+                        'log_index': log['logIndex'],
+                        'market_id': self.market_id,
+                        'contract_address': log['address'],
+                        'data': {
+                            'from': '0x' + log['topics'][1].hex()[-40:],
+                            'to': '0x' + log['topics'][2].hex()[-40:],
+                            'value': str(int(log['data'].hex(), 16)) if log['data'] else '0'
+                        }
+                    })
+                elif topic0 == approval_topic and len(log['topics']) >= 3:
+                    events.append({
+                        'event_name': 'Approval',
+                        'tx_hash': log['transactionHash'].hex(),
+                        'log_index': log['logIndex'],
+                        'market_id': self.market_id,
+                        'contract_address': log['address'],
+                        'data': {
+                            'owner': '0x' + log['topics'][1].hex()[-40:],
+                            'spender': '0x' + log['topics'][2].hex()[-40:],
+                            'value': str(int(log['data'].hex(), 16)) if log['data'] else '0'
+                        }
+                    })
+        except Exception as e:
+            logger.debug(f"Could not get raw logs: {e}")
+        
         return events
+    
+    def get_transactions_in_block(self, block_number: int) -> List[Dict]:
+        """Get all transactions interacting with our contracts in a block."""
+        transactions = []
+        
+        # Contracts to track
+        tracked_contracts = {
+            self.rld_core.address.lower(),
+            self.collateral_token.lower(),
+            self.position_token.lower(),
+            self.pool_manager.address.lower()
+        }
+        
+        try:
+            block = self.w3.eth.get_block(block_number, full_transactions=True)
+            
+            for tx in block['transactions']:
+                to_addr = tx.get('to', '').lower() if tx.get('to') else ''
+                
+                if to_addr in tracked_contracts:
+                    # Get transaction receipt for gas used and status
+                    try:
+                        receipt = self.w3.eth.get_transaction_receipt(tx['hash'])
+                        gas_used = receipt['gasUsed']
+                        status = receipt['status']
+                    except:
+                        gas_used = 0
+                        status = 1
+                    
+                    # Extract method ID (first 4 bytes of input)
+                    input_data = tx.get('input', '0x')
+                    method_id = input_data[:10] if len(input_data) >= 10 else input_data
+                    
+                    transactions.append({
+                        'tx_hash': tx['hash'].hex(),
+                        'tx_index': tx['transactionIndex'],
+                        'from_address': tx['from'].lower(),
+                        'to_address': to_addr,
+                        'value': str(tx.get('value', 0)),
+                        'gas_used': gas_used,
+                        'gas_price': str(tx.get('gasPrice', 0)),
+                        'input_data': input_data[:200],  # Store first 200 chars
+                        'method_id': method_id,
+                        'method_name': self._decode_method_name(method_id),
+                        'decoded_args': None,  # Could add ABI decoding
+                        'status': status
+                    })
+        except Exception as e:
+            logger.debug(f"Could not get transactions: {e}")
+        
+        return transactions
+    
+    def _decode_method_name(self, method_id: str) -> str:
+        """Decode method ID to human-readable name."""
+        # Common method signatures
+        KNOWN_METHODS = {
+            '0xa9059cbb': 'transfer',
+            '0x23b872dd': 'transferFrom',
+            '0x095ea7b3': 'approve',
+            '0x3593564c': 'execute',  # Universal Router
+            '0x40c10f19': 'mint',
+            '0x42842e0e': 'safeTransferFrom',
+            '0x70a08231': 'balanceOf',
+            '0xdd62ed3e': 'allowance',
+            '0x18160ddd': 'totalSupply',
+            '0x6a627842': 'mint',  # ERC20 mint
+            '0x9dc29fac': 'burn',  # ERC20 burn
+            '0x6352211e': 'ownerOf',
+            '0x8da5cb5b': 'owner',
+            '0x5c975abb': 'paused',
+            '0xb6b55f25': 'deposit',
+            '0x2e1a7d4d': 'withdraw',
+            '0xe2bbb158': 'modifyPosition',  # Custom
+            '0x36bdee88': 'modifyLiquidity',  # V4
+        }
+        return KNOWN_METHODS.get(method_id.lower(), 'unknown')
     
     def snapshot_block(self, block_number: int = None) -> Dict:
         """
@@ -484,6 +639,20 @@ class ComprehensiveIndexer:
         if broker_positions:
             logger.info(f"   👤 Brokers: {len(broker_positions)} position(s) tracked")
         
+        # 5. Transactions (all contract interactions)
+        transactions = self.get_transactions_in_block(block_number)
+        for tx in transactions:
+            insert_transaction(
+                block_number, tx['tx_hash'], tx['tx_index'],
+                tx['from_address'], tx['to_address'], tx['value'],
+                tx['gas_used'], tx['gas_price'], tx['input_data'],
+                tx['method_id'], tx['method_name'], tx['decoded_args'],
+                block_timestamp, tx['status']
+            )
+        snapshot['transactions'] = transactions
+        if transactions:
+            logger.info(f"   💳 Transactions: {len(transactions)} contract interaction(s)")
+        
         # Update indexer state
         update_last_indexed_block(block_number)
         
@@ -509,7 +678,8 @@ class ComprehensiveIndexer:
                 }
                 for p in broker_positions
             ],
-            'events_count': len(events)
+            'events_count': len(events),
+            'transactions_count': len(transactions)
         }
         logger.info(f"   📋 STATE: {json.dumps(json_state)}")
         

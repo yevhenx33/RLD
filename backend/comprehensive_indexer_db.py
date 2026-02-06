@@ -86,6 +86,27 @@ def init_comprehensive_db():
         )
     """)
     
+    # Transactions table - all contract interactions
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            block_number INTEGER NOT NULL,
+            tx_hash TEXT NOT NULL UNIQUE,
+            tx_index INTEGER,
+            from_address TEXT NOT NULL,
+            to_address TEXT,
+            value TEXT,
+            gas_used INTEGER,
+            gas_price TEXT,
+            input_data TEXT,
+            method_id TEXT,
+            method_name TEXT,
+            decoded_args TEXT,
+            timestamp INTEGER,
+            status INTEGER DEFAULT 1
+        )
+    """)
+    
     # Indexer state
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS indexer_state (
@@ -103,6 +124,10 @@ def init_comprehensive_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_name ON events(event_name)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_broker_pos_block ON broker_positions(block_number)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_broker_pos_addr ON broker_positions(broker_address)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_block ON transactions(block_number)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_from ON transactions(from_address)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_to ON transactions(to_address)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_method ON transactions(method_id)")
     
     conn.commit()
     conn.close()
@@ -288,6 +313,73 @@ def get_events(from_block: int = None, to_block: int = None,
             d = dict(row)
             if d.get('data'):
                 d['data'] = json.loads(d['data'])
+            results.append(d)
+        return results
+
+
+# ============================================
+# Transaction Operations
+# ============================================
+
+def insert_transaction(block_number: int, tx_hash: str, tx_index: int,
+                       from_address: str, to_address: str, value: str,
+                       gas_used: int, gas_price: str, input_data: str,
+                       method_id: str, method_name: str, decoded_args: Dict,
+                       timestamp: int, status: int = 1):
+    """Insert a transaction record."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO transactions (
+                block_number, tx_hash, tx_index, from_address, to_address,
+                value, gas_used, gas_price, input_data, method_id, method_name,
+                decoded_args, timestamp, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            block_number, tx_hash, tx_index, from_address, to_address,
+            value, gas_used, gas_price, input_data, method_id, method_name,
+            json.dumps(decoded_args) if decoded_args else None,
+            timestamp, status
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_transactions(from_block: int = None, to_block: int = None,
+                     from_address: str = None, to_address: str = None,
+                     method_id: str = None, limit: int = 100) -> List[Dict]:
+    """Query transactions with filters."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        query = "SELECT * FROM transactions WHERE 1=1"
+        params = []
+        
+        if from_block:
+            query += " AND block_number >= ?"
+            params.append(from_block)
+        if to_block:
+            query += " AND block_number <= ?"
+            params.append(to_block)
+        if from_address:
+            query += " AND from_address = ?"
+            params.append(from_address.lower())
+        if to_address:
+            query += " AND to_address = ?"
+            params.append(to_address.lower())
+        if method_id:
+            query += " AND method_id = ?"
+            params.append(method_id)
+        
+        query += " ORDER BY block_number DESC, tx_index ASC LIMIT ?"
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        results = []
+        for row in rows:
+            d = dict(row)
+            if d.get('decoded_args'):
+                d['decoded_args'] = json.loads(d['decoded_args'])
             results.append(d)
         return results
 
