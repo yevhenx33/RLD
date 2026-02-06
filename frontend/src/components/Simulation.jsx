@@ -378,7 +378,7 @@ const Simulation = () => {
   const fetchSimulations = async () => {
     try {
       // Use the enriched endpoint for live market state data
-      const res = await fetch("http://localhost:8000/simulations/enriched");
+      const res = await fetch("http://localhost:8080/simulations/enriched");
       const data = await res.json();
       if (Array.isArray(data)) setSimulations(data);
     } catch (err) {
@@ -402,7 +402,7 @@ const Simulation = () => {
         funding_period: formData.fundingPeriod,
       };
 
-      const res = await fetch("http://localhost:8000/deploy-market", {
+      const res = await fetch("http://localhost:8080/deploy-market", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

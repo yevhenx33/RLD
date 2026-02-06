@@ -95,6 +95,25 @@ def sync_clean_db():
         except Exception as e:
             print(f"   ⚠️ Error syncing {symbol}: {e}")
 
+    # 3. Update sync_state with latest indexed block
+    try:
+        cursor_raw = conn_raw.cursor()
+        cursor_raw.execute("SELECT MAX(block_number) FROM rates")
+        latest_block = cursor_raw.fetchone()[0]
+        if latest_block:
+            cursor_clean.execute("""
+                CREATE TABLE IF NOT EXISTS sync_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            """)
+            cursor_clean.execute("""
+                INSERT OR REPLACE INTO sync_state (key, value) VALUES ('last_block_number', ?)
+            """, (str(latest_block),))
+            print(f"   Updated sync_state: last_block_number = {latest_block}")
+    except Exception as e:
+        print(f"   ⚠️ Error updating sync_state: {e}")
+
     conn_clean.commit()
     conn_raw.close()
     conn_clean.close()

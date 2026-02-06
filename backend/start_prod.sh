@@ -40,9 +40,9 @@ python3 scripts/init_clean_db.py
 echo "🚀 Starting Indexer Service..."
 python3 indexer.py > indexer.log 2>&1 &
 
-# Start Backfill Service (Recent History)
-echo "⏳ Starting History Backfill..."
-python3 fill_gaps_startup.py > backfill.log 2>&1 &
+# Start Continuous Rate Indexer Daemon (gap repair + live indexing)
+echo "📡 Starting Rate Indexer Daemon..."
+python3 scripts/rate_indexer_daemon.py > rate_indexer.log 2>&1 &
 
 # Start Monitor Service
 echo "🤖 Starting Telegram Monitor..."

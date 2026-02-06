@@ -142,7 +142,8 @@ function FilterDropdown({ label, options, selected, onChange }) {
             {/* SELECT ALL OPTION */}
             <button
               onClick={() => {
-                if (isAllSelected) onChange(new Set()); // Deselect all
+                if (isAllSelected)
+                  onChange(new Set()); // Deselect all
                 else onChange(new Set(options)); // Select all
               }}
               className={`
@@ -226,10 +227,10 @@ export default function Markets() {
 
   // --- Filters State ---
   const [selectedProtocols, setSelectedProtocols] = useState(
-    new Set(["AAVE", "MORPHO", "EULER", "FLUID"])
+    new Set(["AAVE", "MORPHO", "EULER", "FLUID"]),
   );
   const [selectedAssets, setSelectedAssets] = useState(
-    new Set(["USDC", "DAI", "USDT"])
+    new Set(["USDC", "DAI", "USDT"]),
   );
 
   // --- ACTIONS ---
@@ -277,7 +278,7 @@ export default function Markets() {
               "https://rate-dashboard.onrender.com";
             const apiRes = await fetch(
               `${API_BASE}/rates?resolution=1H&limit=1&symbol=${asset.symbol}`,
-              { headers: authHeaders }
+              { headers: authHeaders },
             );
             const apiData = await apiRes.json();
             if (apiData && apiData.length > 0)
@@ -291,7 +292,7 @@ export default function Markets() {
             const debtContract = new Contract(
               asset.debtToken,
               ERC20_ABI,
-              provider
+              provider,
             );
             const rawDebt = await debtContract.totalSupply();
             debt = parseFloat(formatUnits(rawDebt, asset.decimals));
@@ -385,7 +386,7 @@ export default function Markets() {
     }
 
     const sortedData = Array.from(merged.values()).sort(
-      (a, b) => a.timestamp - b.timestamp
+      (a, b) => a.timestamp - b.timestamp,
     );
 
     // Forward Fill SOFR (and potentially others) to ensure continuous lines/tooltips on weekends
@@ -412,13 +413,13 @@ export default function Markets() {
 
     const weightedSum = marketData.reduce(
       (acc, curr) => acc + curr.apy * curr.debt,
-      0
+      0,
     );
     const avgApy = totalDebt > 0 ? weightedSum / totalDebt : 0;
 
     const topMarket = marketData.reduce(
       (prev, current) => (prev.debt > current.debt ? prev : current),
-      { symbol: "-", debt: 0 }
+      { symbol: "-", debt: 0 },
     );
     const dominance = totalDebt > 0 ? (topMarket.debt / totalDebt) * 100 : 0;
 
@@ -654,7 +655,7 @@ export default function Markets() {
               <button
                 onClick={() => {
                   const svg = document.querySelector(
-                    "#markets-chart-container svg"
+                    "#markets-chart-container svg",
                   );
                   if (!svg) return;
 
@@ -695,19 +696,19 @@ export default function Markets() {
                   // Ensure xmlns
                   if (
                     !sourceChart.match(
-                      /^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/
+                      /^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/,
                     )
                   ) {
                     sourceChart = sourceChart.replace(
                       /^<svg/,
-                      '<svg xmlns="http://www.w3.org/2000/svg"'
+                      '<svg xmlns="http://www.w3.org/2000/svg"',
                     );
                   }
 
                   const finalSvg = `
                                         <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${
-                    height + legendHeight
-                  }" viewBox="0 0 ${width} ${height + legendHeight}">
+                                          height + legendHeight
+                                        }" viewBox="0 0 ${width} ${height + legendHeight}">
                                             <defs>
                                                 <style>
                                                     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400&amp;display=swap');
@@ -825,7 +826,7 @@ export default function Markets() {
               <tbody className="divide-y divide-white/5">
                 {marketData
                   .filter(
-                    (m) => m.protocol && selectedProtocols.has(m.protocol)
+                    (m) => m.protocol && selectedProtocols.has(m.protocol),
                   )
                   .filter((m) => selectedAssets.has(m.symbol))
                   .map((m) => (

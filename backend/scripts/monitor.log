@@ -1,0 +1,4 @@
+nohup: ignoring input
+2026-02-06 16:59:13,311 - MonitorBot - INFO - Loaded API_URL: https://rate-dashboard.onrender.com
+2026-02-06 16:59:13,311 - MonitorBot - INFO - Loaded RPC_URL: https://eth-mainnet.g.alchemy.com/v2/***REDACTED***2...
+2026-02-06 16:59:13,311 - MonitorBot - INFO - 🤖 Interactive Monitor Bot Started

@@ -119,7 +119,7 @@ const SimulationDetail = () => {
     try {
       // Try enriched endpoint first (uses market_state.db)
       const enrichedRes = await fetch(
-        `http://localhost:8000/simulation/${id}/enriched`,
+        `http://localhost:8080/simulations/enriched/${id}`,
       );
       if (enrichedRes.ok) {
         const result = await enrichedRes.json();
@@ -130,7 +130,7 @@ const SimulationDetail = () => {
       }
 
       // Fallback to original endpoint (decodes tx)
-      const res = await fetch(`http://localhost:8000/simulation/${id}`);
+      const res = await fetch(`http://localhost:8080/simulation/${id}`);
       if (!res.ok) {
         throw new Error("Simulation data not found.");
       }

@@ -11,17 +11,17 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from dotenv import load_dotenv
 
-# Load Env
-load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env"))
-load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
+# Load Env from multiple locations
+load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env"))  # root .env
+load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))  # backend/.env
+load_dotenv(os.path.join(os.path.dirname(__file__), "../../contracts/.env"))  # contracts/.env
 
-# --- CONFIG ---
 # --- CONFIG ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 API_KEY = os.getenv("API_KEY") 
-PORT = os.getenv("PORT", "10000")
-API_URL = f"http://localhost:{PORT}"
+PORT = os.getenv("PORT", "8080")  # Default to 8080 for local testing
+API_URL = os.getenv("API_URL", f"http://localhost:{PORT}")  # Allow override via env
 RPC_URL = os.getenv("MAINNET_RPC_URL")
 
 # Refresh Interval for Background Checks
@@ -34,6 +34,10 @@ logger = logging.getLogger("MonitorBot")
 if not TOKEN:
     logger.critical("TELEGRAM_BOT_TOKEN not found!")
     exit(1)
+
+# Debug: Log loaded config
+logger.info(f"Loaded API_URL: {API_URL}")
+logger.info(f"Loaded RPC_URL: {RPC_URL[:50] if RPC_URL else 'None'}...")
 
 def get_headers():
     if API_KEY:
