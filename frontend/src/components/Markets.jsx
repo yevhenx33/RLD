@@ -274,8 +274,7 @@ export default function Markets() {
           let apy = 0;
           try {
             const API_BASE =
-              import.meta.env.VITE_API_BASE_URL ||
-              "https://rate-dashboard.onrender.com";
+              import.meta.env.VITE_API_BASE_URL || "http://localhost:8081";
             const apiRes = await fetch(
               `${API_BASE}/rates?resolution=1H&limit=1&symbol=${asset.symbol}`,
               { headers: authHeaders },
@@ -320,8 +319,7 @@ export default function Markets() {
   // --- Chart Data Fetching (USDC History) ---
   const getHistoryUrl = (symbol) => {
     const API_BASE =
-      import.meta.env.VITE_API_BASE_URL ||
-      "https://rate-dashboard.onrender.com";
+      import.meta.env.VITE_API_BASE_URL || "http://localhost:8081";
     return `${API_BASE}/rates?symbol=${symbol}&resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
   };
 
@@ -332,8 +330,7 @@ export default function Markets() {
 
   const { data: ethPrices } = useSWR(() => {
     const API_BASE =
-      import.meta.env.VITE_API_BASE_URL ||
-      "https://rate-dashboard.onrender.com";
+      import.meta.env.VITE_API_BASE_URL || "http://localhost:8081";
     return `${API_BASE}/eth-prices?resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
   }, fetcher);
 
