@@ -378,7 +378,27 @@ class ComprehensiveIndexer:
                 'health_factor': health_factor
             }
         except Exception as e:
-            logger.warning(f"Could not get broker position for {broker_address}: {e}")
+            # Fallback: try raw call and decode single value (some brokers return only collateral)
+            try:
+                fn_selector = self.w3.keccak(text="getPosition(bytes32,address)")[:4]
+                call_data = fn_selector + self.market_id_bytes + bytes(12) + bytes.fromhex(broker_address[2:])
+                raw = self.w3.eth.call({
+                    'to': self.rld_core.address,
+                    'data': call_data
+                })
+                if len(raw) == 32:
+                    collateral = int.from_bytes(raw, 'big', signed=True)
+                    return {
+                        'collateral': collateral,
+                        'debt': 0,
+                        'debt_principal': 0,
+                        'collateral_value': collateral,
+                        'debt_value': 0,
+                        'health_factor': 0.0
+                    }
+            except Exception:
+                pass
+            logger.debug(f"Could not get broker position for {broker_address}: {e}")
             return {}
     
     def get_events_in_block(self, block_number: int) -> List[Dict]:
