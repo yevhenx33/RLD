@@ -16,6 +16,7 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env"))  # root .env
 load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))  # backend/.env
 load_dotenv(os.path.join(os.path.dirname(__file__), "../../contracts/.env"))  # contracts/.env
 load_dotenv(os.path.join(os.path.dirname(__file__), "../../frontend/.env"))  # frontend/.env
+load_dotenv(os.path.join(os.path.dirname(__file__), "../../docker/.env"))  # docker/.env (contains MAINNET_RPC_URL)
 
 # --- CONFIG ---
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -23,6 +24,7 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 API_KEY = os.getenv("API_KEY") 
 PORT = os.getenv("PORT", "8080")  # Default to 8080 for local testing
 API_URL = os.getenv("API_URL", f"http://localhost:{PORT}")  # Allow override via env
+RATES_API_URL = os.getenv("RATES_API_URL", "http://localhost:8081")  # Rates Indexer
 RPC_URL = os.getenv("MAINNET_RPC_URL")
 
 # Refresh Interval for Background Checks
@@ -38,6 +40,7 @@ if not TOKEN:
 
 # Debug: Log loaded config
 logger.info(f"Loaded API_URL: {API_URL}")
+logger.info(f"Loaded RATES_API_URL: {RATES_API_URL}")
 logger.info(f"Loaded RPC_URL: {RPC_URL[:50] if RPC_URL else 'None'}...")
 
 def get_headers():
@@ -77,7 +80,7 @@ def answer_callback(callback_query_id, text=None):
 def check_api_health():
     try:
         start = time.time()
-        res = requests.get(f"{API_URL}/", headers=get_headers(), timeout=5)
+        res = requests.get(f"{RATES_API_URL}/", headers=get_headers(), timeout=5)
         latency = (time.time() - start) * 1000
         if res.status_code == 200:
             data = res.json()
@@ -102,9 +105,12 @@ def get_latest_block():
 
 def get_asset_stats(symbol, endpoint="/rates"):
     try:
-        url = f"{API_URL}{endpoint}?symbol={symbol}&limit=48&resolution=1H"
+        # Use RATES_API_URL for rates/prices
+        base_url = RATES_API_URL
+        
+        url = f"{base_url}{endpoint}?symbol={symbol}&limit=48&resolution=1H"
         if endpoint == "/eth-prices":
-            url = f"{API_URL}{endpoint}?limit=48&resolution=1H"
+            url = f"{base_url}{endpoint}?limit=48&resolution=1H"
             
         res = requests.get(url, headers=get_headers(), timeout=10)
         if res.status_code != 200:
@@ -168,10 +174,14 @@ def generate_report():
         for symbol, future in [("USDC", f_usdc), ("DAI", f_dai), ("USDT", f_usdt)]:
             curr, past = future.result()
             if curr:
-                rate = curr.get('apy', 0)
+                rate = curr.get('apy')
+                if rate is None:
+                    rate = 0.0
                 change_str = " (➖ 0.00%)"
                 if past:
-                    old_rate = past.get('apy', 0)
+                    old_rate = past.get('apy')
+                    if old_rate is None:
+                        old_rate = 0.0
                     if old_rate > 0:
                         delta_pct = ((rate - old_rate) / old_rate) * 100
                         sign = "+" if delta_pct >= 0 else ""
@@ -186,10 +196,14 @@ def generate_report():
         report += "\n"
         curr_eth, past_eth = f_eth.result()
         if curr_eth:
-            price = curr_eth.get('price', 0)
+            price = curr_eth.get('price')
+            if price is None:
+                price = 0.0
             change_str = " (➖ 0.0%)"
             if past_eth:
-                old_price = past_eth.get('price', 0)
+                old_price = past_eth.get('price')
+                if old_price is None:
+                    old_price = 0.0
                 if old_price > 0:
                     delta_pct = ((price - old_price) / old_price) * 100
                     sign = "+" if delta_pct >= 0 else ""

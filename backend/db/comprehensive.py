@@ -9,8 +9,11 @@ from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 import os
 
-# Database path
-COMPREHENSIVE_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "comprehensive_state.db")
+# Database path — configurable via env var for Docker, defaults to local dev path
+COMPREHENSIVE_DB_PATH = os.environ.get(
+    "DB_PATH",
+    os.path.join(os.path.dirname(__file__), "..", "data", "comprehensive_state.db")
+)
 DB_PATH = COMPREHENSIVE_DB_PATH  # Alias for API
 
 logger = logging.getLogger(__name__)

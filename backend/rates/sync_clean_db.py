@@ -58,10 +58,14 @@ def _sync_eth_prices_incremental(conn_raw, cursor_clean, since_ts):
     hour_floor = (since_ts // 3600) * 3600
 
     cursor_raw = conn_raw.cursor()
-    cursor_raw.execute(
-        "SELECT timestamp, price FROM eth_prices WHERE timestamp >= ?",
-        (hour_floor,)
-    )
+    try:
+        cursor_raw.execute(
+            "SELECT timestamp, price FROM eth_prices WHERE timestamp >= ?",
+            (hour_floor,)
+        )
+    except Exception:
+        # eth_prices table doesn't exist yet on first run
+        return 0
     rows = cursor_raw.fetchall()
 
     if not rows:

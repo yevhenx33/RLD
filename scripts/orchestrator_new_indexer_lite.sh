@@ -45,7 +45,7 @@ sleep 2
 
 log_success "Indexer started (SQLite mode)"
 echo "   Log: /tmp/indexer.log"
-echo "   DB:  backend/comprehensive_state.db"
+echo "   DB:  backend/data/comprehensive_state.db"
 
 # ═══════════════════════════════════════════════════════════════
 # PHASE 4: SETUP USERS
@@ -74,9 +74,24 @@ scripts/scenarios/mm_bot.sh "$MM_KEY" 10000000
 scripts/scenarios/chaos_trader.sh "$CHAOS_KEY" 10000000
 
 # ═══════════════════════════════════════════════════════════════
-# PHASE 5: START DAEMONS
+# PHASE 5: DEPLOY SWAP ROUTER
 # ═══════════════════════════════════════════════════════════════
-log_phase "5" "START DAEMONS"
+log_phase "5" "DEPLOY SWAP ROUTER"
+
+# Reload to get all addresses
+source /home/ubuntu/RLD/.env
+
+echo "[1] Deploying swap router + approving tokens..."
+cd /home/ubuntu/RLD/backend
+python3 tools/deploy_swap_router.py
+cd "$RLD_ROOT"
+source /home/ubuntu/RLD/.env
+log_success "Swap router deployed: $SWAP_ROUTER"
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 6: START DAEMONS
+# ═══════════════════════════════════════════════════════════════
+log_phase "6" "START DAEMONS"
 
 # Reload to get all broker addresses
 source /home/ubuntu/RLD/.env
@@ -101,7 +116,7 @@ echo "    /tmp/indexer.log"
 echo "    /tmp/daemon.log"
 echo "    /tmp/chaos_trader.log"
 echo ""
-echo "  Database: backend/comprehensive_state.db"
+echo "  Database: backend/data/comprehensive_state.db"
 echo "  Config:   /home/ubuntu/RLD/.env"
 echo ""
 echo "  ⚠️  Note: Running in lite mode (SQLite). For PostgreSQL mode:"

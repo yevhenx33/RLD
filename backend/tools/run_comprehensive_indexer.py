@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "../../.env"))
 load_dotenv(os.path.join(os.path.dirname(__file__), "../../contracts/.env"))
 
-from indexers.comprehensive_indexer import ComprehensiveIndexer, create_indexer_from_env
+from indexers.comprehensive import ComprehensiveIndexer, create_indexer_from_env
 from db.comprehensive import get_latest_summary, get_block_summary
 
 

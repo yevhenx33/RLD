@@ -14,8 +14,8 @@ pkill -f "chaos_daemon.py" 2>/dev/null || true
 sleep 1
 
 # Start chaos daemon
-cd /home/ubuntu/RLD/backend/scripts
-nohup python3 chaos_daemon.py > /tmp/chaos_trader.log 2>&1 &
+cd /home/ubuntu/RLD/backend
+nohup python3 tools/chaos_daemon.py > /tmp/chaos_trader.log 2>&1 &
 CHAOS_PID=$!
 sleep 2
 

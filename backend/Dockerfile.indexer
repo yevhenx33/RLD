@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install deps
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy only what the indexer needs (no forge, no scripts)
+COPY indexers/ indexers/
+COPY api/ api/
+COPY db/ db/
+COPY entrypoint.py .
+
+ENV PYTHONUNBUFFERED=1
+
+# Default DB location (override with -v for persistence)
+ENV DB_PATH=/data/market.db
+
+EXPOSE 8080
+
+VOLUME /data
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
+
+CMD ["python", "entrypoint.py"]

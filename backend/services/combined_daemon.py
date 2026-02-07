@@ -25,12 +25,16 @@ Environment:
 import os
 import sys
 import time
-import subprocess
 import logging
 import requests
 from web3 import Web3
 from eth_account import Account
 from dotenv import load_dotenv
+
+# Add backend to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from services.v4_pool import V4PoolReader
+from services.v4_swap import V4SwapExecutor
 
 # Configure logging with colors
 class ColoredFormatter(logging.Formatter):
@@ -76,7 +80,7 @@ MARKET_ID = os.getenv("MARKET_ID")
 
 SYNC_INTERVAL = 12  # seconds
 MM_THRESHOLD = 0.01  # 1% = 100 basis points
-CONTRACTS_DIR = "/home/ubuntu/RLD/contracts"
+SWAP_ROUTER = os.getenv("SWAP_ROUTER")
 
 # ABIs
 ORACLE_ABI = [
@@ -114,17 +118,54 @@ ERC20_ABI = [
 
 
 def fetch_latest_rate():
-    """Fetch latest USDC borrow rate from API."""
+    """Fetch latest USDC borrow rate — tries API first, falls back to on-chain Aave."""
+    # Try API first (production)
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
-        response = requests.get(f"{API_URL}/rates?limit=1&symbol=USDC", headers=headers, timeout=10)
+        response = requests.get(f"{API_URL}/rates?limit=1&symbol=USDC", headers=headers, timeout=5)
         response.raise_for_status()
         data = response.json()
         if data and len(data) > 0:
-            return data[0].get("apy", 0)
-        return None
+            apy = data[0].get("apy", 0)
+            if apy:
+                return apy
+    except Exception:
+        pass  # Fall through to on-chain
+
+    # Fallback: read rate directly from Aave V3 on-chain
+    try:
+        w3 = Web3(Web3.HTTPProvider(RPC_URL))
+        AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+        USDC_ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+        # getReserveData returns a tuple; index 4 is currentVariableBorrowRate (RAY)
+        POOL_ABI = [{"inputs": [{"name": "asset", "type": "address"}],
+                     "name": "getReserveData",
+                     "outputs": [{"components": [
+                         {"name": "configuration", "type": "uint256"},
+                         {"name": "liquidityIndex", "type": "uint128"},
+                         {"name": "currentLiquidityRate", "type": "uint128"},
+                         {"name": "variableBorrowIndex", "type": "uint128"},
+                         {"name": "currentVariableBorrowRate", "type": "uint128"},
+                         {"name": "currentStableBorrowRate", "type": "uint128"},
+                         {"name": "lastUpdateTimestamp", "type": "uint40"},
+                         {"name": "id", "type": "uint16"},
+                         {"name": "aTokenAddress", "type": "address"},
+                         {"name": "stableDebtTokenAddress", "type": "address"},
+                         {"name": "variableDebtTokenAddress", "type": "address"},
+                         {"name": "interestRateStrategyAddress", "type": "address"},
+                         {"name": "accruedToTreasury", "type": "uint128"},
+                         {"name": "unbacked", "type": "uint128"},
+                         {"name": "isolationModeTotalDebt", "type": "uint128"},
+                     ], "name": "", "type": "tuple"}],
+                     "stateMutability": "view", "type": "function"}]
+        pool = w3.eth.contract(address=Web3.to_checksum_address(AAVE_POOL), abi=POOL_ABI)
+        reserve_data = pool.functions.getReserveData(Web3.to_checksum_address(USDC_ADDR)).call()
+        variable_borrow_rate_ray = reserve_data[4]  # currentVariableBorrowRate in RAY
+        apy_percent = variable_borrow_rate_ray / 1e25  # RAY to percent
+        logger.info(f"📡 On-chain Aave USDC rate: {apy_percent:.4f}%")
+        return apy_percent
     except Exception as e:
-        logger.error(f"API error: {e}")
+        logger.error(f"On-chain rate fetch failed: {e}")
         return None
 
 
@@ -168,6 +209,22 @@ class CombinedDaemon:
         self.token1 = max(WAUSDC.lower(), POSITION_TOKEN.lower())
         self.wausdc_is_token0 = WAUSDC.lower() < POSITION_TOKEN.lower()
         
+        # V4 pool reader (replaces forge script GetMarkPrice + CalculateSwapAmount)
+        self.pool_reader = V4PoolReader(
+            self.w3, self.token0, self.token1,
+            os.getenv("TWAMM_HOOK"), WAUSDC
+        )
+        
+        # V4 swap executor (replaces forge script LifecycleSwap)
+        if SWAP_ROUTER:
+            self.swap_executor = V4SwapExecutor(
+                self.w3, self.token0, self.token1,
+                os.getenv("TWAMM_HOOK"), SWAP_ROUTER
+            )
+        else:
+            self.swap_executor = None
+            logger.warning("⚠️  SWAP_ROUTER not set — swaps will be skipped")
+        
         self.running = True
         self.trades = 0
     
@@ -183,27 +240,11 @@ class CombinedDaemon:
             return None
     
     def get_mark_price(self) -> float:
-        """Get mark price from V4 pool."""
+        """Get mark price from V4 pool via direct extsload."""
         try:
-            env = os.environ.copy()
-            env.update({
-                "TOKEN0": Web3.to_checksum_address(self.token0),
-                "TOKEN1": Web3.to_checksum_address(self.token1),
-                "TWAMM_HOOK": TWAMM_HOOK,
-                "WAUSDC": WAUSDC  # Needed to determine price inversion
-            })
-            
-            result = subprocess.run(
-                ["forge", "script", "script/GetMarkPrice.s.sol", "--tc", "GetMarkPrice",
-                 "--rpc-url", RPC_URL, "-v"],
-                cwd=CONTRACTS_DIR, env=env, capture_output=True, text=True
-            )
-            
-            for line in result.stdout.split('\n'):
-                if "MARK_PRICE_X18:" in line:
-                    return int(line.split(":")[-1].strip()) / 1e18
-            return None
-        except:
+            return self.pool_reader.get_mark_price()
+        except Exception as e:
+            logger.error(f"Mark price read failed: {e}")
             return None
     
     def update_oracle(self, rate_ray: int) -> bool:
@@ -226,71 +267,22 @@ class CombinedDaemon:
             return False
     
     def execute_swap(self, buy_wrlp: bool, amount: int) -> bool:
-        """Execute swap to correct price."""
+        """Execute swap via pre-deployed router."""
+        if not self.swap_executor:
+            logger.error("   ❌ No swap router available")
+            return False
+        
         if self.wausdc_is_token0:
             zero_for_one = buy_wrlp
         else:
             zero_for_one = not buy_wrlp
         
-        env = os.environ.copy()
-        env.update({
-            "TOKEN0": Web3.to_checksum_address(self.token0),
-            "TOKEN1": Web3.to_checksum_address(self.token1),
-            "TWAMM_HOOK": TWAMM_HOOK,
-            "SWAP_AMOUNT": str(amount),
-            "ZERO_FOR_ONE": str(zero_for_one).lower(),
-            "SWAP_USER_KEY": PRIVATE_KEY
-        })
-        
-        result = subprocess.run(
-            ["forge", "script", "script/LifecycleSwap.s.sol", "--tc", "LifecycleSwap",
-             "--rpc-url", RPC_URL, "--broadcast", "-v"],
-            cwd=CONTRACTS_DIR, env=env, capture_output=True, text=True
-        )
-        
-        if result.returncode != 0:
-            # Log error for debugging
-            logger.error(f"   ❌ Swap failed! Check stderr:")
-            for line in result.stderr.split('\n')[-5:]:
-                if line.strip():
-                    logger.error(f"      {line}")
-            return False
-        
-        return True
+        return self.swap_executor.execute_swap(PRIVATE_KEY, zero_for_one, amount)
     
     def calculate_swap_amount(self, target_price: float) -> tuple:
-        """Calculate exact swap amount to reach target price using V4 math."""
+        """Calculate exact swap amount using V4 math in Python."""
         try:
-            target_price_wad = int(target_price * 1e18)
-            
-            env = os.environ.copy()
-            env.update({
-                "TOKEN0": Web3.to_checksum_address(self.token0),
-                "TOKEN1": Web3.to_checksum_address(self.token1),
-                "TWAMM_HOOK": TWAMM_HOOK,
-                "WAUSDC": WAUSDC,
-                "TARGET_PRICE_WAD": str(target_price_wad)
-            })
-            
-            result = subprocess.run(
-                ["forge", "script", "script/CalculateSwapAmount.s.sol", "--tc", "CalculateSwapAmount",
-                 "--rpc-url", RPC_URL, "-v"],
-                cwd=CONTRACTS_DIR, env=env, capture_output=True, text=True
-            )
-            
-            amount_in = 0
-            zero_for_one = True
-            direction = "BUY_WRLP"
-            
-            for line in result.stdout.split('\n'):
-                if "AMOUNT_IN:" in line:
-                    amount_in = int(line.split(":")[-1].strip())
-                elif "ZERO_FOR_ONE:" in line:
-                    zero_for_one = int(line.split(":")[-1].strip()) == 1
-                elif "DIRECTION:" in line:
-                    direction = line.split(":")[-1].strip()
-            
-            return (amount_in, zero_for_one, direction)
+            return self.pool_reader.calculate_swap_amount(target_price)
         except Exception as e:
             logger.error(f"Calculate swap failed: {e}")
             return (0, True, "UNKNOWN")

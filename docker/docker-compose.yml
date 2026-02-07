@@ -1,0 +1,105 @@
+# ═══════════════════════════════════════════════════════════════
+# RLD Simulation Stack
+# ═══════════════════════════════════════════════════════════════
+# Anvil runs EXTERNALLY. Set RPC_URL in .env pointing to it.
+#
+#  Usage:
+#    1. Start Anvil:  anvil --fork-url $ETH_RPC_URL --fork-block-number 21698573 --block-time 1
+#    2. Copy .env.example → .env and fill in RPC_URL
+#    3. docker compose up --build
+#
+#  What happens:
+#    deployer   → deploys protocol, market, users, router, then exits
+#    indexer    → starts indexing after deployer finishes
+#    mm-daemon  → starts market making after deployer finishes
+#    chaos      → starts chaos trading after deployer finishes
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─── DEPLOYER (one-shot) ────────────────────────────────────
+  deployer:
+    build:
+      context: ..
+      dockerfile: docker/deployer/Dockerfile
+    volumes:
+      - config:/config
+    environment:
+      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - ETH_RPC_URL=${ETH_RPC_URL}
+      - DEPLOYER_KEY=${DEPLOYER_KEY}
+      - USER_A_KEY=${USER_A_KEY}
+      - USER_B_KEY=${USER_B_KEY}
+      - USER_C_KEY=${USER_C_KEY}
+      - MM_KEY=${MM_KEY}
+      - CHAOS_KEY=${CHAOS_KEY}
+      - API_URL=${API_URL:-http://rates-indexer:8080}
+      - API_KEY=${API_KEY:-***REDACTED_API_KEY***}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ─── INDEXER (long-running) ──────────────────────────────────
+  indexer:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.indexer
+    depends_on:
+      deployer:
+        condition: service_completed_successfully
+    volumes:
+      - config:/config:ro
+      - indexer-data:/data
+    ports:
+      - "${INDEXER_PORT:-8080}:8080"
+    environment:
+      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - CONFIG_FILE=/config/deployment.json
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ─── MM DAEMON (long-running) ────────────────────────────────
+  mm-daemon:
+    build:
+      context: ..
+      dockerfile: docker/daemons/Dockerfile
+    command: ["python", "services/combined_daemon.py"]
+    depends_on:
+      deployer:
+        condition: service_completed_successfully
+    volumes:
+      - config:/config:ro
+    environment:
+      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - CONFIG_FILE=/config/deployment.json
+      - PRIVATE_KEY=${MM_KEY}
+      - MM_KEY=${MM_KEY}
+      - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
+      - API_URL=${API_URL:-http://rates-indexer:8080}
+      - API_KEY=${API_KEY:-***REDACTED_API_KEY***}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ─── CHAOS TRADER (long-running) ─────────────────────────────
+  chaos-trader:
+    build:
+      context: ..
+      dockerfile: docker/daemons/Dockerfile
+    command: ["python", "tools/chaos_daemon.py"]
+    depends_on:
+      deployer:
+        condition: service_completed_successfully
+    volumes:
+      - config:/config:ro
+    environment:
+      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - CONFIG_FILE=/config/deployment.json
+      - PRIVATE_KEY=${CHAOS_KEY}
+      - CHAOS_KEY=${CHAOS_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  config: # Shared deployment addresses (deployer writes, others read)
+  indexer-data: # Persistent indexer SQLite DB

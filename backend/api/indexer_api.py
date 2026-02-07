@@ -3,13 +3,15 @@
 REST API for Comprehensive Indexer Data.
 Exposes historical market state, pool state, events, and broker positions.
 
-Run with:
-    uvicorn indexer_api:app --host 0.0.0.0 --port 8080 --reload
+Run standalone:
+    uvicorn api.indexer_api:app --host 0.0.0.0 --port 8080 --reload
+
+Or via entrypoint.py (container mode).
 """
 import os
 import sys
 from typing import Optional, List
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
@@ -18,34 +20,37 @@ import json
 # Add parent dir to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from comprehensive_indexer_db import (
+from db.comprehensive import (
     get_latest_summary,
     get_block_summary,
     get_block_states,
     get_pool_states,
     get_events,
-    get_broker_position_history,
+    get_broker_history,
     get_last_indexed_block,
     DB_PATH
 )
 
 app = FastAPI(
-    title="RLD Indexer API",
-    description="Historical market state data for RLD protocol",
-    version="1.0.0"
+    title="RLD Market Indexer API",
+    description="Historical market state data for any RLD market",
+    version="2.0.0"
 )
 
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for dev
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+# ═══════════════════════════════════════════════════════════
 # Response Models
+# ═══════════════════════════════════════════════════════════
+
 class MarketState(BaseModel):
     block_number: int
     block_timestamp: int
@@ -54,7 +59,6 @@ class MarketState(BaseModel):
     total_debt: int
     last_update_timestamp: int
     index_price: int
-    # Computed fields
     nf_decimal: Optional[float] = None
     debt_decimal: Optional[float] = None
     index_price_decimal: Optional[float] = None
@@ -97,42 +101,98 @@ class BrokerPosition(BaseModel):
     health_factor: float
 
 
-class IndexerStatus(BaseModel):
-    last_indexed_block: int
-    db_path: str
-    total_block_states: int
-    total_events: int
-
-
-# API Endpoints
+# ═══════════════════════════════════════════════════════════
+# Health & Config (container endpoints)
+# ═══════════════════════════════════════════════════════════
 
 @app.get("/")
 async def root():
     """Health check endpoint."""
-    return {"status": "ok", "service": "rld-indexer-api"}
+    return {"status": "ok", "service": "rld-market-indexer"}
 
 
-@app.get("/api/status", response_model=IndexerStatus)
+@app.get("/health")
+async def health(request: Request):
+    """Detailed health check with indexer lag."""
+    try:
+        last_block = get_last_indexed_block()
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM block_state")
+        total_blocks = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM events")
+        total_events = c.fetchone()[0]
+        conn.close()
+
+        # Get chain head if web3 is available
+        chain_head = None
+        lag = None
+        try:
+            from web3 import Web3
+            rpc = os.environ.get("RPC_URL", "http://localhost:8545")
+            w3 = Web3(Web3.HTTPProvider(rpc))
+            chain_head = w3.eth.block_number
+            if last_block and chain_head:
+                lag = chain_head - last_block
+        except:
+            pass
+
+        # Market config from entrypoint discovery
+        market_id = os.environ.get("MARKET_ID", "unknown")
+
+        return {
+            "status": "healthy",
+            "market_id": market_id,
+            "last_indexed_block": last_block,
+            "chain_head": chain_head,
+            "lag_blocks": lag,
+            "total_blocks_indexed": total_blocks,
+            "total_events": total_events,
+            "db_path": DB_PATH,
+        }
+    except Exception as e:
+        return {"status": "unhealthy", "error": str(e)}
+
+
+@app.get("/config")
+async def config(request: Request):
+    """Return discovered market configuration."""
+    # Set by entrypoint.py after discovery
+    market_config = getattr(request.app.state, "market_config", None)
+    if market_config:
+        # Don't expose RPC URL (may contain API keys)
+        safe = {k: v for k, v in market_config.items() if k != "rpc_url"}
+        safe["rpc_url"] = "***"
+        return safe
+    return {"error": "Config not available (not running via entrypoint)"}
+
+
+# ═══════════════════════════════════════════════════════════
+# Core Data Endpoints
+# ═══════════════════════════════════════════════════════════
+
+@app.get("/api/status")
 async def get_status():
     """Get indexer status and stats."""
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
-        
+
         cursor.execute("SELECT COUNT(*) FROM block_state")
         total_blocks = cursor.fetchone()[0]
-        
+
         cursor.execute("SELECT COUNT(*) FROM events")
         total_events = cursor.fetchone()[0]
-        
+
         conn.close()
-        
-        return IndexerStatus(
-            last_indexed_block=get_last_indexed_block(),
-            db_path=DB_PATH,
-            total_block_states=total_blocks,
-            total_events=total_events
-        )
+
+        return {
+            "last_indexed_block": get_last_indexed_block(),
+            "db_path": DB_PATH,
+            "total_block_states": total_blocks,
+            "total_events": total_events,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -144,14 +204,13 @@ async def get_latest():
         summary = get_latest_summary()
         if 'error' in summary:
             raise HTTPException(status_code=404, detail=summary['error'])
-        
-        # Add decimal representations
+
         if 'market_state' in summary:
             ms = summary['market_state']
             ms['nf_decimal'] = ms.get('normalization_factor', 0) / 1e18
             ms['debt_decimal'] = ms.get('total_debt', 0) / 1e6
             ms['index_price_decimal'] = ms.get('index_price', 0) / 1e18
-        
+
         return summary
     except HTTPException:
         raise
@@ -173,7 +232,7 @@ async def get_block(block_number: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/history/market", response_model=List[MarketState])
+@app.get("/api/history/market")
 async def get_market_history(
     market_id: Optional[str] = None,
     from_block: Optional[int] = Query(None, description="Start block"),
@@ -183,19 +242,16 @@ async def get_market_history(
     """Get historical market state data."""
     try:
         states = get_block_states(market_id, from_block, to_block, limit)
-        
-        # Add decimal representations
         for state in states:
             state['nf_decimal'] = state.get('normalization_factor', 0) / 1e18
             state['debt_decimal'] = state.get('total_debt', 0) / 1e6
             state['index_price_decimal'] = state.get('index_price', 0) / 1e18
-        
         return states
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/history/pool", response_model=List[PoolState])
+@app.get("/api/history/pool")
 async def get_pool_history(
     pool_id: Optional[str] = None,
     from_block: Optional[int] = Query(None, description="Start block"),
@@ -210,7 +266,7 @@ async def get_pool_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/events", response_model=List[Event])
+@app.get("/api/events")
 async def get_events_list(
     event_name: Optional[str] = Query(None, description="Filter by event name"),
     market_id: Optional[str] = Query(None, description="Filter by market ID"),
@@ -220,19 +276,16 @@ async def get_events_list(
 ):
     """Get historical events."""
     try:
-        # Use named parameters to avoid order confusion
         events = get_events(
-            from_block=from_block, 
-            to_block=to_block, 
-            event_name=event_name, 
-            market_id=market_id, 
+            from_block=from_block,
+            to_block=to_block,
+            event_name=event_name,
+            market_id=market_id,
             limit=limit
         )
-        # Rename 'data' to 'event_data' for API response model
         for e in events:
             if 'data' in e:
                 e['event_data'] = e.pop('data')
-            # Rename 'timestamp' to 'block_timestamp' for API response model
             if 'timestamp' in e:
                 e['block_timestamp'] = e.pop('timestamp')
         return events
@@ -240,8 +293,8 @@ async def get_events_list(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/history/broker", response_model=List[BrokerPosition])
-async def get_broker_history(
+@app.get("/api/history/broker")
+async def get_broker_history_endpoint(
     broker_address: str = Query(..., description="Broker address"),
     market_id: Optional[str] = Query(None, description="Market ID"),
     from_block: Optional[int] = Query(None, description="Start block"),
@@ -250,7 +303,7 @@ async def get_broker_history(
 ):
     """Get historical broker positions."""
     try:
-        positions = get_broker_position_history(broker_address, market_id, from_block, to_block, limit)
+        positions = get_broker_history(broker_address, market_id, limit)
         return positions
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -264,16 +317,12 @@ async def get_price_chart(
 ):
     """Get price data formatted for charting (index vs mark price)."""
     try:
-        # Get market states for index price
         market_states = get_block_states(None, from_block, to_block, limit)
-        
-        # Get pool states for mark price
         pool_states = get_pool_states(None, from_block, to_block, limit)
-        
-        # Build chart data
-        chart_data = []
+
         pool_by_block = {p['block_number']: p for p in pool_states}
-        
+        chart_data = []
+
         for ms in market_states:
             block = ms['block_number']
             data_point = {
@@ -283,16 +332,13 @@ async def get_price_chart(
                 'normalization_factor': ms.get('normalization_factor', 0) / 1e18,
                 'total_debt': ms.get('total_debt', 0) / 1e6
             }
-            
-            # Add pool data if available
             if block in pool_by_block:
                 ps = pool_by_block[block]
                 data_point['mark_price'] = ps.get('mark_price', 0)
                 data_point['tick'] = ps.get('tick', 0)
                 data_point['liquidity'] = ps.get('liquidity', 0)
-            
             chart_data.append(data_point)
-        
+
         return {
             'data': chart_data,
             'count': len(chart_data),

@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════════════════
+# Aave V3 Rates Indexer (standalone)
+# ═══════════════════════════════════════════════════════════════
+# Scrapes live Aave V3 rates from mainnet, serves via /rates API.
+# Runs independently of the simulation stack — persistent across
+# simulation restarts.
+#
+#  Usage:
+#    docker compose -f docker/docker-compose.rates.yml up -d
+#
+#  API:
+#    http://localhost:8081/rates?limit=1&symbol=USDC
+#
+#  The simulation mm-daemon reads from this API to update the
+#  MockRLDAaveOracle on the Anvil fork.
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  rates-indexer:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.rates
+    ports:
+      - "${RATES_PORT:-8081}:8080"
+    volumes:
+      - rates-data:/app/data
+    environment:
+      - MAINNET_RPC_URL=${MAINNET_RPC_URL:-https://eth.llamarpc.com}
+      - RESERVE_RPC_URL=${RESERVE_RPC_URL:-}
+      - ETH_PRICE_GRAPH_URL=${ETH_PRICE_GRAPH_URL:-}
+      - DB_DIR=/app/data
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/", "||", "exit", "1"]
+
+volumes:
+  rates-data: # Persistent SQLite DB for Aave rates

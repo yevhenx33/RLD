@@ -18,11 +18,14 @@ import os
 import sys
 import time
 import random
-import subprocess
 import logging
 from web3 import Web3
 from eth_account import Account
 from dotenv import load_dotenv
+
+# Add backend to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from services.v4_swap import V4SwapExecutor
 
 # Configure logging with colors
 class ColoredFormatter(logging.Formatter):
@@ -63,8 +66,10 @@ BROKER = os.getenv("CHAOS_BROKER")
 WAUSDC = os.getenv("WAUSDC")
 POSITION_TOKEN = os.getenv("POSITION_TOKEN")
 TWAMM_HOOK = os.getenv("TWAMM_HOOK")
+SWAP_ROUTER = os.getenv("SWAP_ROUTER")
 
-CONTRACTS_DIR = "/home/ubuntu/RLD/contracts"
+TOKEN0 = min(WAUSDC.lower(), POSITION_TOKEN.lower()) if WAUSDC and POSITION_TOKEN else None
+TOKEN1 = max(WAUSDC.lower(), POSITION_TOKEN.lower()) if WAUSDC and POSITION_TOKEN else None
 TRADE_INTERVAL_MIN = 10  # seconds
 TRADE_INTERVAL_MAX = 15  # seconds
 
@@ -92,6 +97,15 @@ class ChaosTrader:
         self.trades = 0
         self.successful_trades = 0
         
+        # V4 swap executor
+        if SWAP_ROUTER:
+            self.swap_executor = V4SwapExecutor(
+                self.w3, TOKEN0, TOKEN1, TWAMM_HOOK, SWAP_ROUTER
+            )
+        else:
+            self.swap_executor = None
+            logger.warning("⚠️  SWAP_ROUTER not set — swaps disabled")
+        
     def get_balances(self):
         """Get current balances."""
         try:
@@ -104,6 +118,10 @@ class ChaosTrader:
     
     def execute_random_trade(self):
         """Execute a random trade."""
+        if not self.swap_executor:
+            logger.warning("   ⚠️  No swap executor available")
+            return False
+        
         wausdc_bal, wrlp_bal = self.get_balances()
         
         # Randomly decide direction
@@ -119,7 +137,7 @@ class ChaosTrader:
                 return False
             amount = int(wausdc_bal * trade_pct * 1e6)
             direction = "BUY_WRLP"
-            zero_for_one = "true" if WAUSDC.lower() < POSITION_TOKEN.lower() else "false"
+            zero_for_one = True if WAUSDC.lower() < POSITION_TOKEN.lower() else False
         else:
             # Sell wRLP for waUSDC
             if wrlp_bal < 1000:
@@ -127,45 +145,21 @@ class ChaosTrader:
                 return False
             amount = int(wrlp_bal * trade_pct * 1e6)
             direction = "SELL_WRLP"
-            zero_for_one = "false" if WAUSDC.lower() < POSITION_TOKEN.lower() else "true"
+            zero_for_one = False if WAUSDC.lower() < POSITION_TOKEN.lower() else True
         
         logger.info(f"🎲 {direction}: {amount/1e6:.0f} tokens ({trade_pct*100:.1f}% of balance)")
         
-        # Set up environment variables for forge script
-        token0 = min(WAUSDC.lower(), POSITION_TOKEN.lower())
-        token1 = max(WAUSDC.lower(), POSITION_TOKEN.lower())
-        
-        env = os.environ.copy()
-        env.update({
-            "TOKEN0": Web3.to_checksum_address(token0),
-            "TOKEN1": Web3.to_checksum_address(token1),
-            "TWAMM_HOOK": TWAMM_HOOK,
-            "SWAP_AMOUNT": str(amount),
-            "ZERO_FOR_ONE": zero_for_one,
-            "SWAP_USER_KEY": PRIVATE_KEY
-        })
-        
         try:
-            result = subprocess.run(
-                ["forge", "script", "script/LifecycleSwap.s.sol",
-                 "--tc", "LifecycleSwap",
-                 "--rpc-url", RPC_URL,
-                 "--broadcast", "-v"],
-                capture_output=True, text=True, cwd=CONTRACTS_DIR, timeout=60, env=env
-            )
+            success = self.swap_executor.execute_swap(PRIVATE_KEY, zero_for_one, amount)
             
-            if result.returncode == 0:
+            if success:
                 self.successful_trades += 1
                 logger.info(f"   ✅ Trade successful!")
                 return True
             else:
-                error = result.stderr.split('\n')[-5:-1] if result.stderr else ["Unknown error"]
-                logger.error(f"   ❌ Trade failed: {error[0] if error else 'Unknown'}")
+                logger.error(f"   ❌ Trade failed")
                 return False
                 
-        except subprocess.TimeoutExpired:
-            logger.error("   ⏱️  Trade timed out")
-            return False
         except Exception as e:
             logger.error(f"   ❌ Trade error: {e}")
             return False
