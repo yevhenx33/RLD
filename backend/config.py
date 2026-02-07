@@ -9,11 +9,10 @@ AAVE_POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
 UNI_POOL_ADDRESS = "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640" 
 
 # --- ASSETS TO INDEX ---
-# Symbol -> Configuration
 ASSETS = {
     "USDC": {
         "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        "table": "rates", # Legacy table name
+        "table": "rates",
         "decimals": 6,
         "type": "onchain"
     },
@@ -37,16 +36,16 @@ ASSETS = {
 }
 
 # --- DATABASE ---
-# --- DATABASE ---
-DB_DIR = os.getenv("DB_DIR", os.path.dirname(__file__))
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_DIR = os.getenv("DB_DIR", os.path.join(BACKEND_DIR, "data"))
 DB_NAME = "aave_rates.db"
 DB_PATH = os.path.join(DB_DIR, DB_NAME)
 CLEAN_DB_NAME = "clean_rates.db"
 CLEAN_DB_PATH = os.path.join(DB_DIR, CLEAN_DB_NAME)
 
-# --- GRAPHQL SOURCES (Fallback/History) ---
+# --- GRAPHQL SOURCES ---
 from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(__file__), "../.env"))
+load_dotenv(os.path.join(BACKEND_DIR, "../.env"))
 
 ETH_PRICE_GRAPH_URL = os.getenv("ETH_PRICE_GRAPH_URL")
 if not ETH_PRICE_GRAPH_URL:

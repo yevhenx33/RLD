@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 # Add backend to sys.path to allow imports
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from api import app
+from api.main import app
 
 @pytest.fixture(scope="function")
 def mock_db():

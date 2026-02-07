@@ -18,7 +18,7 @@ export ORACLE_ADMIN_KEY=$DEPLOYER_KEY
 export API_KEY API_URL
 export WAUSDC POSITION_TOKEN TWAMM_HOOK MARKET_ID BROKER_FACTORY RLD_CORE
 
-python3 scripts/combined_daemon.py > /tmp/daemon.log 2>&1 &
+python3 services/combined_daemon.py > /tmp/daemon.log 2>&1 &
 echo $! > /tmp/daemon.pid
 
 log_success "Daemon started (PID: $(cat /tmp/daemon.pid))"

@@ -52,13 +52,20 @@ fi
 log_success "MockOracle: $MOCK_ORACLE"
 "$SCRIPT_DIR/../utils/update_env.sh" "MOCK_ORACLE" "$MOCK_ORACLE"
 
-# Set initial rate from API
+# Set initial rate from API (local)
 log_step "3" "Setting initial rate..."
-API_URL="${API_URL:-https://rate-dashboard.onrender.com}"
+API_URL="${API_URL:-http://localhost:8080}"
 API_KEY="${API_KEY:-***REDACTED_API_KEY***}"
 
-RATE_JSON=$(curl -s "$API_URL/rates?limit=1&symbol=USDC" -H "X-API-Key: $API_KEY")
-APY=$(echo $RATE_JSON | jq -r '.[0].apy')
+RATE_JSON=$(curl -s --max-time 5 "$API_URL/rates?limit=1&symbol=USDC" -H "X-API-Key: $API_KEY" 2>/dev/null)
+APY=$(echo "$RATE_JSON" | jq -r '.[0].apy' 2>/dev/null)
+
+# Fallback to 5% if API unavailable
+if [ -z "$APY" ] || [ "$APY" = "null" ]; then
+    echo "  ⚠️  API unavailable, using default USDC rate (5%)"
+    APY="5.0"
+fi
+
 RATE_RAY=$(python3 -c "print(int($APY / 100 * 1e27))")
 
 cast send $MOCK_ORACLE "setRate(uint256)" $RATE_RAY \

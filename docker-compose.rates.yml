@@ -1,0 +1,34 @@
+# Rate Indexer Stack
+# Continuous Aave V3 rate indexing + API
+#
+# Usage:
+#   # First time: copy existing DBs to data/rates/
+#   mkdir -p data/rates && cp backend/aave_rates.db backend/clean_rates.db data/rates/
+#   docker compose -f docker-compose.rates.yml up -d
+#   docker compose -f docker-compose.rates.yml logs -f
+#   docker compose -f docker-compose.rates.yml down
+
+services:
+  rate-indexer:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.rates
+    container_name: rld-rate-indexer
+    restart: always
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      - RATE_ONLY=true
+      - DB_DIR=/data
+      - PORT=8080
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data/rates:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
