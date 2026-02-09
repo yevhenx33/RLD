@@ -132,14 +132,37 @@ def main():
     os.environ.setdefault("TWAMM_HOOK", config["twamm_hook"])
 
     # 2. Initialize DB
-    logger.info("[2/3] Initializing database...")
+    logger.info("[2/4] Initializing database...")
     db_path = os.environ.get("DB_PATH", "/data/market.db")
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     init_comprehensive_db()
     logger.info(f"  DB: {db_path}")
 
-    # 3. Create and start indexer
-    logger.info("[3/3] Starting indexer + API...")
+    # 3. Stale DB detection — auto-reset on simulation restart
+    logger.info("[3/4] Checking for stale data (simulation restart)...")
+    try:
+        from web3 import Web3
+        w3 = Web3(Web3.HTTPProvider(config["rpc_url"]))
+        chain_head = w3.eth.block_number
+
+        from db.comprehensive import get_last_indexed_block
+        last_indexed = get_last_indexed_block()
+
+        lag = last_indexed - chain_head
+        if last_indexed > 0 and lag > 1:
+            logger.warning(f"  ⚠️  STALE DB DETECTED: indexed block {last_indexed:,} > chain head {chain_head:,} (lag: {lag:,})")
+            logger.warning(f"  🔄 Simulation was restarted — wiping DB and re-indexing from scratch")
+            if os.path.exists(db_path):
+                os.remove(db_path)
+            init_comprehensive_db()
+            logger.info(f"  ✅ DB reset complete. Will index from chain head.")
+        else:
+            logger.info(f"  Chain head: {chain_head:,} | Last indexed: {last_indexed:,} | OK")
+    except Exception as e:
+        logger.warning(f"  ⚠️  Could not check chain head (non-fatal): {e}")
+
+    # 4. Create and start indexer
+    logger.info("[4/4] Starting indexer + API...")
     indexer = create_indexer_from_config(config)
 
     poll_interval = int(os.environ.get("POLL_INTERVAL", "2"))
