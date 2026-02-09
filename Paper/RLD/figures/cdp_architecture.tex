@@ -1,0 +1,79 @@
+% RLD Protocol Architecture Diagram
+% Standalone TikZ file — can be \input{} into main .tex
+% or compiled standalone with: pdflatex cdp_architecture.tex
+
+\documentclass[border=5pt]{standalone}
+\usepackage{tikz}
+\usetikzlibrary{positioning, arrows.meta, fit, calc}
+
+\begin{document}
+
+\begin{tikzpicture}[
+    % Global styles
+    every node/.style={font=\sffamily},
+    % Dashed box style for protocol components
+    proto/.style={
+        draw, dashed, minimum width=3.2cm, minimum height=1.1cm,
+        inner sep=6pt, font=\sffamily\large
+    },
+    % Smaller dashed box for oracle sources
+    oracle/.style={
+        draw, dashed, minimum width=3.0cm, minimum height=0.8cm,
+        inner sep=4pt, font=\sffamily
+    },
+    % Arrow style: dashed with stealth tips
+    arr/.style={
+        <->, dashed, >={Stealth[length=5pt]}, line width=0.6pt
+    },
+    arr1/.style={
+        ->, dashed, >={Stealth[length=5pt]}, line width=0.6pt
+    },
+    arr1dot/.style={
+        ->, dotted, >={Stealth[length=5pt]}, line width=0.6pt
+    },
+    % Label style
+    lbl/.style={font=\sffamily\bfseries\large},
+]
+
+% ── Interest Rates Oracle Group ─────────────────────────────────────────
+\node[oracle] (aave)   at (0, 0)    {AAVE};
+\node[oracle] (morpho) at (0, -1.3) {Morpho};
+\node[oracle] (euler)  at (0, -2.6) {Euler};
+\node[oracle] (fluid)  at (0, -3.9) {Fluid};
+
+% Outer dashed box around oracle sources
+\node[draw, dashed, fit=(aave)(morpho)(euler)(fluid),
+      inner sep=4pt, label={[lbl, anchor=south]above:{Interest rates oracle}}] (oracleBox) {};
+
+% ── CDP Box ─────────────────────────────────────────────────────────────
+\node[proto, right=2.5cm of morpho, yshift=-0.65cm] (cdp) {CDP};
+
+% ── Uniswap V4 Box ─────────────────────────────────────────────────────
+\node[proto, right=2.5cm of cdp] (uni) {Uniswap V4};
+
+% ── RLP - USDC Box ─────────────────────────────────────────────────────
+\node[proto, right=0.6cm of uni] (rlp) {RLP -- USDC};
+
+% ── Short Label (above CDP) ────────────────────────────────────────────
+\node[lbl, above=1.0cm of cdp] (short) {Short};
+
+% ── Long Label (below Uniswap V4) ─────────────────────────────────────
+\node[lbl, below=1.0cm of uni] (long) {Long};
+
+% ── Arrows ──────────────────────────────────────────────────────────────
+
+% Oracle → CDP
+\draw[arr] (oracleBox.east) -- (cdp.west);
+
+% CDP → Uniswap V4
+\draw[arr] (cdp.east) -- (uni.west);
+
+% Short ↔ CDP (vertical)
+\draw[arr] (cdp.north) -- (short.south);
+
+% Long ↔ Uniswap V4 (vertical, dotted)
+\draw[arr1dot] (uni.south) -- (long.north);
+
+\end{tikzpicture}
+
+\end{document}
