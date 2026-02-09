@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-02-09T20:05:01Z",
+  "system": {
+    "uptime_secs": 154686,
+    "load": 0.25,
+    "cpu_cores": 8,
+    "disk": { "total_gb": 193, "used_gb": 141, "free_gb": 53, "percent": 73 },
+    "memory": { "total_mb": 23463, "used_mb": 7179, "available_mb": 16283 }
+  },
+  "containers": [{"name":"docker-indexer-1","status":"healthy","uptime":"Up 2 hours","ports":"0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp"},{"name":"docker-monitor-bot-1","status":"healthy","uptime":"Up 3 hours","ports":"0.0.0.0:8082->8080/tcp, [::]:8082->8080/tcp"},{"name":"docker-mm-daemon-1","status":"running","uptime":"Up 7 hours","ports":""},{"name":"docker-chaos-trader-1","status":"running","uptime":"Up 7 hours","ports":""},{"name":"docker-rates-indexer-1","status":"healthy","uptime":"Up 7 hours","ports":"0.0.0.0:8081->8080/tcp, [::]:8081->8080/tcp"},{"name":"docker-deployer-1","status":"stopped","uptime":"Exited (1) 2 hours ago","ports":""}],
+  "services": {
+    "rates_indexer": { "healthy": true, "last_block": "24421481" },
+    "sim_indexer": { "healthy": true },
+    "monitor_bot": { "healthy": true },
+    "nginx": { "healthy": true }
+  },
+  "ssl": { "expiry": "2026-05-10", "days_remaining": 89 },
+  "git": { "commit": "6e7011d", "message": "fix: rewrite status dashboard as vanilla JS (no CDN deps, CS", "time": "2026-02-09 20:00:12 +0000" },
+  "docker": { "dangling_images": 25, "images_size": "3.293GB" }
+}

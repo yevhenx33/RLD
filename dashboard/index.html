@@ -1,0 +1,843 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RLD // INFRA STATUS</title>
+    <script
+      src="https://unpkg.com/react@18/umd/react.production.min.js"
+      crossorigin
+    ></script>
+    <script
+      src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+      crossorigin
+    ></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      :root {
+        --bg: #08090a;
+        --s1: #0d0f10;
+        --s2: #131517;
+        --bdr: #1a1d20;
+        --g: #00ff88;
+        --gd: #00994d;
+        --g2: rgba(0, 255, 136, 0.08);
+        --a: #ffaa00;
+        --ad: #996600;
+        --a2: rgba(255, 170, 0, 0.08);
+        --r: #ff3344;
+        --rd: #991a22;
+        --r2: rgba(255, 51, 68, 0.08);
+        --c: #00ccff;
+        --cd: #006680;
+        --t: #8a8f98;
+        --td: #3a3f48;
+        --tb: #cdd0d6;
+      }
+      body {
+        font-family: "JetBrains Mono", monospace;
+        background: var(--bg);
+        color: var(--t);
+        min-height: 100vh;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 3px,
+          rgba(0, 255, 136, 0.006) 3px,
+          rgba(0, 255, 136, 0.006) 4px
+        );
+        pointer-events: none;
+        z-index: 9999;
+      }
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.4;
+        }
+      }
+      .blink {
+        animation: blink 1.2s step-end infinite;
+      }
+      .pulse {
+        animation: pulse 2s ease-in-out infinite;
+      }
+      .fade {
+        animation: fadeUp 0.3s ease both;
+      }
+
+      .wrap {
+        max-width: 1280px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      .hdr {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 0 16px;
+        border-bottom: 1px solid var(--bdr);
+        margin-bottom: 16px;
+      }
+      .grid {
+        display: grid;
+        gap: 1px;
+      }
+      .g2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .g3 {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+      .g4 {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      @media (max-width: 900px) {
+        .g2,
+        .g3,
+        .g4 {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .card {
+        background: var(--s1);
+        border: 1px solid var(--bdr);
+        padding: 14px 16px;
+      }
+      .card-t {
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 2.5px;
+        color: var(--td);
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .badge {
+        font-size: 9px;
+        padding: 2px 8px;
+        border-radius: 2px;
+        letter-spacing: 1.5px;
+        font-weight: 600;
+        margin-left: auto;
+      }
+      .b-green {
+        background: var(--g2);
+        color: var(--g);
+        border: 1px solid rgba(0, 255, 136, 0.15);
+      }
+      .b-amber {
+        background: var(--a2);
+        color: var(--a);
+        border: 1px solid rgba(255, 170, 0, 0.15);
+      }
+      .b-red {
+        background: var(--r2);
+        color: var(--r);
+        border: 1px solid rgba(255, 51, 68, 0.15);
+      }
+
+      .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+      }
+      .d-g {
+        background: var(--g);
+        box-shadow: 0 0 6px var(--g);
+      }
+      .d-a {
+        background: var(--a);
+        box-shadow: 0 0 6px var(--a);
+      }
+      .d-r {
+        background: var(--r);
+        box-shadow: 0 0 6px var(--r);
+      }
+
+      .tbl {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .tbl th {
+        text-align: left;
+        color: var(--td);
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        padding: 5px 8px;
+        border-bottom: 1px solid var(--bdr);
+        font-weight: 400;
+      }
+      .tbl td {
+        padding: 5px 8px;
+        border-bottom: 1px solid #0e0f11;
+        font-size: 11px;
+      }
+      .tbl tr:hover td {
+        background: rgba(0, 255, 136, 0.015);
+      }
+
+      .bar-bg {
+        height: 4px;
+        background: var(--bdr);
+        border-radius: 1px;
+        overflow: hidden;
+      }
+      .bar-fg {
+        height: 100%;
+        border-radius: 1px;
+        transition: width 0.6s ease;
+      }
+
+      .metric-val {
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.5px;
+      }
+      .metric-lbl {
+        font-size: 9px;
+        color: var(--td);
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        margin-top: 2px;
+      }
+
+      .log-line {
+        font-size: 10px;
+        padding: 3px 0;
+        border-bottom: 1px solid #0b0c0d;
+        display: flex;
+        gap: 10px;
+      }
+      .log-ts {
+        color: var(--td);
+        flex-shrink: 0;
+        width: 60px;
+      }
+      .log-ok {
+        color: var(--g);
+      }
+      .log-warn {
+        color: var(--a);
+      }
+      .log-err {
+        color: var(--r);
+      }
+
+      .glow-g {
+        text-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
+      }
+      .glow-c {
+        text-shadow: 0 0 8px rgba(0, 204, 255, 0.3);
+      }
+      .glow-r {
+        text-shadow: 0 0 8px rgba(255, 51, 68, 0.4);
+      }
+
+      .ftr {
+        text-align: center;
+        padding: 14px 0;
+        color: var(--td);
+        font-size: 9px;
+        border-top: 1px solid var(--bdr);
+        margin-top: 12px;
+        letter-spacing: 1.5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="text/babel">
+      const { useState, useEffect, useCallback } = React;
+
+      const fmtUp = (s) => {
+        const d = Math.floor(s / 86400),
+          h = Math.floor((s % 86400) / 3600),
+          m = Math.floor((s % 3600) / 60);
+        return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+      };
+      const fmtAgo = (ts) => {
+        if (!ts) return "—";
+        const d = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+        return d < 60
+          ? `${d}s ago`
+          : d < 3600
+            ? `${Math.floor(d / 60)}m ago`
+            : `${Math.floor(d / 3600)}h ago`;
+      };
+      const pct = (u, t) => (t > 0 ? Math.round((u / t) * 100) : 0);
+
+      const Dot = ({ s }) => (
+        <span
+          className={`dot d-${s === "healthy" || s === "running" || s === true ? "g" : s === "stopped" || s === false ? "r" : "a"}`}
+        />
+      );
+
+      const Bar = ({ v, mx, label }) => {
+        const p = pct(v, mx),
+          c = p > 90 ? "var(--r)" : p > 75 ? "var(--a)" : "var(--g)";
+        return (
+          <div style={{ marginBottom: 8 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                marginBottom: 3,
+              }}
+            >
+              <span style={{ fontSize: 10, color: "var(--t)" }}>{label}</span>
+              <span style={{ fontSize: 10, color: c }}>{p}%</span>
+            </div>
+            <div className="bar-bg">
+              <div
+                className="bar-fg"
+                style={{ width: `${p}%`, background: c }}
+              />
+            </div>
+          </div>
+        );
+      };
+
+      function App() {
+        const [d, setD] = useState(null);
+        const [err, setErr] = useState(null);
+        const [logs, setLogs] = useState([]);
+        const [tick, setTick] = useState(0);
+
+        const load = useCallback(() => {
+          fetch("/status.json?_=" + Date.now())
+            .then((r) => r.json())
+            .then((j) => {
+              setD(j);
+              setErr(null);
+              const now = new Date().toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              });
+              const up = j.containers.filter(
+                (c) => c.status === "healthy" || c.status === "running",
+              ).length;
+              setLogs((prev) =>
+                [
+                  {
+                    ts: now,
+                    msg: `health check — ${up}/${j.containers.length} services ok`,
+                    cls: up === j.containers.length ? "log-ok" : "log-warn",
+                  },
+                  j.services.rates_indexer.last_block
+                    ? {
+                        ts: now,
+                        msg: `rates-indexer block: ${Number(j.services.rates_indexer.last_block).toLocaleString()}`,
+                        cls: "log-ok",
+                      }
+                    : null,
+                  ...prev,
+                ]
+                  .filter(Boolean)
+                  .slice(0, 30),
+              );
+            })
+            .catch((e) => setErr(e.message));
+        }, []);
+
+        useEffect(() => {
+          load();
+          const iv = setInterval(load, 30000);
+          return () => clearInterval(iv);
+        }, [load]);
+        useEffect(() => {
+          const iv = setInterval(() => setTick((t) => t + 1), 1000);
+          return () => clearInterval(iv);
+        }, []);
+
+        if (err)
+          return (
+            <div style={{ padding: 60, textAlign: "center" }}>
+              <div
+                style={{ color: "var(--r)", fontSize: 13 }}
+                className="glow-r"
+              >
+                ✗ STATUS UNAVAILABLE
+              </div>
+              <div style={{ color: "var(--td)", marginTop: 8, fontSize: 11 }}>
+                {err}
+              </div>
+            </div>
+          );
+        if (!d)
+          return (
+            <div style={{ padding: 60, textAlign: "center" }}>
+              <span style={{ color: "var(--g)" }} className="pulse glow-g">
+                ▌ LOADING...
+              </span>
+            </div>
+          );
+
+        const {
+          system: sys,
+          containers: cts,
+          services: svc,
+          ssl,
+          git,
+          docker: dk,
+        } = d;
+        const up = cts.filter(
+          (c) => c.status === "healthy" || c.status === "running",
+        ).length;
+        const allUp = up === cts.length;
+
+        return (
+          <div className="wrap">
+            {/* Header */}
+            <div className="hdr">
+              <div>
+                <span
+                  style={{ color: "var(--g)", fontSize: 15, fontWeight: 700 }}
+                  className="glow-g"
+                >
+                  RLD
+                </span>
+                <span
+                  style={{ color: "var(--td)", fontSize: 11, marginLeft: 10 }}
+                >
+                  // INFRA STATUS
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Dot s={allUp ? "healthy" : "stopped"} />
+                <span
+                  style={{
+                    color: allUp ? "var(--g)" : "var(--r)",
+                    fontSize: 11,
+                  }}
+                  className={allUp ? "glow-g" : "glow-r"}
+                >
+                  {allUp ? "ALL SYSTEMS OPERATIONAL" : "DEGRADED"}
+                </span>
+                <span
+                  style={{ color: "var(--td)", fontSize: 10, marginLeft: 8 }}
+                >
+                  {fmtAgo(d.timestamp)}
+                </span>
+                <span
+                  className="blink"
+                  style={{ color: "var(--g)", fontSize: 10 }}
+                >
+                  ▌
+                </span>
+              </div>
+            </div>
+
+            {/* Top metrics */}
+            <div className="grid g4" style={{ marginBottom: 1 }}>
+              <div className="card fade">
+                <div className="card-t">
+                  Services
+                  <span className="badge b-green">
+                    {up}/{cts.length}
+                  </span>
+                </div>
+                <div className="metric-val" style={{ color: "var(--g)" }}>
+                  {up}/{cts.length}
+                </div>
+                <div className="metric-lbl">containers up</div>
+              </div>
+              <div className="card fade">
+                <div className="card-t">Uptime</div>
+                <div className="metric-val" style={{ color: "var(--tb)" }}>
+                  {fmtUp(sys.uptime_secs)}
+                </div>
+                <div className="metric-lbl">server uptime</div>
+              </div>
+              <div className="card fade">
+                <div className="card-t">
+                  SSL
+                  <span
+                    className={`badge ${ssl.days_remaining > 30 ? "b-green" : ssl.days_remaining > 7 ? "b-amber" : "b-red"}`}
+                  >
+                    {ssl.days_remaining}d
+                  </span>
+                </div>
+                <div
+                  className="metric-val"
+                  style={{
+                    color:
+                      ssl.days_remaining > 30
+                        ? "var(--g)"
+                        : ssl.days_remaining > 7
+                          ? "var(--a)"
+                          : "var(--r)",
+                  }}
+                >
+                  {ssl.days_remaining}
+                </div>
+                <div className="metric-lbl">days remaining</div>
+              </div>
+              <div className="card fade">
+                <div className="card-t">Load</div>
+                <div
+                  className="metric-val"
+                  style={{
+                    color:
+                      sys.load > sys.cpu_cores * 0.8 ? "var(--a)" : "var(--tb)",
+                  }}
+                >
+                  {sys.load}
+                </div>
+                <div className="metric-lbl">{sys.cpu_cores} cores</div>
+              </div>
+            </div>
+
+            {/* Resources + Containers */}
+            <div className="grid g2" style={{ marginBottom: 1 }}>
+              <div className="card fade">
+                <div className="card-t">
+                  Resources
+                  <span
+                    className={`badge ${sys.disk.percent > 85 ? "b-red" : sys.disk.percent > 70 ? "b-amber" : "b-green"}`}
+                  >
+                    {sys.disk.percent}% DISK
+                  </span>
+                </div>
+                <Bar
+                  v={sys.disk.used_gb}
+                  mx={sys.disk.total_gb}
+                  label={`disk — ${sys.disk.used_gb}G / ${sys.disk.total_gb}G (${sys.disk.free_gb}G free)`}
+                />
+                <Bar
+                  v={sys.memory.used_mb}
+                  mx={sys.memory.total_mb}
+                  label={`memory — ${(sys.memory.used_mb / 1024).toFixed(1)}G / ${(sys.memory.total_mb / 1024).toFixed(1)}G`}
+                />
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    marginTop: 6,
+                  }}
+                >
+                  <span style={{ fontSize: 10 }}>docker images</span>
+                  <span style={{ fontSize: 10, color: "var(--tb)" }}>
+                    {dk.images_size}
+                    {dk.dangling_images > 5 ? (
+                      <span style={{ color: "var(--a)", marginLeft: 6 }}>
+                        ({dk.dangling_images} dangling)
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+              </div>
+
+              <div className="card fade">
+                <div className="card-t">Containers</div>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th>name</th>
+                      <th>status</th>
+                      <th>uptime</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cts.map((c, i) => {
+                      const nm = c.name
+                        .replace(/^docker-/, "")
+                        .replace(/-1$/, "");
+                      return (
+                        <tr key={i}>
+                          <td>
+                            <Dot s={c.status} />
+                          </td>
+                          <td style={{ color: "var(--tb)" }}>{nm}</td>
+                          <td
+                            style={{
+                              color:
+                                c.status === "healthy"
+                                  ? "var(--g)"
+                                  : c.status === "running"
+                                    ? "var(--gd)"
+                                    : "var(--r)",
+                              fontSize: 10,
+                            }}
+                          >
+                            {c.status}
+                          </td>
+                          <td style={{ fontSize: 10 }}>{c.uptime}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Services + Security */}
+            <div className="grid g2" style={{ marginBottom: 1 }}>
+              <div className="card fade">
+                <div className="card-t">Services</div>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th>service</th>
+                      <th>status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      {
+                        n: "Nginx / HTTPS",
+                        ok: svc.nginx.healthy,
+                        port: ":443",
+                      },
+                      {
+                        n: "Rates Indexer",
+                        ok: svc.rates_indexer.healthy,
+                        port: ":8081",
+                        extra: svc.rates_indexer.last_block
+                          ? `blk ${Number(svc.rates_indexer.last_block).toLocaleString()}`
+                          : "",
+                      },
+                      {
+                        n: "Sim Indexer",
+                        ok: svc.sim_indexer.healthy,
+                        port: ":8080",
+                      },
+                      {
+                        n: "Monitor Bot",
+                        ok: svc.monitor_bot.healthy,
+                        port: ":8082",
+                      },
+                    ].map((s, i) => (
+                      <tr key={i}>
+                        <td>
+                          <Dot s={s.ok} />
+                        </td>
+                        <td style={{ color: "var(--tb)" }}>
+                          {s.n}
+                          <span
+                            style={{
+                              color: "var(--td)",
+                              marginLeft: 6,
+                              fontSize: 9,
+                            }}
+                          >
+                            {s.port}
+                          </span>
+                        </td>
+                        <td>
+                          {s.ok ? (
+                            <span style={{ color: "var(--g)", fontSize: 10 }}>
+                              online
+                            </span>
+                          ) : (
+                            <span style={{ color: "var(--r)", fontSize: 10 }}>
+                              offline
+                            </span>
+                          )}
+                          {s.extra ? (
+                            <span
+                              style={{
+                                color: "var(--td)",
+                                fontSize: 9,
+                                marginLeft: 8,
+                              }}
+                            >
+                              {s.extra}
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="card fade">
+                <div className="card-t">
+                  Security<span className="badge b-green">HARDENED</span>
+                </div>
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th></th>
+                      <th>check</th>
+                      <th>status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { n: "HSTS", ok: true, d: "preload" },
+                      { n: "CSP", ok: true, d: "active" },
+                      { n: "X-Frame", ok: true, d: "SAMEORIGIN" },
+                      { n: "X-Content-Type", ok: true, d: "nosniff" },
+                      { n: ".env blocked", ok: true, d: "404" },
+                      { n: ".git blocked", ok: true, d: "404" },
+                      { n: "UFW active", ok: true, d: "3 ports" },
+                      { n: "SSH key deploy", ok: true, d: "ed25519" },
+                    ].map((s, i) => (
+                      <tr key={i}>
+                        <td style={{ color: "var(--g)", fontSize: 10 }}>✓</td>
+                        <td style={{ color: "var(--tb)" }}>{s.n}</td>
+                        <td style={{ color: "var(--gd)", fontSize: 10 }}>
+                          {s.d}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* CI/CD + Activity */}
+            <div className="grid g2" style={{ marginBottom: 1 }}>
+              <div className="card fade">
+                <div className="card-t">
+                  CI/CD Pipeline<span className="badge b-green">PASSING</span>
+                </div>
+                <table className="tbl">
+                  <tbody>
+                    <tr>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>
+                        pipeline
+                      </td>
+                      <td
+                        style={{ color: "var(--c)", fontWeight: 500 }}
+                        className="glow-c"
+                      >
+                        Build & Deploy #9
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>
+                        status
+                      </td>
+                      <td>
+                        <Dot s={true} />
+                        <span
+                          style={{
+                            color: "var(--g)",
+                            marginLeft: 6,
+                            fontSize: 10,
+                          }}
+                        >
+                          PASSING
+                        </span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>
+                        frontend
+                      </td>
+                      <td style={{ fontSize: 10 }}>34s — lint + build</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>
+                        deploy
+                      </td>
+                      <td style={{ fontSize: 10 }}>29s — scp + ssh</td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>
+                        trigger
+                      </td>
+                      <td style={{ fontSize: 10 }}>
+                        push to main (frontend/**, backend/**, docker/**)
+                      </td>
+                    </tr>
+                    <tr>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>
+                        last commit
+                      </td>
+                      <td style={{ fontSize: 10 }}>
+                        <span style={{ color: "var(--c)" }}>{git.commit}</span>
+                        <span style={{ color: "var(--td)", marginLeft: 8 }}>
+                          {git.message}
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="card fade">
+                <div className="card-t">
+                  Activity Log<span className="badge b-green">LIVE</span>
+                </div>
+                <div style={{ maxHeight: 180, overflowY: "auto" }}>
+                  {logs.map((l, i) => (
+                    <div key={i} className="log-line">
+                      <span className="log-ts">{l.ts}</span>
+                      <span className={l.cls}>{l.msg}</span>
+                    </div>
+                  ))}
+                  {logs.length === 0 && (
+                    <div
+                      style={{ color: "var(--td)", fontSize: 10, padding: 8 }}
+                    >
+                      waiting for first check...
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="ftr">
+              RLD PROTOCOL // INFRASTRUCTURE MONITOR v1.0
+              <span style={{ float: "right" }}>
+                NEXT REFRESH IN {30 - (tick % 30)}s
+              </span>
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>

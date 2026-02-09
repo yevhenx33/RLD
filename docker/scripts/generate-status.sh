@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-OUTPUT="/home/ubuntu/RLD/frontend/dist/status.json"
+OUTPUT="/home/ubuntu/RLD/dashboard/status.json"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # ── System metrics ──
