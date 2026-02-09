@@ -13,9 +13,6 @@ const Markets = lazy(() => import("./components/Markets"));
 const Research = lazy(() => import("./components/Research"));
 const Article = lazy(() => import("./components/Article"));
 const Portfolio = lazy(() => import("./components/Portfolio"));
-const Simulation = lazy(() => import("./components/Simulation"));
-const SimulationDetail = lazy(() => import("./components/SimulationDetail"));
-const LiveSimulation = lazy(() => import("./components/LiveSimulation"));
 
 const Loading = () => (
   <div className="h-screen w-full flex items-center justify-center bg-black text-gray-500 font-mono text-xs animate-pulse">
@@ -98,30 +95,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 element={
                   <Suspense fallback={<Loading />}>
                     <Portfolio />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="/simulation"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <Simulation />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="/simulation/:id"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <SimulationDetail />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="/live"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <LiveSimulation />
                   </Suspense>
                 }
               />

@@ -2,7 +2,6 @@ import React from "react";
 import { Link } from "react-router-dom";
 import {
   Terminal,
-  Shield,
   TrendingUp,
   ArrowRight,
   ExternalLink,
@@ -129,7 +128,6 @@ const LandingPage = () => {
               <div className="h-[1px] w-full bg-white/10 mb-4" />
               <NavJump href="#bonds" label="01. Synthetic Bonds" />
               <NavJump href="#rates" label="02. Rate-Level Perps" />
-              <NavJump href="#insurance" label="03. Credit Default Swaps" />
             </div>
           </div>
 
@@ -176,27 +174,6 @@ const LandingPage = () => {
                 <div className="flex justify-center lg:justify-end items-center">
                   <div className="w-full max-w-lg">
                     <LandingChart />
-                  </div>
-                </div>
-              }
-            />
-
-            <LandingSectionFeature
-              id="insurance"
-              index="03"
-              title="Credit Default Swaps"
-              icon={<Shield className="text-green-500" size={20} />}
-              accentColor="green"
-              description="Protect against protocol bankruptcy (Stream-like case) with an automatic default system triggered by:"
-              features={[
-                "Utilization > 90%",
-                "Collateral Depeg > 90%",
-                "DEX liquidity drop > 90%",
-              ]}
-              visual={
-                <div className="flex justify-center lg:justify-end items-center">
-                  <div className="w-full max-w-lg">
-                    <CDSKinkCurve />
                   </div>
                 </div>
               }
@@ -363,88 +340,6 @@ const LandingSectionFeature = ({
 
         {/* RIGHT: Visual */}
         {visual}
-      </div>
-    </div>
-  );
-};
-
-// CDS Kink Curve Component
-const CDSKinkCurve = () => {
-  const data = [
-    { util: 0, rate: 2 },
-    { util: 20, rate: 2.5 },
-    { util: 40, rate: 3 },
-    { util: 60, rate: 3.5 },
-    { util: 80, rate: 4 }, // Base Kink
-    { util: 85, rate: 6 },
-    { util: 90, rate: 10 }, // Crisis Trigger
-    { util: 95, rate: 50 },
-    { util: 100, rate: 100 }, // Max Cap
-  ];
-
-  return (
-    <div className="group relative bg-[#0a0a0a] border border-white/10 hover:border-white/20 transition-colors flex flex-col w-full h-full">
-      {/* Header */}
-      <div className="bg-white/5 px-5 py-3 border-b border-white/5 flex justify-between items-center">
-        <div className="text-[10px] text-gray-500 uppercase tracking-widest font-medium">
-          Payoff Curve
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-[10px] text-red-500 uppercase tracking-widest font-bold">
-            Auto-Default Trigger
-          </span>
-        </div>
-      </div>
-
-      {/* Body: Chart */}
-      <div className="h-[250px] relative w-full bg-black/40">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart
-            data={data}
-            margin={{ top: 10, right: 0, bottom: 0, left: 0 }}
-          >
-            <defs>
-              <linearGradient id="colorRateGreen" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <Tooltip
-              cursor={{ stroke: "#333", strokeWidth: 1 }}
-              contentStyle={{ backgroundColor: "#000", borderColor: "#333" }}
-              itemStyle={{
-                color: "#22c55e",
-                fontSize: "10px",
-                textTransform: "uppercase",
-              }}
-              labelStyle={{ display: "none" }}
-              formatter={(value) => [`${value}%`, "RATE"]}
-            />
-            <Area
-              type="monotone"
-              dataKey="rate"
-              stroke="#22c55e"
-              fill="url(#colorRateGreen)"
-              strokeWidth={2}
-              isAnimationActive={true}
-              animationDuration={2000}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Footer */}
-      <div className="px-5 py-4 bg-[#050505] border-t border-white/5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-          <span className="text-[10px] uppercase tracking-widest font-medium text-green-500">
-            Active
-          </span>
-        </div>
-        <div className="text-[10px] text-gray-600 uppercase tracking-widest font-bold">
-          Solvency Protection
-        </div>
       </div>
     </div>
   );
