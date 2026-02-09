@@ -5,7 +5,7 @@ const ProductCard = ({
   title,
   desc,
   badge,
-  Icon,
+  Icon, // eslint-disable-line no-unused-vars
   onClick,
   isActive,
 }) => {

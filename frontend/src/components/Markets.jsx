@@ -58,21 +58,16 @@ const ASSETS = [
   },
 ];
 
-function MarketMetricBox({
-  label,
-  value,
-  sub,
-  dimmed,
-  Icon: _Icon = Activity,
-}) {
+// eslint-disable-next-line no-unused-vars
+function MarketMetricBox({ label, value, sub, dimmed, Icon = Activity }) {
   return (
     <div
       className={`p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[160px] ${
-        dimmed ? "opacity-30" : ""
+        dimmed ? "opacity-60" : ""
       }`}
     >
       <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
-        {label} <_Icon size={15} className="opacity-90" />
+        {label} <Icon size={15} className="opacity-90" />
       </div>
       <div>
         <div className="text-xl md:text-3xl font-light text-white mb-1 md:mb-2 tracking-tight">
@@ -487,6 +482,7 @@ export default function Markets() {
       color: s.color,
       yAxisId: s.yAxisId,
     }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hiddenSeries]);
 
   return (
@@ -691,7 +687,7 @@ export default function Markets() {
                   // Ensure xmlns
                   if (
                     !sourceChart.match(
-                      /^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/,
+                      /^<svg[^>]+xmlns="http:\/\/www\.w3\.org\/2000\/svg"/,
                     )
                   ) {
                     sourceChart = sourceChart.replace(

@@ -1,4 +1,3 @@
-
 export const RLD_PAPER_CONTENT = `
 RLD v3
 On-chain synthetic bonds and credit-default swaps.
@@ -81,7 +80,7 @@ as a leveraged proxy for asset prices. When asset prices rise, traders aggressiv
 positions, draining stablecoin liquidity and driving up utilization. Consequently, borrowing costs do not merely 
 track market activity; they amplify it.
 Empirical data reveal that interest rates often exhibit higher sensitivity to market moves than even dedicated 
-volatility indices. For instance, during the Bitcoin rally from \$60k to \$110k +83% in late 2024, USDC 
+volatility indices. For instance, during the Bitcoin rally from $60k to $110k +83% in late 2024, USDC 
 borrowing rates surged by 237% (from 6.7% to 40+%. In contrast, the Deribit Volatility Index DVOL 
 increased by only 5.4% during the same period. This demonstrates that interest rates function as a "super-
 volatile" asset class, reacting far more violently to market exuberance than traditional volatility metrics suggest.
@@ -132,9 +131,9 @@ Perpetuals. This design allows for the creation of a fungible ERC-20 token that 
 rate of a specific on-chain lending pool (e.g., Aave USDC, Morpho USDT.
 2.1 The CDP Architecture
 The RLP Index Price transforms the annualized borrowing rate   into a scalar value:
-With  , a 5% interest rate (  ) equals a \$5.00 price. This linear scaling ensures that the 
+With  , a 5% interest rate (  ) equals a $5.00 price. This linear scaling ensures that the 
 derivative's payouts are intuitive: a doubling of the interest rate results in a doubling of the position value: at 
-5%  P = \$5; at 10%  P = \$10.
+5%  P = $5; at 10%  P = $10.
 2.1.1 Minting Short Exposure)
 To open a Short RLP position (betting on stable or falling rates), a liquidity provider or yield hedger interacts 
 with the Vault contract:
@@ -146,7 +145,7 @@ a normalization factor that accumulates a continuous funding rate.
 funding. 
  The contract requires collateral be worth more than the debt. If the value of collateral falls below some 
 multiple the debt value, the contract liquidates the collateral to repay the loan.
-This mechanism creates a fungible asset that tracks   and avoids machinery for paying or receiving cash 
+This mechanism creates a fungible asset that tracks   and avoids machinery for paying or receiving cash 
 funding. The perpetual should trade close to its debt value (adjusted for funding) in an external market - 
 concentrated RLP/ USDC pool on Uniswap V4.
 2.1.2 Continuous Funding Normalization Factor)
@@ -181,16 +180,16 @@ inflate, effectively paying Longs a subsidy to hold the position.
 Users seeking exposure to rising interest rates (e.g., borrowers hedging variable loans) do not mint tokens. 
 Instead, they simply buy RLP tokens on the Uniswap V4 pool.
 Payoff: The value of the RLP token tracks the Index Price  . If interest rates rise from 5% to 10%,
-the fundamental value of the token doubles from \$5 to \$10.
+the fundamental value of the token doubles from $5 to $10.
 Cost of Carry: If the market is bullish on rates, the token may trade at a premium   While the 
 Long holder does not pay an explicit fee, they pay implicitly through the funding rate.
 Funding Drag: the token price will tend to converge downward toward the Index Price over time as 
 arbitrageurs mint new tokens to capture the premium.
-Example: Long RLP (index = \$5  \$10
-Trader use \$1,000 to buy Q  =  1 0 0 0  /  \$ 5  =  2 0 0  RLP 
-Price go from \$5 to \$10
+Example: Long RLP (index = $5  $10
+Trader use $1,000 to buy Q  =  1 0 0 0  /  $ 5  =  2 0 0  RLP 
+Price go from $5 to $10
  
-Net profit \$1000 or 2 on notional, before trading fees/funding.
+Net profit $1000 or 2 on notional, before trading fees/funding.
 2.1.4 Repayment and Liquidation
 To close a Short position, the minter must return the borrowed quantity of RLP tokens to the Vault:
 1. The Short buys RLP from the pool (or uses held tokens).
@@ -266,7 +265,7 @@ infrastructure, but because the market structure of interest rates is fundamenta
 assets (like ETH or BTC, making it uniquely suited for concentrated liquidity provisioning.
 The Mean-Reversion Advantage
 Standard directional assets typically exhibit "trending" behavior, where price discovery drives the asset into 
-new ranges permanently (e.g., ETH moving from \$1,000 to \$3,000. For Liquidity Providers (LPs) in Automated 
+new ranges permanently (e.g., ETH moving from $1,000 to $3,000. For Liquidity Providers (LPs) in Automated 
 Market Makers AMMs), this creates Impermanent Loss IL: as the price moves away from their liquidity range, 
 they are effectively "selling the winner" and suffering relative losses.
 P  (t)=index K⋅  ( Δt ∑ i
@@ -278,7 +277,7 @@ U
 real
 U  =real
  
-Total LiquidityTotal Borrows
+Total LiquidityTotal Borrows
 U  
 real
 r  
@@ -304,7 +303,7 @@ fixed-rate loans and guaranteed-yield bonds without the liquidity fragmentation 
 3.1 Fixed Yield
 Lenders can lock in a guaranteed return on their floating-rate assets (e.g., aUSDC, sUSDe) with a single 
 transaction. This transforms a passive, volatile deposit into a deterministic financial instrument.
-The Problem: A lender depositing \$100,000 into a lending protocol might see 15% APY during a bull run, 
+The Problem: A lender depositing $100,000 into a lending protocol might see 15% APY during a bull run, 
 but suffer a collapse to 2% during a "Crypto Winter." This volatility makes cash-flow planning impossible 
 for DAOs and treasuries.
 The RLP Solution: The lender opens a Short RLP position.
@@ -316,14 +315,14 @@ The Result: The user walks away with a fixed yield (e.g., 10% regardless of w
 cash flows into a secured, predictable annuity.
 3.2 Generalized Pricing Model
 The Lifecycle Step-by-Step Rates 5%:
-1. Initial Deposit: The user deposits \$100,000 of aUSDC Aave interest-bearing token) into the RLP Vault. This 
+1. Initial Deposit: The user deposits $100,000 of aUSDC Aave interest-bearing token) into the RLP Vault. This 
 asset continues to earn the underlying Aave supply rate.
 2. Minting Short): The Vault calculates the required hedge size   and mints Short RLP tokens.
 3. Monetization Sell): The minted RLP tokens are immediately sold into the Uniswap V4 pool for USDC.
 4. Looping: This newly acquired USDC is deposited back into Aave to mint more aUSDC.
  Re-Collateralization: The new aUSDC is added to the Vault's collateral balance.
-Result: The user now holds, e.g., \$105,000 of aUSDC collateral against the RLP debt. They earn yield on \$105k 
-instead of \$100k, creating a "Leveraged Yield" effect that helps offset funding costs.
+Result: The user now holds, e.g., $105,000 of aUSDC collateral against the RLP debt. They earn yield on $105k 
+instead of $100k, creating a "Leveraged Yield" effect that helps offset funding costs.
 To achieve precision, the Vault calculates the exact Hedge Quantity   required. This is not a simple 1:1 ratio; it 
 must account for the specific mechanics of the underlying protocol, including continuous compounding and 
 the divergence between supply and borrow rates.
@@ -332,11 +331,11 @@ Q
 Q
 Q  =hedge
  ×
-Base Duration
+Base Duration
   ×T(KN )  ×
-Compounding Scalar
+Compounding Scalar
  γ  
-Utilization Beta
+Utilization Beta
  β
 RLD v3
 7
@@ -403,12 +402,12 @@ proportional to the yield itself.
 To hedge a 10% yield, the user must mint Short RLP debt equivalent to roughly 10% of their principal. 
 Crucially, because RLP utilizes an Isolated Loop, the capital generated from selling the Short position is not 
 lost; it is re-supplied as collateral, further boosting safety.
-Example: Hedging a 10% Yield on \$100,000
-Initial Principal: \$100,000
-Minted Debt: ~\$10,000 Short RLP
-Proceeds Re-supplied: \$10,000 Converted to aUSDC
-Total Collateral: \$110,000
-Initial LTV: \$  
+Example: Hedging a 10% Yield on $100,000
+Initial Principal: $100,000
+Minted Debt: ~$10,000 Short RLP
+Proceeds Re-supplied: $10,000 Converted to aUSDC
+Total Collateral: $110,000
+Initial LTV: $  
 This implies a massive Collateralization Ratio CR of ~1,100% at inception, far exceeding the 109% liquidation 
 threshold.
 Because the position starts with such low LTV, it can withstand any volatility shocks of interest rates up to 
@@ -433,7 +432,7 @@ The strategy employs the "Leveraged Loop" described in Section 3.4, where procee
 are re-supplied to the lending protocol to generate a "Leveraged Yield" effect. The position is managed via the 
 TWAMM mechanism, which linearly unwinds the hedge size   to zero over the duration of the bond.
 Simulation Parameters:
-Principal: \$100,000
+Principal: $100,000
 Initial Rate: 10.0%
 Re-Supply Leverage: ~1.1x (derived from Short proceeds) 
 Unwind Logic: Linear decay via TWAMM   
@@ -540,7 +539,7 @@ effectively realizes the Time-Weighted Average Price TWAP of the interest 
 mathematically smoothing out volatility spikes and ensuring fair execution.
 3.7 RWA Integration: The On-Chain Treasury
 The Rate-Level Perp architecture is asset-agnostic. While its immediate application is hedging DeFi lending 
-rates Aave/Morpho), its most scalable utility lies in bringing the \$25 trillion US Treasury market on-chain.
+rates Aave/Morpho), its most scalable utility lies in bringing the $25 trillion US Treasury market on-chain.
 By swapping the underlying components - collateral and oracle - RLP allows users to synthesize United States 
 Treasury Bills with programmable duration, 24/7 liquidity, and complete composability, effectively creating a 
 "DeFi Prime Brokerage" for sovereign debt.
@@ -640,33 +639,33 @@ depositing a high-yield asset (e.g., Ethenaʼs sUSDe) and borrowing a low-cost s
 the exposure. Risk: if borrowing costs spike to match asset yields, the positionʼs profitability collapses.
 RLP transforms this into a fixed-income strategy by using the debt capacity itself to fund a hedge.
 The Setup: 3x Hedged Loop:
-A trader starts with \$100,000 capital. They target 3x Leverage on the spread between sUSDe Yield) and USDC 
+A trader starts with $100,000 capital. They target 3x Leverage on the spread between sUSDe Yield) and USDC 
 (Cost).
-Principal: \$100,000
+Principal: $100,000
 Initial Rates: Asset Yield 5%, Borrow Cost 4%.
-Target Collateral: \$300,000 sUSDe
-Base Debt: \$200,000 USDC
-The Hedge: To lock the 4% Borrow Rate, the user buys Long RLP tokens covering the \$200k liability.
-Cost: \$200,000 Liability   4% Rate = \$8,000
-Financing: The user borrows this additional \$8k.
+Target Collateral: $300,000 sUSDe
+Base Debt: $200,000 USDC
+The Hedge: To lock the 4% Borrow Rate, the user buys Long RLP tokens covering the $200k liability.
+Cost: $200,000 Liability   4% Rate = $8,000
+Financing: The user borrows this additional $8k.
 Initial LTV:  
 Bull Market Case:
 sUSDe yield rises to 10%, but USDC borrow costs rise to 9%.
 1. PnL:
-Gross Yield: \$300,000 Collateral   10% = +\$30,000
-Interest Expense: \$208,000 Debt   9% = -\$18,720
+Gross Yield: $300,000 Collateral   10% = +$30,000
+Interest Expense: $208,000 Debt   9% = -$18,720
 Note: Expense is higher because rates rose from 4%  9%.
 2. The Hedge Payoff:
 Rate Shift: 4%  9%.
-RLP Price Change: \$4.00  \$9.00 +\$5.00/token).
-Hedge Profit: 2,000 units   \$5.00 = +\$10,000
+RLP Price Change: $4.00  $9.00 +$5.00/token).
+Hedge Profit: 2,000 units   $5.00 = +$10,000
 3. Net Performance Comparison:
 Metric Unhedged Loop (3x)Hedged Loop 3x + RLP
-Gross Yield \$30,000 \$30,000
-Interest Expense \$18,000  9% on \$200k\$18,720  9% on \$208k
-Hedge Profit \$0 +\$10,000
-Net Profit \$12,000 \$21,280
-ROI (on \$100k) 12.00% 21.28%
+Gross Yield $30,000 $30,000
+Interest Expense $18,000  9% on $200k$18,720  9% on $208k
+Hedge Profit $0 +$10,000
+Net Profit $12,000 $21,280
+ROI (on $100k) 12.00% 21.28%
 While the unhedged trader suffered from the rate hike, the hedged trader outperformed by 77%.
 Effective Cost of Borrowing:
 ↑ ↑
@@ -679,7 +678,7 @@ RLD v3
 14
 
 Even though market rates hit 9%, the user effectively paid ~4%. The slight drift from 4.00% to 4.19% accounts 
-for the interest paid on the \$8k hedge financing).
+for the interest paid on the $8k hedge financing).
 4.3 Case Study: Fintech Lenders (The NIM Guarantee)
 Credit protocols lending to real-world businesses RWAs) face a fatal asset-liability mismatch: they originate 
 loans off-chain at Fixed Rates but borrow capital on-chain at Floating Rates.
@@ -697,7 +696,7 @@ The Strategy: Synthetic Fixed Spread
 The goal is to lock in the 4% Net Spread between Aave Borrow) and Euler Supply) without taking any rate 
 risk.
 Leg 1: Fixed Liability Aave)
-Action: Borrow \$1M USDC on Aave at 4%.
+Action: Borrow $1M USDC on Aave at 4%.
 Hedge: Buy Long RLP-Aave-USDC.
 Result: You have fixed your cost of capital at exactly 4% APY.
 Leg 2: Fixed Asset Euler or Pendle)
@@ -714,7 +713,7 @@ This effectively allows market makers to bridge liquidity between protocols, for
 converge across the ecosystem while capturing a guaranteed, risk-free yield.
 Timing the Credit Cycle
 This structure is most powerful when used to Time the Macro Credit Cycle.
- =\$208,000 (Total Debt)\$18,720 (Interest)−\$10,000 (Hedge PnL) 4.19%
+ =$208,000 (Total Debt)$18,720 (Interest)−$10,000 (Hedge PnL) 4.19%
 R  
 asset
 r  
@@ -724,7 +723,7 @@ r
 t
 NIM=R  −asset
  
-Effective Cost
+Effective Cost
  (r −HedgePayout)t
 PnL≈(r −t r  )locked
 NIM=10%−(r −t (r −t 6%))=+4%
@@ -789,7 +788,7 @@ is mean-reverting and a correction is imminent.
 5.2 Case Study: The Stream Finance Liquidity Crunch (Nov 2025)
 The sharp rate spike observed in November 2025 serves as the textbook definition of a "Statistical Arbitrage" 
 window.
-The Event: On November 4, 2025, the yield-optimization protocol Stream Finance suffered a \$93M 
+The Event: On November 4, 2025, the yield-optimization protocol Stream Finance suffered a $93M 
 bankruptcy.
 The Contagion: This triggered a panic-driven outflow from lending pools Euler, Morpho, Aave).
 The Rate Impact: This massive supply shock caused utilization rates to skyrocket, driving USDC borrowing 
@@ -808,7 +807,7 @@ Empirical Basis Late 2024 Rally):
 RLD v3
 17
 
-Asset Move: Bitcoin rallied from \$60k  \$110k (+83%).
+Asset Move: Bitcoin rallied from $60k  $110k (+83%).
 Rate Response: Smoothed USDC borrowing rates 7d MA surged from 7.6%  45.5% +502%.
 Observation: The interest rate moved 6x faster than the asset price.
 The Trade: Rate-Asset Straddle (delta-neutral-at-inception portfolio):
@@ -816,7 +815,7 @@ Leg 1: Short BTC-PERP To receive funding).
 Leg 2: Long RLP-USDC Betting on leverage exhaustion).
 Scenario: The "Melt-Up" Price +83%
 Short BTC PnL: The short position suffers a linear loss of -83%.
-Long RLP PnL: The massive demand for leverage drives RLP prices from \$7.60  \$45.50. The 
+Long RLP PnL: The massive demand for leverage drives RLP prices from $7.60  $45.50. The 
 position generates a +502% return.
 Net Outcome:
 Result: The trader profits massively on his delta-neutral portfolio, because the convexity of the rate spike 
@@ -836,14 +835,14 @@ tailored for the new wave of exotic yield-bearing protocols (e.g., Stream Financ
 In DeFi lending markets, a "Default" or "Bank Run" is mathematically identifiable via the Interest Rate Model. 
 When utilization hits 100%, rates are programmed to spike to their maximum cap (often 100%+ or a "Jump 
 Multiplier"):
-Normal State: Rate = 10%. RLP Price   \$10.00.
-Default Event: Rate = 100%. RLP Price   \$100.00.
+Normal State: Rate = 10%. RLP Price   $10.00.
+Default Event: Rate = 100%. RLP Price   $100.00.
 The Payout: A Long RLP holder receives a 10x return instantly.
 The RLP architecture essentially creates a liquid Put Option on the underlying lending market.
 In traditional finance, a Put Option gains value as the underlying asset's price falls. In DeFi lending, "Price" is 
 analogous to Liquidity Solvency. When a protocol enters a crisis (e.g., a bank run or hack), liquidity dries up, 
 driving Utilization to 100%.
-Net PnL=(+502%  )+RLP (−83%  )=BTC +419%
+Net PnL=(+502%  )+RLP (−83%  )=BTC +419%
 ≈
 ≈
 RLD v3
@@ -861,7 +860,7 @@ Default Swaps. The reason is Correlation Risk.
 In a standard Rate Lock, the goal is efficiency, so users might cross-margin positions. However, for Insurance, 
 the goal is Solvency.
 The Contagion Trap
-Consider a user insuring a \$1M deposit in Aave against a "USDC Depeg" or "Aave Hack."
+Consider a user insuring a $1M deposit in Aave against a "USDC Depeg" or "Aave Hack."
 If the insurance protocol uses a U S D C  Aave Deposit Tokens) as collateral for the underwriters:
 The Event: Aave is hacked or USDC depegged. a U S D C  value drops to zero.
 The Payout: The user's insurance claim is valid, but the collateral backing that claim is now worth 0.
@@ -880,24 +879,24 @@ RLD v3
 19
 
 6.3 Demand Side
-Consider a Whale holding \$1 billion in w s t E T H  on Aave.
+Consider a Whale holding $1 billion in w s t E T H  on Aave.
 Strategy: They deposit w s t E T H  as collateral to borrow stablecoins for lifestyle spending or farming, while 
 maintaining long exposure to ETH price appreciation.
-The Risk: Protocol Failure. If Aave suffers a smart contract exploit or governance attack, the \$1B of w s t E T H  
+The Risk: Protocol Failure. If Aave suffers a smart contract exploit or governance attack, the $1B of w s t E T H  
 locked in the protocol could be drained.
 The Problem: Traditional insurance is too expensive or lacks capacity for this size.
 The RLP Solution: Self-Funded Solvency
 Because the underlying asset (w s t E T H ) generates a native yield ~2.5%, the Whale can allocate this passive 
 income to purchase RLP CDS protection.
-1. Gross Yield: \$25 Million / year 2.5%.
-2. Insurance Cost: \$25 Million / year 2.5% Premium).
+1. Gross Yield: $25 Million / year 2.5%.
+2. Insurance Cost: $25 Million / year 2.5% Premium).
 The Payoff:
 Scenario A Normal Market): The Whale effectively use staking rewards to cover principal risk.
 Scenario B The Hack): Aave is exploited.
-The \$1B w s t E T H  collateral is lost.
+The $1B w s t E T H  collateral is lost.
 The CDS Payout: The RLP Short positions are seized. The Whale's RLP holdings reprice from the 
 premium cost to the full face value.
-Result: The Whale recovers their \$1 Billion principal from the insurance payout, effectively rendering 
+Result: The Whale recovers their $1 Billion principal from the insurance payout, effectively rendering 
 the hack a non-event for their portfolio.
 Strategic Advantage: Diversified Coverage
 The user can even acquire CDS for multiple markets on Aave (e.g., insuring the USDC pool and the ETH pool 

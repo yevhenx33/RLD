@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { getFutureDate, getDaysDiff } from "../utils/helpers";
 
-export function useTradeLogic(currentRate) {
+export function useTradeLogic() {
   const [activeProduct, setActiveProduct] = useState("FIXED_YIELD");
   const [activeTab, setActiveTab] = useState("OPEN");
 

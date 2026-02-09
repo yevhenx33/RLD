@@ -1,12 +1,13 @@
 export const BLOG_POSTS = [
-    {
-        id: 0,
-        title: "Rate-Level Derivatives (RLD) v3: Whitepaper",
-        date: "2026-01-08",
-        category: "WHITEPAPER",
-        summary: "The complete technical whitepaper for Rate-Level Derivatives, enabling on-chain synthetic bonds, volatility trading, and CDS markets.",
-        readTime: "25 MIN READ",
-        content: `
+  {
+    id: 0,
+    title: "Rate-Level Derivatives (RLD) v3: Whitepaper",
+    date: "2026-01-08",
+    category: "WHITEPAPER",
+    summary:
+      "The complete technical whitepaper for Rate-Level Derivatives, enabling on-chain synthetic bonds, volatility trading, and CDS markets.",
+    readTime: "25 MIN READ",
+    content: `
 # RLD v3
 
 On-chain synthetic bonds and credit-default swaps.
@@ -93,7 +94,7 @@ To open a Short RLP position (betting on stable or falling rates), a liquidity p
 4. The contract can be repaid at any time after repaying the whole debt value including any outstanding funding. 
 5. The contract requires collateral be worth more than the debt. If the value of collateral falls below some multiple the debt value, the contract liquidates the collateral to repay the loan.
 
-This mechanism creates a fungible asset that tracks $P_{index}$ and avoids machinery for paying or receiving cash funding. The perpetual should trade close to its debt value (adjusted for funding) in an external market - concentrated RLP/ USDC pool on Uniswap V4.
+This mechanism creates a fungible asset that tracks $P_{index}$ and avoids machinery for paying or receiving cash funding. The perpetual should trade close to its debt value (adjusted for funding) in an external market - concentrated RLP/ USDC pool on Uniswap V4.
 
 **2.1.2 Continuous Funding (Normalization Factor)**
 
@@ -797,16 +798,17 @@ This paper and the accompanying simulations demonstrate that the **Rate-Level Pe
 3. **Solvency Insurance (CDS):** Real-world data from the Stream Finance crisis identifies a precise solvency trigger at **95% utilization**. The RLP payout curve functions as a trustless **Parametric Put Option**, creating an automated backstop for depositors that triggers exactly when liquidity freezes.
 
 By consolidating liquidity into a single Uniswap V4 pool rather than fragmenting it across dated maturities, RLD provides the scalable infrastructure required to bring trillion-dollar fixed-income markets on-chain.
-        `
-    },
-    {
-        id: 1,
-        title: "The Case for On-Chain Rate Derivatives",
-        date: "2024-03-15",
-        category: "MARKET_STRUCTURE",
-        summary: "Why traditional interest rate swaps are moving to DeFi, and how RLD captures this value flow through symbiotic architectural patterns.",
-        readTime: "5 MIN READ",
-        content: `
+        `,
+  },
+  {
+    id: 1,
+    title: "The Case for On-Chain Rate Derivatives",
+    date: "2024-03-15",
+    category: "MARKET_STRUCTURE",
+    summary:
+      "Why traditional interest rate swaps are moving to DeFi, and how RLD captures this value flow through symbiotic architectural patterns.",
+    readTime: "5 MIN READ",
+    content: `
 ## Introduction
 
 The global interest rate derivatives market represents over **$450 trillion** in notional value. As DeFi matures, the demand for hedging on-chain yields (which are inherently volatile) is growing exponentially.
@@ -843,16 +845,17 @@ RLD allows users to swap floating rates for fixed exposure (or speculate on rate
 3. **Clearing House**: Managing margin and liquidations.
 
 Stay tuned for our upcoming whitepaper on the VAMM pricing curve.
-        `
-    },
-    {
-        id: 2,
-        title: "Understanding TWAR vs. Spot Rates",
-        date: "2024-03-10",
-        category: "MECHANISM",
-        summary: "A deep dive into Time-Weighted Average Rates (TWAR) and why they are essential for creating manipulation-resistant synthetic assets.",
-        readTime: "8 MIN READ",
-        content: `
+        `,
+  },
+  {
+    id: 2,
+    title: "Understanding TWAR vs. Spot Rates",
+    date: "2024-03-10",
+    category: "MECHANISM",
+    summary:
+      "A deep dive into Time-Weighted Average Rates (TWAR) and why they are essential for creating manipulation-resistant synthetic assets.",
+    readTime: "8 MIN READ",
+    content: `
 ## Why Spot Rates Fail
 
 Using spot rates for derivative settlement is dangerous due to flash loan attacks. An attacker can manipulate utilization $U_t$ within a single block, spiking the rate $R_t$ to 1000%+, resolving a derivative position instantly, and repaying the loan.
@@ -877,16 +880,17 @@ function updateIndex() external {
 \`\`\`
 
 This creates a smoothing effect that makes short-term manipulation economically unfeasible.
-        `
-    },
-    {
-        id: 3,
-        title: "Volatility Analysis: Q1 2024",
-        date: "2024-02-28",
-        category: "DATA_ANALYSIS",
-        summary: "Analyzing the recent spike in USDC borrow rates across Aave V3 mainnet and its correlation with market-wide leverage flushes.",
-        readTime: "12 MIN READ",
-        content: `
+        `,
+  },
+  {
+    id: 3,
+    title: "Volatility Analysis: Q1 2024",
+    date: "2024-02-28",
+    category: "DATA_ANALYSIS",
+    summary:
+      "Analyzing the recent spike in USDC borrow rates across Aave V3 mainnet and its correlation with market-wide leverage flushes.",
+    readTime: "12 MIN READ",
+    content: `
 ## Market Overview
 
 Q1 2024 saw significant volatility in stablecoin yields. 
@@ -897,17 +901,18 @@ Q1 2024 saw significant volatility in stablecoin yields.
 | Feb   | 5.8%     | 45.0%     | High       |
 | Mar   | 4.9%     | 18.2%     | Med        |
 
-The spike in February corresponds to the leverage flush event where \$2B in long positions were liquidated, causing a temporary shortage of USDC liquidity.
-        `
-    },
-    {
-        id: 4,
-        title: "Protocol Security Architecture",
-        date: "2024-02-15",
-        category: "SECURITY",
-        summary: "How we secure the Oracle layer using multi-sig validation and optimistic dispute windows to ensure data integrity.",
-        readTime: "6 MIN READ",
-        content: `
+The spike in February corresponds to the leverage flush event where $2B in long positions were liquidated, causing a temporary shortage of USDC liquidity.
+        `,
+  },
+  {
+    id: 4,
+    title: "Protocol Security Architecture",
+    date: "2024-02-15",
+    category: "SECURITY",
+    summary:
+      "How we secure the Oracle layer using multi-sig validation and optimistic dispute windows to ensure data integrity.",
+    readTime: "6 MIN READ",
+    content: `
 ## Security Pillars
 
 1. **Multi-Sig Oracle**: 3/5 consensus required for rate updates.
@@ -923,6 +928,6 @@ graph TD
     C -->|Yes| D[Symbiotic Oracle]
     D -->|Update| E[RLD Protocol]
 \`\`\`
-        `
-    }
+        `,
+  },
 ];

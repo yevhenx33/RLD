@@ -220,6 +220,7 @@ function App() {
       const startStr = new Date(firstTs * 1000).toISOString().split("T")[0];
       const endStr = new Date(lastTs * 1000).toISOString().split("T")[0];
 
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTempStart(startStr);
       setTempEnd(endStr);
     }
@@ -398,6 +399,7 @@ function App() {
   // --- PNL SIMULATION ---
   useEffect(() => {
     if (simTargetRate === null && currentRate > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setSimTargetRate(currentRate);
     }
   }, [currentRate, simTargetRate]);

@@ -14,6 +14,7 @@ const Research = lazy(() => import("./components/Research"));
 const Article = lazy(() => import("./components/Article"));
 const Portfolio = lazy(() => import("./components/Portfolio"));
 
+// eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
   <div className="h-screen w-full flex items-center justify-center bg-black text-gray-500 font-mono text-xs animate-pulse">
     LOADING_MODULE...

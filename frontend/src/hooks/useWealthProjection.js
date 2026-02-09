@@ -11,7 +11,9 @@ export function useWealthProjection(collateral, currentRate, days = 90) {
       const fixedBalance = collateral * (1 + fixedRateDaily * i);
       const trend = collateral * (1 + fixedRateDaily * 1.2 * i);
       const wave = Math.sin(i * cycleSpeed) * (collateral * volatility);
-      const noise = (Math.random() - 0.5) * (collateral * 0.005);
+      const noise =
+        (((Math.sin(i * 12.9898 + 78.233) * 43758.5453) % 1) - 0.5) *
+        (collateral * 0.005);
       const variableBalance = trend + wave + noise;
 
       data.push({

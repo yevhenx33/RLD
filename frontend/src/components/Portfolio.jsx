@@ -195,7 +195,7 @@ const BondTable = ({ nfts, sortConfig, onSort }) => {
     );
   };
 
-  const HeaderCell = ({ label, sortKey, align = "center" }) => (
+  const renderHeaderCell = (label, sortKey, align = "center") => (
     <th
       className={`p-5 text-xs uppercase tracking-widest text-gray-500 font-bold cursor-pointer hover:text-white transition-colors group select-none text-${align}`}
       onClick={() => onSort(sortKey)}
@@ -223,25 +223,13 @@ const BondTable = ({ nfts, sortConfig, onSort }) => {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="border-b border-white/10 bg-white/[0.02]">
-              <HeaderCell label="Token ID" sortKey="tokenId" align="center" />
-              <HeaderCell label="APY" sortKey="rate" align="center" />
-              <HeaderCell
-                label="Principal"
-                sortKey="principal"
-                align="center"
-              />
-              <HeaderCell label="Asset" sortKey="currency" align="center" />
-              <HeaderCell
-                label="Maturity"
-                sortKey="maturityDate"
-                align="center"
-              />
-              <HeaderCell
-                label="Time Left"
-                sortKey="maturityDate"
-                align="center"
-              />
-              <HeaderCell label="Status" sortKey="status" align="center" />
+              {renderHeaderCell("Token ID", "tokenId", "center")}
+              {renderHeaderCell("APY", "rate", "center")}
+              {renderHeaderCell("Principal", "principal", "center")}
+              {renderHeaderCell("Asset", "currency", "center")}
+              {renderHeaderCell("Maturity", "maturityDate", "center")}
+              {renderHeaderCell("Time Left", "maturityDate", "center")}
+              {renderHeaderCell("Status", "status", "center")}
               <th className="p-5 text-xs uppercase tracking-widest text-gray-500 font-bold text-center">
                 Action
               </th>
