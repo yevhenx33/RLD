@@ -28,9 +28,6 @@ services:
       - MAINNET_RPC_URL=${BOT_RPC_URL:-https://eth.llamarpc.com}
       - API_KEY=${API_KEY:-}
       - PYTHONUNBUFFERED=1
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]

@@ -59,7 +59,7 @@ def tg_request(method, data=None):
         res = requests.post(url, json=data, timeout=20)
         return res.json()
     except Exception as e:
-        logger.warning(f"Telegram API ({method}): {e}")
+        logger.error(f"Telegram API Error ({method}): {e}")
         return None
 
 def send_message(chat_id, text, reply_markup=None):
@@ -185,7 +185,7 @@ def get_sim_status():
             "tick": int(ps.get('tick', 0))
         }
     except Exception as e:
-        logger.warning(f"Sim API: {e}")
+        logger.error(f"Sim API Error: {e}")
         return None
 
 def generate_sim_report():
