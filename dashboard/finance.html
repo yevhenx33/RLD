@@ -27,32 +27,21 @@
         --bg: #06080a;
         --s1: #0c0e12;
         --s2: #12151a;
-        --s3: #181c22;
         --bdr: #1c2028;
-        --bdr2: #252a33;
-        --g: #00ff88;
-        --gd: #00cc6a;
-        --g10: rgba(0, 255, 136, 0.06);
-        --g20: rgba(0, 255, 136, 0.12);
-        --a: #ffb020;
-        --ad: #cc8800;
-        --a10: rgba(255, 176, 32, 0.06);
-        --a20: rgba(255, 176, 32, 0.12);
-        --r: #ff4455;
-        --rd: #cc2233;
-        --r10: rgba(255, 68, 85, 0.06);
-        --r20: rgba(255, 68, 85, 0.12);
-        --c: #38bdf8;
-        --cd: #0ea5e9;
-        --c10: rgba(56, 189, 248, 0.06);
-        --p: #a78bfa;
-        --pd: #8b5cf6;
-        --p10: rgba(167, 139, 250, 0.06);
-        --p20: rgba(167, 139, 250, 0.12);
-        --t: #8892a0;
-        --td: #4a5260;
-        --tb: #d0d5dd;
+        --t: #c8ccd4;
+        --tb: #e2e5ea;
+        --td: #4a5060;
         --tw: #f0f2f5;
+        --g: #00ff88;
+        --g20: rgba(0, 255, 136, 0.12);
+        --r: #ff4466;
+        --r20: rgba(255, 68, 102, 0.12);
+        --a: #ffaa22;
+        --a20: rgba(255, 170, 34, 0.12);
+        --c: #38bdf8;
+        --c20: rgba(56, 189, 248, 0.12);
+        --p: #a78bfa;
+        --p20: rgba(167, 139, 250, 0.12);
       }
       html {
         font-size: 15px;
@@ -65,6 +54,8 @@
         line-height: 1.5;
         overflow-x: hidden;
       }
+
+      /* ── Scanline overlay ── */
       body::before {
         content: "";
         position: fixed;
@@ -73,20 +64,18 @@
           0deg,
           transparent,
           transparent 2px,
-          rgba(0, 255, 136, 0.004) 2px,
-          rgba(0, 255, 136, 0.004) 4px
+          rgba(0, 255, 136, 0.003) 2px,
+          rgba(0, 255, 136, 0.003) 4px
         );
         pointer-events: none;
         z-index: 9999;
       }
-      ::selection {
-        background: var(--g20);
-        color: var(--g);
-      }
-      @keyframes fadeUp {
+
+      /* ── Animations ── */
+      @keyframes fadeIn {
         from {
           opacity: 0;
-          transform: translateY(8px);
+          transform: translateY(6px);
         }
         to {
           opacity: 1;
@@ -94,10 +83,6 @@
         }
       }
       @keyframes blink {
-        0%,
-        100% {
-          opacity: 1;
-        }
         50% {
           opacity: 0;
         }
@@ -108,187 +93,195 @@
           opacity: 1;
         }
         50% {
-          opacity: 0.3;
+          opacity: 0.5;
         }
       }
 
-      .wrap {
-        max-width: 1440px;
+      /* ── Layout ── */
+      .dash {
+        max-width: 1400px;
         margin: 0 auto;
-        padding: 12px 16px;
+        padding: 20px 24px;
       }
 
       /* ── Header ── */
-      .hdr {
+      .header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 10px 0 14px;
+        padding-bottom: 16px;
         border-bottom: 1px solid var(--bdr);
-        margin-bottom: 12px;
+        margin-bottom: 20px;
       }
-      .hdr-l {
+      .header-left {
         display: flex;
         align-items: baseline;
-        gap: 8px;
-      }
-      .hdr-r {
-        display: flex;
-        align-items: center;
-        gap: 14px;
+        gap: 12px;
       }
       .logo {
-        font-size: 18px;
+        font-size: 22px;
         font-weight: 700;
         color: var(--g);
-        text-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
+        text-shadow: 0 0 16px rgba(0, 255, 136, 0.3);
       }
-      .subtitle {
+      .logo-sub {
         font-size: 12px;
         color: var(--td);
         letter-spacing: 3px;
         text-transform: uppercase;
+      }
+      .header-right {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        font-size: 12px;
+        color: var(--td);
       }
 
       /* ── Tabs ── */
       .tabs {
         display: flex;
         gap: 0;
-        margin-bottom: 12px;
+        margin-bottom: 20px;
         border-bottom: 1px solid var(--bdr);
       }
       .tab {
         padding: 8px 20px;
-        font-size: 10px;
+        font-size: 11px;
+        font-weight: 600;
         letter-spacing: 2px;
         text-transform: uppercase;
         color: var(--td);
-        cursor: pointer;
+        text-decoration: none;
         border-bottom: 2px solid transparent;
         transition: all 0.2s;
-        text-decoration: none;
       }
       .tab:hover {
-        color: var(--tb);
-        background: rgba(255, 255, 255, 0.02);
+        color: var(--t);
       }
       .tab.active {
-        color: var(--g);
-        border-bottom-color: var(--g);
-        background: var(--g10);
+        color: var(--c);
+        border-bottom-color: var(--c);
       }
 
-      /* ── Grid ── */
-      .grid {
-        display: grid;
-        gap: 1px;
+      /* ── Section ── */
+      .section {
+        margin-bottom: 24px;
+        animation: fadeIn 0.4s ease both;
       }
-      .g2 {
-        grid-template-columns: 1fr 1fr;
-      }
-      .g3 {
-        grid-template-columns: 1fr 1fr 1fr;
-      }
-      .g4 {
-        grid-template-columns: repeat(4, 1fr);
-      }
-      .g5 {
-        grid-template-columns: repeat(5, 1fr);
-      }
-      .g32 {
-        grid-template-columns: 3fr 2fr;
-      }
-      .g23 {
-        grid-template-columns: 2fr 3fr;
-      }
-      @media (max-width: 600px) {
-        .g2,
-        .g3,
-        .g4,
-        .g5,
-        .g32,
-        .g23 {
-          grid-template-columns: 1fr;
-        }
-      }
-
-      /* ── Card ── */
-      .card {
-        background: var(--s1);
-        border: 1px solid var(--bdr);
-        padding: 12px 14px;
-        animation: fadeUp 0.35s ease both;
-      }
-      .card-hdr {
+      .section-header {
         display: flex;
-        align-items: center;
         justify-content: space-between;
-        margin-bottom: 8px;
-        font-size: 9px;
-        text-transform: uppercase;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .section-title {
+        font-size: 11px;
+        font-weight: 600;
         letter-spacing: 2px;
+        text-transform: uppercase;
         color: var(--td);
       }
-      .card-hdr .label {
-        display: flex;
-        align-items: center;
-        gap: 5px;
+
+      /* ── Hero metrics ── */
+      .hero {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 2px;
+        margin-bottom: 24px;
+      }
+      @media (max-width: 768px) {
+        .hero {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      .metric {
+        background: var(--s1);
+        border: 1px solid var(--bdr);
+        padding: 20px 24px;
+        animation: fadeIn 0.4s ease both;
+      }
+      .metric-label {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: var(--td);
+        margin-bottom: 8px;
+      }
+      .metric-value {
+        font-size: 32px;
+        font-weight: 600;
+        letter-spacing: -1px;
+        line-height: 1.1;
+      }
+      .metric-sub {
+        font-size: 12px;
+        color: var(--td);
+        margin-top: 4px;
       }
 
       /* ── Badge ── */
       .badge {
-        font-size: 8px;
-        padding: 2px 7px;
-        border-radius: 2px;
-        letter-spacing: 1.2px;
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        font-size: 10px;
         font-weight: 600;
-        white-space: nowrap;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        border-radius: 2px;
       }
       .b-g {
-        background: var(--g10);
+        background: var(--g20);
         color: var(--g);
-        border: 1px solid var(--g20);
-      }
-      .b-a {
-        background: var(--a10);
-        color: var(--a);
-        border: 1px solid var(--a20);
+        border: 1px solid rgba(0, 255, 136, 0.15);
       }
       .b-r {
-        background: var(--r10);
+        background: var(--r20);
         color: var(--r);
-        border: 1px solid var(--r20);
+        border: 1px solid rgba(255, 68, 102, 0.15);
+      }
+      .b-a {
+        background: var(--a20);
+        color: var(--a);
+        border: 1px solid rgba(255, 170, 34, 0.15);
       }
       .b-c {
-        background: var(--c10);
+        background: var(--c20);
         color: var(--c);
         border: 1px solid rgba(56, 189, 248, 0.15);
       }
       .b-p {
-        background: var(--p10);
+        background: var(--p20);
         color: var(--p);
         border: 1px solid rgba(167, 139, 250, 0.15);
       }
 
-      /* ── Dot ── */
-      .dot {
-        width: 5px;
-        height: 5px;
-        border-radius: 50%;
+      /* ── Chart ── */
+      .chart-wrap {
+        position: relative;
+        height: 420px;
+        border: 1px solid var(--bdr);
+        background: var(--s1);
+        overflow: hidden;
+      }
+      .chart-svg {
+        width: 100%;
+        height: 100%;
+      }
+      .legend {
+        display: flex;
+        gap: 16px;
+        font-size: 10px;
+        color: var(--td);
+      }
+      .legend-dot {
+        width: 10px;
+        height: 3px;
+        border-radius: 1px;
         display: inline-block;
-        flex-shrink: 0;
-      }
-      .dg {
-        background: var(--g);
-        box-shadow: 0 0 5px var(--g);
-      }
-      .da {
-        background: var(--a);
-        box-shadow: 0 0 5px var(--a);
-      }
-      .dr {
-        background: var(--r);
-        box-shadow: 0 0 5px var(--r);
+        margin-right: 5px;
       }
 
       /* ── Table ── */
@@ -297,156 +290,94 @@
         border-collapse: collapse;
       }
       .tbl th {
-        text-align: left;
-        color: var(--td);
-        font-size: 8px;
-        text-transform: uppercase;
+        padding: 10px 12px;
+        font-size: 11px;
+        font-weight: 600;
         letter-spacing: 1.5px;
-        padding: 4px 6px;
+        text-transform: uppercase;
+        color: var(--td);
+        text-align: left;
         border-bottom: 1px solid var(--bdr);
-        font-weight: 400;
       }
-      .tbl td {
-        padding: 4px 6px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-        font-size: 13px;
-        white-space: nowrap;
-      }
-      .tbl tr:hover td {
-        background: rgba(0, 255, 136, 0.01);
-      }
-      .tbl .r {
+      .tbl th.r {
         text-align: right;
       }
-
-      /* ── Metric ── */
-      .mv {
-        font-size: 28px;
-        font-weight: 600;
-        letter-spacing: -0.5px;
-        line-height: 1.2;
+      .tbl td {
+        padding: 12px 12px;
+        font-size: 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        white-space: nowrap;
       }
-      .mv-sm {
-        font-size: 20px;
-        font-weight: 600;
-        letter-spacing: -0.3px;
-        line-height: 1.2;
+      .tbl td.r {
+        text-align: right;
       }
-      .ml {
-        font-size: 11px;
-        color: var(--td);
-        text-transform: uppercase;
-        letter-spacing: 1.5px;
-        margin-top: 2px;
+      .tbl tr:hover td {
+        background: rgba(255, 255, 255, 0.02);
       }
-      .ms {
-        font-size: 12px;
-        color: var(--td);
-        margin-left: 2px;
-        font-weight: 300;
-      }
-
-      /* ── Chart ── */
-      .chart-wrap {
-        position: relative;
-        height: 360px;
+      .tbl-card {
+        background: var(--s1);
         border: 1px solid var(--bdr);
-        background: var(--s2);
-        border-radius: 2px;
         overflow: hidden;
       }
-      .chart-svg {
-        width: 100%;
-        height: 100%;
+      .tbl-footer {
+        display: flex;
+        justify-content: space-between;
+        padding: 12px 12px;
+        font-size: 12px;
+        color: var(--td);
+        border-top: 1px solid var(--bdr);
       }
 
-      /* ── Event item ── */
+      /* ── Events ── */
       .evt {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 5px 0;
+        gap: 10px;
+        padding: 6px 0;
         border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-        font-size: 10px;
-        animation: fadeUp 0.2s ease both;
+        font-size: 12px;
+        animation: fadeIn 0.3s ease both;
       }
       .evt-type {
-        font-size: 8px;
-        padding: 2px 0;
-        border-radius: 1px;
-        letter-spacing: 1px;
+        padding: 2px 8px;
+        font-size: 10px;
         font-weight: 600;
-        width: 80px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        border-radius: 2px;
+        width: 84px;
         text-align: center;
         flex-shrink: 0;
-        display: inline-block;
       }
       .evt-swap {
-        background: var(--c10);
+        background: var(--c20);
         color: var(--c);
         border: 1px solid rgba(56, 189, 248, 0.15);
       }
       .evt-transfer {
-        background: var(--p10);
+        background: var(--p20);
         color: var(--p);
         border: 1px solid rgba(167, 139, 250, 0.15);
       }
       .evt-other {
         background: rgba(255, 255, 255, 0.03);
         color: var(--td);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+      .events-card {
+        background: var(--s1);
         border: 1px solid var(--bdr);
+        padding: 16px;
       }
 
-      /* ── Stat row ── */
-      .stat-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 3px 0;
-        font-size: 10px;
-      }
-      .stat-k {
-        color: var(--td);
-      }
-      .stat-v {
-        color: var(--tb);
-        font-weight: 500;
-      }
-
-      .glow-g {
-        text-shadow: 0 0 8px rgba(0, 255, 136, 0.2);
-      }
-      .glow-c {
-        text-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
-      }
-      .glow-p {
-        text-shadow: 0 0 8px rgba(167, 139, 250, 0.25);
-      }
-
-      .ftr {
+      /* ── Footer ── */
+      .footer {
         text-align: center;
-        padding: 10px 0;
+        padding: 16px;
+        font-size: 11px;
         color: var(--td);
-        font-size: 8px;
         border-top: 1px solid var(--bdr);
-        margin-top: 10px;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-      }
-
-      /* ── Legend ── */
-      .legend {
-        display: flex;
-        gap: 16px;
-        align-items: center;
-        font-size: 9px;
-        color: var(--td);
-      }
-      .legend-dot {
-        width: 8px;
-        height: 3px;
-        border-radius: 1px;
-        display: inline-block;
-        margin-right: 4px;
+        margin-top: 8px;
       }
     </style>
   </head>
@@ -495,89 +426,33 @@
           second: "2-digit",
         });
       };
-      const fmtAgo = (ts) => {
-        if (!ts) return "—";
-        const now = Date.now() / 1000;
-        const d = Math.floor(now - ts);
-        if (d < 60) return `${d}s ago`;
-        if (d < 3600) return `${Math.floor(d / 60)}m ago`;
-        if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
-        return `${Math.floor(d / 86400)}d ago`;
-      };
       const fromRaw = (v, decimals = 6) => {
         if (!v && v !== 0) return 0;
         return Number(v) / Math.pow(10, decimals);
       };
 
-      // ── Descriptive stats ──
-      function calcStats(arr) {
-        if (!arr || arr.length === 0) return null;
-        const n = arr.length;
-        const sorted = [...arr].sort((a, b) => a - b);
-        const sum = arr.reduce((a, b) => a + b, 0);
-        const mean = sum / n;
-        const variance = arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / n;
-        const std = Math.sqrt(variance);
-        const min = sorted[0];
-        const max = sorted[n - 1];
-        const median =
-          n % 2 === 0
-            ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2
-            : sorted[Math.floor(n / 2)];
-        const q1 = sorted[Math.floor(n * 0.25)];
-        const q3 = sorted[Math.floor(n * 0.75)];
-        const latest = arr[arr.length - 1];
-        const first = arr[0];
-        const change = first !== 0 ? ((latest - first) / first) * 100 : 0;
-        return {
-          n,
-          mean,
-          std,
-          min,
-          max,
-          median,
-          q1,
-          q3,
-          latest,
-          first,
-          change,
-        };
-      }
-
       // ══════════════════ COMPONENTS ══════════════════
       const Badge = ({ text, type }) => (
         <span className={`badge b-${type}`}>{text}</span>
       );
-      const Dot = ({ ok }) => <span className={`dot ${ok ? "dg" : "dr"}`} />;
-      const Card = ({ title, badge, children, style, delay = 0 }) => (
-        <div
-          className="card"
-          style={{ ...style, animationDelay: `${delay * 40}ms` }}
-        >
-          <div className="card-hdr">
-            <span className="label">{title}</span>
-            {badge}
-          </div>
-          {children}
-        </div>
-      );
 
-      // ── Dual-series SVG price chart ──
+      // ── Price Chart ──
       const PriceChart = ({ data }) => {
         if (!data || data.length < 2)
           return (
             <div
               style={{
-                height: 360,
+                height: 420,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 color: "var(--td)",
-                fontSize: 11,
               }}
             >
-              <span style={{ animation: "pulse 1.5s ease infinite" }}>
-                Loading price history from indexer...
+              <span
+                style={{ animation: "pulse 1.5s ease infinite", fontSize: 13 }}
+              >
+                Loading price history…
               </span>
             </div>
           );
@@ -593,22 +468,19 @@
         const mx = Math.max(...allPrices);
         const range = mx - mn || 0.01;
 
-        const w = 1200,
-          h = 360,
-          padL = 60,
-          padR = 20,
-          padT = 40,
-          padB = 30;
+        const w = 1400,
+          h = 420,
+          padL = 70,
+          padR = 24,
+          padT = 48,
+          padB = 36;
         const cw = w - padL - padR,
           ch = h - padT - padB;
-
         const toX = (i) => padL + (i / (data.length - 1)) * cw;
         const toY = (v) => padT + ch - ((v - mn) / range) * ch;
 
-        // Build path strings
-        let markPath = "";
-        let idxPath = "";
-        let markArea = "";
+        let markPath = "",
+          idxPath = "";
         data.forEach((d, i) => {
           const x = toX(i);
           if (d.mark_price > 0) {
@@ -621,17 +493,15 @@
           }
         });
 
-        // Y-axis labels
-        const ySteps = 5;
+        const ySteps = 6;
         const yLabels = [];
         for (let i = 0; i <= ySteps; i++) {
           const v = mn + (range / ySteps) * i;
           yLabels.push({ y: toY(v), label: "$" + v.toFixed(4) });
         }
 
-        // X-axis labels (show ~5 timestamps)
         const xLabels = [];
-        const step = Math.max(1, Math.floor(data.length / 5));
+        const step = Math.max(1, Math.floor(data.length / 6));
         for (let i = 0; i < data.length; i += step) {
           const d = data[i];
           if (d.timestamp) {
@@ -657,16 +527,11 @@
               preserveAspectRatio="none"
             >
               <defs>
-                <linearGradient id="mark-grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--c)" stopOpacity="0.08" />
+                <linearGradient id="mg" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--c)" stopOpacity="0.06" />
                   <stop offset="100%" stopColor="var(--c)" stopOpacity="0" />
                 </linearGradient>
-                <linearGradient id="idx-grad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="var(--p)" stopOpacity="0.08" />
-                  <stop offset="100%" stopColor="var(--p)" stopOpacity="0" />
-                </linearGradient>
               </defs>
-              {/* Grid lines */}
               {yLabels.map((yl, i) => (
                 <g key={i}>
                   <line
@@ -678,11 +543,11 @@
                     strokeWidth="0.5"
                   />
                   <text
-                    x={padL - 6}
-                    y={yl.y + 3}
+                    x={padL - 8}
+                    y={yl.y + 4}
                     textAnchor="end"
                     fill="var(--td)"
-                    fontSize="8"
+                    fontSize="10"
                     fontFamily="JetBrains Mono"
                   >
                     {yl.label}
@@ -693,25 +558,23 @@
                 <text
                   key={i}
                   x={xl.x}
-                  y={h - 8}
+                  y={h - 10}
                   textAnchor="middle"
                   fill="var(--td)"
-                  fontSize="8"
+                  fontSize="10"
                   fontFamily="JetBrains Mono"
                 >
                   {xl.label}
                 </text>
               ))}
-              {/* Index price (purple, behind) */}
               <path
                 d={idxPath}
                 fill="none"
                 stroke="var(--p)"
                 strokeWidth="1.5"
-                strokeOpacity="0.7"
+                strokeOpacity="0.6"
                 vectorEffect="non-scaling-stroke"
               />
-              {/* Mark price (cyan, front) */}
               <path
                 d={markPath}
                 fill="none"
@@ -719,7 +582,6 @@
                 strokeWidth="2"
                 vectorEffect="non-scaling-stroke"
               />
-              {/* Latest dots */}
               {latestMark > 0 && (
                 <circle
                   cx={toX(data.length - 1)}
@@ -727,7 +589,7 @@
                   r="4"
                   fill="var(--c)"
                   stroke="var(--bg)"
-                  strokeWidth="1"
+                  strokeWidth="1.5"
                 />
               )}
               {latestIdx > 0 && (
@@ -737,12 +599,11 @@
                   r="3"
                   fill="var(--p)"
                   stroke="var(--bg)"
-                  strokeWidth="1"
+                  strokeWidth="1.5"
                 />
               )}
             </svg>
-            {/* Overlay labels */}
-            <div style={{ position: "absolute", top: 8, left: padL + 8 }}>
+            <div style={{ position: "absolute", top: 12, left: padL + 12 }}>
               <div className="legend">
                 <span>
                   <span
@@ -763,23 +624,23 @@
             <div
               style={{
                 position: "absolute",
-                top: 6,
-                right: 12,
+                top: 10,
+                right: 16,
                 textAlign: "right",
               }}
             >
-              <div style={{ fontSize: 9, color: "var(--td)" }}>
+              <div style={{ fontSize: 11, color: "var(--td)" }}>
                 MARK{" "}
                 <span
-                  style={{ color: "var(--c)", fontWeight: 600, fontSize: 14 }}
+                  style={{ color: "var(--c)", fontWeight: 600, fontSize: 18 }}
                 >
                   ${latestMark?.toFixed(4)}
                 </span>
               </div>
-              <div style={{ fontSize: 9, color: "var(--td)", marginTop: 2 }}>
+              <div style={{ fontSize: 11, color: "var(--td)", marginTop: 2 }}>
                 INDEX{" "}
                 <span
-                  style={{ color: "var(--p)", fontWeight: 600, fontSize: 14 }}
+                  style={{ color: "var(--p)", fontWeight: 600, fontSize: 18 }}
                 >
                   ${latestIdx?.toFixed(4)}
                 </span>
@@ -788,14 +649,13 @@
             <div
               style={{
                 position: "absolute",
-                bottom: padB + 6,
-                left: padL + 8,
-                fontSize: 9,
+                bottom: padB + 8,
+                left: padL + 12,
+                fontSize: 10,
                 color: "var(--td)",
               }}
             >
-              {data.length} data points · blocks{" "}
-              {data[0].block_number?.toLocaleString()} →{" "}
+              {data.length} blocks · {data[0].block_number?.toLocaleString()} →{" "}
               {data[data.length - 1].block_number?.toLocaleString()}
             </div>
           </div>
@@ -820,7 +680,6 @@
             })
             .catch((e) => setErr(e.message));
         }, []);
-
         const loadChart = useCallback(() => {
           fetch("/api/chart/price?limit=1000")
             .then((r) => r.json())
@@ -829,7 +688,6 @@
             })
             .catch(() => {});
         }, []);
-
         const loadEvents = useCallback(() => {
           fetch("/api/events?limit=1000")
             .then((r) => r.json())
@@ -861,48 +719,39 @@
           return () => clearInterval(iv);
         }, []);
 
-        // ── Mark price descriptive stats from chart data ──
-        // (Must be before conditional returns per Rules of Hooks)
-        const markStats = useMemo(() => {
-          if (!chartData) return null;
-          const prices = chartData
-            .filter((d) => d.mark_price > 0)
-            .map((d) => d.mark_price);
-          return calcStats(prices);
-        }, [chartData]);
-
         if (err && !latest)
           return (
-            <div className="wrap">
-              <div style={{ padding: 60, textAlign: "center" }}>
-                <div style={{ color: "var(--r)", fontSize: 14 }}>
-                  ✗ SIM INDEXER UNAVAILABLE
-                </div>
-                <div style={{ color: "var(--td)", marginTop: 8, fontSize: 11 }}>
-                  {err}
-                </div>
+            <div
+              className="dash"
+              style={{ paddingTop: 80, textAlign: "center" }}
+            >
+              <div style={{ color: "var(--r)", fontSize: 16, fontWeight: 600 }}>
+                ✗ SIM INDEXER UNAVAILABLE
+              </div>
+              <div style={{ color: "var(--td)", marginTop: 8, fontSize: 13 }}>
+                {err}
               </div>
             </div>
           );
-
         if (!latest)
           return (
-            <div className="wrap">
-              <div style={{ padding: 60, textAlign: "center" }}>
-                <span
-                  style={{
-                    color: "var(--g)",
-                    fontSize: 12,
-                    animation: "pulse 1.5s ease infinite",
-                  }}
-                >
-                  ▌ LOADING SIMULATION DATA...
-                </span>
-              </div>
+            <div
+              className="dash"
+              style={{ paddingTop: 80, textAlign: "center" }}
+            >
+              <span
+                style={{
+                  color: "var(--g)",
+                  fontSize: 14,
+                  animation: "pulse 1.5s ease infinite",
+                }}
+              >
+                ▌ LOADING SIMULATION DATA…
+              </span>
             </div>
           );
 
-        // ── Parse latest data ──
+        // ── Parse latest ──
         const ms = latest.market_states?.[0] || latest.market_state || {};
         const ps = latest.pool_states?.[0] || latest.pool_state || {};
         const bps = latest.broker_positions || [];
@@ -914,11 +763,6 @@
           : 1;
         const totalDebt = fromRaw(ms.total_debt, 6);
 
-        // ── TVL calculation ──
-        // Pool liquidity in TVL = needs reserve amounts. Approximate with liquidity * price range
-        // For now, use the raw liquidity value and convert conceptually
-        const liquidityRaw = Number(ps.liquidity) || 0;
-        // Better TVL: use broker collateral as proxy for TVL since it represents deposited value
         const totalCollateral = bps.reduce(
           (a, b) => a + fromRaw(b.collateral, 6),
           0,
@@ -933,7 +777,6 @@
           0,
         );
 
-        // ── Over-collateralization ratio ──
         const overCollat =
           totalDebtValue > 0
             ? totalCollateralValue / totalDebtValue
@@ -946,42 +789,34 @@
             : overCollat > 0
               ? (overCollat * 100).toFixed(1) + "%"
               : "—";
-
-        // ── Peg deviation ──
         const pegDev =
           indexPrice > 0 ? ((markPrice - indexPrice) / indexPrice) * 100 : 0;
 
-        // (markStats computed above, before conditional returns)
-
-        // ── Swap stats ──
         const swaps = events.filter((e) => e.event_name === "Swap");
-        const totalVol = swaps.reduce((a, e) => {
-          const a1 = Math.abs(fromRaw(e.event_data?.amount1 || "0", 6));
-          return a + a1;
-        }, 0);
+        const totalVol = swaps.reduce(
+          (a, e) => a + Math.abs(fromRaw(e.event_data?.amount1 || "0", 6)),
+          0,
+        );
 
         return (
-          <div className="wrap">
+          <div className="dash">
             {/* ═══ HEADER ═══ */}
-            <div className="hdr">
-              <div className="hdr-l">
+            <div className="header">
+              <div className="header-left">
                 <span className="logo">RLD</span>
-                <span className="subtitle">simulation monitor</span>
+                <span className="logo-sub">simulation monitor</span>
               </div>
-              <div className="hdr-r">
-                <span style={{ fontSize: 10, color: "var(--td)" }}>
+              <div className="header-right">
+                <span>
                   block{" "}
-                  <span style={{ color: "var(--c)" }} className="glow-c">
+                  <span style={{ color: "var(--c)" }}>
                     {latest.block_number?.toLocaleString()}
                   </span>
                 </span>
-                <span style={{ color: "var(--td)", fontSize: 10 }}>
-                  {now.toLocaleTimeString("en-GB")}
-                </span>
+                <span>{now.toLocaleTimeString("en-GB")}</span>
                 <span
                   style={{
                     color: "var(--g)",
-                    fontSize: 9,
                     animation: "blink 1.2s step-end infinite",
                   }}
                 >
@@ -1000,432 +835,276 @@
               </a>
             </div>
 
-            {/* ═══ ROW 1: Key Financial Metrics (5 cols) ═══ */}
-            <div className="grid g5" style={{ marginBottom: 1 }}>
-              <Card title="MARK PRICE" delay={0}>
-                <div className="mv" style={{ color: "var(--c)" }}>
+            {/* ═══ SECTION 1: HERO METRICS ═══ */}
+            <div className="hero">
+              <div className="metric" style={{ animationDelay: "0ms" }}>
+                <div className="metric-label">Mark Price</div>
+                <div className="metric-value" style={{ color: "var(--c)" }}>
                   {fmt(markPrice, 4)}
                 </div>
-                <div className="ml">wRLP / aUSDC</div>
-              </Card>
-              <Card
-                title="INDEX PRICE"
-                badge={
-                  <Badge
-                    text={fmtPct(pegDev)}
-                    type={
-                      Math.abs(pegDev) < 1
-                        ? "g"
-                        : Math.abs(pegDev) < 5
-                          ? "a"
-                          : "r"
-                    }
-                  />
-                }
-                delay={1}
-              >
-                <div className="mv" style={{ color: "var(--p)" }}>
+                <div className="metric-sub">wRLP / aUSDC</div>
+              </div>
+              <div className="metric" style={{ animationDelay: "40ms" }}>
+                <div className="metric-label">
+                  Index Price
+                  <span style={{ marginLeft: 8 }}>
+                    <Badge
+                      text={fmtPct(pegDev)}
+                      type={
+                        Math.abs(pegDev) < 1
+                          ? "g"
+                          : Math.abs(pegDev) < 5
+                            ? "a"
+                            : "r"
+                      }
+                    />
+                  </span>
+                </div>
+                <div className="metric-value" style={{ color: "var(--p)" }}>
                   {fmt(indexPrice, 4)}
                 </div>
-                <div className="ml">oracle reference</div>
-              </Card>
-              <Card title="TOTAL DEBT" delay={2}>
+                <div className="metric-sub">oracle · peg deviation</div>
+              </div>
+              <div className="metric" style={{ animationDelay: "80ms" }}>
+                <div className="metric-label">Total Debt</div>
                 <div
-                  className="mv"
+                  className="metric-value"
                   style={{ color: totalDebt > 0 ? "var(--a)" : "var(--tb)" }}
                 >
-                  {fmtN(totalDebt)} wRLP
-                </div>
-                {totalDebtValue > 0 && (
-                  <div
+                  {fmtN(totalDebt)}{" "}
+                  <span
                     style={{
-                      fontSize: 10,
+                      fontSize: 16,
+                      fontWeight: 400,
                       color: "var(--td)",
-                      marginBottom: 2,
                     }}
                   >
-                    ≈ {fmt(totalDebtValue)}
-                  </div>
-                )}
-                <div className="ml">outstanding borrows</div>
-              </Card>
-              <Card title="SYSTEM TVL" delay={3}>
-                <div className="mv" style={{ color: "var(--g)" }}>
-                  {fmt(totalCollateralValue)}
+                    wRLP
+                  </span>
                 </div>
-                <div className="ml">total collateral value</div>
-              </Card>
-              <Card
-                title="OVER-COLLAT"
-                badge={
-                  <Badge
-                    text={
-                      overCollat === Infinity || overCollat === 0
-                        ? "NO DEBT"
-                        : overCollat >= 1.5
-                          ? "SAFE"
+                {totalDebtValue > 0 && (
+                  <div className="metric-sub">≈ {fmt(totalDebtValue)}</div>
+                )}
+              </div>
+              <div className="metric" style={{ animationDelay: "120ms" }}>
+                <div className="metric-label">
+                  System Health
+                  <span style={{ marginLeft: 8 }}>
+                    <Badge
+                      text={
+                        overCollat === Infinity || overCollat === 0
+                          ? "NO DEBT"
+                          : overCollat >= 1.5
+                            ? "SAFE"
+                            : overCollat >= 1.2
+                              ? "WATCH"
+                              : "DANGER"
+                      }
+                      type={
+                        overCollat === Infinity ||
+                        overCollat === 0 ||
+                        overCollat >= 1.5
+                          ? "g"
                           : overCollat >= 1.2
-                            ? "WATCH"
-                            : "DANGER"
-                    }
-                    type={
-                      overCollat === Infinity ||
-                      overCollat === 0 ||
-                      overCollat >= 1.5
-                        ? "g"
-                        : overCollat >= 1.2
-                          ? "a"
-                          : "r"
-                    }
-                  />
-                }
-                delay={4}
-              >
+                            ? "a"
+                            : "r"
+                      }
+                    />
+                  </span>
+                </div>
                 <div
-                  className="mv"
+                  className="metric-value"
                   style={{
                     color:
-                      overCollat === Infinity
+                      overCollat >= 1.5 || overCollat === Infinity
                         ? "var(--g)"
-                        : overCollat >= 1.5
-                          ? "var(--g)"
-                          : overCollat >= 1.2
-                            ? "var(--a)"
-                            : "var(--r)",
+                        : overCollat >= 1.2
+                          ? "var(--a)"
+                          : "var(--r)",
                   }}
                 >
                   {overCollatDisplay}
                 </div>
-                <div className="ml">collateral / debt ratio</div>
-              </Card>
+                <div className="metric-sub">
+                  TVL {fmt(totalCollateralValue)} · O/C ratio
+                </div>
+              </div>
             </div>
 
-            {/* ═══ ROW 2: Price Chart (full width, 2x height) ═══ */}
-            <Card
-              title="MARK vs INDEX PRICE"
-              badge={
-                chartData ? (
+            {/* ═══ SECTION 2: PRICE CHART ═══ */}
+            <div className="section">
+              <div className="section-header">
+                <span className="section-title">Mark vs Index Price</span>
+                {chartData && (
                   <Badge text={`${chartData.length} BLOCKS`} type="c" />
-                ) : null
-              }
-              style={{ marginBottom: 1 }}
-              delay={5}
-            >
-              <PriceChart data={chartData} />
-            </Card>
-
-            {/* ═══ ROW 3: Price Stats + Pool State ═══ */}
-            <div className="grid g2" style={{ marginBottom: 1 }}>
-              <Card
-                title="MARK PRICE STATISTICS"
-                badge={
-                  markStats ? (
-                    <Badge text={`N=${markStats.n}`} type="c" />
-                  ) : null
-                }
-                delay={6}
-              >
-                {markStats ? (
-                  <div>
-                    <div className="stat-row">
-                      <span className="stat-k">Mean</span>
-                      <span className="stat-v">{fmt(markStats.mean, 4)}</span>
-                    </div>
-                    <div className="stat-row">
-                      <span className="stat-k">Std Dev (σ)</span>
-                      <span className="stat-v">{markStats.std.toFixed(6)}</span>
-                    </div>
-                    <div className="stat-row">
-                      <span className="stat-k">Min</span>
-                      <span className="stat-v" style={{ color: "var(--r)" }}>
-                        {fmt(markStats.min, 4)}
-                      </span>
-                    </div>
-                    <div className="stat-row">
-                      <span className="stat-k">Max</span>
-                      <span className="stat-v" style={{ color: "var(--g)" }}>
-                        {fmt(markStats.max, 4)}
-                      </span>
-                    </div>
-                    <div
-                      className="stat-row"
-                      style={{
-                        borderTop: "1px solid var(--bdr)",
-                        paddingTop: 4,
-                        marginTop: 2,
-                      }}
-                    >
-                      <span className="stat-k">Median (P50)</span>
-                      <span className="stat-v">{fmt(markStats.median, 4)}</span>
-                    </div>
-                    <div className="stat-row">
-                      <span className="stat-k">Q1 (P25)</span>
-                      <span className="stat-v">{fmt(markStats.q1, 4)}</span>
-                    </div>
-                    <div className="stat-row">
-                      <span className="stat-k">Q3 (P75)</span>
-                      <span className="stat-v">{fmt(markStats.q3, 4)}</span>
-                    </div>
-                    <div
-                      className="stat-row"
-                      style={{
-                        borderTop: "1px solid var(--bdr)",
-                        paddingTop: 4,
-                        marginTop: 2,
-                      }}
-                    >
-                      <span className="stat-k">Range</span>
-                      <span className="stat-v">
-                        {(markStats.max - markStats.min).toFixed(6)}
-                      </span>
-                    </div>
-                    <div className="stat-row">
-                      <span className="stat-k">CV (σ/μ)</span>
-                      <span className="stat-v">
-                        {((markStats.std / markStats.mean) * 100).toFixed(4)}%
-                      </span>
-                    </div>
-                    <div className="stat-row">
-                      <span className="stat-k">Δ Start→End</span>
-                      <span
-                        className="stat-v"
-                        style={{
-                          color:
-                            markStats.change >= 0 ? "var(--g)" : "var(--r)",
-                        }}
-                      >
-                        {fmtPct(markStats.change, 3)}
-                      </span>
-                    </div>
-                    <div className="stat-row">
-                      <span className="stat-k">Latest</span>
-                      <span className="stat-v" style={{ color: "var(--c)" }}>
-                        {fmt(markStats.latest, 4)}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ color: "var(--td)", fontSize: 10 }}>
-                    Loading chart data...
-                  </div>
                 )}
-              </Card>
+              </div>
+              <PriceChart data={chartData} />
+            </div>
 
-              <Card title="POOL STATE" delay={7}>
+            {/* ═══ SECTION 3: BROKER POSITIONS ═══ */}
+            <div className="section">
+              <div className="section-header">
+                <span className="section-title">Broker Positions</span>
+                <Badge text={`${bps.length} BROKERS`} type="p" />
+              </div>
+              <div className="tbl-card">
                 <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Broker</th>
+                      <th className="r">Collateral</th>
+                      <th className="r">Debt (wRLP)</th>
+                      <th className="r">Debt Value</th>
+                      <th className="r">Health Factor</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Pool ID</td>
-                      <td style={{ color: "var(--c)", fontSize: 10 }}>
-                        {fmtAddr(ps.pool_id)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Current Tick</td>
-                      <td style={{ color: "var(--tb)", fontWeight: 500 }}>
-                        {ps.tick?.toLocaleString()}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Token0 (wRLP)</td>
-                      <td style={{ fontSize: 10 }}>{fmtAddr(ps.token0)}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Token1 (aUSDC)</td>
-                      <td style={{ fontSize: 10 }}>{fmtAddr(ps.token1)}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Fee Growth 0</td>
-                      <td>{ps.fee_growth_global0 || "0"}</td>
-                    </tr>
-                    <tr>
-                      <td style={{ color: "var(--td)" }}>Fee Growth 1</td>
-                      <td>{ps.fee_growth_global1 || "0"}</td>
-                    </tr>
+                    {bps.map((b, i) => {
+                      const coll = fromRaw(b.collateral, 6);
+                      const debt = fromRaw(b.debt, 6);
+                      const debtVal = fromRaw(b.debt_value, 6);
+                      const hf = b.health_factor;
+                      const hasDebt = debt > 0 || debtVal > 0;
+                      const status = !hasDebt
+                        ? "idle"
+                        : hf > 2
+                          ? "safe"
+                          : hf > 1.2
+                            ? "watch"
+                            : "danger";
+                      return (
+                        <tr key={i}>
+                          <td
+                            style={{
+                              color: "var(--c)",
+                              fontFamily: "JetBrains Mono",
+                              fontSize: 12,
+                            }}
+                          >
+                            {fmtAddr(b.broker_address)}
+                          </td>
+                          <td
+                            className="r"
+                            style={{ color: "var(--tb)", fontWeight: 500 }}
+                          >
+                            {fmt(coll)}
+                          </td>
+                          <td
+                            className="r"
+                            style={{
+                              color: hasDebt ? "var(--a)" : "var(--td)",
+                            }}
+                          >
+                            {hasDebt ? fmtN(debt) + " wRLP" : "—"}
+                          </td>
+                          <td
+                            className="r"
+                            style={{
+                              color: debtVal > 0 ? "var(--a)" : "var(--td)",
+                              fontSize: 12,
+                            }}
+                          >
+                            {debtVal > 0 ? fmt(debtVal) : "—"}
+                          </td>
+                          <td
+                            className="r"
+                            style={{
+                              color: !hasDebt
+                                ? "var(--td)"
+                                : hf > 2
+                                  ? "var(--g)"
+                                  : hf > 1.2
+                                    ? "var(--a)"
+                                    : "var(--r)",
+                              fontWeight: 600,
+                              fontSize: 16,
+                            }}
+                          >
+                            {!hasDebt ? "∞" : hf.toFixed(2)}
+                          </td>
+                          <td>
+                            <Badge
+                              text={status.toUpperCase()}
+                              type={
+                                status === "safe" || status === "idle"
+                                  ? "g"
+                                  : status === "watch"
+                                    ? "a"
+                                    : "r"
+                              }
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
-                <div
-                  style={{
-                    borderTop: "1px solid var(--bdr)",
-                    marginTop: 8,
-                    paddingTop: 8,
-                  }}
-                >
-                  <div className="stat-row">
-                    <span className="stat-k">Norm Factor</span>
-                    <span className="stat-v">{normFactor.toFixed(8)}</span>
-                  </div>
-                  <div className="stat-row">
-                    <span className="stat-k">Last Update</span>
-                    <span className="stat-v">
-                      {fmtAgo(ms.last_update_timestamp)}
+                <div className="tbl-footer">
+                  <span>
+                    total collateral:{" "}
+                    <span style={{ color: "var(--g)" }}>
+                      {fmt(totalCollateral)}
                     </span>
-                  </div>
+                  </span>
+                  <span>
+                    total debt:{" "}
+                    <span
+                      style={{
+                        color: totalBrokerDebt > 0 ? "var(--a)" : "var(--td)",
+                      }}
+                    >
+                      {fmtN(totalBrokerDebt)} wRLP
+                    </span>
+                    {totalDebtValue > 0 && (
+                      <span style={{ color: "var(--td)", marginLeft: 6 }}>
+                        ({fmt(totalDebtValue)})
+                      </span>
+                    )}
+                  </span>
+                  <span>
+                    over-collat:{" "}
+                    <span style={{ color: "var(--g)" }}>
+                      {overCollatDisplay}
+                    </span>
+                  </span>
                 </div>
-              </Card>
+              </div>
             </div>
 
-            {/* ═══ ROW 4: Broker Positions ═══ */}
-            <Card
-              title="BROKER POSITIONS"
-              badge={<Badge text={`${bps.length} BROKERS`} type="p" />}
-              style={{ marginBottom: 1 }}
-              delay={8}
-            >
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th>broker</th>
-                    <th className="r">collateral</th>
-                    <th className="r">debt (wRLP)</th>
-                    <th className="r">collateral value</th>
-                    <th className="r">debt value</th>
-                    <th className="r">health factor</th>
-                    <th>status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bps.map((b, i) => {
-                    const coll = fromRaw(b.collateral, 6);
-                    const debt = fromRaw(b.debt, 6);
-                    const collVal = fromRaw(b.collateral_value, 6);
-                    const debtVal = fromRaw(b.debt_value, 6);
-                    const hf = b.health_factor;
-                    const hasDebt = debt > 0 || debtVal > 0;
-                    const status = !hasDebt
-                      ? "idle"
-                      : hf > 2
-                        ? "safe"
-                        : hf > 1.2
-                          ? "watch"
-                          : "danger";
-                    return (
-                      <tr key={i}>
-                        <td style={{ color: "var(--c)", fontSize: 10 }}>
-                          {fmtAddr(b.broker_address)}
-                        </td>
-                        <td className="r" style={{ color: "var(--tb)" }}>
-                          {fmt(coll)}
-                        </td>
-                        <td
-                          className="r"
-                          style={{ color: hasDebt ? "var(--a)" : "var(--td)" }}
-                        >
-                          {hasDebt ? fmtN(debt) + " wRLP" : "—"}
-                        </td>
-                        <td className="r" style={{ fontSize: 10 }}>
-                          {fmt(collVal)}
-                        </td>
-                        <td
-                          className="r"
-                          style={{
-                            fontSize: 10,
-                            color: debtVal > 0 ? "var(--a)" : "var(--td)",
-                          }}
-                        >
-                          {debtVal > 0 ? fmt(debtVal) : "—"}
-                        </td>
-                        <td
-                          className="r"
-                          style={{
-                            color: !hasDebt
-                              ? "var(--td)"
-                              : hf > 2
-                                ? "var(--g)"
-                                : hf > 1.2
-                                  ? "var(--a)"
-                                  : "var(--r)",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {!hasDebt ? "∞" : hf.toFixed(2)}
-                        </td>
-                        <td>
-                          <Badge
-                            text={status.toUpperCase()}
-                            type={
-                              status === "safe" || status === "idle"
-                                ? "g"
-                                : status === "watch"
-                                  ? "a"
-                                  : "r"
-                            }
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginTop: 8,
-                  paddingTop: 6,
-                  borderTop: "1px solid var(--bdr)",
-                  fontSize: 10,
-                  color: "var(--td)",
-                }}
-              >
-                <span>
-                  total collateral:{" "}
-                  <span style={{ color: "var(--g)" }}>
-                    {fmt(totalCollateral)}
+            {/* ═══ SECTION 4: EVENTS ═══ */}
+            <div className="section">
+              <div className="section-header">
+                <span className="section-title">Recent Events</span>
+                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: "var(--td)" }}>
+                    vol {fmt(totalVol)} · {swaps.length} swaps
                   </span>
-                </span>
-                <span>
-                  total debt:{" "}
-                  <span
-                    style={{
-                      color: totalBrokerDebt > 0 ? "var(--a)" : "var(--gd)",
-                    }}
-                  >
-                    {fmtN(totalBrokerDebt)} wRLP
-                  </span>
-                  {totalDebtValue > 0 && (
-                    <span style={{ color: "var(--td)", marginLeft: 4 }}>
-                      ({fmt(totalDebtValue)})
-                    </span>
-                  )}
-                </span>
-                <span>
-                  over-collateralization:{" "}
-                  <span style={{ color: "var(--g)" }}>{overCollatDisplay}</span>
-                </span>
+                  <Badge text={`${events.length} TOTAL`} type="c" />
+                </div>
               </div>
-            </Card>
-
-            {/* ═══ ROW 5: Events Feed + Market Summary ═══ */}
-            <div className="grid g2" style={{ marginBottom: 1 }}>
-              <Card
-                title="EVENT FEED"
-                badge={<Badge text={`${events.length} TOTAL`} type="c" />}
-                delay={9}
-              >
-                <div style={{ maxHeight: 400, overflowY: "auto" }}>
+              <div className="events-card">
+                <div style={{ maxHeight: 360, overflowY: "auto" }}>
                   {events.map((e, i) => {
                     const isSwap = e.event_name === "Swap";
                     const isTransfer = e.event_name === "Transfer";
-                    const evtClass = isSwap
-                      ? "evt-swap"
-                      : isTransfer
-                        ? "evt-transfer"
-                        : "evt-other";
                     return (
                       <div
                         key={i}
                         className="evt"
-                        style={{ animationDelay: `${Math.min(i, 20) * 15}ms` }}
+                        style={{ animationDelay: `${Math.min(i, 20) * 12}ms` }}
                       >
-                        <span className={`evt-type ${evtClass}`}>
+                        <span
+                          className={`evt-type ${isSwap ? "evt-swap" : isTransfer ? "evt-transfer" : "evt-other"}`}
+                        >
                           {e.event_name}
                         </span>
                         <span
                           style={{
                             color: "var(--td)",
-                            fontSize: 9,
-                            minWidth: 52,
+                            fontSize: 11,
+                            minWidth: 60,
                           }}
                         >
                           {fmtTs(e.block_timestamp)}
@@ -1433,8 +1112,8 @@
                         <span
                           style={{
                             color: "var(--td)",
-                            fontSize: 9,
-                            minWidth: 80,
+                            fontSize: 11,
+                            minWidth: 90,
                           }}
                         >
                           blk {e.block_number?.toLocaleString()}
@@ -1448,15 +1127,15 @@
                                     ? "var(--g)"
                                     : "var(--r)",
                                 fontWeight: 600,
-                                fontSize: 10,
-                                minWidth: 32,
+                                fontSize: 12,
+                                minWidth: 36,
                               }}
                             >
                               {Number(e.event_data?.amount0) > 0
                                 ? "BUY"
                                 : "SELL"}
                             </span>
-                            <span style={{ fontSize: 9, color: "var(--tb)" }}>
+                            <span style={{ fontSize: 12, color: "var(--tb)" }}>
                               {fmtN(
                                 Math.abs(
                                   fromRaw(e.event_data?.amount1 || "0", 6),
@@ -1468,11 +1147,11 @@
                         )}
                         {isTransfer && (
                           <>
-                            <span style={{ fontSize: 9, color: "var(--td)" }}>
+                            <span style={{ fontSize: 11, color: "var(--td)" }}>
                               {fmtAddr(e.event_data?.from)} →{" "}
                               {fmtAddr(e.event_data?.to)}
                             </span>
-                            <span style={{ fontSize: 9, color: "var(--tb)" }}>
+                            <span style={{ fontSize: 12, color: "var(--tb)" }}>
                               {fmtN(
                                 Math.abs(
                                   fromRaw(e.event_data?.value || "0", 18),
@@ -1483,74 +1162,21 @@
                           </>
                         )}
                         {!isSwap && !isTransfer && (
-                          <span style={{ fontSize: 9, color: "var(--td)" }}>
-                            {JSON.stringify(e.event_data).slice(0, 60)}…
+                          <span style={{ fontSize: 11, color: "var(--td)" }}>
+                            {JSON.stringify(e.event_data).slice(0, 80)}…
                           </span>
                         )}
                       </div>
                     );
                   })}
                 </div>
-              </Card>
-
-              <Card title="ACTIVITY" delay={10}>
-                <div className="stat-row">
-                  <span className="stat-k">Swap Volume</span>
-                  <span className="stat-v" style={{ color: "var(--tb)" }}>
-                    {fmt(totalVol)}
-                  </span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Total Swaps</span>
-                  <span className="stat-v">{swaps.length}</span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Total Events</span>
-                  <span className="stat-v">{events.length}</span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Active Borrowers</span>
-                  <span className="stat-v">
-                    {
-                      bps.filter(
-                        (b) =>
-                          fromRaw(b.debt, 6) > 0 ||
-                          fromRaw(b.debt_value, 6) > 0,
-                      ).length
-                    }
-                    {" / "}
-                    {bps.length}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    borderTop: "1px solid var(--bdr)",
-                    marginTop: 4,
-                    paddingTop: 4,
-                  }}
-                />
-                <div className="stat-row">
-                  <span className="stat-k">Market ID</span>
-                  <span
-                    className="stat-v"
-                    style={{ color: "var(--c)", fontSize: 11 }}
-                  >
-                    {fmtAddr(ms.market_id)}
-                  </span>
-                </div>
-                <div className="stat-row">
-                  <span className="stat-k">Last Update</span>
-                  <span className="stat-v">
-                    {fmtAgo(ms.last_update_timestamp)}
-                  </span>
-                </div>
-              </Card>
+              </div>
             </div>
 
             {/* ═══ FOOTER ═══ */}
-            <div className="ftr">
-              RLD Protocol · Simulation Monitor v2.0 · auto-refresh 10s · next
-              update in{" "}
+            <div className="footer">
+              RLD Protocol · Simulation Monitor v3.0 · auto-refresh 10s · NF{" "}
+              {normFactor.toFixed(6)} · next update in{" "}
               <span style={{ color: "var(--c)" }}>{10 - (tick % 10)}s</span>
             </div>
           </div>
