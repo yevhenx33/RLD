@@ -89,6 +89,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f combined_daemon || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
   # ─── CHAOS TRADER (long-running) ─────────────────────────────
   chaos-trader:
@@ -109,6 +115,12 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f chaos_daemon || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
 
 volumes:
   config: # Shared deployment addresses (deployer writes, others read)

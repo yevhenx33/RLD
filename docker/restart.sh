@@ -159,8 +159,13 @@ for c in "${ORPHANS[@]}"; do
     fi
 done
 
-# 1d. Verify ports are free
-step "1d" "Checking port availability..."
+# 1d. Prune dangling images
+step "1d" "Pruning dangling Docker images..."
+PRUNED=$(docker image prune -f 2>/dev/null | tail -1)
+ok "$PRUNED"
+
+# 1e. Verify ports are free
+step "1e" "Checking port availability..."
 PORTS_TO_CHECK=("$ANVIL_PORT:Anvil")
 PORTS_TO_CHECK+=("${INDEXER_PORT:-8080}:Indexer")
 if [ "$SIM_ONLY" = false ]; then
@@ -447,6 +452,23 @@ echo "  Stop:    docker compose -f $COMPOSE_MAIN down -v"
 echo "  Anvil:   tail -f $ANVIL_LOG"
 echo ""
 
+# ═════════════════════════════════════════════════════════════
+# STEP 7: Ensure cron job for status.json generation
+# ═════════════════════════════════════════════════════════════
+header "STEP 7: CRON SETUP"
+
+STATUS_SCRIPT="$SCRIPT_DIR/scripts/generate-status.sh"
+CRON_LINE="* * * * * $STATUS_SCRIPT >/dev/null 2>&1"
+
+if sudo crontab -l 2>/dev/null | grep -qF "generate-status.sh"; then
+    ok "Cron job already exists for generate-status.sh"
+else
+    step "7a" "Installing cron job for status.json generation..."
+    (sudo crontab -l 2>/dev/null; echo "$CRON_LINE") | sudo crontab -
+    ok "Cron job installed: generate-status.sh (every minute)"
+fi
+
+echo ""
 if [ "$ALL_RUNNING" = true ]; then
     echo -e "${GREEN}✅ All systems operational!${NC}"
 else
