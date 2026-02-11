@@ -582,10 +582,13 @@
                 minute: "2-digit",
                 second: "2-digit",
               });
-              const up = j.containers.filter(
+              const active = j.containers.filter(
+                (c) => c.status !== "stopped" && c.status !== "created",
+              );
+              const up = active.filter(
                 (c) => c.status === "healthy" || c.status === "running",
               ).length;
-              const total = j.containers.length;
+              const total = active.length;
               const msgs = [
                 {
                   ts,
@@ -635,7 +638,7 @@
 
         useEffect(() => {
           load();
-          const iv = setInterval(load, 30000);
+          const iv = setInterval(load, 12000);
           return () => clearInterval(iv);
         }, [load]);
         useEffect(() => {
@@ -1264,6 +1267,454 @@
               </Card>
             </div>
 
+            {/* ══ ROW 4.5: Data Integrity ══ */}
+            {d.databases && (
+              <div className="grid g2" style={{ marginBottom: 1 }}>
+                <Card
+                  title="DATABASE HEALTH"
+                  badge={(() => {
+                    const db = d.databases;
+                    const ar = db.aave_rates;
+                    const cr = db.clean_rates;
+                    if (!ar || !cr || ar.error || cr.error)
+                      return <Badge text="ERROR" type="r" />;
+                    const rt = ar.tables || {};
+                    const realtimeAge = Math.max(
+                      ...[rt.rates, rt.rates_dai, rt.rates_usdt]
+                        .filter(Boolean)
+                        .map((t) => t.latest_age_secs || 0),
+                    );
+                    const hourlyAge = Math.max(
+                      rt.eth_prices?.latest_age_secs || 0,
+                      cr.freshness_secs || 0,
+                    );
+                    if (realtimeAge > 7200 || hourlyAge > 9000)
+                      return <Badge text="CRITICAL" type="r" />;
+                    if (realtimeAge > 1800 || hourlyAge > 4500)
+                      return <Badge text="STALE" type="a" />;
+                    return <Badge text="FRESH" type="g" />;
+                  })()}
+                  delay={9}
+                >
+                  {(() => {
+                    const ar = d.databases.aave_rates;
+                    const cr = d.databases.clean_rates;
+                    if (!ar || ar.error)
+                      return (
+                        <div style={{ color: "var(--r)", fontSize: 11 }}>
+                          ⚠ aave_rates.db: {ar?.error || "unavailable"}
+                        </div>
+                      );
+
+                    const ageColor = (s) =>
+                      s < 0
+                        ? "var(--td)"
+                        : s < 1800
+                          ? "var(--g)"
+                          : s < 7200
+                            ? "var(--a)"
+                            : "var(--r)";
+                    const hourlyAgeColor = (s) =>
+                      s < 0
+                        ? "var(--td)"
+                        : s < 4500
+                          ? "var(--g)"
+                          : s < 9000
+                            ? "var(--a)"
+                            : "var(--r)";
+                    const ageFmt = (s) =>
+                      s < 0
+                        ? "—"
+                        : s < 60
+                          ? `${s}s`
+                          : s < 3600
+                            ? `${Math.floor(s / 60)}m`
+                            : `${(s / 3600).toFixed(1)}h`;
+
+                    return (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 10,
+                        }}
+                      >
+                        {/* aave_rates.db */}
+                        <div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              marginBottom: 6,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 10,
+                                color: "var(--tb)",
+                                fontWeight: 500,
+                              }}
+                            >
+                              aave_rates.db
+                            </span>
+                            <span style={{ fontSize: 9, color: "var(--td)" }}>
+                              {ar.size_mb} MB
+                            </span>
+                          </div>
+                          <table className="tbl">
+                            <thead>
+                              <tr>
+                                <th>table</th>
+                                <th className="r">rows</th>
+                                <th className="r">freshness</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(ar.tables || {}).map(
+                                ([name, info], i) => (
+                                  <tr key={i}>
+                                    <td
+                                      style={{
+                                        fontSize: 10,
+                                        color: "var(--tb)",
+                                      }}
+                                    >
+                                      {name.replace("rates_", "")}
+                                    </td>
+                                    <td className="r" style={{ fontSize: 10 }}>
+                                      {info.rows?.toLocaleString()}
+                                    </td>
+                                    <td
+                                      className="r"
+                                      style={{
+                                        fontSize: 10,
+                                        color: (name === "eth_prices"
+                                          ? hourlyAgeColor
+                                          : ageColor)(info.latest_age_secs),
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      {ageFmt(info.latest_age_secs)} ago
+                                    </td>
+                                  </tr>
+                                ),
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                        {/* clean_rates.db */}
+                        <div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              marginBottom: 4,
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 10,
+                                color: "var(--tb)",
+                                fontWeight: 500,
+                              }}
+                            >
+                              clean_rates.db
+                            </span>
+                            <span style={{ fontSize: 9, color: "var(--td)" }}>
+                              {cr?.size_mb} MB
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: 10,
+                              padding: "4px 6px",
+                              borderBottom: "1px solid rgba(255,255,255,0.02)",
+                            }}
+                          >
+                            <span>freshness</span>
+                            <span
+                              style={{
+                                color: hourlyAgeColor(cr?.freshness_secs),
+                                fontWeight: 600,
+                              }}
+                            >
+                              {ageFmt(cr?.freshness_secs)} ago
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: 10,
+                              padding: "4px 6px",
+                              borderBottom: "1px solid rgba(255,255,255,0.02)",
+                            }}
+                          >
+                            <span>rows (24h)</span>
+                            <span
+                              style={{
+                                color:
+                                  cr?.rows_24h >= 23
+                                    ? "var(--g)"
+                                    : cr?.rows_24h >= 20
+                                      ? "var(--a)"
+                                      : "var(--r)",
+                              }}
+                            >
+                              {cr?.rows_24h} / 24
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </Card>
+
+                <Card
+                  title="DATA QUALITY"
+                  badge={(() => {
+                    const db = d.databases;
+                    const cr = db?.clean_rates;
+                    const ar = db?.aave_rates;
+                    if (!cr || !ar) return <Badge text="—" type="c" />;
+                    const totalNulls = cr.nulls_7d
+                      ? Object.values(cr.nulls_7d).reduce((a, b) => a + b, 0)
+                      : 0;
+                    const hasCorrupt = (ar.corrupt_rows || 0) > 0;
+                    const syncStale = (cr.sync_age_secs || 0) > 300;
+                    if (hasCorrupt || totalNulls > 5 || syncStale)
+                      return <Badge text="ISSUES" type="r" />;
+                    if (totalNulls > 0 || cr.missing_hours_7d > 0)
+                      return <Badge text="MINOR" type="a" />;
+                    return <Badge text="CLEAN" type="g" />;
+                  })()}
+                  delay={10}
+                >
+                  {(() => {
+                    const cr = d.databases?.clean_rates;
+                    const ar = d.databases?.aave_rates;
+                    if (!cr || cr.error)
+                      return (
+                        <div style={{ color: "var(--r)", fontSize: 11 }}>
+                          ⚠ {cr?.error || "unavailable"}
+                        </div>
+                      );
+
+                    const nulls = cr.nulls_7d || {};
+                    const totalNulls = Object.values(nulls).reduce(
+                      (a, b) => a + b,
+                      0,
+                    );
+
+                    return (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 8,
+                        }}
+                      >
+                        {/* NULL counts */}
+                        <div>
+                          <div
+                            style={{
+                              fontSize: 9,
+                              color: "var(--td)",
+                              textTransform: "uppercase",
+                              letterSpacing: "1.5px",
+                              marginBottom: 4,
+                            }}
+                          >
+                            null values (7d)
+                          </div>
+                          <div
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: "1fr 1fr",
+                              gap: "2px 16px",
+                            }}
+                          >
+                            {Object.entries(nulls).map(([col, cnt], i) => (
+                              <div
+                                key={i}
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  padding: "3px 0",
+                                  borderBottom:
+                                    "1px solid rgba(255,255,255,0.02)",
+                                }}
+                              >
+                                <span style={{ fontSize: 10 }}>
+                                  {col
+                                    .replace("_rate", "")
+                                    .replace("eth_price", "ETH")}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    color:
+                                      cnt === 0
+                                        ? "var(--g)"
+                                        : cnt <= 3
+                                          ? "var(--a)"
+                                          : "var(--r)",
+                                  }}
+                                >
+                                  {cnt}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Corrupt + Sync + Missing */}
+                        <div
+                          style={{
+                            borderTop: "1px solid var(--bdr)",
+                            paddingTop: 6,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: 10,
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color:
+                                    (ar?.corrupt_rows || 0) > 0
+                                      ? "var(--a)"
+                                      : "var(--g)",
+                                  fontSize: 10,
+                                }}
+                              >
+                                {(ar?.corrupt_rows || 0) > 0 ? "⚠" : "✓"}
+                              </span>
+                              corrupt rows
+                            </span>
+                            <span
+                              style={{
+                                color:
+                                  (ar?.corrupt_rows || 0) > 0
+                                    ? "var(--a)"
+                                    : "var(--gd)",
+                                fontWeight: 600,
+                              }}
+                            >
+                              {(ar?.corrupt_rows || 0).toLocaleString()}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: 10,
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color:
+                                    (cr.sync_age_secs || 0) > 300
+                                      ? "var(--r)"
+                                      : (cr.sync_age_secs || 0) > 120
+                                        ? "var(--a)"
+                                        : "var(--g)",
+                                  fontSize: 10,
+                                }}
+                              >
+                                {(cr.sync_age_secs || 0) > 300 ? "⚠" : "✓"}
+                              </span>
+                              sync age
+                            </span>
+                            <span
+                              style={{
+                                color:
+                                  (cr.sync_age_secs || 0) > 300
+                                    ? "var(--r)"
+                                    : (cr.sync_age_secs || 0) > 120
+                                      ? "var(--a)"
+                                      : "var(--gd)",
+                                fontWeight: 600,
+                              }}
+                            >
+                              {cr.sync_age_secs < 60
+                                ? `${cr.sync_age_secs}s`
+                                : `${Math.floor(cr.sync_age_secs / 60)}m`}
+                            </span>
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: 10,
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 4,
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color:
+                                    (cr.missing_hours_7d || 0) > 3
+                                      ? "var(--r)"
+                                      : (cr.missing_hours_7d || 0) > 0
+                                        ? "var(--a)"
+                                        : "var(--g)",
+                                  fontSize: 10,
+                                }}
+                              >
+                                {(cr.missing_hours_7d || 0) > 0 ? "⚠" : "✓"}
+                              </span>
+                              missing hours (7d)
+                            </span>
+                            <span
+                              style={{
+                                color:
+                                  (cr.missing_hours_7d || 0) > 0
+                                    ? "var(--a)"
+                                    : "var(--gd)",
+                                fontWeight: 600,
+                              }}
+                            >
+                              {cr.missing_hours_7d || 0}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </Card>
+              </div>
+            )}
+
             {/* ══ ROW 5: Git + Docker + Activity ══ */}
             <div className="grid g3" style={{ marginBottom: 1 }}>
               <Card title="LAST DEPLOY" delay={10}>
@@ -1406,9 +1857,9 @@
 
             {/* ══ FOOTER ══ */}
             <div className="ftr">
-              RLD Protocol · Infrastructure Monitor v2.0 · auto-refresh 30s ·
+              RLD Protocol · Infrastructure Monitor v2.0 · auto-refresh 12s ·
               next update in{" "}
-              <span style={{ color: "var(--c)" }}>{30 - (tick % 30)}s</span>
+              <span style={{ color: "var(--c)" }}>{12 - (tick % 12)}s</span>
             </div>
           </div>
         );

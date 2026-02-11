@@ -12,6 +12,9 @@ Complete containerized infrastructure for the RLD Protocol: simulation stack, ra
                   │       │                        (port 8081)       │
                   │       └──► /* ──► frontend/dist                  │
                   │                                                  │
+                  │  Nginx (8090) ──► dashboard/index.html           │
+                  │       └──► /status.json (generated every 60s)   │
+                  │                                                  │
                   │  ┌─── docker_default network ───────────────┐    │
                   │  │                                          │    │
                   │  │  rates-indexer ◄── monitor-bot           │    │
@@ -24,6 +27,7 @@ Complete containerized infrastructure for the RLD Protocol: simulation stack, ra
                   │  └──────────────────────────────────────────┘    │
                   │                                                  │
                   │  Anvil (port 8545) ◄── all containers            │
+                  │  Cron: generate-status.sh (every minute)         │
                   └──────────────────────────────────────────────────┘
 ```
 
@@ -103,7 +107,7 @@ docker compose -f docker/docker-compose.frontend.yml up -d --build
 | `indexer`       | `backend/Dockerfile.indexer` | 8080 | `python3 urllib`    | Indexes simulation blocks + serves API. **Auto-resets DB on simulation restart**   |
 | `mm-daemon`     | `docker/daemons/Dockerfile`  | —    | —                   | Market maker: arb trades + oracle updates from live rates                          |
 | `chaos-trader`  | `docker/daemons/Dockerfile`  | —    | —                   | Random trades for market activity                                                  |
-| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl                | Scrapes live Aave V3 rates from mainnet                                            |
+| `rates-indexer` | `backend/Dockerfile.rates`   | 8081 | curl                | Scrapes live Aave V3 rates + ETH prices from mainnet (60s sync interval)           |
 | `monitor-bot`   | `backend/Dockerfile.bot`     | 8082 | curl                | Telegram bot: `/status` reports, hourly digests                                    |
 | `rld-frontend`  | `frontend/Dockerfile`        | 80   | wget                | Multi-stage build: Node 20 → Nginx Alpine (68MB)                                   |
 
@@ -205,19 +209,21 @@ cd frontend && npm run build
 
 ### `docker/.env` (primary config)
 
-| Variable             | Description                                             | Secret?         |
-| -------------------- | ------------------------------------------------------- | --------------- |
-| `RPC_URL`            | Anvil RPC (default: `http://host.docker.internal:8545`) | No              |
-| `MAINNET_RPC_URL`    | **Unrestricted** Alchemy key for server-side use        | Yes             |
-| `DEPLOYER_KEY`       | Anvil key #0 (deploy contracts)                         | Simulation only |
-| `USER_A_KEY`         | Anvil key #0 (LP provider)                              | Simulation only |
-| `USER_B_KEY`         | Anvil key #1 (long user)                                | Simulation only |
-| `USER_C_KEY`         | Anvil key #2 (TWAMM user)                               | Simulation only |
-| `MM_KEY`             | Anvil key #3 (market maker)                             | Simulation only |
-| `CHAOS_KEY`          | Anvil key #4 (chaos trader)                             | Simulation only |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot auth token                                 | Yes             |
-| `TELEGRAM_CHAT_ID`   | Telegram chat for reports                               | No              |
-| `API_KEY`            | Rates API auth key                                      | Yes             |
+| Variable              | Description                                             | Secret?         |
+| --------------------- | ------------------------------------------------------- | --------------- |
+| `RPC_URL`             | Anvil RPC (default: `http://host.docker.internal:8545`) | No              |
+| `MAINNET_RPC_URL`     | **Unrestricted** Alchemy key for server-side use        | Yes             |
+| `ETH_PRICE_GRAPH_URL` | The Graph API URL for Uniswap V3 ETH/USDC pool data     | Yes             |
+| `RESERVE_RPC_URL`     | Infura RPC for reserve/fallback mainnet access          | Yes             |
+| `DEPLOYER_KEY`        | Anvil key #0 (deploy contracts)                         | Simulation only |
+| `USER_A_KEY`          | Anvil key #0 (LP provider)                              | Simulation only |
+| `USER_B_KEY`          | Anvil key #1 (long user)                                | Simulation only |
+| `USER_C_KEY`          | Anvil key #2 (TWAMM user)                               | Simulation only |
+| `MM_KEY`              | Anvil key #3 (market maker)                             | Simulation only |
+| `CHAOS_KEY`           | Anvil key #4 (chaos trader)                             | Simulation only |
+| `TELEGRAM_BOT_TOKEN`  | Telegram bot auth token                                 | Yes             |
+| `TELEGRAM_CHAT_ID`    | Telegram chat for reports                               | No              |
+| `API_KEY`             | Rates API auth key                                      | Yes             |
 
 ### Root `.env` (protocol addresses + frontend vars)
 
@@ -271,6 +277,47 @@ curl -s http://localhost:8080/api/status | python3 -m json.tool
 cast block-number --rpc-url http://localhost:8545
 ```
 
+### Infrastructure Dashboard (port 8090)
+
+A real-time infrastructure dashboard served by Nginx on port 8090. Auto-refreshes every **12 seconds** (1 Ethereum block time).
+
+```bash
+# Access locally
+open http://localhost:8090
+
+# Regenerate status data manually
+sudo /home/ubuntu/RLD/docker/scripts/generate-status.sh
+
+# View generation logs
+tail -f /home/ubuntu/RLD/logs/status-gen.log
+```
+
+**Dashboard sections:**
+
+| Section         | Metrics                                                 |
+| --------------- | ------------------------------------------------------- |
+| System          | CPU load, memory, disk, uptime, connections             |
+| Containers      | Status, health, uptime for all 6 containers             |
+| Services        | Health check + response time for each service endpoint  |
+| Database Health | Table freshness, row counts, file sizes                 |
+| Data Quality    | NULL values (7d), corrupt rows, sync age, missing hours |
+| SSL & Git       | Certificate expiry, latest commit info                  |
+| Activity Log    | Rolling feed of health checks, block numbers, errors    |
+
+**How it works:**
+
+1. `generate-status.sh` runs every minute via cron, collecting metrics from Docker, SQLite DBs, service endpoints, and system stats
+2. Writes `dashboard/status.json` atomically (`mktemp` → `mv`) to prevent partial reads
+3. `dashboard/index.html` (React/Babel) fetches `status.json` every 12s and renders
+
+**Alerting thresholds (Database Health):**
+
+| Metric      | Real-time tables (rates) | Hourly tables (eth_prices, clean_rates) |
+| ----------- | ------------------------ | --------------------------------------- |
+| 🟢 Fresh    | < 30 min                 | < 75 min                                |
+| 🟡 Stale    | < 2 hours                | < 2.5 hours                             |
+| 🔴 Critical | > 2 hours                | > 2.5 hours                             |
+
 ### Single-Service Rebuild
 
 ```bash
@@ -281,13 +328,17 @@ docker compose -f docker/docker-compose.yml up -d --no-deps indexer
 
 ### Troubleshooting
 
-| Symptom                           | Cause                                         | Fix                                                    |
-| --------------------------------- | --------------------------------------------- | ------------------------------------------------------ |
-| RPC 403 errors in daemon logs     | Alchemy API key restricted to specific origin | Use an unrestricted key in `MAINNET_RPC_URL`           |
-| Port already in use on restart    | Orphaned container from previous run          | `restart.sh` handles this automatically                |
-| Deployer `nonce too low`          | Rapid-fire transactions without receipt wait  | Already fixed in `deploy_all.sh`                       |
-| Containers stuck in `Created`     | Deployer dependency not met                   | `restart.sh` auto-recovers stuck containers            |
-| `Cannot resolve 'indexer'` in bot | Bot on different Docker network than indexer  | Ensure both use same compose or `host.docker.internal` |
+| Symptom                           | Cause                                          | Fix                                                    |
+| --------------------------------- | ---------------------------------------------- | ------------------------------------------------------ |
+| RPC 403 errors in daemon logs     | Alchemy API key restricted to specific origin  | Use an unrestricted key in `MAINNET_RPC_URL`           |
+| Port already in use on restart    | Orphaned container from previous run           | `restart.sh` handles this automatically                |
+| Deployer `nonce too low`          | Rapid-fire transactions without receipt wait   | Already fixed in `deploy_all.sh`                       |
+| Containers stuck in `Created`     | Deployer dependency not met                    | `restart.sh` auto-recovers stuck containers            |
+| `Cannot resolve 'indexer'` in bot | Bot on different Docker network than indexer   | Ensure both use same compose or `host.docker.internal` |
+| Dashboard JSON parse error        | `status.json` read mid-write                   | Fixed: atomic writes via `mktemp` + `mv`               |
+| ETH prices not syncing            | `ETH_PRICE_GRAPH_URL` missing from docker/.env | Add the Graph API URL to `docker/.env`                 |
+| Sync age > 5min on dashboard      | `SYNC_INTERVAL` too high in daemon.py          | Set to 60s (current default)                           |
+| Dashboard shows 5/6 services ok   | Stopped deployer counted in health check       | Fixed: stopped/created containers excluded from count  |
 
 ---
 
@@ -378,6 +429,7 @@ Hourly cron collects logs from all containers into daily files:
 ```bash
 # Setup (already installed via crontab)
 0 * * * * /home/ubuntu/RLD/docker/scripts/collect-logs.sh
+* * * * * sudo /home/ubuntu/RLD/docker/scripts/generate-status.sh >> /home/ubuntu/RLD/logs/status-gen.log 2>&1
 
 # Manual run
 ./docker/scripts/collect-logs.sh
@@ -398,3 +450,20 @@ Logs are rotated automatically after 7 days.
 | ------ | -------- | ----- | ------------------- |
 | `site` | 30 req/s | 60    | All pages (`/`)     |
 | `api`  | 10 req/s | 20    | API proxy (`/api/`) |
+
+---
+
+## Data Pipeline
+
+### ETH Price Sync
+
+The rates-indexer daemon fetches ETH/USDC prices from The Graph's Uniswap V3 subgraph (`poolHourDatas`) every 60 seconds.
+
+```
+The Graph API → aave_rates.db (eth_prices table) → sync_clean_db.py → clean_rates.db (hourly_stats)
+```
+
+- **Source:** Uniswap V3 USDC/ETH 0.05% pool (`0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640`)
+- **Sync interval:** 60s (`SYNC_INTERVAL` in `daemon.py`)
+- **Backfill:** If data gaps are detected, fetch from The Graph API — never use interpolation for financial data
+- **Corrupt row filter:** Rows where `price NOT BETWEEN 100 AND 100000` are excluded during sync

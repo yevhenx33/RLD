@@ -127,6 +127,71 @@ if ls /home/ubuntu/RLD/logs/*$(date +%Y-%m-%d)*.log >/dev/null 2>&1; then
   _ec=$(cat /home/ubuntu/RLD/logs/*$(date +%Y-%m-%d)*.log 2>/dev/null | grep -ic "error\|exception\|traceback\|fatal" 2>/dev/null) && ERR_COUNT=$_ec || ERR_COUNT=0
 fi
 
+# ── Database Integrity ──
+DB_JSON=$(docker exec docker-rates-indexer-1 python3 -c "
+import sqlite3, os, json, time
+
+now = int(time.time())
+result = {}
+
+# --- aave_rates.db ---
+try:
+    db = '/app/data/aave_rates.db'
+    sz = round(os.path.getsize(db) / 1024 / 1024, 1)
+    conn = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+    c = conn.cursor()
+    tables = {}
+    for t in ['rates', 'eth_prices', 'rates_dai', 'rates_usdt']:
+        try:
+            c.execute(f'SELECT COUNT(*) FROM {t}')
+            cnt = c.fetchone()[0]
+            c.execute(f'SELECT MAX(timestamp) FROM {t}')
+            mx = c.fetchone()[0] or 0
+            tables[t] = {'rows': cnt, 'latest_age_secs': now - mx if mx > 1000000 else -1}
+        except: pass
+    c.execute('SELECT COUNT(*) FROM eth_prices WHERE timestamp < 100000000')
+    corrupt = c.fetchone()[0]
+    conn.close()
+    result['aave_rates'] = {'size_mb': sz, 'tables': tables, 'corrupt_rows': corrupt}
+except Exception as e:
+    result['aave_rates'] = {'error': str(e)}
+
+# --- clean_rates.db ---
+try:
+    db2 = '/app/data/clean_rates.db'
+    sz2 = round(os.path.getsize(db2) / 1024 / 1024, 1)
+    conn2 = sqlite3.connect(f'file:{db2}?mode=ro', uri=True)
+    c2 = conn2.cursor()
+    c2.execute('SELECT MAX(timestamp) FROM hourly_stats')
+    mx2 = c2.fetchone()[0] or 0
+    fresh = now - mx2 if mx2 > 0 else -1
+    nulls = {}
+    for col in ['eth_price', 'usdc_rate', 'dai_rate', 'usdt_rate']:
+        c2.execute(f'SELECT COUNT(*) FROM hourly_stats WHERE timestamp > ? AND {col} IS NULL', (now - 7*86400,))
+        nulls[col] = c2.fetchone()[0]
+    c2.execute('SELECT COUNT(*) FROM hourly_stats WHERE timestamp > ?', (now - 7*86400,))
+    rows_7d = c2.fetchone()[0]
+    c2.execute('SELECT COUNT(*) FROM hourly_stats WHERE timestamp > ?', (now - 86400,))
+    rows_24h = c2.fetchone()[0]
+    # Sync age
+    sync_age = -1
+    try:
+        c2.execute(\"SELECT value FROM sync_state WHERE key='last_synced_timestamp'\")
+        r = c2.fetchone()
+        if r: sync_age = now - int(r[0])
+    except: pass
+    conn2.close()
+    result['clean_rates'] = {
+        'size_mb': sz2, 'freshness_secs': fresh, 'rows_24h': rows_24h,
+        'nulls_7d': nulls, 'missing_hours_7d': max(0, 168 - rows_7d),
+        'sync_age_secs': sync_age
+    }
+except Exception as e:
+    result['clean_rates'] = {'error': str(e)}
+
+print(json.dumps(result))
+" 2>/dev/null || echo '{}')
+
 # ── History tracking (keep last 60 data points = ~1 hour) ──
 if [ -f "$HISTORY" ]; then
   HIST=$(python3 -c "
@@ -146,8 +211,9 @@ else
 fi
 echo "$HIST" > "$HISTORY"
 
-# ── Write JSON ──
-cat > "$OUTPUT" << ENDJSON
+# ── Write JSON (atomic) ──
+TMPOUT=$(mktemp "${OUTPUT}.XXXXXX")
+cat > "$TMPOUT" << ENDJSON
 {
   "timestamp": "$TIMESTAMP",
   "system": {
@@ -171,8 +237,11 @@ cat > "$OUTPUT" << ENDJSON
   "ssl": {"expiry":"$SSL_EXPIRY","days_remaining":${SSL_DAYS:-0}},
   "git": {"commit":"$GIT_COMMIT","message":"$GIT_MSG","time":"$GIT_TIME","author":"$GIT_AUTHOR"},
   "docker": {"dangling_images":$DANGLING,"images_size":"$IMG_SIZE","active":$IMG_ACTIVE,"total":$IMG_TOTAL},
+  "databases": $DB_JSON,
   "history": $HIST
 }
 ENDJSON
+mv "$TMPOUT" "$OUTPUT"
+chmod 644 "$OUTPUT"
 
 echo "[$(date)] Status updated → $OUTPUT"

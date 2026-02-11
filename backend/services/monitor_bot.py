@@ -112,9 +112,9 @@ def get_asset_stats(symbol, endpoint="/rates"):
         # Use RATES_API_URL for rates/prices
         base_url = RATES_API_URL
         
-        url = f"{base_url}{endpoint}?symbol={symbol}&limit=48&resolution=1H"
+        url = f"{base_url}{endpoint}?symbol={symbol}&limit=96&resolution=1H"
         if endpoint == "/eth-prices":
-            url = f"{base_url}{endpoint}?limit=48&resolution=1H"
+            url = f"{base_url}{endpoint}?limit=96&resolution=1H"
             
         res = requests.get(url, headers=get_headers(), timeout=10)
         if res.status_code != 200:
@@ -136,9 +136,9 @@ def get_asset_stats(symbol, endpoint="/rates"):
         current = data[0]
         target_ts = current['timestamp'] - 86400
         past = None
-        min_diff = 3600 * 2
+        min_diff = 3600 * 6  # 6h tolerance to bridge data gaps
         
-        for item in data:
+        for item in data[1:]:  # Skip current entry
             diff = abs(item['timestamp'] - target_ts)
             if diff < min_diff:
                 min_diff = diff

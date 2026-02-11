@@ -57,7 +57,7 @@ RPC_URLS = [url for url in RPC_URLS if url]
 # Daemon settings
 POLL_INTERVAL = 12  # seconds (1 Ethereum block)
 BATCH_SIZE = 10     # Blocks per RPC batch
-SYNC_INTERVAL = 300 # Full hourly aggregation every 5 minutes
+SYNC_INTERVAL = 60  # Full hourly aggregation every 60s (incremental, lightweight)
 BLOCKS_7D = int(7 * 24 * 3600 / 12)  # ~50400 blocks
 
 # Read ETH_PRICE_GRAPH_URL after all envs loaded (config.py loads too early)

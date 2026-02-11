@@ -53,14 +53,20 @@ def _set_sync_state(cursor, key, value):
 
 
 def _sync_eth_prices_incremental(conn_raw, cursor_clean, since_ts):
-    """Sync only ETH prices newer than since_ts."""
-    # Re-aggregate the current hour bucket too (partial hour edge case)
-    hour_floor = (since_ts // 3600) * 3600
+    """Sync ETH prices newer than since_ts, with a 48h safety lookback.
+    
+    The GraphQL source can deliver historical data late (e.g. API outage recovery).
+    Using a lookback window ensures late-arriving rows are picked up even if the
+    wall-clock watermark has already advanced past them.
+    """
+    # Safety lookback: re-check the last 48 hours to catch late backfills
+    lookback = since_ts - (48 * 3600)
+    hour_floor = (lookback // 3600) * 3600
 
     cursor_raw = conn_raw.cursor()
     try:
         cursor_raw.execute(
-            "SELECT timestamp, price FROM eth_prices WHERE timestamp >= ?",
+            "SELECT timestamp, price FROM eth_prices WHERE timestamp >= ? AND price BETWEEN 100 AND 100000",
             (hour_floor,)
         )
     except Exception:
