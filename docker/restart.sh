@@ -164,8 +164,27 @@ step "1d" "Pruning dangling Docker images..."
 PRUNED=$(docker image prune -f 2>/dev/null | tail -1)
 ok "$PRUNED"
 
-# 1e. Verify ports are free
-step "1e" "Checking port availability..."
+# 1e. Clean old Anvil state snapshots (keeps only the most recent)
+step "1e" "Cleaning old Anvil state snapshots..."
+CLEANUP_SCRIPT="$SCRIPT_DIR/scripts/cleanup-anvil-snapshots.sh"
+if [ -x "$CLEANUP_SCRIPT" ]; then
+    "$CLEANUP_SCRIPT" --force 2>&1 | sed 's/^/    /'
+else
+    ANVIL_TMP="$HOME/.foundry/anvil/tmp"
+    if [ -d "$ANVIL_TMP" ]; then
+        SNAPSHOT_COUNT=$(find "$ANVIL_TMP" -maxdepth 1 -name 'anvil-state-*' -type d | wc -l)
+        if [ "$SNAPSHOT_COUNT" -gt 1 ]; then
+            LATEST=$(ls -dt "$ANVIL_TMP"/anvil-state-* | head -1)
+            ls -dt "$ANVIL_TMP"/anvil-state-* | tail -n +2 | xargs rm -rf
+            ok "Removed $((SNAPSHOT_COUNT - 1)) old snapshot(s), kept $(basename "$LATEST")"
+        else
+            ok "No old snapshots to clean"
+        fi
+    fi
+fi
+
+# 1f. Verify ports are free
+step "1f" "Checking port availability..."
 PORTS_TO_CHECK=("$ANVIL_PORT:Anvil")
 PORTS_TO_CHECK+=("${INDEXER_PORT:-8080}:Indexer")
 if [ "$SIM_ONLY" = false ]; then
