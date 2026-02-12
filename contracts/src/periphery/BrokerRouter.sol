@@ -88,7 +88,9 @@ contract BrokerRouter is ReentrancyGuard {
 
     event DepositRouteSet(address indexed collateralToken, address underlying, address aavePool);
     event LongExecuted(address indexed broker, uint256 amountIn, uint256 amountOut);
+    event LongClosed(address indexed broker, uint256 amountIn, uint256 amountOut);
     event ShortExecuted(address indexed broker, uint256 debtAmount, uint256 proceeds);
+    event ShortClosed(address indexed broker, uint256 debtRepaid, uint256 collateralSpent);
     event Deposited(address indexed broker, uint256 underlyingAmount, uint256 wrappedAmount);
 
     /* ============================================================================================ */
@@ -282,7 +284,7 @@ contract BrokerRouter is ReentrancyGuard {
 
         SwapParams memory swapParams = SwapParams({
             zeroForOne: zeroForOne,
-            amountSpecified: int256(amountIn),  // exact input
+            amountSpecified: -int256(amountIn),  // negative = exact input in V4
             sqrtPriceLimitX96: zeroForOne
                 ? 4295128740  // MIN_SQRT_PRICE + 1
                 : 1461446703485210103287273052203988822378723970341  // MAX_SQRT_PRICE - 1
@@ -298,7 +300,7 @@ contract BrokerRouter is ReentrancyGuard {
             (BalanceDelta)
         );
 
-        // 5. Calculate output (the token we received)
+        // 5. Calculate output (the token we received — positive delta)
         amountOut = zeroForOne
             ? uint256(int256(delta.amount1()))
             : uint256(int256(delta.amount0()));
@@ -308,6 +310,64 @@ contract BrokerRouter is ReentrancyGuard {
         IERC20(position).transfer(broker, posBalance);
 
         emit LongExecuted(broker, amountIn, posBalance);
+    }
+
+    /* ============================================================================================ */
+    /*                                       CLOSE LONG                                             */
+    /* ============================================================================================ */
+
+    /// @notice Close a long position: swap wRLP → collateral (waUSDC)
+    /// @dev Flow: withdrawPositionToken → swap wRLP→waUSDC → transfer proceeds to broker
+    /// @param broker The PrimeBroker to trade from
+    /// @param amountIn Amount of wRLP to sell
+    /// @param poolKey V4 pool key for routing the swap
+    /// @return amountOut Amount of collateral received
+    function closeLong(
+        address broker,
+        uint256 amountIn,
+        PoolKey calldata poolKey
+    ) external onlyBrokerAuthorized(broker) nonReentrant returns (uint256 amountOut) {
+        PrimeBroker pb = PrimeBroker(payable(broker));
+        address collateral = pb.collateralToken();
+        address position = pb.positionToken();
+
+        // 1. Withdraw position tokens (wRLP) from broker to this router
+        pb.withdrawPositionToken(address(this), amountIn);
+
+        // 2. Approve PoolManager for the swap
+        IERC20(position).approve(address(poolManager), amountIn);
+
+        // 3. Determine swap direction (selling position for collateral)
+        bool zeroForOne = position < collateral;
+
+        SwapParams memory swapParams = SwapParams({
+            zeroForOne: zeroForOne,
+            amountSpecified: -int256(amountIn),  // negative = exact input in V4
+            sqrtPriceLimitX96: zeroForOne
+                ? 4295128740  // MIN_SQRT_PRICE + 1
+                : 1461446703485210103287273052203988822378723970341  // MAX_SQRT_PRICE - 1
+        });
+
+        // 4. Execute swap via PoolManager
+        BalanceDelta delta = abi.decode(
+            poolManager.unlock(abi.encode(SwapCallback({
+                sender: address(this),
+                key: poolKey,
+                params: swapParams
+            }))),
+            (BalanceDelta)
+        );
+
+        // 5. Calculate output (collateral received — positive delta)
+        amountOut = zeroForOne
+            ? uint256(int256(delta.amount1()))
+            : uint256(int256(delta.amount0()));
+
+        // 6. Transfer ALL collateral proceeds back to broker
+        uint256 colBalance = IERC20(collateral).balanceOf(address(this));
+        IERC20(collateral).transfer(broker, colBalance);
+
+        emit LongClosed(broker, amountIn, colBalance);
     }
 
     /* ============================================================================================ */
@@ -347,7 +407,7 @@ contract BrokerRouter is ReentrancyGuard {
 
         SwapParams memory swapParams = SwapParams({
             zeroForOne: zeroForOne,
-            amountSpecified: int256(targetDebtAmount),  // exact input
+            amountSpecified: -int256(targetDebtAmount),  // negative = exact input in V4
             sqrtPriceLimitX96: zeroForOne
                 ? 4295128740
                 : 1461446703485210103287273052203988822378723970341
@@ -367,6 +427,74 @@ contract BrokerRouter is ReentrancyGuard {
         pb.modifyPosition(rawMarketId, int256(proceeds), int256(0));
 
         emit ShortExecuted(broker, targetDebtAmount, proceeds);
+    }
+
+    /* ============================================================================================ */
+    /*                                       CLOSE SHORT                                            */
+    /* ============================================================================================ */
+
+    /// @notice Close (partially or fully) a short position by buying back wRLP and repaying debt
+    /// @dev Flow: withdraw collateral → swap waUSDC → wRLP → transfer wRLP to broker → modifyPosition(0, -debt)
+    ///      The bought wRLP is burned by Core when repaying debt.
+    /// @param broker The PrimeBroker to close the short on
+    /// @param collateralToSpend Amount of waUSDC to use for buying wRLP
+    /// @param poolKey V4 pool key for routing the swap
+    /// @return debtRepaid Amount of wRLP debt repaid
+    function closeShort(
+        address broker,
+        uint256 collateralToSpend,
+        PoolKey calldata poolKey
+    ) external onlyBrokerAuthorized(broker) nonReentrant returns (uint256 debtRepaid) {
+        PrimeBroker pb = PrimeBroker(payable(broker));
+        address collateral = pb.collateralToken();
+        address position = pb.positionToken();
+        bytes32 rawMarketId = MarketId.unwrap(pb.marketId());
+
+        // 1. Withdraw collateral (waUSDC) from broker to buy wRLP
+        pb.withdrawCollateral(address(this), collateralToSpend);
+
+        // 2. Approve PoolManager for the swap
+        IERC20(collateral).approve(address(poolManager), collateralToSpend);
+
+        // 3. Swap waUSDC → wRLP (exact input: spend all collateralToSpend)
+        bool zeroForOne = collateral < position;
+
+        SwapParams memory swapParams = SwapParams({
+            zeroForOne: zeroForOne,
+            amountSpecified: -int256(collateralToSpend),  // negative = exact input
+            sqrtPriceLimitX96: zeroForOne
+                ? 4295128740  // MIN_SQRT_PRICE + 1
+                : 1461446703485210103287273052203988822378723970341  // MAX_SQRT_PRICE - 1
+        });
+
+        BalanceDelta delta = abi.decode(
+            poolManager.unlock(abi.encode(SwapCallback({
+                sender: address(this),
+                key: poolKey,
+                params: swapParams
+            }))),
+            (BalanceDelta)
+        );
+
+        // 4. Calculate wRLP received (positive delta on the output side)
+        debtRepaid = zeroForOne
+            ? uint256(int256(delta.amount1()))
+            : uint256(int256(delta.amount0()));
+
+        // 5. Transfer ALL wRLP to broker (needed for burn in modifyPosition)
+        uint256 posBalance = IERC20(position).balanceOf(address(this));
+        IERC20(position).transfer(broker, posBalance);
+
+        // 6. Repay debt: Core will burn wRLP from broker
+        pb.modifyPosition(rawMarketId, int256(0), -int256(debtRepaid));
+
+        // 7. Return any leftover collateral to broker
+        uint256 leftover = IERC20(collateral).balanceOf(address(this));
+        if (leftover > 0) {
+            IERC20(collateral).transfer(broker, leftover);
+        }
+
+        emit ShortClosed(broker, debtRepaid, collateralToSpend);
     }
 
     /* ============================================================================================ */

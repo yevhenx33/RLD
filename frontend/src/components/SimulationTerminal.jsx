@@ -1,4 +1,11 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, {
+  useState,
+  useMemo,
+  useEffect,
+  useRef,
+  useCallback,
+} from "react";
+import { ethers } from "ethers";
 import {
   Loader2,
   Terminal,
@@ -10,18 +17,22 @@ import {
   Gauge,
   ArrowUpDown,
   RefreshCw,
-  Droplets,
   Wallet,
   CheckCircle,
+  Download,
 } from "lucide-react";
 import { useSimulation } from "../hooks/useSimulation";
 import { useChartControls } from "../hooks/useChartControls";
 import { useWallet } from "../context/WalletContext";
-import { useFaucet } from "../hooks/useFaucet";
+
 import { useBrokerAccount } from "../hooks/useBrokerAccount";
 import { useSwapQuote } from "../hooks/useSwapQuote";
 import { useSwapExecution } from "../hooks/useSwapExecution";
+import { useOperations, formatOpAmount } from "../hooks/useOperations";
 import AccountModal from "./AccountModal";
+import SwapConfirmModal from "./SwapConfirmModal";
+import { ToastContainer } from "./Toast";
+import { useToast } from "../hooks/useToast";
 import RLDPerformanceChart from "./RLDChart";
 import ChartControlBar from "./ChartControlBar";
 
@@ -54,22 +65,39 @@ function SimMetricBox({ label, value, sub, Icon = Activity, dimmed }) {
   );
 }
 
-function EventsFeed({ events = [] }) {
-  if (events.length === 0) {
+function OperationsFeed({
+  operations = [],
+  loading = false,
+  connected = false,
+}) {
+  if (!connected) {
     return (
       <div className="text-xs text-gray-600 uppercase tracking-widest text-center py-4">
-        No recent swaps
+        —
+      </div>
+    );
+  }
+
+  if (loading && operations.length === 0) {
+    return (
+      <div className="text-xs text-gray-600 uppercase tracking-widest text-center py-4">
+        Loading...
+      </div>
+    );
+  }
+
+  if (operations.length === 0) {
+    return (
+      <div className="text-xs text-gray-600 uppercase tracking-widest text-center py-4">
+        No operations yet
       </div>
     );
   }
 
   return (
     <div className="space-y-0 divide-y divide-white/5 max-h-[200px] overflow-y-auto custom-scrollbar">
-      {events.slice(0, 10).map((e) => {
-        const amount0 = BigInt(e.data?.amount0 || "0");
-        const amount1 = BigInt(e.data?.amount1 || "0");
-        const isBuy = amount0 < 0n;
-        const ts = new Date(e.timestamp * 1000);
+      {operations.slice(0, 15).map((op) => {
+        const ts = new Date(op.timestamp * 1000);
         const timeStr = ts.toLocaleTimeString("en-US", {
           hour: "2-digit",
           minute: "2-digit",
@@ -77,42 +105,41 @@ function EventsFeed({ events = [] }) {
           hour12: false,
         });
 
+        // Format amounts based on event type
+        let detail = "";
+        if (op.type === "LongExecuted") {
+          detail = `${formatOpAmount(op.args[1])} waUSDC → ${formatOpAmount(op.args[2])} wRLP`;
+        } else if (op.type === "LongClosed") {
+          detail = `${formatOpAmount(op.args[1])} wRLP → ${formatOpAmount(op.args[2])} waUSDC`;
+        } else if (op.type === "ShortExecuted") {
+          detail = `${formatOpAmount(op.args[1])} debt · ${formatOpAmount(op.args[2])} proceeds`;
+        } else if (op.type === "Deposited") {
+          detail = `${formatOpAmount(op.args[1])} → ${formatOpAmount(op.args[2])} waUSDC`;
+        }
+
         return (
           <div
-            key={e.id}
+            key={op.id}
             className="py-2 flex items-center justify-between gap-3"
           >
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <span
-                className={`text-[10px] font-bold px-1.5 py-0.5 ${
-                  isBuy
-                    ? "bg-green-500/20 text-green-400"
-                    : "bg-red-500/20 text-red-400"
-                }`}
+                className={`text-[9px] font-bold font-mono px-1.5 py-0.5 tracking-wider w-[72px] text-center inline-block ${op.color}`}
               >
-                {isBuy ? "BUY" : "SELL"}
+                {op.label}
               </span>
               <span className="text-[11px] text-gray-500 font-mono">
                 {timeStr}
               </span>
             </div>
-            <div className="text-[11px] font-mono text-gray-400 flex-shrink-0">
-              {formatAmount(amount0, amount1)}
+            <div className="text-[10px] font-mono text-gray-400 flex-shrink-0">
+              {detail}
             </div>
           </div>
         );
       })}
     </div>
   );
-}
-
-function formatAmount(a0, a1) {
-  // Show the outgoing amount (negative side) as the size
-  const raw = a0 < 0n ? -a0 : -a1;
-  const num = Number(raw) / 1e6;
-  if (num >= 1e6) return `${(num / 1e6).toFixed(1)}M`;
-  if (num >= 1e3) return `${(num / 1e3).toFixed(1)}K`;
-  return num.toFixed(0);
 }
 
 // ── Main Component ────────────────────────────────────────────
@@ -140,51 +167,25 @@ export default function SimulationTerminal() {
     totalEvents,
   } = sim;
 
-  // Merge fallback infrastructure addresses (API might not return these yet)
-  // Also override token addresses for swap operations — the indexer DB has stale addresses
-  // but the pool was initialized with the .env addresses
+  // Use dynamic addresses from the indexer API — no hardcoded overrides.
+  // The /api/market-info endpoint returns all deployed contract addresses
+  // (v4_quoter, broker_router, twamm_hook, token addresses) which update
+  // automatically on each redeployment.
   const enrichedMarketInfo = useMemo(() => {
     if (!marketInfo) return null;
     return {
       ...marketInfo,
-      // Override with actual deployed token addresses for swap operations
-      collateral: {
-        ...marketInfo.collateral,
-        address:
-          marketInfo.collateral?.address ||
-          "0xD1620Dac6d79BE34F8500756B47cf91B1fA5Cc8C",
-      },
-      position_token: {
-        ...marketInfo.position_token,
-        address:
-          marketInfo.position_token?.address ||
-          "0x5aEd016F177EB355EBE52c98f5883432F2351971",
-      },
       infrastructure: {
-        broker_router: "0xBf7877CCB45f6d792c581fcbDd1150caD486B284",
-        v4_quoter: "0x873AFcA0319f5c04421E90e882566C496877aFF8",
-        twamm_hook: "0x2d1B11cE8ea5204839458789873da6b0ce182Ac0",
-        pool_manager: "0x000000000004444c5dc75cB358380D2e3dE08A90",
-        pool_fee: 500,
-        tick_spacing: 5,
-        // Actual pool token addresses
-        swap_collateral: "0xD1620Dac6d79BE34F8500756B47cf91B1fA5Cc8C",
-        swap_position_token: "0x5aEd016F177EB355EBE52c98f5883432F2351971",
         ...marketInfo.infrastructure,
+        // Swap token addresses mirror the top-level collateral/position_token
+        swap_collateral: marketInfo.collateral?.address,
+        swap_position_token: marketInfo.position_token?.address,
       },
     };
   }, [marketInfo]);
 
   // Wallet & Faucet
   const { account, connectWallet } = useWallet();
-  const {
-    requestFaucet,
-    loading: faucetLoading,
-    error: faucetError,
-    step: faucetStep,
-    waUsdcBalance,
-  } = useFaucet(account, marketInfo?.collateral?.address);
-
   // Broker account
   const {
     hasBroker,
@@ -198,22 +199,72 @@ export default function SimulationTerminal() {
     marketInfo?.collateral?.address,
   );
 
+  // User operations (on-chain events from BrokerRouter)
+  const { operations, loading: opsLoading } = useOperations(
+    enrichedMarketInfo?.infrastructure?.broker_router,
+    brokerAddress,
+  );
+
   // Trading State (must be declared before swap hooks that reference tradeSide/collateral)
   const [tradeSide, setTradeSide] = useState("LONG");
+  const [tradeAction, setTradeAction] = useState("OPEN"); // OPEN or CLOSE
   const [collateral, setCollateral] = useState(1000);
-  const [shortCR, setShortCR] = useState(150);
+  const [closeAmount, setCloseAmount] = useState(""); // wRLP to sell (close long)
+  const [closeShortAmount, setCloseShortAmount] = useState(""); // waUSDC to spend (close short)
+  const [shortCR, setShortCR] = useState(200);
+  const [shortAmount, setShortAmount] = useState(0);
+
+  // Broker wRLP (position token) balance — for close long
+  const [brokerWrlpBalance, setBrokerWrlpBalance] = useState(null);
+  useEffect(() => {
+    if (!brokerAddress || !enrichedMarketInfo?.position_token?.address) return;
+    const fetchWrlp = async () => {
+      try {
+        const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
+        const token = new ethers.Contract(
+          enrichedMarketInfo.position_token.address,
+          ["function balanceOf(address) view returns (uint256)"],
+          provider,
+        );
+        const bal = await token.balanceOf(brokerAddress);
+        setBrokerWrlpBalance(parseFloat(ethers.formatUnits(bal, 6)));
+      } catch (e) {
+        console.warn("Failed to fetch wRLP balance:", e);
+      }
+    };
+    fetchWrlp();
+    const interval = setInterval(fetchWrlp, 12000);
+    return () => clearInterval(interval);
+  }, [brokerAddress, enrichedMarketInfo?.position_token?.address]);
+
+  // Determine which amount to quote and in which direction
+  // Close Long = SELL wRLP; Close Short = BUY wRLP (same direction as Open Long)
+  const quoteDirection =
+    tradeAction === "CLOSE" && tradeSide === "LONG" ? "SELL" : "BUY";
+  const quoteAmountIn =
+    tradeAction === "CLOSE"
+      ? tradeSide === "LONG"
+        ? parseFloat(closeAmount) || 0
+        : parseFloat(closeShortAmount) || 0
+      : tradeSide === "LONG"
+        ? collateral
+        : 0;
 
   // Swap quote (V4Quoter on-chain)
   const { quote: swapQuote, loading: quoteLoading } = useSwapQuote(
     enrichedMarketInfo?.infrastructure,
     enrichedMarketInfo?.infrastructure?.swap_collateral,
     enrichedMarketInfo?.infrastructure?.swap_position_token,
-    tradeSide === "LONG" ? collateral : 0,
+    quoteAmountIn,
+    quoteDirection,
   );
 
   // Swap execution (MetaMask-signed)
   const {
     executeLong,
+    executeCloseLong,
+    executeShort,
+    executeCloseShort,
     executing: swapExecuting,
     error: swapError,
     step: swapStep,
@@ -226,6 +277,25 @@ export default function SimulationTerminal() {
   );
 
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [showSwapConfirm, setShowSwapConfirm] = useState(false);
+
+  // Toast notifications
+  const { toasts, addToast, removeToast } = useToast();
+
+  // Track swap errors to fire toast + close modal
+  const prevSwapError = useRef(swapError);
+  useEffect(() => {
+    if (swapError && swapError !== prevSwapError.current && showSwapConfirm) {
+      addToast({
+        type: "error",
+        title: "Swap Failed",
+        message: swapError,
+        duration: 6000,
+      });
+      setShowSwapConfirm(false);
+    }
+    prevSwapError.current = swapError;
+  }, [swapError, showSwapConfirm, addToast]);
 
   // Chart controls
   const controls = useChartControls({
@@ -288,19 +358,47 @@ export default function SimulationTerminal() {
     if (tradeSide === "LONG") {
       return { notional: collateral, liqRate: null };
     }
-    const crDecimal = shortCR / 100;
+    // SHORT: notional = shortAmount (wRLP) × currentRate
+    const notionalUSD = shortAmount * currentRate;
     return {
-      notional: crDecimal > 0 ? collateral / crDecimal : 0,
+      notional: notionalUSD,
       liqRate: currentRate * (shortCR / 110),
     };
-  }, [tradeSide, collateral, shortCR, currentRate]);
+  }, [tradeSide, collateral, shortAmount, shortCR, currentRate]);
 
-  const handleShortAmountChange = (newAmount) => {
-    if (newAmount > 0) {
-      const newCR = (collateral / newAmount) * 100;
-      setShortCR(Math.min(Math.max(newCR, 110), 1500));
+  const handleShortAmountChange = (newWRLP) => {
+    setShortAmount(newWRLP);
+    // Recalculate CR: CR = collateral / (wRLP × rate)
+    if (newWRLP > 0 && currentRate > 0) {
+      const newCR = (collateral / (newWRLP * currentRate)) * 100;
+      setShortCR(Math.min(Math.max(newCR, 150), 1500));
     }
   };
+
+  // When CR slider changes, recalculate shortAmount
+  // shortAmount = collateral / (CR × indexPrice)
+  const handleShortCRChange = (newCR) => {
+    setShortCR(newCR);
+    if (currentRate > 0 && collateral > 0) {
+      const crDecimal = newCR / 100;
+      const newAmount = collateral / (crDecimal * currentRate);
+      setShortAmount(parseFloat(newAmount.toFixed(6)));
+    }
+  };
+
+  // Auto-compute shortAmount = collateral / (CR × indexPrice) whenever inputs change
+  useEffect(() => {
+    if (
+      tradeSide === "SHORT" &&
+      currentRate > 0 &&
+      collateral > 0 &&
+      shortCR > 0
+    ) {
+      const crDecimal = shortCR / 100;
+      const newAmount = collateral / (crDecimal * currentRate);
+      setShortAmount(parseFloat(newAmount.toFixed(6)));
+    }
+  }, [tradeSide, collateral, shortCR, currentRate]);
 
   const handleLongAmountChange = (newAmount) => {
     setCollateral(newAmount);
@@ -360,6 +458,8 @@ export default function SimulationTerminal() {
 
   return (
     <>
+      {/* Toast notifications */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
       <div className="min-h-screen bg-[#080808] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
         {/* MAIN CONTENT */}
         <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
@@ -608,25 +708,39 @@ export default function SimulationTerminal() {
                     ? "Create Account"
                     : swapExecuting
                       ? swapStep || "Processing..."
-                      : tradeSide === "LONG"
-                        ? "Open Long"
-                        : "Open Short",
+                      : tradeAction === "CLOSE" && tradeSide === "LONG"
+                        ? "Close Long"
+                        : tradeAction === "CLOSE" && tradeSide === "SHORT"
+                          ? "Close Short"
+                          : tradeSide === "LONG"
+                            ? "Open Long"
+                            : "Open Short",
                 onClick:
                   !account || !hasBroker
                     ? () => setShowAccountModal(true)
                     : tradeSide === "LONG"
-                      ? () => {
-                          executeLong(collateral, () => {
-                            if (fetchBrokerBalance && brokerAddress) {
-                              fetchBrokerBalance(brokerAddress);
-                            }
-                          });
-                        }
-                      : () => {},
+                      ? () => setShowSwapConfirm(true)
+                      : () => setShowSwapConfirm(true),
                 disabled:
                   swapExecuting ||
-                  (tradeSide === "LONG" && (!collateral || quoteLoading)),
-                variant: tradeSide === "LONG" ? "cyan" : "pink",
+                  (tradeSide === "LONG" &&
+                    tradeAction === "OPEN" &&
+                    (!collateral || quoteLoading)) ||
+                  (tradeSide === "LONG" &&
+                    tradeAction === "CLOSE" &&
+                    (!closeAmount || quoteLoading)) ||
+                  (tradeSide === "SHORT" &&
+                    tradeAction === "OPEN" &&
+                    (!collateral || shortAmount <= 0)) ||
+                  (tradeSide === "SHORT" &&
+                    tradeAction === "CLOSE" &&
+                    (!closeShortAmount || quoteLoading)),
+                variant:
+                  tradeAction === "CLOSE"
+                    ? "pink"
+                    : tradeSide === "LONG"
+                      ? "cyan"
+                      : "pink",
               }}
               footer={
                 <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
@@ -699,71 +813,121 @@ export default function SimulationTerminal() {
                 </div>
               }
             >
-              {/* Faucet Section */}
-              {account && (
-                <div className="border border-white/10 p-4 space-y-3 bg-white/[0.02]">
-                  <button
-                    onClick={() => requestFaucet(account)}
-                    disabled={faucetLoading}
-                    className={`w-full py-2.5 text-[11px] font-bold tracking-[0.15em] uppercase transition-all focus:outline-none rounded-none border ${
-                      faucetLoading
-                        ? "border-white/10 text-gray-600 cursor-wait"
-                        : "border-cyan-500/30 text-cyan-400 hover:bg-cyan-500/10 hover:border-cyan-500/50"
-                    }`}
-                  >
-                    {faucetLoading ? (
-                      <Loader2 size={14} className="animate-spin mx-auto" />
-                    ) : waUsdcBalance ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <Droplets size={12} />
-                        Faucet · Request Funds
-                      </span>
-                    ) : (
-                      <span className="flex items-center justify-center gap-2">
-                        <Droplets size={12} />
-                        Request 100K waUSDC + ETH
-                      </span>
-                    )}
-                  </button>
-                  {faucetError && (
-                    <div className="text-[10px] text-red-400 font-mono truncate">
-                      Error: {faucetError}
-                    </div>
-                  )}
+              {/* === OPEN / CLOSE sub-toggle === */}
+              {(tradeSide === "LONG" || tradeSide === "SHORT") && (
+                <div className="flex border border-white/10 bg-[#060606]">
+                  {["OPEN", "CLOSE"].map((action) => (
+                    <button
+                      key={action}
+                      onClick={() => setTradeAction(action)}
+                      className={`flex-1 py-2 text-[11px] font-bold tracking-[0.2em] uppercase transition-colors ${
+                        tradeAction === action
+                          ? action === "CLOSE"
+                            ? "bg-pink-500/10 text-pink-400 border-b-2 border-pink-500"
+                            : "bg-cyan-500/10 text-cyan-400 border-b-2 border-cyan-500"
+                          : "text-gray-600 hover:text-gray-400"
+                      }`}
+                    >
+                      {action}
+                    </button>
+                  ))}
                 </div>
               )}
 
-              {/* Collateral Input */}
-              <InputGroup
-                label="Collateral"
-                subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toLocaleString()} waUSDC` : hasBroker ? "..." : "—"}`}
-                value={collateral}
-                onChange={(v) => setCollateral(Number(v))}
-                suffix="USDC"
-              />
-
-              {/* LONG: Amount Out (from V4 quote) */}
-              {tradeSide === "LONG" && (
-                <InputGroup
-                  label="Amount_Out"
-                  subLabel={quoteLoading ? "quoting..." : ""}
-                  value={
-                    swapQuote ? parseFloat(swapQuote.amountOut.toFixed(4)) : ""
-                  }
-                  onChange={() => {}}
-                  suffix="wRLP"
-                  readOnly
-                />
+              {/* === OPEN LONG: Collateral Input + Amount Out === */}
+              {tradeSide === "LONG" && tradeAction === "OPEN" && (
+                <>
+                  <InputGroup
+                    label="Collateral"
+                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toLocaleString()} waUSDC` : hasBroker ? "..." : "—"}`}
+                    value={collateral}
+                    onChange={(v) => setCollateral(Number(v))}
+                    suffix="USDC"
+                    onMax={() => setCollateral(parseFloat(brokerBalance) || 0)}
+                  />
+                  {tradeSide === "LONG" && (
+                    <InputGroup
+                      label="Amount_Out"
+                      subLabel={quoteLoading ? "quoting..." : ""}
+                      value={
+                        swapQuote
+                          ? parseFloat(swapQuote.amountOut.toFixed(4))
+                          : ""
+                      }
+                      onChange={() => {}}
+                      suffix="wRLP"
+                      readOnly
+                    />
+                  )}
+                </>
               )}
 
-              {/* SHORT: Amount & CR */}
-              {tradeSide === "SHORT" && (
+              {/* === CLOSE LONG: wRLP Input + waUSDC Out === */}
+              {tradeSide === "LONG" && tradeAction === "CLOSE" && (
+                <>
+                  <InputGroup
+                    label="Sell_wRLP"
+                    subLabel={`Available: ${brokerWrlpBalance != null ? `${brokerWrlpBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} wRLP` : "—"}`}
+                    value={closeAmount}
+                    onChange={(v) => setCloseAmount(v)}
+                    suffix="wRLP"
+                    onMax={() => setCloseAmount(String(brokerWrlpBalance || 0))}
+                  />
+                  <InputGroup
+                    label="Amount_Out"
+                    subLabel={quoteLoading ? "quoting..." : ""}
+                    value={
+                      swapQuote
+                        ? parseFloat(swapQuote.amountOut.toFixed(2))
+                        : ""
+                    }
+                    onChange={() => {}}
+                    suffix="waUSDC"
+                    readOnly
+                  />
+                </>
+              )}
+
+              {/* === CLOSE SHORT: Spend waUSDC → buy wRLP to repay === */}
+              {tradeSide === "SHORT" && tradeAction === "CLOSE" && (
+                <>
+                  <InputGroup
+                    label="Spend_waUSDC"
+                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toLocaleString()} waUSDC` : hasBroker ? "..." : "—"}`}
+                    value={closeShortAmount}
+                    onChange={(v) => setCloseShortAmount(v)}
+                    suffix="waUSDC"
+                    onMax={() =>
+                      setCloseShortAmount(
+                        String(parseFloat(brokerBalance) || 0),
+                      )
+                    }
+                  />
+                  <InputGroup
+                    label="Est._wRLP_Repaid"
+                    subLabel={quoteLoading ? "quoting..." : ""}
+                    value={
+                      swapQuote
+                        ? parseFloat(swapQuote.amountOut.toFixed(4))
+                        : ""
+                    }
+                    onChange={() => {}}
+                    suffix="wRLP"
+                    readOnly
+                  />
+                </>
+              )}
+
+              {/* SHORT OPEN: Amount & CR */}
+              {tradeSide === "SHORT" && tradeAction === "OPEN" && (
                 <>
                   <InputGroup
                     label="Amount_Notional"
-                    value={notional > 0 ? parseFloat(notional.toFixed(2)) : ""}
+                    value={
+                      shortAmount > 0 ? parseFloat(shortAmount.toFixed(6)) : ""
+                    }
                     onChange={(v) => handleShortAmountChange(Number(v))}
-                    suffix="USDC"
+                    suffix="wRLP"
                   />
 
                   <div className="space-y-2">
@@ -773,15 +937,17 @@ export default function SimulationTerminal() {
                     </div>
                     <input
                       type="range"
-                      min="110"
+                      min="150"
                       max="1500"
                       step="10"
                       value={shortCR}
-                      onChange={(e) => setShortCR(Number(e.target.value))}
+                      onChange={(e) =>
+                        handleShortCRChange(Number(e.target.value))
+                      }
                       className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
                     />
                     <div className="flex justify-between text-[12px] text-gray-500 font-mono">
-                      <span>110%</span>
+                      <span>150%</span>
                       <span>1500%</span>
                     </div>
                   </div>
@@ -791,7 +957,11 @@ export default function SimulationTerminal() {
               {/* Stats Box */}
               <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-[12px]">
                 <SummaryRow
-                  label="Entry_Rate"
+                  label={
+                    tradeAction === "CLOSE" && tradeSide === "LONG"
+                      ? "AVG_Rate"
+                      : "AVG_Rate"
+                  }
                   value={
                     tradeSide === "LONG" && swapQuote
                       ? `${swapQuote.entryRate.toFixed(4)}`
@@ -819,9 +989,9 @@ export default function SimulationTerminal() {
                     Est. Fee
                   </span>
                   <span className="font-mono text-gray-400">
-                    {tradeSide === "LONG" && swapQuote
-                      ? `${swapQuote.estFee.toFixed(2)} waUSDC`
-                      : `${(notional * 0.001).toFixed(2)} USDC`}
+                    {tradeSide === "LONG" && swapQuote?.gasEstimate
+                      ? `$${(((swapQuote.gasEstimate * 30e9) / 1e18) * 2500).toFixed(2)}`
+                      : "$0.00"}
                   </span>
                 </div>
                 {swapError && (
@@ -912,16 +1082,47 @@ export default function SimulationTerminal() {
               </div>
             </div>
 
-            {/* Recent Swaps */}
+            {/* Last Operations */}
             <div className="border border-white/10 bg-[#080808] flex flex-col">
               <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
                 <h3 className="text-xs font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                  <Gauge size={14} className="text-gray-500" />
-                  Recent_Swaps
+                  <Activity size={14} className="text-gray-500" />
+                  Last_Operations
                 </h3>
+                {operations.length > 0 && (
+                  <button
+                    onClick={() => {
+                      const header = "Date,Type,Amount_In,Amount_Out,Tx_Hash";
+                      const rows = operations.map((op) => {
+                        const date = new Date(
+                          op.timestamp * 1000,
+                        ).toISOString();
+                        const amtIn = (Number(op.args[1]) / 1e6).toFixed(2);
+                        const amtOut = (Number(op.args[2]) / 1e6).toFixed(2);
+                        return `${date},${op.label},${amtIn},${amtOut},${op.txHash}`;
+                      });
+                      const csv = [header, ...rows].join("\n");
+                      const blob = new Blob([csv], { type: "text/csv" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = "rld_operations.csv";
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="text-[9px] font-mono font-bold tracking-[0.15em] uppercase px-1.5 py-0.5 border border-white/10 text-gray-500 hover:text-white hover:border-white/30 bg-white/[0.02] hover:bg-white/[0.05] transition-all flex items-center gap-1"
+                  >
+                    <Download size={10} />
+                    CSV
+                  </button>
+                )}
               </div>
               <div className="p-4 md:p-5 flex-1">
-                <EventsFeed events={events} />
+                <OperationsFeed
+                  operations={operations}
+                  loading={opsLoading}
+                  connected={!!account}
+                />
               </div>
             </div>
           </div>
@@ -933,11 +1134,112 @@ export default function SimulationTerminal() {
         isOpen={showAccountModal}
         onClose={() => setShowAccountModal(false)}
         onComplete={(addr) => {
-          console.log("Broker onboarded:", addr);
           setShowAccountModal(false);
+          // Refresh broker state & show toast
+          if (addr) {
+            fetchBrokerBalance(addr);
+            addToast({
+              type: "success",
+              title: "Account Created",
+              message: `Broker deployed & funded successfully`,
+              duration: 5000,
+            });
+          }
         }}
         brokerFactoryAddr={marketInfo?.broker_factory}
         waUsdcAddr={marketInfo?.collateral?.address}
+      />
+      {/* Swap Confirmation Modal */}
+      <SwapConfirmModal
+        isOpen={showSwapConfirm}
+        onClose={() => setShowSwapConfirm(false)}
+        onConfirm={() => {
+          if (tradeAction === "CLOSE" && tradeSide === "LONG") {
+            // Close Long flow
+            executeCloseLong(parseFloat(closeAmount), (receipt) => {
+              setShowSwapConfirm(false);
+              if (fetchBrokerBalance && brokerAddress) {
+                fetchBrokerBalance(brokerAddress);
+              }
+              addToast({
+                type: "success",
+                title: "Long Closed",
+                message: `Sold ${parseFloat(closeAmount).toLocaleString()} wRLP for waUSDC`,
+                duration: 5000,
+              });
+              setCloseAmount("");
+            });
+          } else if (tradeAction === "CLOSE" && tradeSide === "SHORT") {
+            // Close Short flow — spend waUSDC to buy wRLP and repay debt
+            executeCloseShort(parseFloat(closeShortAmount), (receipt) => {
+              setShowSwapConfirm(false);
+              if (fetchBrokerBalance && brokerAddress) {
+                fetchBrokerBalance(brokerAddress);
+              }
+              addToast({
+                type: "success",
+                title: "Short Closed",
+                message: `Spent ${parseFloat(closeShortAmount).toLocaleString()} waUSDC to repay wRLP debt`,
+                duration: 5000,
+              });
+              setCloseShortAmount("");
+            });
+          } else if (tradeSide === "SHORT" && tradeAction === "OPEN") {
+            // Open Short flow — shortAmount is already in wRLP
+            executeShort(collateral, shortAmount, (receipt) => {
+              setShowSwapConfirm(false);
+              if (fetchBrokerBalance && brokerAddress) {
+                fetchBrokerBalance(brokerAddress);
+              }
+              addToast({
+                type: "success",
+                title: "Short Opened",
+                message: `Shorted ${notional.toLocaleString()} USDC notional at ${shortCR.toFixed(0)}% CR`,
+                duration: 5000,
+              });
+            });
+          } else {
+            // Open Long flow
+            executeLong(collateral, (receipt) => {
+              setShowSwapConfirm(false);
+              if (fetchBrokerBalance && brokerAddress) {
+                fetchBrokerBalance(brokerAddress);
+              }
+              addToast({
+                type: "success",
+                title: "Long Opened",
+                message: `Swapped ${Number(collateral).toLocaleString()} waUSDC for wRLP`,
+                duration: 5000,
+              });
+            });
+          }
+        }}
+        tradeSide={tradeSide}
+        tradeAction={tradeAction}
+        collateral={
+          tradeAction === "CLOSE" && tradeSide === "LONG"
+            ? parseFloat(closeAmount) || 0
+            : tradeAction === "CLOSE" && tradeSide === "SHORT"
+              ? parseFloat(closeShortAmount) || 0
+              : collateral
+        }
+        amountOut={
+          tradeSide === "SHORT" && tradeAction === "OPEN"
+            ? shortAmount
+            : swapQuote?.amountOut
+        }
+        entryRate={currentRate}
+        liqRate={liqRate}
+        notional={tradeSide === "SHORT" ? notional : undefined}
+        shortCR={tradeSide === "SHORT" ? shortCR : undefined}
+        fee={
+          swapQuote?.gasEstimate
+            ? ((swapQuote.gasEstimate * 30e9) / 1e18) * 2500
+            : 0
+        }
+        executing={swapExecuting}
+        executionStep={swapStep}
+        executionError={swapError}
       />
     </>
   );

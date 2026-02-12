@@ -14,3 +14,33 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+---
+
+## Close Short Feature
+
+### Hook: `useSwapExecution.js`
+
+Added `executeCloseShort(amountIn, onSuccess)` callback:
+
+- Takes waUSDC amount (human-readable, 6 decimals)
+- Checks operator status, switches chain ID for Anvil, signs via MetaMask
+- Calls `router.closeShort(broker, amountInWei, poolKey)`
+- ABI entry added for `closeShort(address,uint256,PoolKey)`
+
+### UI: `SimulationTerminal.jsx`
+
+- **OPEN/CLOSE toggle** — now active for both LONG and SHORT sides
+- **CLOSE SHORT input panel** — `Spend_waUSDC` input + `Est._wRLP_Repaid` (read-only, from V4Quoter)
+- **Quote direction** — Close Short uses BUY direction (buying wRLP with waUSDC)
+- **Action button** — dynamic label: "Close Short", disabled when no amount or quoting
+- **Confirm modal handler** — calls `executeCloseShort` with success toast
+
+### Modal: `SwapConfirmModal.jsx`
+
+Fixed to distinguish OPEN SHORT vs CLOSE SHORT:
+
+- Added `isOpenShort` / `isCloseShort` flags
+- CLOSE SHORT shows "You Pay waUSDC → You Receive wRLP" layout
+- Header: `CLOSE_SHORT`, Button: `Close Short`, Side label: `CLOSE SHORT`
+- OPEN SHORT layout unchanged (Collateral → Borrow/Debt)

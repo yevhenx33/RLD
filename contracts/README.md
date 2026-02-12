@@ -64,3 +64,44 @@ $ forge --help
 $ anvil --help
 $ cast --help
 ```
+
+---
+
+## Close Short (BrokerRouter)
+
+Added `closeShort` to `BrokerRouter.sol` — allows partial or full repayment of a short position's wRLP debt by spending waUSDC collateral.
+
+### Function Signature
+
+```solidity
+function closeShort(
+    address broker,
+    uint256 collateralToSpend,
+    PoolKey calldata poolKey
+) external onlyBrokerAuthorized(broker) nonReentrant returns (uint256 debtRepaid)
+```
+
+### Execution Flow
+
+1. **Withdraw collateral** — `pb.withdrawCollateral(router, collateralToSpend)` pulls waUSDC from broker
+2. **Swap waUSDC → wRLP** — exact-input swap via V4 PoolManager
+3. **Transfer wRLP to broker** — router sends bought wRLP back to broker
+4. **Repay debt** — `pb.modifyPosition(marketId, 0, -debtRepaid)` burns wRLP via RLDCore
+5. **Return leftover** — any residual collateral returned to broker
+
+### Event
+
+```solidity
+event ShortClosed(address indexed broker, uint256 debtRepaid, uint256 collateralSpent);
+```
+
+### Deployment
+
+Deployed via `script/DeployBrokerRouter.s.sol`. After deployment:
+
+- Call `setDepositRoute(waUSDC, route)` to configure deposit wrapping path
+- Call `broker.setOperator(routerAddress, true)` to authorize the router
+
+### Known Limitation: TWAP Oracle Staleness
+
+The `closeShort` flow triggers `_applyFunding()` in RLDCore, which calls `observe(secondsAgo=3600)` on the TWAMM oracle. On Anvil, `block.timestamp` tracks wall-clock time, so oracle observations go stale if no swaps happen for >24 minutes. A keep-alive script doing periodic tiny swaps is needed to keep the oracle fresh.
