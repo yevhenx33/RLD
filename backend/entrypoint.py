@@ -67,6 +67,13 @@ if os.path.exists(config_file):
         "mock_oracle": "MOCK_ORACLE",
         "swap_router": "SWAP_ROUTER",
         "broker_factory": "BROKER_FACTORY",
+        "broker_router": "BROKER_ROUTER",
+        "v4_quoter": "V4_QUOTER",
+        "v4_position_manager": "V4_POSITION_MANAGER",
+        "v4_position_descriptor": "V4_POSITION_DESCRIPTOR",
+        "v4_state_view": "V4_STATE_VIEW",
+        "universal_router": "UNIVERSAL_ROUTER",
+        "permit2": "PERMIT2",
         "mm_broker": "MM_BROKER",
         "chaos_broker": "CHAOS_BROKER",
     }
@@ -199,6 +206,16 @@ def main():
     from api.indexer_api import app
 
     # Attach config to app for /health and /config endpoints
+    # Augment with infrastructure addresses loaded from deployment.json
+    infra_keys = (
+        "broker_router", "v4_quoter", "broker_factory", "swap_router",
+        "v4_position_manager", "v4_position_descriptor", "v4_state_view",
+        "universal_router", "permit2",
+    )
+    for key in infra_keys:
+        env_key = key.upper()
+        if env_key in os.environ and key not in config:
+            config[key] = os.environ[env_key]
     app.state.market_config = config
 
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")

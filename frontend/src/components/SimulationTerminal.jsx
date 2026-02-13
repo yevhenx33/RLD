@@ -20,6 +20,8 @@ import {
   Wallet,
   CheckCircle,
   Download,
+  Calculator,
+  ChevronDown,
 } from "lucide-react";
 import { useSimulation } from "../hooks/useSimulation";
 import { useChartControls } from "../hooks/useChartControls";
@@ -35,6 +37,8 @@ import { ToastContainer } from "./Toast";
 import { useToast } from "../hooks/useToast";
 import RLDPerformanceChart from "./RLDChart";
 import ChartControlBar from "./ChartControlBar";
+import ControlCell from "./ControlCell";
+import PnlCalculatorModal from "./PnlCalculatorModal";
 
 import BrokerPositions from "./BrokerPositions";
 import StatItem from "./StatItem";
@@ -211,8 +215,27 @@ export default function SimulationTerminal() {
   const [collateral, setCollateral] = useState(1000);
   const [closeAmount, setCloseAmount] = useState(""); // wRLP to sell (close long)
   const [closeShortAmount, setCloseShortAmount] = useState(""); // waUSDC to spend (close short)
+  const [closeShortDebt, setCloseShortDebt] = useState(""); // wRLP debt to repay (close short)
+  const [lastCloseShortEdit, setLastCloseShortEdit] = useState(null); // 'debt' or 'collateral'
+  const [closeShortRepayMode, setCloseShortRepayMode] = useState("wRLP"); // 'wRLP' or 'waUSDC'
+  const [payDropdownOpen, setPayDropdownOpen] = useState(false);
+  const payDropdownRef = useRef(null);
   const [shortCR, setShortCR] = useState(200);
   const [shortAmount, setShortAmount] = useState(0);
+
+  // Close PAY_WITH dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (
+        payDropdownRef.current &&
+        !payDropdownRef.current.contains(e.target)
+      ) {
+        setPayDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Broker wRLP (position token) balance — for close long
   const [brokerWrlpBalance, setBrokerWrlpBalance] = useState(null);
@@ -251,7 +274,11 @@ export default function SimulationTerminal() {
         : 0;
 
   // Swap quote (V4Quoter on-chain)
-  const { quote: swapQuote, loading: quoteLoading } = useSwapQuote(
+  const {
+    quote: swapQuote,
+    loading: quoteLoading,
+    refresh: refreshQuote,
+  } = useSwapQuote(
     enrichedMarketInfo?.infrastructure,
     enrichedMarketInfo?.infrastructure?.swap_collateral,
     enrichedMarketInfo?.infrastructure?.swap_position_token,
@@ -305,8 +332,8 @@ export default function SimulationTerminal() {
   });
   const { resolution } = controls;
 
-  // PnL Simulation State
-  const [simTargetRate, setSimTargetRate] = useState(null);
+  // PnL Modal State
+  const [pnlModalOpen, setPnlModalOpen] = useState(false);
 
   // Chart series visibility
   const [hiddenSeries, setHiddenSeries] = useState([]);
@@ -403,25 +430,6 @@ export default function SimulationTerminal() {
   const handleLongAmountChange = (newAmount) => {
     setCollateral(newAmount);
   };
-
-  // Init sim target rate when data loads
-  useEffect(() => {
-    if (simTargetRate === null && currentRate > 0) {
-      setSimTargetRate(currentRate);
-    }
-  }, [currentRate, simTargetRate]);
-
-  const simPnL = useMemo(() => {
-    if (!simTargetRate) return { value: 0, percent: 0 };
-    let pnl = 0;
-    if (tradeSide === "LONG") {
-      pnl = ((simTargetRate - currentRate) / 100) * notional;
-    } else {
-      pnl = ((currentRate - simTargetRate) / 100) * notional;
-    }
-    const percent = collateral > 0 ? (pnl / collateral) * 100 : 0;
-    return { value: pnl, percent };
-  }, [simTargetRate, tradeSide, currentRate, notional, collateral]);
 
   // ── Error / Loading ─────────────────────────────────────────
   if (error && !connected) {
@@ -608,7 +616,25 @@ export default function SimulationTerminal() {
               </div>
 
               {/* 2. CONTROLS */}
-              <ChartControlBar controls={controls} />
+              <ChartControlBar
+                controls={controls}
+                extraControls={
+                  <ControlCell
+                    label="PNL_CALCULATOR"
+                    className="pr-0 hidden md:flex"
+                  >
+                    <div className="flex items-center justify-end h-[30px] w-full">
+                      <button
+                        onClick={() => setPnlModalOpen(true)}
+                        className="flex items-center gap-2 px-4 h-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors text-xs font-mono tracking-widest uppercase w-full justify-center"
+                      >
+                        <Calculator size={14} />
+                        Open
+                      </button>
+                    </div>
+                  </ControlCell>
+                }
+              />
 
               {/* 3. CHART */}
               <div className="relative flex-1 min-h-[350px] md:min-h-[400px]">
@@ -742,76 +768,7 @@ export default function SimulationTerminal() {
                       ? "cyan"
                       : "pink",
               }}
-              footer={
-                <div className="border-t border-white/10 p-6 flex flex-col gap-4 bg-[#0a0a0a]">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
-                      PnL_Simulator
-                    </span>
-                    <RefreshCw
-                      size={15}
-                      className="text-gray-600 cursor-pointer hover:text-white transition-colors"
-                      onClick={() => setSimTargetRate(currentRate)}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-[13px] text-gray-500 font-mono">
-                      <span>Rate_Scenario</span>
-                      <span>
-                        {simTargetRate ? simTargetRate.toFixed(2) : "0.00"}%
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="30"
-                      step="0.1"
-                      value={simTargetRate || currentRate}
-                      onChange={(e) => setSimTargetRate(Number(e.target.value))}
-                      className="w-full h-1 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none"
-                    />
-                    <div className="flex justify-between gap-1">
-                      {[-50, -10, 10, 50].map((pct) => (
-                        <SettingsButton
-                          key={pct}
-                          onClick={() =>
-                            setSimTargetRate(currentRate * (1 + pct / 100))
-                          }
-                          className="flex-1"
-                        >
-                          {pct > 0 ? "+" : ""}
-                          {pct}%
-                        </SettingsButton>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between items-end">
-                      <span className="text-[13px] text-gray-500">
-                        Est. PnL (1Y)
-                      </span>
-                      <div
-                        className={`text-right ${
-                          simPnL.value >= 0 ? "text-green-500" : "text-red-500"
-                        }`}
-                      >
-                        <div className="text-xl font-mono leading-none">
-                          {simPnL.value >= 0 ? "+" : ""}
-                          {simPnL.value.toLocaleString(undefined, {
-                            maximumFractionDigits: 0,
-                          })}{" "}
-                          USDC
-                        </div>
-                        <div className="text-[12px] font-mono mt-1">
-                          {simPnL.percent.toFixed(2)}% ROI
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              }
+              footer={null}
             >
               {/* === OPEN / CLOSE sub-toggle === */}
               {(tradeSide === "LONG" || tradeSide === "SHORT") && (
@@ -839,7 +796,7 @@ export default function SimulationTerminal() {
                 <>
                   <InputGroup
                     label="Collateral"
-                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toLocaleString()} waUSDC` : hasBroker ? "..." : "—"}`}
+                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} waUSDC` : hasBroker ? "..." : "—"}`}
                     value={collateral}
                     onChange={(v) => setCollateral(Number(v))}
                     suffix="USDC"
@@ -848,7 +805,18 @@ export default function SimulationTerminal() {
                   {tradeSide === "LONG" && (
                     <InputGroup
                       label="Amount_Out"
-                      subLabel={quoteLoading ? "quoting..." : ""}
+                      subLabel={
+                        <button
+                          type="button"
+                          onClick={refreshQuote}
+                          className="inline-flex items-center gap-1 text-gray-500 hover:text-white transition-colors cursor-pointer"
+                        >
+                          <RefreshCw
+                            size={10}
+                            className={quoteLoading ? "animate-spin" : ""}
+                          />
+                        </button>
+                      }
                       value={
                         swapQuote
                           ? parseFloat(swapQuote.amountOut.toFixed(4))
@@ -867,7 +835,7 @@ export default function SimulationTerminal() {
                 <>
                   <InputGroup
                     label="Sell_wRLP"
-                    subLabel={`Available: ${brokerWrlpBalance != null ? `${brokerWrlpBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} wRLP` : "—"}`}
+                    subLabel={`Available: ${brokerWrlpBalance != null ? `${brokerWrlpBalance.toFixed(1)} wRLP` : "—"}`}
                     value={closeAmount}
                     onChange={(v) => setCloseAmount(v)}
                     suffix="wRLP"
@@ -875,7 +843,18 @@ export default function SimulationTerminal() {
                   />
                   <InputGroup
                     label="Amount_Out"
-                    subLabel={quoteLoading ? "quoting..." : ""}
+                    subLabel={
+                      <button
+                        type="button"
+                        onClick={refreshQuote}
+                        className="inline-flex items-center gap-1 text-gray-500 hover:text-white transition-colors cursor-pointer"
+                      >
+                        <RefreshCw
+                          size={10}
+                          className={quoteLoading ? "animate-spin" : ""}
+                        />
+                      </button>
+                    }
                     value={
                       swapQuote
                         ? parseFloat(swapQuote.amountOut.toFixed(2))
@@ -888,46 +867,162 @@ export default function SimulationTerminal() {
                 </>
               )}
 
-              {/* === CLOSE SHORT: Spend waUSDC → buy wRLP to repay === */}
+              {/* === CLOSE SHORT: PAY WITH selector + mode-dependent inputs === */}
               {tradeSide === "SHORT" && tradeAction === "CLOSE" && (
                 <>
+                  {/* PAY WITH custom dropdown */}
+                  <div className="flex items-center justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                    <span>Pay_With</span>
+                    <div className="relative" ref={payDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => setPayDropdownOpen(!payDropdownOpen)}
+                        className={`
+                          h-[28px] border border-white/20 bg-black flex items-center justify-between px-2 gap-2
+                          text-[11px] font-mono text-white focus:outline-none uppercase tracking-widest
+                          hover:border-white transition-colors
+                          ${payDropdownOpen ? "border-white" : ""}
+                        `}
+                      >
+                        <span>{closeShortRepayMode}</span>
+                        <ChevronDown
+                          size={12}
+                          className={`transition-transform duration-200 flex-shrink-0 ${payDropdownOpen ? "rotate-180" : ""}`}
+                        />
+                      </button>
+                      {payDropdownOpen && (
+                        <div className="absolute top-full right-0 mt-1 bg-[#0a0a0a] border border-white/20 z-50 flex flex-col shadow-xl whitespace-nowrap">
+                          {[
+                            { value: "wRLP", label: "wRLP — Direct Repay" },
+                            { value: "waUSDC", label: "waUSDC — Swap & Repay" },
+                          ].map((opt) => {
+                            const isSelected =
+                              closeShortRepayMode === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => {
+                                  setCloseShortRepayMode(opt.value);
+                                  setCloseShortDebt("");
+                                  setCloseShortAmount("");
+                                  setPayDropdownOpen(false);
+                                }}
+                                className={`
+                                  w-full flex items-center px-3 py-2 text-[11px] text-left uppercase tracking-widest transition-colors
+                                  ${
+                                    isSelected
+                                      ? "bg-cyan-500/10 text-cyan-400"
+                                      : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
+                                  }
+                                `}
+                              >
+                                {opt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Debt_To_Repay — always shown */}
                   <InputGroup
-                    label="Spend_waUSDC"
-                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toLocaleString()} waUSDC` : hasBroker ? "..." : "—"}`}
-                    value={closeShortAmount}
-                    onChange={(v) => setCloseShortAmount(v)}
-                    suffix="waUSDC"
-                    onMax={() =>
-                      setCloseShortAmount(
-                        String(parseFloat(brokerBalance) || 0),
-                      )
-                    }
-                  />
-                  <InputGroup
-                    label="Est._wRLP_Repaid"
-                    subLabel={quoteLoading ? "quoting..." : ""}
-                    value={
-                      swapQuote
-                        ? parseFloat(swapQuote.amountOut.toFixed(4))
-                        : ""
-                    }
-                    onChange={() => {}}
+                    label="Debt_To_Repay"
+                    subLabel={`Total_Debt: ${shortAmount > 0 ? shortAmount.toFixed(1) + " wRLP" : "—"}`}
+                    value={closeShortDebt}
+                    onChange={(v) => {
+                      setCloseShortDebt(v);
+                      setLastCloseShortEdit("debt");
+                      if (closeShortRepayMode === "waUSDC") {
+                        const num = parseFloat(v) || 0;
+                        if (currentRate > 0) {
+                          setCloseShortAmount(
+                            num > 0 ? (num * currentRate).toFixed(2) : "",
+                          );
+                        }
+                      }
+                    }}
                     suffix="wRLP"
-                    readOnly
+                    onMax={() => {
+                      setCloseShortDebt(String(shortAmount || 0));
+                      setLastCloseShortEdit("debt");
+                      if (
+                        closeShortRepayMode === "waUSDC" &&
+                        currentRate > 0 &&
+                        shortAmount > 0
+                      ) {
+                        setCloseShortAmount(
+                          (shortAmount * currentRate).toFixed(2),
+                        );
+                      }
+                    }}
                   />
+
+                  {/* Amount_To_Pay — only in waUSDC mode */}
+                  {closeShortRepayMode === "waUSDC" && (
+                    <InputGroup
+                      label="Amount_To_Pay"
+                      subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} waUSDC` : hasBroker ? "..." : "—"}`}
+                      value={closeShortAmount}
+                      onChange={(v) => {
+                        setCloseShortAmount(v);
+                        setLastCloseShortEdit("collateral");
+                        const num = parseFloat(v) || 0;
+                        if (currentRate > 0) {
+                          setCloseShortDebt(
+                            num > 0 ? (num / currentRate).toFixed(6) : "",
+                          );
+                        }
+                      }}
+                      suffix="waUSDC"
+                      onMax={() => {
+                        const max = String(parseFloat(brokerBalance) || 0);
+                        setCloseShortAmount(max);
+                        setLastCloseShortEdit("collateral");
+                        if (currentRate > 0) {
+                          setCloseShortDebt(
+                            ((parseFloat(max) || 0) / currentRate).toFixed(6),
+                          );
+                        }
+                      }}
+                    />
+                  )}
+
+                  {/* wRLP mode: show broker wRLP balance info */}
+                  {closeShortRepayMode === "wRLP" && (
+                    <div className="flex justify-between text-[12px] uppercase tracking-widest font-bold text-gray-500">
+                      <span>Broker_wRLP</span>
+                      <span className="text-white font-mono">
+                        {brokerWrlpBalance != null
+                          ? brokerWrlpBalance.toFixed(1) + " wRLP"
+                          : "—"}
+                      </span>
+                    </div>
+                  )}
                 </>
               )}
 
-              {/* SHORT OPEN: Amount & CR */}
+              {/* SHORT OPEN: Collateral, CR, computed Notional */}
               {tradeSide === "SHORT" && tradeAction === "OPEN" && (
                 <>
+                  <InputGroup
+                    label="Collateral"
+                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} waUSDC` : hasBroker ? "..." : "—"}`}
+                    value={collateral}
+                    onChange={(v) => setCollateral(Number(v))}
+                    suffix="USDC"
+                    onMax={() => setCollateral(parseFloat(brokerBalance) || 0)}
+                  />
+
                   <InputGroup
                     label="Amount_Notional"
                     value={
                       shortAmount > 0 ? parseFloat(shortAmount.toFixed(6)) : ""
                     }
-                    onChange={(v) => handleShortAmountChange(Number(v))}
+                    onChange={() => {}}
                     suffix="wRLP"
+                    readOnly
                   />
 
                   <div className="space-y-2">
@@ -984,16 +1079,7 @@ export default function SimulationTerminal() {
                       : `$${notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
                   }
                 />
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-gray-500 uppercase text-[12px]">
-                    Est. Fee
-                  </span>
-                  <span className="font-mono text-gray-400">
-                    {tradeSide === "LONG" && swapQuote?.gasEstimate
-                      ? `$${(((swapQuote.gasEstimate * 30e9) / 1e18) * 2500).toFixed(2)}`
-                      : "$0.00"}
-                  </span>
-                </div>
+
                 {swapError && (
                   <div className="text-[10px] text-red-400 font-mono truncate mt-1">
                     {swapError}
@@ -1148,6 +1234,13 @@ export default function SimulationTerminal() {
         }}
         brokerFactoryAddr={marketInfo?.broker_factory}
         waUsdcAddr={marketInfo?.collateral?.address}
+      />
+      {/* Swap Confirmation Modal */}
+      {/* PnL Calculator Modal */}
+      <PnlCalculatorModal
+        isOpen={pnlModalOpen}
+        onClose={() => setPnlModalOpen(false)}
+        currentRate={currentRate}
       />
       {/* Swap Confirmation Modal */}
       <SwapConfirmModal

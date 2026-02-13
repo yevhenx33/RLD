@@ -5,10 +5,12 @@ import {
   Wallet,
   Shield,
   CircleDollarSign,
+  Droplets,
   Loader2,
 } from "lucide-react";
 import { useWallet } from "../context/WalletContext";
 import { useBrokerAccount } from "../hooks/useBrokerAccount";
+import { useFaucet } from "../hooks/useFaucet";
 
 /**
  * 3-step waterfall modal for broker account onboarding.
@@ -37,21 +39,41 @@ export default function AccountModal({
     depositFunds,
   } = useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr);
 
+  const {
+    requestFaucet,
+    loading: faucetLoading,
+    error: faucetError,
+    waUsdcBalance,
+  } = useFaucet(account, waUsdcAddr);
+
   const [depositAmount, setDepositAmount] = useState("10000");
+  const [faucetDone, setFaucetDone] = useState(false);
 
   // ── Determine current step ───────────────────────────────────
+  // 1: Connect Wallet → 2: Request Funds → 3: Create Account → 4: Deposit
   const currentStep = useMemo(() => {
     if (!account) return 1;
-    if (!hasBroker) return 2;
-    return 3;
-  }, [account, hasBroker]);
+    if (!faucetDone && !waUsdcBalance) return 2;
+    if (!hasBroker) return 3;
+    return 4;
+  }, [account, hasBroker, faucetDone, waUsdcBalance]);
 
   const [completedDeposit, setCompletedDeposit] = useState(false);
 
   // Reset completed state when modal closes
   useEffect(() => {
-    if (!isOpen) setCompletedDeposit(false);
+    if (!isOpen) {
+      setCompletedDeposit(false);
+      setFaucetDone(false);
+    }
   }, [isOpen]);
+
+  // Auto-advance past faucet step once balance arrives
+  useEffect(() => {
+    if (waUsdcBalance && parseFloat(waUsdcBalance) > 0) {
+      setFaucetDone(true);
+    }
+  }, [waUsdcBalance]);
 
   if (!isOpen) return null;
 
@@ -67,6 +89,15 @@ export default function AccountModal({
     },
     {
       num: 2,
+      label: "Request_Funds",
+      icon: Droplets,
+      description:
+        faucetDone || (waUsdcBalance && parseFloat(waUsdcBalance) > 0)
+          ? `${parseFloat(waUsdcBalance || 0).toLocaleString()} waUSDC received`
+          : "Get testnet ETH + waUSDC",
+    },
+    {
+      num: 3,
       label: "Create_Account",
       icon: Shield,
       description: brokerAddress
@@ -74,7 +105,7 @@ export default function AccountModal({
         : "Deploy your trading account",
     },
     {
-      num: 3,
+      num: 4,
       label: "Deposit_Funds",
       icon: CircleDollarSign,
       description: completedDeposit
@@ -84,7 +115,7 @@ export default function AccountModal({
   ];
 
   const getStepState = (stepNum) => {
-    if (completedDeposit && stepNum <= 3) return "completed";
+    if (completedDeposit && stepNum <= 4) return "completed";
     if (stepNum < currentStep) return "completed";
     if (stepNum === currentStep) return "active";
     return "pending";
@@ -114,12 +145,21 @@ export default function AccountModal({
         };
       case 2:
         return {
+          label: faucetLoading ? "Requesting..." : "Request_Funds",
+          onClick: async () => {
+            await requestFaucet(account);
+          },
+          disabled: faucetLoading,
+          variant: "cyan",
+        };
+      case 3:
+        return {
           label: "Deploy_Account",
           onClick: createBroker,
           disabled: creating || hasBroker === null,
           variant: "cyan",
         };
-      case 3:
+      case 4:
         return {
           label: "Deposit_Collateral",
           onClick: async () => {
@@ -140,7 +180,7 @@ export default function AccountModal({
   };
 
   const action = getAction();
-  const isLoading = creating || depositing;
+  const isLoading = creating || depositing || faucetLoading;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -264,8 +304,8 @@ export default function AccountModal({
                     {s.description}
                   </p>
 
-                  {/* Deposit amount input — only show when step 3 is active */}
-                  {s.num === 3 && state === "active" && !completedDeposit && (
+                  {/* Deposit amount input — only show when step 4 is active */}
+                  {s.num === 4 && state === "active" && !completedDeposit && (
                     <div className="mt-3 flex items-center gap-2">
                       <div className="flex-1 relative">
                         <input
@@ -312,7 +352,7 @@ export default function AccountModal({
               <span className="text-cyan-400/60">{statusText}</span>
             ) : (
               <span className="text-gray-600">
-                STEP {currentStep}/3 ·{" "}
+                STEP {currentStep}/4 ·{" "}
                 {completedDeposit ? "COMPLETE" : "AWAITING_INPUT"}
               </span>
             )}

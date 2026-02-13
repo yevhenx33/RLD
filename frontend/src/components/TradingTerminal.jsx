@@ -15,6 +15,7 @@ export const InputGroup = ({
   value,
   onChange,
   suffix,
+  onMax,
   type = "number",
   placeholder = "0.00",
 }) => (
@@ -31,11 +32,18 @@ export const InputGroup = ({
         className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-2 focus:outline-none focus:border-white transition-colors placeholder-gray-800 rounded-none"
         placeholder={placeholder}
       />
-      {suffix && (
-        <span className="absolute right-0 top-2 text-sm text-gray-600">
-          {suffix}
-        </span>
-      )}
+      <span className="absolute right-0 top-2 flex items-center gap-2">
+        {suffix && <span className="text-sm text-gray-600">{suffix}</span>}
+        {onMax && (
+          <button
+            type="button"
+            onClick={onMax}
+            className="text-[9px] font-mono font-bold tracking-[0.15em] uppercase px-1.5 py-0.5 border border-white/10 text-gray-500 hover:text-white hover:border-white/30 bg-white/[0.02] hover:bg-white/[0.05] transition-all"
+          >
+            MAX
+          </button>
+        )}
+      </span>
     </div>
   </div>
 );

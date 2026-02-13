@@ -46,9 +46,15 @@ USDC="0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 AUSDC="0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"
 AAVE_POOL="0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
 USDC_WHALE="0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341"
-V4_POSITION_MANAGER="0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e"
-PERMIT2="0x000000000022D473030F116dDEE9F6B43aC78BA3"
+
+# ─── Official Uniswap V4 mainnet addresses (always available on mainnet fork) ──
 POOL_MANAGER="0x000000000004444c5dc75cB358380D2e3dE08A90"
+V4_POSITION_MANAGER="0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e"
+V4_QUOTER="0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203"
+V4_POSITION_DESCRIPTOR="0xd1428ba554f4c8450b763a0b2040a4935c63f06c"
+V4_STATE_VIEW="0x7ffe42c4a5deea5b0fec41c94c136cf115597227"
+UNIVERSAL_ROUTER="0x66a9893cc07d91d95644aedd05d03f95e1dba8af"
+PERMIT2="0x000000000022D473030F116dDEE9F6B43aC78BA3"
 
 # ─── Wait for Anvil ───────────────────────────────────────────
 log_phase "0" "WAITING FOR ANVIL"
@@ -502,6 +508,12 @@ cat > /config/deployment.json << EOF
     "broker_factory": "$BROKER_FACTORY_ADDR",
     "swap_router": "$SWAP_ROUTER",
     "pool_manager": "$POOL_MANAGER",
+    "v4_quoter": "$V4_QUOTER",
+    "v4_position_manager": "$V4_POSITION_MANAGER",
+    "v4_position_descriptor": "$V4_POSITION_DESCRIPTOR",
+    "v4_state_view": "$V4_STATE_VIEW",
+    "universal_router": "$UNIVERSAL_ROUTER",
+    "permit2": "$PERMIT2",
     "token0": "$TOKEN0",
     "token1": "$TOKEN1",
     "zero_for_one_long": $ZERO_FOR_ONE_LONG,

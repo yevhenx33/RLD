@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 
 const RPC_URL = "http://127.0.0.1:8545";
@@ -146,6 +146,15 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
   useEffect(() => {
     checkBroker();
   }, [checkBroker]);
+
+  // ── Auto-refresh broker balance every 12s ──────────────────────
+  useEffect(() => {
+    if (!brokerAddress || !waUsdcAddr) return;
+    const interval = setInterval(() => {
+      fetchBrokerBalance(brokerAddress);
+    }, 12_000);
+    return () => clearInterval(interval);
+  }, [brokerAddress, waUsdcAddr, fetchBrokerBalance]);
 
   // ── Create broker via MetaMask signing ──────────────────────────
   const createBroker = useCallback(async () => {

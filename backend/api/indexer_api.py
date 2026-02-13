@@ -455,23 +455,38 @@ async def get_market_info(request: Request):
 
         broker_factory = market_config.get("broker_factory", os.environ.get("BROKER_FACTORY"))
 
-        # Infrastructure addresses (deployed to Anvil fork)
-        broker_router = os.environ.get("BROKER_ROUTER", "0x171B627111dd81C46F6ae3F1455232bF1cbC311F")
-        v4_quoter = os.environ.get("V4_QUOTER", "0x894c963d57D46793ea0d710C816a1804f5A2e272")
-        twamm_hook = market_config.get("twamm_hook", os.environ.get("TWAMM_HOOK", "0x2d1B11cE8ea5204839458789873da6b0ce182Ac0"))
-        pool_manager = "0x000000000004444c5dc75cB358380D2e3dE08A90"
+        # RLD-deployed infrastructure — from deployment.json (via market_config)
+        broker_router = market_config.get("broker_router", os.environ.get("BROKER_ROUTER", ""))
+        twamm_hook = market_config.get("twamm_hook", os.environ.get("TWAMM_HOOK", ""))
+
+        # Official Uniswap V4 mainnet addresses (always available on mainnet fork)
+        # Hardcoded fallbacks guarantee these are always returned even without config
+        pool_manager = market_config.get("pool_manager", "0x000000000004444c5dc75cB358380D2e3dE08A90")
+        v4_quoter = market_config.get("v4_quoter", "0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203")
+        v4_position_manager = market_config.get("v4_position_manager", "0xbd216513d74c8cf14cf4747e6aaa6420ff64ee9e")
+        v4_position_descriptor = market_config.get("v4_position_descriptor", "0xd1428ba554f4c8450b763a0b2040a4935c63f06c")
+        v4_state_view = market_config.get("v4_state_view", "0x7ffe42c4a5deea5b0fec41c94c136cf115597227")
+        universal_router = market_config.get("universal_router", "0x66a9893cc07d91d95644aedd05d03f95e1dba8af")
+        permit2 = market_config.get("permit2", "0x000000000022D473030F116dDEE9F6B43aC78BA3")
 
         return {
             "collateral": {"name": col_name, "symbol": col_symbol, "address": col_token},
             "position_token": {"name": pos_name, "symbol": pos_symbol, "address": pos_token},
             "broker_factory": broker_factory,
             "infrastructure": {
+                # RLD-specific
                 "broker_router": broker_router,
-                "v4_quoter": v4_quoter,
                 "twamm_hook": twamm_hook,
-                "pool_manager": pool_manager,
                 "pool_fee": 500,
                 "tick_spacing": 5,
+                # Uniswap V4 official
+                "pool_manager": pool_manager,
+                "v4_quoter": v4_quoter,
+                "v4_position_manager": v4_position_manager,
+                "v4_position_descriptor": v4_position_descriptor,
+                "v4_state_view": v4_state_view,
+                "universal_router": universal_router,
+                "permit2": permit2,
             },
             "risk_params": {
                 "min_col_ratio": min_col_ratio / 1e18,

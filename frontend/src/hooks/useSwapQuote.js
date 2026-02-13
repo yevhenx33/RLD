@@ -3,7 +3,8 @@ import { ethers } from "ethers";
 
 const RPC_URL = "http://127.0.0.1:8545";
 
-// V4Quoter ABI — quoteExactInputSingle
+// Mainnet V4 Quoter ABI — quoteExactInputSingle(QuoteExactSingleParams)
+// Uses struct-wrapped params matching the deployed Quoter at 0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203
 const QUOTER_ABI = [
   {
     name: "quoteExactInputSingle",
@@ -44,7 +45,8 @@ const QUOTER_ABI = [
  * @param {object} infrastructure - { v4_quoter, twamm_hook, pool_fee, tick_spacing }
  * @param {string} collateralAddr - waUSDC address
  * @param {string} positionAddr   - wRLP address
- * @param {number} amountIn       - User-entered collateral amount (human units, 6 decimals)
+ * @param {number} amountIn       - Amount to swap (human units, 6 decimals)
+ * @param {string} direction      - 'BUY' (waUSDC→wRLP, open long) or 'SELL' (wRLP→waUSDC, close long)
  * @param {number} debounceMs     - Debounce interval (default: 500ms)
  */
 export function useSwapQuote(
@@ -52,6 +54,7 @@ export function useSwapQuote(
   collateralAddr,
   positionAddr,
   amountIn,
+  direction = "BUY",
   debounceMs = 500,
 ) {
   const [quote, setQuote] = useState(null); // { amountOut, entryRate, notional, estFee, gasEstimate }
@@ -100,11 +103,15 @@ export function useSwapQuote(
         hooks: infrastructure.twamm_hook,
       };
 
-      // Determine swap direction: selling collateral for position
+      // Determine swap direction
+      // BUY  (open long):  sell collateral for position → zeroForOne = collateral < position
+      // SELL (close long): sell position for collateral → zeroForOne = position < collateral
       const zeroForOne =
-        collateralAddr.toLowerCase() < positionAddr.toLowerCase();
+        direction === "SELL"
+          ? positionAddr.toLowerCase() < collateralAddr.toLowerCase()
+          : collateralAddr.toLowerCase() < positionAddr.toLowerCase();
 
-      // waUSDC has 6 decimals
+      // Both waUSDC and wRLP have 6 decimals
       const exactAmount = ethers.parseUnits(String(amountIn), 6);
 
       // V4Quoter.quoteExactInputSingle is NOT a view function —
@@ -120,7 +127,7 @@ export function useSwapQuote(
       const amountOutRaw = result[0]; // BigInt
       const gasEstimateRaw = result[1]; // BigInt
 
-      // wRLP also has 6 decimals (it wraps aUSDC-based LP)
+      // Both tokens have 6 decimals
       const amountOutFormatted = parseFloat(
         ethers.formatUnits(amountOutRaw, 6),
       );
@@ -129,20 +136,29 @@ export function useSwapQuote(
       const poolFeeRate = (infrastructure.pool_fee || 500) / 1e6;
       const tradingFee = amountIn * poolFeeRate;
 
-      // Entry rate: price per wRLP in waUSDC terms
-      const entryRate =
-        amountOutFormatted > 0 ? amountIn / amountOutFormatted : 0;
+      // Rate: price per wRLP in waUSDC terms
+      // BUY:  entryRate = waUSDC_in / wRLP_out
+      // SELL: exitRate  = waUSDC_out / wRLP_in
+      const rate =
+        direction === "SELL"
+          ? amountOutFormatted > 0
+            ? amountOutFormatted / amountIn
+            : 0
+          : amountOutFormatted > 0
+            ? amountIn / amountOutFormatted
+            : 0;
 
-      // Notional = amountOut * entryRate = amountIn (by definition)
-      const notional = amountIn;
+      const notional = direction === "SELL" ? amountOutFormatted : amountIn;
 
       setQuote({
         amountOut: amountOutFormatted,
-        entryRate,
+        entryRate: rate,
+        exitRate: rate,
         notional,
         estFee: tradingFee,
         gasEstimate: Number(gasEstimateRaw),
         amountOutRaw: amountOutRaw.toString(),
+        direction,
       });
     } catch (e) {
       console.warn("Quote failed:", e);
@@ -151,14 +167,21 @@ export function useSwapQuote(
     } finally {
       setLoading(false);
     }
-  }, [infrastructure, collateralAddr, positionAddr, amountIn]);
+  }, [infrastructure, collateralAddr, positionAddr, amountIn, direction]);
 
-  // Debounced fetch
+  // Debounced fetch + 5s auto-refresh
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(fetchQuote, debounceMs);
-    return () => clearTimeout(timerRef.current);
+
+    // Auto-refresh every 12s
+    const interval = setInterval(fetchQuote, 12000);
+
+    return () => {
+      clearTimeout(timerRef.current);
+      clearInterval(interval);
+    };
   }, [fetchQuote, debounceMs]);
 
-  return { quote, loading, error };
+  return { quote, loading, error, refresh: fetchQuote };
 }

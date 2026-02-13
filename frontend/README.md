@@ -44,3 +44,37 @@ Fixed to distinguish OPEN SHORT vs CLOSE SHORT:
 - CLOSE SHORT shows "You Pay waUSDC → You Receive wRLP" layout
 - Header: `CLOSE_SHORT`, Button: `Close Short`, Side label: `CLOSE SHORT`
 - OPEN SHORT layout unchanged (Collateral → Borrow/Debt)
+
+---
+
+## Close Short Panel Polish
+
+### `SimulationTerminal.jsx` — PAY_WITH Custom Dropdown
+
+- Replaced native `<select>` with a custom dropdown matching Markets page `FilterDropdown` style
+- **Trigger button**: Boxed (`border border-white/20 bg-black`), mono font, `ChevronDown` icon with rotation
+- **Options panel**: `bg-[#0a0a0a] border border-white/20`, rows with cyan highlight for selected, hover effects
+- Click-outside handler closes dropdown; selecting an option clears inputs
+- Default mode: `wRLP` (Direct Repay); options: `wRLP — Direct Repay`, `waUSDC — Swap & Repay`
+
+### `SimulationTerminal.jsx` — Compact Balance Formatting
+
+- All balance sublabels use `.toFixed(1)` — no thousand separators, 1 decimal place
+- Example: `12252.1 waUSDC` instead of `12 252,129 waUSDC`
+- Applied to: Collateral Broker, Sell_wRLP Available, Total Debt, Amount_To_Pay Broker, Broker_wRLP, Short Collateral Broker
+
+### `SimulationTerminal.jsx` — Quote Refresh
+
+- Replaced static "quoting..." text with a clickable `RefreshCw` icon button
+- Icon spins (`animate-spin`) while a quote is loading
+- Users can manually trigger a quote refresh by clicking the icon
+- Auto-refresh interval changed from 5s → 12s to match production cadence
+
+### `useSwapQuote.js`
+
+- Auto-refresh interval: `5000ms` → `12000ms`
+- Exposed `refresh` callback for manual quote triggering
+
+### `index.css` — Global Styles
+
+- Added CSS to hide number input spinner arrows globally (all browsers)

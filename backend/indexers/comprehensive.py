@@ -133,6 +133,45 @@ PRIME_BROKER_ABI = [
 ]
 
 
+# V4 Quoter ABI — quoteExactInputSingle for mark price
+V4_QUOTER_ABI = [
+    {
+        "name": "quoteExactInputSingle",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {
+                "name": "params",
+                "type": "tuple",
+                "components": [
+                    {
+                        "name": "poolKey",
+                        "type": "tuple",
+                        "components": [
+                            {"name": "currency0", "type": "address"},
+                            {"name": "currency1", "type": "address"},
+                            {"name": "fee", "type": "uint24"},
+                            {"name": "tickSpacing", "type": "int24"},
+                            {"name": "hooks", "type": "address"},
+                        ],
+                    },
+                    {"name": "zeroForOne", "type": "bool"},
+                    {"name": "exactAmount", "type": "uint128"},
+                    {"name": "hookData", "type": "bytes"},
+                ],
+            },
+        ],
+        "outputs": [
+            {"name": "amountOut", "type": "uint256"},
+            {"name": "gasEstimate", "type": "uint256"},
+        ],
+    },
+]
+
+# Mainnet V4 Quoter (always available on mainnet fork)
+V4_QUOTER_ADDRESS = os.getenv("V4_QUOTER", "0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203")
+
+
 class ComprehensiveIndexer:
     """Block-level indexer for complete market state tracking."""
     
@@ -183,6 +222,37 @@ class ComprehensiveIndexer:
             # Calculate pool ID (currency0, currency1, fee, tickSpacing, hooks)
             # We'll compute this from the pool key
             self.pool_id = self._compute_pool_id()
+            
+            # V4 Quoter for mark price (quotes 1 wRLP → waUSDC)
+            try:
+                twamm_hook = os.getenv("TWAMM_HOOK", "")
+                if not twamm_hook:
+                    try:
+                        with open("/home/ubuntu/RLD/contracts/deployments.json") as f:
+                            deployments = json.load(f)
+                            twamm_hook = deployments.get("TWAMM") or deployments.get("TWAMMHook") or ""
+                    except:
+                        pass
+                self._quoter = self.w3.eth.contract(
+                    address=Web3.to_checksum_address(V4_QUOTER_ADDRESS),
+                    abi=V4_QUOTER_ABI
+                )
+                # Pool key for quoter calls
+                self._pool_key = (
+                    Web3.to_checksum_address(self.token0),
+                    Web3.to_checksum_address(self.token1),
+                    500,   # fee
+                    5,     # tickSpacing
+                    Web3.to_checksum_address(twamm_hook) if twamm_hook else Web3.to_checksum_address("0x" + "0" * 40),
+                )
+                # Selling wRLP: if wRLP is token0 → zeroForOne=True, else False
+                self._sell_wrlp_zfo = not self.wausdc_is_token0
+                # Token decimals (both 6 for waUSDC/wRLP, but keep general)
+                self._pos_decimals = 6  # wRLP decimals
+                logger.info(f"   V4 Quoter: {V4_QUOTER_ADDRESS}")
+            except Exception as e:
+                logger.warning(f"Could not init V4 Quoter: {e}")
+                self._quoter = None
             
         except Exception as e:
             logger.warning(f"Could not fetch market addresses: {e}")
@@ -286,24 +356,43 @@ class ComprehensiveIndexer:
             logger.warning(f"Could not compute pool ID: {e}")
             return None
     
-    def _mark_price_from_sqrt(self, sqrt_price_x96: int) -> float:
-        """Compute mark price (wRLP in waUSDC terms) from sqrtPriceX96.
+    def _get_mark_price_from_quoter(self) -> float:
+        """Get mark price via V4 Quoter: quote selling 1 wRLP for waUSDC.
         
-        sqrtPriceX96 encodes price = token1/token0.
-        - If waUSDC is token0: raw = wRLP/waUSDC → invert to get waUSDC/wRLP
-        - If waUSDC is token1: raw = waUSDC/wRLP → already correct
+        Returns: price of 1 wRLP in waUSDC (e.g., 3.77).
+        Token-ordering agnostic — works for any pair.
+        """
+        if not self._quoter:
+            return None
+        try:
+            one_wrlp = 10 ** self._pos_decimals  # 1 wRLP in raw units
+            params = (
+                self._pool_key,       # poolKey
+                self._sell_wrlp_zfo,  # zeroForOne (selling wRLP)
+                one_wrlp,             # exactAmount
+                b"",                  # hookData
+            )
+            result = self._quoter.functions.quoteExactInputSingle(params).call()
+            amount_out = result[0]  # waUSDC received for 1 wRLP
+            return amount_out / (10 ** self._pos_decimals)  # both 6 decimals
+        except Exception as e:
+            logger.debug(f"Quoter mark price failed: {e}")
+            return None
+
+    def _mark_price_from_sqrt(self, sqrt_price_x96: int) -> float:
+        """Fallback: compute mark price from sqrtPriceX96.
+        
+        The pool was initialized by the RLDMarketFactory which already inverts
+        the oracle price when needed, so the raw token1/token0 ratio directly
+        gives the correct mark price (collateral per position token).
         """
         if sqrt_price_x96 == 0:
             return 0.0
         raw_price_x18 = (sqrt_price_x96 * sqrt_price_x96 * 10**18) // (2**192)
         if raw_price_x18 == 0:
             return 0.0
-        if self.wausdc_is_token0:
-            # raw = wRLP/waUSDC → invert to get waUSDC/wRLP
-            return (10**36 / raw_price_x18) / 10**18
-        else:
-            # raw = waUSDC/wRLP → already the mark price we want
-            return raw_price_x18 / 10**18
+        # Raw price = token1/token0 = mark price (factory handles inversion at init)
+        return raw_price_x18 / 10**18
     
     def get_market_state(self) -> Dict:
         """Fetch current market state from RLDCore."""
@@ -383,8 +472,10 @@ class ComprehensiveIndexer:
             # Parse liquidity (uint128 in bottom 128 bits)
             liquidity = int.from_bytes(liquidity_data, 'big') & ((1 << 128) - 1)
             
-            # Calculate mark price from sqrtPriceX96
-            mark_price = self._mark_price_from_sqrt(sqrt_price_x96)
+            # Calculate mark price: prefer quoter, fallback to sqrt
+            mark_price = self._get_mark_price_from_quoter()
+            if mark_price is None:
+                mark_price = self._mark_price_from_sqrt(sqrt_price_x96)
             
             return {
                 'token0': self.token0,
@@ -821,7 +912,7 @@ class ComprehensiveIndexer:
             swap_pool_id = swap_data.get('pool_id', '')
             
             if swap_sqrt > 0:
-                swap_mark = self._mark_price_from_sqrt(swap_sqrt)
+                swap_mark = self._get_mark_price_from_quoter() or self._mark_price_from_sqrt(swap_sqrt)
                 
                 # Auto-detect pool_id on first swap if not yet known from events
                 if swap_pool_id and not os.getenv("POOL_ID"):
