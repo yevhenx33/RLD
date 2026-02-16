@@ -687,6 +687,7 @@
           ssl,
           git,
           docker: dk,
+          backups: bk,
           history: hist,
         } = d;
         const running = cts.filter(
@@ -1715,8 +1716,8 @@
               </div>
             )}
 
-            {/* ══ ROW 5: Git + Docker + Activity ══ */}
-            <div className="grid g3" style={{ marginBottom: 1 }}>
+            {/* ══ ROW 5: Git + Backups + Docker + Activity ══ */}
+            <div className="grid g4" style={{ marginBottom: 1 }}>
               <Card title="LAST DEPLOY" delay={10}>
                 <div
                   style={{ display: "flex", flexDirection: "column", gap: 6 }}
@@ -1809,6 +1810,115 @@
                     <div className="ml">total size</div>
                   </div>
                 </div>
+              </Card>
+
+              <Card
+                title="BACKUPS"
+                badge={
+                  bk?.status === "success" ? (
+                    <Badge text="OK" type="g" />
+                  ) : bk?.status === "never" ? (
+                    <Badge text="NEVER" type="a" />
+                  ) : bk?.status === "partial" ? (
+                    <Badge text="PARTIAL" type="a" />
+                  ) : (
+                    <Badge text={bk?.status?.toUpperCase() || "—"} type="r" />
+                  )
+                }
+                delay={11}
+              >
+                {(() => {
+                  if (!bk || bk.status === "never")
+                    return (
+                      <div style={{ color: "var(--a)", fontSize: 11 }}>
+                        No backups yet
+                      </div>
+                    );
+                  const backupAge = bk.timestamp ? fmtAgo(bk.timestamp) : "—";
+                  return (
+                    <div
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontSize: 10 }}>last backup</span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "var(--tb)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {backupAge}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontSize: 10 }}>size</span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "var(--tb)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {bk.size || "—"}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontSize: 10 }}>databases</span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color:
+                              bk.success === bk.total ? "var(--g)" : "var(--a)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {bk.success}/{bk.total}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ fontSize: 10 }}>retained</span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            color: "var(--tb)",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {bk.retained} day{bk.retained !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </Card>
 
               <Card
