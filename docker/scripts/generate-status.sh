@@ -95,11 +95,20 @@ if [ -n "$anvil_resp" ]; then
   anvil_block=$(echo "$anvil_resp" | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))" 2>/dev/null || echo "")
 fi
 
-# ── SSL ──
+# ── SSL (read cert file directly — instant and deterministic) ──
 SSL_EXPIRY="unknown"; SSL_DAYS="0"
-if command -v certbot &>/dev/null; then
-  SSL_EXPIRY=$(sudo certbot certificates 2>/dev/null | grep "Expiry" | head -1 | awk '{print $3}' || echo "unknown")
-  SSL_DAYS=$(sudo certbot certificates 2>/dev/null | grep "VALID:" | head -1 | grep -oP '\d+(?= days)' || echo "0")
+CERT_FILE="/etc/letsencrypt/live/rld.fi/fullchain.pem"
+if [ -f "$CERT_FILE" ]; then
+  CERT_END=$(openssl x509 -enddate -noout -in "$CERT_FILE" 2>/dev/null | cut -d= -f2)
+  if [ -n "$CERT_END" ]; then
+    CERT_EPOCH=$(date -d "$CERT_END" +%s 2>/dev/null)
+    NOW_EPOCH=$(date +%s)
+    if [ -n "$CERT_EPOCH" ]; then
+      SSL_DAYS=$(( (CERT_EPOCH - NOW_EPOCH) / 86400 ))
+      SSL_EXPIRY=$(date -d "$CERT_END" +%Y-%m-%d 2>/dev/null || echo "unknown")
+      [ "$SSL_DAYS" -lt 0 ] && SSL_DAYS=0
+    fi
+  fi
 fi
 
 # ── Nginx ──

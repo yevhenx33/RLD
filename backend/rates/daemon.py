@@ -56,9 +56,11 @@ RPC_URLS = [url for url in RPC_URLS if url]
 
 # Daemon settings
 POLL_INTERVAL = 12  # seconds (1 Ethereum block)
-BATCH_SIZE = 10     # Blocks per RPC batch
+BATCH_SIZE = 50     # Blocks per RPC batch
 SYNC_INTERVAL = 60  # Full hourly aggregation every 60s (incremental, lightweight)
 BLOCKS_7D = int(7 * 24 * 3600 / 12)  # ~50400 blocks
+SOFR_SYNC_INTERVAL = 86400  # Sync SOFR once per day
+SOFR_API_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/100.json"
 
 # Read ETH_PRICE_GRAPH_URL after all envs loaded (config.py loads too early)
 ETH_PRICE_GRAPH_URL_LOCAL = os.getenv("ETH_PRICE_GRAPH_URL")
@@ -402,6 +404,61 @@ def sync_eth_prices(conn):
         return 0
 
 
+def sync_sofr_rates(conn):
+    """Fetch daily SOFR rates from the NY Fed API and insert into sofr_rates."""
+    cursor = conn.cursor()
+
+    # Ensure table exists
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sofr_rates (
+            timestamp INTEGER PRIMARY KEY,
+            apy REAL
+        )
+    """)
+
+    # Get last SOFR timestamp
+    cursor.execute("SELECT MAX(timestamp) FROM sofr_rates")
+    result = cursor.fetchone()
+    last_ts = result[0] if result and result[0] else 0
+
+    try:
+        response = requests.get(SOFR_API_URL, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        rates = data.get("refRates", [])
+        if not rates:
+            logger.debug("No SOFR data returned from NY Fed API")
+            return 0
+
+        count = 0
+        for item in rates:
+            # Parse date -> midnight UTC timestamp
+            date_str = item.get("effectiveDate")
+            rate = item.get("percentRate")
+            if not date_str or rate is None:
+                continue
+
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            ts = int(dt.timestamp())
+
+            if ts > last_ts:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO sofr_rates (timestamp, apy) VALUES (?, ?)",
+                    (ts, float(rate))
+                )
+                count += 1
+
+        conn.commit()
+        if count:
+            logger.info(f"📊 Synced {count} SOFR rates from NY Fed")
+        return count
+
+    except Exception as e:
+        logger.error(f"SOFR sync error: {e}")
+        return 0
+
+
 def run_initial_repair(cursor, conn):
     """Repair gaps from the last 7 days on startup."""
     logger.info("🛠️  Running initial 7-day gap repair...")
@@ -493,9 +550,11 @@ def run_daemon():
     # Initial repair
     run_initial_repair(cursor, conn)
     sync_eth_prices(conn)  # Sync ETH prices on startup
+    sync_sofr_rates(conn)  # Backfill SOFR from NY Fed on startup
     sync_clean_db()
 
     last_sync_time = time.time()
+    last_sofr_sync = time.time()
 
     # Continuous loop
     while running:
@@ -519,6 +578,11 @@ def run_daemon():
                 if time.time() - last_sync_time > SYNC_INTERVAL:
                     sync_clean_db()
                     last_sync_time = time.time()
+
+                # Daily SOFR sync
+                if time.time() - last_sofr_sync > SOFR_SYNC_INTERVAL:
+                    sync_sofr_rates(conn)
+                    last_sofr_sync = time.time()
             else:
                 logger.debug(f"Up to date at block {current_block}")
 

@@ -13,7 +13,8 @@ RAW_DB_PATH = DB_PATH
 SYMBOL_MAP = {
     "USDC": "usdc_rate",
     "DAI": "dai_rate",
-    "USDT": "usdt_rate"
+    "USDT": "usdt_rate",
+    "SOFR": "sofr_rate"
 }
 
 
@@ -168,8 +169,6 @@ def sync_clean_db(force_full=False):
 
     # 2. Sync Assets
     for symbol, config in ASSETS.items():
-        if config['type'] != 'onchain':
-            continue
         col_name = SYMBOL_MAP.get(symbol)
         if not col_name:
             continue

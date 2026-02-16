@@ -90,7 +90,11 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f combined_daemon || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c "import os,sys; [sys.exit(0) for f in os.listdir(''/proc'') if f.isdigit() and ''combined_daemon'' in open(f''/proc/{f}/cmdline'',''rb'').read().decode(errors=''ignore'')]" || exit 1',
+        ]
       interval: 30s
       timeout: 5s
       start_period: 60s
@@ -116,7 +120,11 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f chaos_daemon || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c "import os,sys; [sys.exit(0) for f in os.listdir(''/proc'') if f.isdigit() and ''chaos_daemon'' in open(f''/proc/{f}/cmdline'',''rb'').read().decode(errors=''ignore'')]" || exit 1',
+        ]
       interval: 30s
       timeout: 5s
       start_period: 60s
