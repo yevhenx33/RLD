@@ -221,6 +221,15 @@ function App() {
 
   const { data: ethPrices } = useSWR(getEthUrl(), fetcher);
 
+  // SOFR rate data
+  const getSofrUrl = () => {
+    let url = `${API_BASE}/rates?symbol=SOFR&resolution=${resolution}`;
+    if (appliedStart) url += `&start_date=${appliedStart}`;
+    if (appliedEnd) url += `&end_date=${appliedEnd}`;
+    return url;
+  };
+  const { data: sofrRates } = useSWR(getSofrUrl(), fetcher);
+
   // --- DATA PROCESSING ---
   const processedData = useMemo(() => {
     if (!rates || rates.length === 0) return [];
@@ -228,6 +237,12 @@ function App() {
     const priceMap = new Map();
     if (ethPrices && ethPrices.length > 0) {
       ethPrices.forEach((p) => priceMap.set(p.timestamp, p.price));
+    }
+
+    // Build SOFR lookup map
+    const sofrMap = new Map();
+    if (sofrRates && sofrRates.length > 0) {
+      sofrRates.forEach((r) => sofrMap.set(r.timestamp, r.apy));
     }
 
     const result = [];
@@ -279,10 +294,34 @@ function App() {
         }
       }
 
-      result.push({ ...current, twar: twarValue, ethPrice: price || null });
+      // Match SOFR by exact timestamp or bucket
+      let sofr = sofrMap.get(current.timestamp);
+      if (sofr === undefined) {
+        const bucketTs =
+          Math.floor(current.timestamp / bucketSize) * bucketSize;
+        sofr = sofrMap.get(bucketTs);
+      }
+
+      result.push({
+        ...current,
+        twar: twarValue,
+        ethPrice: price || null,
+        sofrRate: sofr ?? null,
+      });
     }
+
+    // Forward-fill SOFR for weekends/gaps
+    let lastSofr = null;
+    for (const point of result) {
+      if (point.sofrRate !== null && point.sofrRate !== undefined) {
+        lastSofr = point.sofrRate;
+      } else if (lastSofr !== null) {
+        point.sofrRate = lastSofr;
+      }
+    }
+
     return result;
-  }, [rates, ethPrices, twarWindow, resolution]);
+  }, [rates, ethPrices, sofrRates, twarWindow, resolution]);
 
   const stats = useMemo(() => {
     if (!rates || rates.length === 0)
@@ -633,6 +672,19 @@ function App() {
                       ETH_Price
                     </span>
                   </div>
+                  <div
+                    className={`flex items-center gap-2 cursor-pointer transition-all ${
+                      hiddenSeries.includes("sofrRate")
+                        ? "opacity-50 line-through"
+                        : "opacity-100 hover:opacity-80"
+                    }`}
+                    onClick={() => toggleSeries("sofrRate")}
+                  >
+                    <div className="w-2 h-2 bg-green-400"></div>
+                    <span className="text-[11px] uppercase tracking-widest">
+                      SOFR_Rate
+                    </span>
+                  </div>
                   <button
                     onClick={handleDownloadCSV}
                     className="hidden md:flex items-center gap-2 text-[11px] uppercase tracking-widest text-gray-500 hover:text-white transition-colors focus:outline-none group"
@@ -679,6 +731,7 @@ function App() {
                         color: "#a1a1aa",
                         yAxisId: "right",
                       },
+                      { key: "sofrRate", name: "SOFR", color: "#4ade80" },
                       ...(showTwar
                         ? [{ key: "twar", name: "TWAR", color: "#ec4899" }]
                         : []),

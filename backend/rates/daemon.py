@@ -60,7 +60,8 @@ BATCH_SIZE = 50     # Blocks per RPC batch
 SYNC_INTERVAL = 60  # Full hourly aggregation every 60s (incremental, lightweight)
 BLOCKS_7D = int(7 * 24 * 3600 / 12)  # ~50400 blocks
 SOFR_SYNC_INTERVAL = 86400  # Sync SOFR once per day
-SOFR_API_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/100.json"
+SOFR_GENESIS = "2023-03-01"  # Backfill start date
+SOFR_API_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/search.json"
 
 # Read ETH_PRICE_GRAPH_URL after all envs loaded (config.py loads too early)
 ETH_PRICE_GRAPH_URL_LOCAL = os.getenv("ETH_PRICE_GRAPH_URL")
@@ -422,7 +423,10 @@ def sync_sofr_rates(conn):
     last_ts = result[0] if result and result[0] else 0
 
     try:
-        response = requests.get(SOFR_API_URL, timeout=30)
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        start = SOFR_GENESIS if last_ts == 0 else datetime.utcfromtimestamp(last_ts).strftime("%Y-%m-%d")
+        url = f"{SOFR_API_URL}?startDate={start}&endDate={today}"
+        response = requests.get(url, timeout=30)
         response.raise_for_status()
         data = response.json()
 
