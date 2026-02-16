@@ -136,6 +136,9 @@ if ls /home/ubuntu/RLD/logs/*$(date +%Y-%m-%d)*.log >/dev/null 2>&1; then
   _ec=$(cat /home/ubuntu/RLD/logs/*$(date +%Y-%m-%d)*.log 2>/dev/null | grep -ic "error\|exception\|traceback\|fatal" 2>/dev/null) && ERR_COUNT=$_ec || ERR_COUNT=0
 fi
 
+# ── Backups ──
+BACKUP_JSON=$(cat /home/ubuntu/RLD/backups/last_backup.json 2>/dev/null || echo '{"status":"never","timestamp":"never","size":"0","retained":0}')
+
 # ── Database Integrity ──
 DB_JSON=$(docker exec docker-rates-indexer-1 python3 -c "
 import sqlite3, os, json, time
@@ -247,6 +250,7 @@ cat > "$TMPOUT" << ENDJSON
   "git": {"commit":"$GIT_COMMIT","message":"$GIT_MSG","time":"$GIT_TIME","author":"$GIT_AUTHOR"},
   "docker": {"dangling_images":$DANGLING,"images_size":"$IMG_SIZE","active":$IMG_ACTIVE,"total":$IMG_TOTAL},
   "databases": $DB_JSON,
+  "backups": $BACKUP_JSON,
   "history": $HIST
 }
 ENDJSON
