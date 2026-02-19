@@ -39,6 +39,7 @@ import BrokerPositions from "./BrokerPositions";
 import StatItem from "./StatItem";
 import TradingTerminal, { InputGroup, SummaryRow } from "./TradingTerminal";
 import SettingsButton from "./SettingsButton";
+import ActionForm from "./ActionForm";
 
 // ── Sub-components ────────────────────────────────────────────
 
@@ -207,6 +208,7 @@ export default function SimulationTerminal() {
 
   // Trading State (must be declared before swap hooks that reference tradeSide/collateral)
   const [tradeSide, setTradeSide] = useState("LONG");
+  const [activeAction, setActiveAction] = useState(null);
   const [tradeAction, setTradeAction] = useState("OPEN"); // OPEN or CLOSE
   const [collateral, setCollateral] = useState(1000);
   const [closeAmount, setCloseAmount] = useState(""); // wRLP to sell (close long)
@@ -1084,10 +1086,12 @@ export default function SimulationTerminal() {
             </TradingTerminal>
           </div>
 
-          {/* === BOTTOM ROW: YOUR POSITION | OPERATIONS === */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Your Position */}
-            <div className="border border-white/10 flex flex-col">
+          {/* === BOTTOM ROW: YOUR POSITION | OPERATIONS + PLACEHOLDER === */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+            {/* Left: Position + Actions (col-span-9) */}
+            <div className="xl:col-span-9 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+            {/* Your Position (2/3 width) */}
+            <div className="lg:col-span-2 border border-white/10 flex flex-col">
               <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
                 <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
                   <Wallet size={14} className="text-gray-500" />
@@ -1367,8 +1371,57 @@ export default function SimulationTerminal() {
               </div>
             </div>
 
-            {/* Operations */}
+            {/* Actions panel (1/3 of col-span-9) */}
             <div className="border border-white/10 flex flex-col">
+                <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
+                  <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
+                    <Layers size={14} className="text-gray-500" />
+                    Actions
+                  </h3>
+                  <span className="text-sm text-gray-700 tracking-[0.15em]">::EXEC</span>
+                </div>
+                <div className="p-4 flex flex-col gap-2">
+                  {[
+                    { id: "twap", label: "TWAP", desc: "Time-weighted swap" },
+                    { id: "lp", label: "LP", desc: "Provide liquidity" },
+                    { id: "loop", label: "Loop", desc: "Leveraged position" },
+                    { id: "batch", label: "Batch", desc: "Multi-action bundle" },
+                  ].map((action) => (
+                    <React.Fragment key={action.id}>
+                    <button
+                      onClick={() => setActiveAction(activeAction === action.id ? null : action.id)}
+                      className={`w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-all text-left group ${
+                        activeAction === action.id ? "bg-white/5" : ""
+                      }`}
+                    >
+                      <div>
+                        <div className={`text-sm font-bold uppercase tracking-widest transition-colors ${
+                          activeAction === action.id ? "text-cyan-400" : "text-white group-hover:text-cyan-400"
+                        }`}>
+                          {action.label}
+                        </div>
+                        <div className="text-sm text-gray-600 font-mono mt-0.5">
+                          {action.desc}
+                        </div>
+                      </div>
+                      <ChevronDown size={14} className={`transition-all ${
+                        activeAction === action.id
+                          ? "text-cyan-400 rotate-0"
+                          : "text-gray-600 group-hover:text-cyan-400 -rotate-90"
+                      }`} />
+                    </button>
+                    {activeAction === action.id && (
+                      <ActionForm type={action.id} onClose={() => setActiveAction(null)} />
+                    )}
+                    </React.Fragment>
+                  ))}
+                </div>
+            </div>
+            </div>
+
+            {/* Right: Operations panel (col-span-3) */}
+            <div className="xl:col-span-3">
+              <div className="border border-white/10 flex flex-col">
               <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center">
                 <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
                   <Activity size={14} className="text-gray-500" />
@@ -1408,6 +1461,7 @@ export default function SimulationTerminal() {
                   loading={opsLoading}
                   connected={!!account}
                 />
+              </div>
               </div>
             </div>
           </div>

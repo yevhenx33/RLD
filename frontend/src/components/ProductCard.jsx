@@ -32,7 +32,7 @@ const ProductCard = ({
       <div>
         <div className="flex justify-between items-center mb-6">
           <span
-            className={`text-[10px] font-bold uppercase tracking-widest ${c.text} ${c.bg} px-2 py-1`}
+            className={`text-sm font-bold uppercase tracking-widest ${c.text} ${c.bg} px-2 py-1`}
           >
             {badge}
           </span>
@@ -43,7 +43,7 @@ const ProductCard = ({
         <h3 className="text-lg font-mono text-white mb-2 tracking-tight">
           {title}
         </h3>
-        <p className="text-xs text-gray-500 font-mono mb-4 leading-relaxed">
+        <p className="text-sm text-gray-500 font-mono mb-4 leading-relaxed">
           {desc}
         </p>
       </div>

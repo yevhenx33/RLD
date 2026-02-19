@@ -74,7 +74,7 @@ const TradingTerminal = ({
   footer, // Optional footer content
 }) => {
   return (
-    <div className="xl:col-span-3 border border-white/10 bg-[#050505] flex flex-col h-full">
+    <div className="xl:col-span-3 border border-white/10 bg-[#080808] flex flex-col h-full">
       {/* Header */}
       <div className="p-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[50px]">
         <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
@@ -97,7 +97,7 @@ const TradingTerminal = ({
               className={`py-3 text-sm font-bold tracking-widest uppercase transition-colors focus:outline-none rounded-none ${
                 tab.isActive
                   ? tab.activeClass || "bg-white text-black"
-                  : "bg-[#050505] text-gray-600 hover:text-gray-400 hover:bg-white/5"
+                  : "bg-[#080808] text-gray-600 hover:text-gray-400 hover:bg-white/5"
               }`}
             >
               {tab.label}

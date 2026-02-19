@@ -13,7 +13,7 @@ import { formatNum } from "../utils/helpers";
 const CustomWealthTooltip = ({ active, payload }) => {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-zinc-950 border border-zinc-800 p-3 rounded shadow-2xl font-mono text-xs z-50">
+      <div className="bg-zinc-950 border border-zinc-800 p-3 rounded shadow-2xl font-mono text-sm z-50">
         <p className="text-zinc-500 mb-2 border-b border-zinc-800 pb-1">
           {payload[0].payload.label} Projection
         </p>
@@ -62,7 +62,7 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
     <div className="w-full h-full select-none bg-[#080808] border border-white/10 p-4 md:p-6 flex flex-col">
       <div className="flex items-start justify-between mb-6">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
+          <div className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-1">
             Value_at_Maturity
           </div>
           <div className="text-3xl font-light text-white font-mono tracking-tight">
@@ -70,7 +70,7 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
           </div>
         </div>
         <div className="text-right">
-          <div className="text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
+          <div className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-1">
             {theme === "pink" ? "Projected_Hedge" : "Calculated_Wealth"}
           </div>
           <div
@@ -84,16 +84,16 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
       </div>
 
       <div className="flex justify-between items-center mb-4">
-        <div className="text-[10px] text-gray-600 uppercase tracking-widest">
+        <div className="text-sm text-gray-600 uppercase tracking-widest">
           Simulated_Path
         </div>
         <div className="flex gap-4">
           <div
-            className={`flex items-center gap-2 text-[10px] ${labelColor} uppercase tracking-wider`}
+            className={`flex items-center gap-2 text-sm ${labelColor} uppercase tracking-wider`}
           >
             <div className={`w-2 h-0.5 ${bgColor}`}></div> Fixed
           </div>
-          <div className="flex items-center gap-2 text-[10px] text-gray-400 uppercase tracking-wider">
+          <div className="flex items-center gap-2 text-sm text-gray-400 uppercase tracking-wider">
             <div className="w-2 h-0.5 bg-gray-400 border border-dashed"></div>{" "}
             Variable
           </div>

@@ -100,14 +100,14 @@ function MarketMetricBox({ label, value, sub, dimmed, Icon = Activity }) {
         dimmed ? "opacity-60" : ""
       }`}
     >
-      <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
+      <div className="text-sm text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
         {label} <Icon size={15} className="opacity-90" />
       </div>
       <div>
         <div className="text-xl md:text-3xl font-light text-white mb-1 md:mb-2 tracking-tight">
           {value}
         </div>
-        <div className="text-[10px] md:text-[12px] text-gray-500 uppercase tracking-widest">
+        <div className="text-sm text-gray-500 uppercase tracking-widest">
           {sub}
         </div>
       </div>
@@ -144,7 +144,7 @@ function FilterDropdown({ label, options, selected, onChange }) {
         onClick={() => setIsOpen(!isOpen)}
         className={`
           w-full h-[30px] border border-white/20 bg-black flex items-center justify-between px-3 
-          text-xs font-mono text-white focus:outline-none uppercase tracking-widest 
+          text-sm font-mono text-white focus:outline-none uppercase tracking-widest 
           hover:border-white transition-colors
           ${isOpen ? "border-white" : ""}
         `}
@@ -179,7 +179,7 @@ function FilterDropdown({ label, options, selected, onChange }) {
                 else onChange(new Set(options));
               }}
               className={`
-                w-full flex items-center gap-3 px-3 py-2.5 text-xs text-left uppercase tracking-widest transition-colors
+                w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left uppercase tracking-widest transition-colors
                 ${
                   isAllSelected
                     ? "bg-cyan-500/10 text-cyan-400"
@@ -212,7 +212,7 @@ function FilterDropdown({ label, options, selected, onChange }) {
                   key={opt}
                   onClick={() => toggle(opt)}
                   className={`
-                    w-full flex items-center gap-3 px-3 py-2.5 text-xs text-left uppercase tracking-widest transition-colors
+                    w-full flex items-center gap-3 px-3 py-2.5 text-sm text-left uppercase tracking-widest transition-colors
                     ${
                       isSelected
                         ? "bg-cyan-500/10 text-cyan-400"
@@ -514,7 +514,7 @@ export default function Markets() {
           <h1 className="text-3xl font-medium tracking-tight text-white mb-2">
             GLOBAL LIQUIDITY
           </h1>
-          <p className="text-xs text-gray-500 uppercase tracking-widest">
+          <p className="text-sm text-gray-500 uppercase tracking-widest">
             Market Depth & Interest Rate Dynamics
           </p>
         </div>
@@ -568,7 +568,7 @@ export default function Markets() {
                     }`}
                   >
                     <div className={`w-2 h-2 ${series.bg} rounded-none`}></div>
-                    <span className="text-[11px] uppercase tracking-widest text-[#e0e0e0]">
+                    <span className="text-sm uppercase tracking-widest text-[#e0e0e0]">
                       {series.label}
                     </span>
                   </div>
@@ -578,7 +578,7 @@ export default function Markets() {
               {/* Download Button */}
               <button
                 onClick={handleDownloadSVG}
-                className="hidden md:flex items-center gap-2 text-xs text-gray-500 hover:text-white transition-colors uppercase tracking-widest"
+                className="hidden md:flex items-center gap-2 text-sm text-gray-500 hover:text-white transition-colors uppercase tracking-widest"
               >
                 <Download size={14} /> SVG
               </button>
@@ -629,7 +629,7 @@ export default function Markets() {
           {loading && (
             <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-10 flex flex-col items-center justify-center">
               <Loader2 className="w-8 h-8 text-cyan-500 animate-spin mb-2" />
-              <span className="text-[10px] uppercase tracking-widest text-white">
+              <span className="text-sm uppercase tracking-widest text-white">
                 Syncing Data...
               </span>
             </div>
@@ -639,19 +639,19 @@ export default function Markets() {
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-white/10 bg-white/[0.02]">
-                  <th className="p-5 text-xs uppercase tracking-widest text-gray-500 font-bold text-left">
+                  <th className="p-5 text-sm uppercase tracking-widest text-gray-500 font-bold text-left">
                     Asset
                   </th>
-                  <th className="p-5 text-xs uppercase tracking-widest text-gray-500 font-bold text-center">
+                  <th className="p-5 text-sm uppercase tracking-widest text-gray-500 font-bold text-center">
                     Total Debt
                   </th>
-                  <th className="p-5 text-xs uppercase tracking-widest text-gray-500 font-bold text-center">
+                  <th className="p-5 text-sm uppercase tracking-widest text-gray-500 font-bold text-center">
                     Borrow APY
                   </th>
-                  <th className="p-5 text-xs uppercase tracking-widest text-gray-500 font-bold text-center">
+                  <th className="p-5 text-sm uppercase tracking-widest text-gray-500 font-bold text-center">
                     Protocol
                   </th>
-                  <th className="p-5 text-xs uppercase tracking-widest text-gray-500 font-bold text-center">
+                  <th className="p-5 text-sm uppercase tracking-widest text-gray-500 font-bold text-center">
                     Network
                   </th>
                 </tr>
@@ -689,20 +689,20 @@ export default function Markets() {
                             <div className="text-base font-bold text-white tracking-tight flex items-center gap-2">
                               {m.symbol}
                             </div>
-                            <div className="text-[10px] text-gray-600 uppercase tracking-widest font-bold">
+                            <div className="text-sm text-gray-600 uppercase tracking-widest font-bold">
                               {m.name}
                             </div>
                           </div>
                         </div>
                       </td>
                       <td className="p-5 text-center">
-                        <div className="text-xs font-mono font-bold tracking-widest text-white">
+                        <div className="text-sm font-mono font-bold tracking-widest text-white">
                           {formatCurrency(m.debt)}
                         </div>
                       </td>
                       <td className="p-5 text-center">
                         <div className="flex flex-col items-center">
-                          <div className="text-xs font-mono font-bold tracking-widest text-cyan-400">
+                          <div className="text-sm font-mono font-bold tracking-widest text-cyan-400">
                             {m.apy.toFixed(2)}%
                           </div>
                         </div>
@@ -714,13 +714,13 @@ export default function Markets() {
                             alt={m.protocol}
                             className="w-5 h-5 object-contain"
                           />
-                          <span className="text-xs uppercase tracking-widest font-bold text-white">
+                          <span className="text-sm uppercase tracking-widest font-bold text-white">
                             {m.protocol}
                           </span>
                         </div>
                       </td>
                       <td className="p-5 text-center">
-                        <span className="text-xs uppercase tracking-widest font-bold text-white">
+                        <span className="text-sm uppercase tracking-widest font-bold text-white">
                           ETHEREUM
                         </span>
                       </td>
@@ -731,7 +731,7 @@ export default function Markets() {
 
             {/* Footer */}
             {!loading && marketData.length > 0 && (
-              <div className="p-4 border-t border-white/5 bg-[#0d0d0d] flex justify-between items-center text-[10px] uppercase tracking-widest text-gray-600">
+              <div className="p-4 border-t border-white/5 bg-[#0d0d0d] flex justify-between items-center text-sm uppercase tracking-widest text-gray-600">
                 <span>Showing {marketData.length} Assets</span>
                 <span className="flex items-center gap-1">
                   Data provided by <span className="text-white">Aave V3</span>

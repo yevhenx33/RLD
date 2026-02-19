@@ -41,7 +41,7 @@ export default function Header({ isCapped, ratesLoaded }) {
             </Link>
 
             {/* DESKTOP NAV */}
-            <div className="hidden md:flex text-[12px] items-center gap-1 font-bold tracking-[0.15em] uppercase">
+            <div className="hidden md:flex text-sm items-center gap-1 font-bold tracking-[0.15em] uppercase">
               <span className="text-white/10">//</span>
 
               <div className="relative group">
@@ -70,13 +70,13 @@ export default function Header({ isCapped, ratesLoaded }) {
                   <div className="border border-white/10 bg-[#0a0a0a] min-w-[160px] shadow-2xl">
                     <Link
                       to="/markets/perps"
-                      className="flex items-center gap-2.5 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
+                      className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
                     >
                       Long/Short
                     </Link>
                     <Link
                       to="/markets/pools"
-                      className="flex items-center gap-2.5 px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors"
+                      className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors"
                     >
                       Pools
                     </Link>
@@ -93,14 +93,7 @@ export default function Header({ isCapped, ratesLoaded }) {
                 BONDS
               </Link>
 
-              <span className="text-white/10">|</span>
 
-              <Link
-                to="/vaults"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/vaults" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
-              >
-                VAULTS
-              </Link>
 
               <span className="text-white/10">|</span>
 
@@ -201,12 +194,7 @@ export default function Header({ isCapped, ratesLoaded }) {
               >
                 EXPLORE
               </Link>
-              <Link
-                to="/vaults"
-                className={`py-2 ${location.pathname === "/vaults" ? "text-white" : "text-gray-500"}`}
-              >
-                VAULTS
-              </Link>
+
               <Link
                 to="/portfolio"
                 className={`py-2 ${location.pathname === "/portfolio" ? "text-white" : "text-gray-500"}`}

@@ -15,11 +15,11 @@ const SimulationTerminal = lazy(
   () => import("./components/SimulationTerminal"),
 );
 const Homepage = lazy(() => import("./components/Homepage"));
-const Vaults = lazy(() => import("./components/Vaults"));
-const VaultDetail = lazy(() => import("./components/VaultDetail"));
+
 const PoolLP = lazy(() => import("./components/PoolLP"));
 const PoolsDirectory = lazy(() => import("./components/PoolsDirectory"));
 const PerpsDirectory = lazy(() => import("./components/PerpsDirectory"));
+const BondsDirectory = lazy(() => import("./components/BondsDirectory"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -77,6 +77,14 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 path="/bonds"
                 element={
                   <Suspense fallback={<Loading />}>
+                    <BondsDirectory />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/bonds/:address"
+                element={
+                  <Suspense fallback={<Loading />}>
                     <Bonds />
                   </Suspense>
                 }
@@ -89,22 +97,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   </Suspense>
                 }
               />
-              <Route
-                path="/vaults"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <Vaults />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="/vaults/fixed-yield"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <VaultDetail />
-                  </Suspense>
-                }
-              />
+
 
               <Route
                 path="/portfolio"
@@ -134,6 +127,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   </Suspense>
                 }
               />
+
               <Route
                 path="/markets/pools"
                 element={
