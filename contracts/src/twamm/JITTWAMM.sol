@@ -61,17 +61,17 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     /// @notice Epoch interval for order expiry bucketing (e.g. 3600 = 1 hour)
     uint256 public immutable expirationInterval;
 
-    /// @notice Discount growth rate: basis points per second (e.g. 1 = 0.01% per second)
-    /// @dev At 1 bp/s, after 1 hour the discount is 3600 * 0.01% = 36%.
-    ///      More conservatively, use smaller values.
-    ///      Default: ~0.14 bps/s ≈ 0.5% per hour (configurable via governance)
-    uint256 public discountRateBpsPerSecond = 1; // 0.01% per second → 36% per hour (adjustable)
+    /// @notice Discount growth rate: basis points per second
+    /// @dev Default 1 (= 0.01%/s). Set in constructor.
+    uint256 public discountRateBpsPerSecond;
 
-    /// @notice Maximum discount cap in basis points (e.g. 50 = 0.5%)
-    uint256 public maxDiscountBps = 50;
+    /// @notice Maximum discount cap in basis points
+    /// @dev Default 500 (= 5%). Set in constructor.
+    uint256 public maxDiscountBps;
 
     /// @notice TWAP observation window in seconds for pricing
-    uint32 public twapWindow = 300; // 5-minute TWAP
+    /// @dev Default 300 (5 minutes). Set in constructor.
+    uint32 public twapWindow;
 
     /* ======================================================================== */
     /*                              STATE                                       */
@@ -80,13 +80,37 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     /// @notice Core JIT-TWAMM state per pool
     mapping(PoolId => JITState) internal poolStates;
 
-    /// @notice Tokens owed to users from order earnings
-    mapping(Currency => mapping(address => uint256)) public tokensOwed;
+    /// @notice Tokens owed to users from order earnings (scoped per pool)
+    mapping(PoolId => mapping(Currency => mapping(address => uint256)))
+        public tokensOwed;
 
     /// @notice TWAP oracle observations
     mapping(PoolId => mapping(uint256 => TwapOracle.Observation))
         public observations;
     mapping(PoolId => TwapOracle.State) public oracleStates;
+
+    /// @notice Reference to RLDCore (wired post-deployment via setRldCore)
+    address public rldCore;
+
+    /// @notice Asset-specific price boundaries per pool (sqrtPriceX96 min/max)
+    struct PriceBounds {
+        uint160 min;
+        uint160 max;
+    }
+
+    /// @notice Price bounds per pool (if bounds.max == 0, no bounds are set)
+    mapping(PoolId => PriceBounds) public priceBounds;
+
+    /// @notice Authorized factory address (can call setPriceBounds)
+    address public authorizedFactory;
+
+    /// @notice Accumulated orphaned TWAMM dust per currency, claimable by owner
+    /// @dev On mainnet (12s blocks), each expired TWAMM order orphans at most
+    ///      sellRate * 12 tokens — the final block of accrual that can't be
+    ///      cleared because sellRateCurrent drops to 0 at the epoch boundary.
+    ///      Rather than stranding these tokens permanently, they are accumulated
+    ///      here and the owner redistributes via claimDust().
+    mapping(Currency => uint256) public collectedDust;
 
     /* ======================================================================== */
     /*                           CONSTRUCTOR                                    */
@@ -94,16 +118,34 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
 
     constructor(
         IPoolManager _manager,
+        uint256 _expirationInterval,
         address initialOwner,
-        uint256 _expirationInterval
+        address _rldCore
     ) BaseHook(_manager) Owned(initialOwner) {
         if (_expirationInterval == 0) revert InvalidExpirationInterval();
         expirationInterval = _expirationInterval;
+        rldCore = _rldCore;
+        // L2: Sensible defaults
+        discountRateBpsPerSecond = 1; // 0.01% per second
+        maxDiscountBps = 500; // 5% max
+        twapWindow = 300; // 5-minute TWAP
     }
 
     /* ======================================================================== */
     /*                        ADMIN CONFIGURATION                               */
     /* ======================================================================== */
+
+    /// @notice Wire the RLDCore reference (post-deployment)
+    function setRldCore(address _rldCore) external onlyOwner {
+        rldCore = _rldCore;
+    }
+
+    /// @notice Set the authorized factory address (one-time only)
+    function setAuthorizedFactory(address _factory) external onlyOwner {
+        require(authorizedFactory == address(0), "Factory already set");
+        require(_factory != address(0), "Zero address");
+        authorizedFactory = _factory;
+    }
 
     /// @notice Update the discount rate (governance)
     function setDiscountRate(uint256 _bpsPerSecond) external onlyOwner {
@@ -112,12 +154,56 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
 
     /// @notice Update the max discount cap (governance)
     function setMaxDiscount(uint256 _maxBps) external onlyOwner {
+        require(_maxBps <= 10000, "Exceeds 100%");
         maxDiscountBps = _maxBps;
     }
 
     /// @notice Update the TWAP window (governance)
     function setTwapWindow(uint32 _seconds) external onlyOwner {
+        require(_seconds > 0, "Zero window");
         twapWindow = _seconds;
+    }
+
+    /// @notice Sets asset-specific price boundary for a pool (one-time only)
+    /// @dev Bounds prevent price manipulation by gating LP range and reverting
+    ///      swaps that move price outside the allowed range.
+    ///      e.g., for wRLP: min=sqrtPrice(0.0001), max=sqrtPrice(100)
+    ///      Can only be set once per pool (bounds.max == 0 check)
+    /// @param key The pool key
+    /// @param min Minimum allowed sqrtPriceX96
+    /// @param max Maximum allowed sqrtPriceX96
+    function setPriceBounds(
+        PoolKey calldata key,
+        uint160 min,
+        uint160 max
+    ) external {
+        require(
+            msg.sender == owner || msg.sender == authorizedFactory,
+            "UNAUTHORIZED"
+        );
+        PriceBounds storage bounds = priceBounds[key.toId()];
+        if (bounds.max != 0) revert("Bounds already set");
+        bounds.min = min;
+        bounds.max = max;
+    }
+
+    /// @notice Claims accumulated orphaned TWAMM dust tokens
+    /// @dev Only owner can call. Transfers all collected dust for a currency
+    ///      to the specified recipient. Dust originates from the final block
+    ///      of accrual per expired order that could not be cleared.
+    /// @param currency The currency to claim dust for
+    /// @param recipient Address to receive the dust tokens
+    function claimDust(
+        Currency currency,
+        address recipient
+    ) external onlyOwner {
+        uint256 amount = collectedDust[currency];
+        if (amount == 0) return;
+        collectedDust[currency] = 0;
+        IERC20Minimal(Currency.unwrap(currency)).safeTransfer(
+            recipient,
+            amount
+        );
     }
 
     /* ======================================================================== */
@@ -139,10 +225,10 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
                 afterAddLiquidity: false,
                 afterRemoveLiquidity: false,
                 beforeSwap: true,
-                afterSwap: false,
+                afterSwap: true,
                 beforeDonate: false,
                 afterDonate: false,
-                beforeSwapReturnDelta: true, // KEY: We return deltas to fill takers internally
+                beforeSwapReturnDelta: true,
                 afterSwapReturnDelta: false,
                 afterAddLiquidityReturnDelta: false,
                 afterRemoveLiquidityReturnDelta: false
@@ -161,11 +247,12 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
         state.lastUpdateTimestamp = _getIntervalTime(block.timestamp);
         state.lastClearTimestamp = block.timestamp;
 
-        // Initialize TWAP oracle
+        // C2 + L1: Bootstrap TWAP oracle with enough capacity for meaningful TWAP
         observations[poolId].initialize(
             oracleStates[poolId],
             uint32(block.timestamp)
         );
+        observations[poolId].grow(oracleStates[poolId], 10);
 
         return BaseHook.beforeInitialize.selector;
     }
@@ -173,11 +260,22 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     function _beforeAddLiquidity(
         address,
         PoolKey calldata key,
-        ModifyLiquidityParams calldata,
+        ModifyLiquidityParams calldata params,
         bytes calldata
     ) internal override returns (bytes4) {
         _updateOracle(key);
         _accrueAndNet(key);
+        _flushDonations(key);
+
+        // Enforce price bounds on LP range
+        PriceBounds memory bounds = priceBounds[key.toId()];
+        if (bounds.min != 0) {
+            uint160 lowerSqrt = TickMath.getSqrtPriceAtTick(params.tickLower);
+            uint160 upperSqrt = TickMath.getSqrtPriceAtTick(params.tickUpper);
+            if (lowerSqrt < bounds.min || upperSqrt > bounds.max)
+                revert("LP Range Out of Bounds");
+        }
+
         return BaseHook.beforeAddLiquidity.selector;
     }
 
@@ -189,6 +287,7 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     ) internal override returns (bytes4) {
         _updateOracle(key);
         _accrueAndNet(key);
+        _flushDonations(key);
         return BaseHook.beforeRemoveLiquidity.selector;
     }
 
@@ -201,6 +300,7 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         _updateOracle(key);
         _accrueAndNet(key);
+        _flushDonations(key);
 
         PoolId poolId = key.toId();
         JITState storage state = poolStates[poolId];
@@ -317,7 +417,45 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
 
         emit JITFill(poolId, fillAmountInOutputToken, params.zeroForOne);
 
+        // ── C1: Settle with V4 PoolManager ──
+        // The hook promised a BeforeSwapDelta; V4 will create currency deltas
+        // on address(this). We must settle by moving real tokens.
+        Currency inputCurrency = params.zeroForOne
+            ? key.currency0
+            : key.currency1;
+        Currency outputCurrency = params.zeroForOne
+            ? key.currency1
+            : key.currency0;
+
+        // 1. SEND output tokens (from ghost custody) to PoolManager
+        poolManager.sync(outputCurrency);
+        IERC20Minimal(Currency.unwrap(outputCurrency)).safeTransfer(
+            address(poolManager),
+            fillAmountInOutputToken
+        );
+        poolManager.settle();
+
+        // 2. RECEIVE input tokens (earnings for streamers) from PoolManager
+        poolManager.take(inputCurrency, address(this), fillAmountInInputToken);
+
         return (BaseHook.beforeSwap.selector, delta, 0);
+    }
+
+    /// @notice Enforce price bounds after every swap
+    function _afterSwap(
+        address,
+        PoolKey calldata key,
+        SwapParams calldata,
+        BalanceDelta,
+        bytes calldata
+    ) internal override returns (bytes4, int128) {
+        PriceBounds memory bounds = priceBounds[key.toId()];
+        if (bounds.min != 0) {
+            (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(key.toId());
+            if (sqrtPriceX96 < bounds.min || sqrtPriceX96 > bounds.max)
+                revert("Price Out of Bounds");
+        }
+        return (BaseHook.afterSwap.selector, 0);
     }
 
     /* ======================================================================== */
@@ -390,7 +528,8 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
             poolId,
             orderId,
             msg.sender,
-            params.amountIn,
+            // H2: Emit actual transfer amount (sellRate * duration <= params.amountIn)
+            sellRate * params.duration,
             orderKey.expiration,
             params.zeroForOne,
             sellRate,
@@ -447,9 +586,9 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
 
         // Claim earned tokens
         Currency buyToken = orderKey.zeroForOne ? key.currency1 : key.currency0;
-        uint256 owed = tokensOwed[buyToken][msg.sender];
+        uint256 owed = tokensOwed[poolId][buyToken][msg.sender];
         if (owed > 0) {
-            tokensOwed[buyToken][msg.sender] = 0;
+            tokensOwed[poolId][buyToken][msg.sender] = 0;
             IERC20Minimal(Currency.unwrap(buyToken)).safeTransfer(
                 msg.sender,
                 owed
@@ -506,7 +645,7 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
             Currency buyToken = orderKey.zeroForOne
                 ? poolKey.currency1
                 : poolKey.currency0;
-            tokensOwed[buyToken][orderKey.owner] += earningsAmount;
+            tokensOwed[poolId][buyToken][orderKey.owner] += earningsAmount;
         }
 
         // Update snapshot
@@ -514,10 +653,14 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     }
 
     /// @inheritdoc IJITTWAMM
-    function claimTokens(Currency currency) external returns (uint256 amount) {
-        amount = tokensOwed[currency][msg.sender];
+    function claimTokens(
+        PoolKey calldata key,
+        Currency currency
+    ) external returns (uint256 amount) {
+        PoolId poolId = key.toId();
+        amount = tokensOwed[poolId][currency][msg.sender];
         if (amount > 0) {
-            tokensOwed[currency][msg.sender] = 0;
+            tokensOwed[poolId][currency][msg.sender] = 0;
             IERC20Minimal(Currency.unwrap(currency)).safeTransfer(
                 msg.sender,
                 amount
@@ -533,7 +676,8 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     function clear(
         PoolKey calldata key,
         bool zeroForOne,
-        uint256 maxAmount
+        uint256 maxAmount,
+        uint256 minDiscountBps
     ) external nonReentrant {
         _accrueAndNet(key);
 
@@ -544,12 +688,24 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
         uint256 available = zeroForOne ? state.accrued0 : state.accrued1;
         if (available == 0) revert NothingToClear();
 
+        // Revert if the corresponding stream has no active orders.
+        // Otherwise _recordEarnings would be a no-op and the arb's
+        // payment tokens would be permanently stranded in the contract.
+        StreamPool storage stream = zeroForOne
+            ? state.stream0For1
+            : state.stream1For0;
+        if (stream.sellRateCurrent == 0) revert NoActiveStream();
+
         uint256 clearAmount = available > maxAmount ? maxAmount : available;
 
         // Calculate dynamic discount
         uint256 elapsedSinceClear = block.timestamp - state.lastClearTimestamp;
         uint256 discountBps = elapsedSinceClear * discountRateBpsPerSecond;
         if (discountBps > maxDiscountBps) discountBps = maxDiscountBps;
+
+        // H3: MEV protection — revert if discount is below caller's minimum
+        if (discountBps < minDiscountBps)
+            revert InsufficientDiscount(discountBps, minDiscountBps);
 
         // Get TWAP price
         uint160 twapSqrtPriceX96 = _getTwapPrice(key);
@@ -578,16 +734,13 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
             clearAmount
         );
 
-        // Update ghost balance
+        // Update ghost balance and record earnings
         if (zeroForOne) {
             state.accrued0 -= clearAmount;
-            // Record earnings for the 0→1 stream (sold token0, earned token1)
-            _recordEarnings(state.stream0For1, discountedPayment);
         } else {
             state.accrued1 -= clearAmount;
-            // Record earnings for the 1→0 stream (sold token1, earned token0)
-            _recordEarnings(state.stream1For0, discountedPayment);
         }
+        _recordEarnings(stream, discountedPayment);
 
         state.lastClearTimestamp = block.timestamp;
 
@@ -652,6 +805,132 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
         return (stream.sellRateCurrent, stream.earningsFactorCurrent);
     }
 
+    /// @inheritdoc IJITTWAMM
+    function getCancelOrderState(
+        PoolKey calldata key,
+        OrderKey calldata orderKey
+    ) external view returns (uint256 buyTokensOwed, uint256 sellTokensRefund) {
+        PoolId poolId = key.toId();
+        JITState storage state = poolStates[poolId];
+        bytes32 orderId = _orderId(orderKey);
+        Order storage order = state.orders[orderId];
+
+        if (order.sellRate == 0) return (0, 0);
+
+        StreamPool storage stream = orderKey.zeroForOne
+            ? state.stream0For1
+            : state.stream1For0;
+
+        // Compute pending earnings
+        uint256 earningsFactorDelta = stream.earningsFactorCurrent -
+            order.earningsFactorLast;
+        if (earningsFactorDelta > 0) {
+            buyTokensOwed = Math.mulDiv(
+                order.sellRate,
+                earningsFactorDelta,
+                FixedPoint96.Q96 * RATE_SCALER
+            );
+        }
+
+        // Compute refund for remaining time
+        if (state.lastUpdateTimestamp < orderKey.expiration) {
+            uint256 remainingSeconds = orderKey.expiration -
+                state.lastUpdateTimestamp;
+            sellTokensRefund =
+                (order.sellRate * remainingSeconds) /
+                RATE_SCALER;
+        }
+    }
+
+    /// @notice Alias for getStreamPool — backward compatible with old test suite
+    function getOrderPool(
+        PoolKey calldata key,
+        bool zeroForOne
+    )
+        external
+        view
+        returns (uint256 sellRateCurrent, uint256 earningsFactorCurrent)
+    {
+        JITState storage state = poolStates[key.toId()];
+        StreamPool storage stream = zeroForOne
+            ? state.stream0For1
+            : state.stream1For0;
+        return (stream.sellRateCurrent, stream.earningsFactorCurrent);
+    }
+
+    /// @notice Returns the last update timestamp for a pool (analog of lastVirtualOrderTimestamp)
+    function lastVirtualOrderTimestamp(
+        PoolId poolId
+    ) external view returns (uint256) {
+        return poolStates[poolId].lastUpdateTimestamp;
+    }
+
+    /* ======================================================================== */
+    /*                     EXECUTION CONVENIENCE METHODS                        */
+    /* ======================================================================== */
+
+    /// @notice Trigger accrual + internal netting without a swap (equivalent to old executeTWAMMOrders)
+    function executeJITTWAMMOrders(PoolKey memory key) public {
+        _updateOracle(key);
+        _accrueAndNet(key);
+    }
+
+    /// @notice Trigger accrual up to a specific timestamp
+    function executeJITTWAMMOrders(
+        PoolKey memory key,
+        uint256 /*targetTimestamp*/
+    ) public {
+        // In JIT-TWAMM, accrual is continuous up to block.timestamp
+        // targetTimestamp is accepted for API compat but we accrue to now
+        _updateOracle(key);
+        _accrueAndNet(key);
+    }
+
+    /// @notice Sync an order and claim all owed tokens in one call
+    function syncAndClaimTokens(
+        SyncParams calldata params
+    ) external returns (uint256 claimed0, uint256 claimed1) {
+        _sync(params.key, params.orderKey);
+
+        // If order is expired, delete it
+        PoolId poolId = params.key.toId();
+        JITState storage state = poolStates[poolId];
+        bytes32 orderId = _orderId(params.orderKey);
+        Order storage order = state.orders[orderId];
+
+        if (
+            order.sellRate > 0 &&
+            state.lastUpdateTimestamp >= params.orderKey.expiration
+        ) {
+            // Order expired — _crossEpoch already subtracted sellRate from
+            // stream.sellRateCurrent and sellRateEndingAtInterval during
+            // _accrueAndNet(). We only need to clean up the order record.
+            delete state.orders[orderId];
+        }
+
+        // Claim both currencies
+        Currency c0 = params.key.currency0;
+        Currency c1 = params.key.currency1;
+
+        claimed0 = tokensOwed[poolId][c0][msg.sender];
+        if (claimed0 > 0) {
+            tokensOwed[poolId][c0][msg.sender] = 0;
+            IERC20Minimal(Currency.unwrap(c0)).safeTransfer(
+                msg.sender,
+                claimed0
+            );
+        }
+
+        claimed1 = tokensOwed[poolId][c1][msg.sender];
+        if (claimed1 > 0) {
+            tokensOwed[poolId][c1][msg.sender] = 0;
+            IERC20Minimal(Currency.unwrap(c1)).safeTransfer(
+                msg.sender,
+                claimed1
+            );
+        }
+    }
+
     /* ======================================================================== */
     /*                         INTERNAL: CORE ENGINE                            */
     /* ======================================================================== */
@@ -677,7 +956,15 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
         state.accrued0 += newAccrued0;
         state.accrued1 += newAccrued1;
 
-        // === Step 2: Cross epoch boundaries (subtract expired sellRates) ===
+        // === Step 2: Layer 1 — Internal Netting ===
+        // CRITICAL: Must net BEFORE crossing epochs. If we cross first,
+        // expired orders reduce sellRateCurrent to 0, making _recordEarnings
+        // a no-op (divides by zero sellRate). Net first while rates are active.
+        if (state.accrued0 > 0 && state.accrued1 > 0) {
+            _internalNet(key, state);
+        }
+
+        // === Step 3: Cross epoch boundaries (subtract expired sellRates) ===
         uint256 lastInterval = _getIntervalTime(state.lastUpdateTimestamp);
         uint256 currentInterval = _getIntervalTime(currentTime);
 
@@ -693,12 +980,60 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
             }
         }
 
-        // === Step 3: Layer 1 — Internal Netting ===
-        if (state.accrued0 > 0 && state.accrued1 > 0) {
-            _internalNet(key, state);
+        // === Step 4: Orphan remaining accrued tokens if stream expired ===
+        // When sellRateCurrent drops to 0 (all orders expired), any remaining
+        // accrued tokens can never be cleared — clear() reverts with NoActiveStream
+        // because _recordEarnings would divide by zero.
+        //
+        // TRANSPARENCY NOTE: On mainnet (12s blocks), this captures at most
+        // sellRate * 12 tokens per expired order — the final block of accrual
+        // between the last possible clear() and the epoch crossing. These tokens
+        // are redirected to LPs as fee income via V4's donate() mechanism,
+        // rather than being permanently stranded in the hook contract.
+        if (state.stream0For1.sellRateCurrent == 0 && state.accrued0 > 0) {
+            state.pendingDonation0 += state.accrued0;
+            state.accrued0 = 0;
+        }
+        if (state.stream1For0.sellRateCurrent == 0 && state.accrued1 > 0) {
+            state.pendingDonation1 += state.accrued1;
+            state.accrued1 = 0;
         }
 
         state.lastUpdateTimestamp = currentTime;
+    }
+
+    /// @notice Flush pending donations: move orphaned accrued tokens to protocol fees
+    /// @dev Orphaned tokens accumulate when TWAMM streams expire with residual accrued
+    ///      balances. On mainnet (12s blocks), each expired order orphans at most
+    ///      sellRate * 12 tokens — the final block of accrual that could not be
+    ///      cleared before the epoch boundary. These tokens are moved to collectedFees
+    ///      (the protocol fee pool) rather than being permanently stranded.
+    ///
+    ///      TRANSPARENCY NOTE: These tokens came from TWAMM trader deposits. They
+    ///      represent ~1 block worth of accrual per expired order. The owner should
+    ///      redistribute them to LPs or return them to traders via claimProtocolFees().
+    ///
+    ///      Why not V4 donate()? donate() calls beforeDonate/afterDonate hooks on
+    ///      the pool's hook address (this contract), which would require the
+    ///      BEFORE_DONATE_FLAG permission bit — changing the hook's deployed address.
+    function _flushDonations(PoolKey calldata key) internal {
+        JITState storage state = poolStates[key.toId()];
+        uint256 d0 = state.pendingDonation0;
+        uint256 d1 = state.pendingDonation1;
+        if (d0 == 0 && d1 == 0) return;
+
+        state.pendingDonation0 = 0;
+        state.pendingDonation1 = 0;
+
+        // Move to dust collection — owner can claim via claimDust()
+        if (d0 > 0) {
+            collectedDust[key.currency0] += d0;
+        }
+        if (d1 > 0) {
+            collectedDust[key.currency1] += d1;
+        }
+
+        emit DustDonatedToLPs(key.toId(), d0, d1);
     }
 
     /// @notice Cross an epoch boundary: snapshot earningsFactor and subtract expired sellRate
@@ -728,11 +1063,22 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
         if (state.accrued0 <= accrued1AsToken0) {
             // All of accrued0 can be matched
             matchedToken0 = state.accrued0;
-            matchedToken1 = _convertAtPrice(matchedToken0, twapPrice, true);
+            matchedToken1 = Math.mulDiv(
+                Math.mulDiv(matchedToken0, twapPrice, FixedPoint96.Q96),
+                twapPrice,
+                FixedPoint96.Q96,
+                Math.Rounding.Ceil
+            );
         } else {
             // All of accrued1 can be matched
             matchedToken1 = state.accrued1;
-            matchedToken0 = accrued1AsToken0;
+            // RF-3: Use Ceil rounding symmetrically (same as the other branch)
+            matchedToken0 = Math.mulDiv(
+                Math.mulDiv(matchedToken1, FixedPoint96.Q96, twapPrice),
+                FixedPoint96.Q96,
+                twapPrice,
+                Math.Rounding.Ceil
+            );
         }
 
         if (matchedToken0 == 0 || matchedToken1 == 0) return;
@@ -772,9 +1118,8 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
         TwapOracle.State storage oracleState = oracleStates[poolId];
 
         if (oracleState.cardinality < 2) {
-            // Not enough observations, fall back to spot price
-            (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(poolId);
-            return sqrtPriceX96;
+            // C2: Revert instead of falling back to manipulable spot price
+            revert OracleNotReady();
         }
 
         // Get tick cumulatives for TWAP calculation

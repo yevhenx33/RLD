@@ -26,7 +26,10 @@ interface IJITTWAMM {
     error SellRateCannotBeZero();
     error Unauthorized();
     error NothingToClear();
+    error NoActiveStream();
     error InsufficientPayment();
+    error OracleNotReady();
+    error InsufficientDiscount(uint256 actual, uint256 minimum);
 
     /* ======== STRUCTS ======== */
 
@@ -63,6 +66,14 @@ interface IJITTWAMM {
         uint256 lastClearTimestamp;
         uint256 accrued0;
         uint256 accrued1;
+        /// @dev Orphaned accrued tokens awaiting donation to LPs.
+        /// When a TWAMM stream expires, any remaining accrued tokens that
+        /// were not cleared in time are moved here. They are donated to the
+        /// V4 pool (as LP fee income) on the next hook callback.
+        /// This eliminates the "hidden tax" where ~1 block of accrual
+        /// (sellRate * blockTime) would otherwise be permanently stranded.
+        uint256 pendingDonation0;
+        uint256 pendingDonation1;
         StreamPool stream0For1;
         StreamPool stream1For0;
         mapping(bytes32 => Order) orders;
@@ -124,6 +135,19 @@ interface IJITTWAMM {
         uint256 discount
     );
 
+    /// @notice Emitted when orphaned accrued tokens are donated to LPs
+    /// @dev This happens when a TWAMM stream expires with unsold accrued tokens.
+    ///      On mainnet (12s blocks), this is at most sellRate * 12 per order —
+    ///      the final block of accrual that cannot be cleared because clear()
+    ///      reverts once sellRateCurrent drops to 0 at the epoch boundary.
+    ///      Rather than stranding these tokens permanently, they are redirected
+    ///      to LPs as fee income on the next pool interaction.
+    event DustDonatedToLPs(
+        PoolId indexed poolId,
+        uint256 amount0,
+        uint256 amount1
+    );
+
     /* ======== EXTERNAL FUNCTIONS ======== */
 
     /// @notice Submit a new streaming order
@@ -142,17 +166,22 @@ interface IJITTWAMM {
         SyncParams calldata params
     ) external returns (uint256 earningsAmount);
 
-    /// @notice Claim all owed tokens for a pool
-    function claimTokens(Currency currency) external returns (uint256 amount);
+    /// @notice Claim owed tokens for a specific pool
+    function claimTokens(
+        PoolKey calldata key,
+        Currency currency
+    ) external returns (uint256 amount);
 
     /// @notice Layer 3: Clear accumulated ghost balance via dynamic auction
     /// @param key Pool to clear
     /// @param zeroForOne Direction to clear (true = buy accrued token0, false = buy accrued token1)
     /// @param maxAmount Maximum amount to clear
+    /// @param minDiscountBps Minimum discount bps required (MEV protection)
     function clear(
         PoolKey calldata key,
         bool zeroForOne,
-        uint256 maxAmount
+        uint256 maxAmount,
+        uint256 minDiscountBps
     ) external;
 
     /// @notice View the current ghost balances and discount
@@ -182,4 +211,10 @@ interface IJITTWAMM {
         external
         view
         returns (uint256 sellRateCurrent, uint256 earningsFactorCurrent);
+
+    /// @notice View what a cancel would return without executing it
+    function getCancelOrderState(
+        PoolKey calldata key,
+        OrderKey calldata orderKey
+    ) external view returns (uint256 buyTokensOwed, uint256 sellTokensRefund);
 }
