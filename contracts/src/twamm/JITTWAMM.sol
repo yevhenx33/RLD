@@ -33,6 +33,9 @@ import {Owned} from "solmate/src/auth/Owned.sol";
 import {IJITTWAMM} from "./IJITTWAMM.sol";
 import {TransferHelper} from "./libraries/TransferHelper.sol";
 import {TwapOracle} from "./libraries/TwapOracle.sol";
+import {CurrencySettler} from "@uniswap/v4-core/test/utils/CurrencySettler.sol";
+import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
+import {IBrokerVerifier} from "../shared/interfaces/IBrokerVerifier.sol";
 
 /// @dev Scaling factor for sell rates to maintain precision
 uint256 constant RATE_SCALER = 1e18;
@@ -53,6 +56,7 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     using StateLibrary for IPoolManager;
     using TwapOracle for mapping(uint256 => TwapOracle.Observation);
     using TwapOracle for TwapOracle.State;
+    using CurrencySettler for Currency;
 
     /* ======================================================================== */
     /*                              CONSTANTS                                   */
@@ -1200,5 +1204,140 @@ contract JITTWAMM is BaseHook, Owned, ReentrancyGuard, IJITTWAMM {
     /// @notice Generate a unique order ID from an OrderKey
     function _orderId(OrderKey memory key) internal pure returns (bytes32) {
         return keccak256(abi.encode(key));
+    }
+
+    /* ======================================================================== */
+    /*                    LIQUIDATION: FORCE SETTLE                             */
+    /* ======================================================================== */
+
+    /// @notice Force-settle ghost balance by market-selling into V4 pool.
+    /// @dev ONLY callable by verified brokers during liquidation.
+    ///      Access control: verifies msg.sender is a legitimate broker registered
+    ///      in the Core market via brokerVerifier. This allows the TWAMM hook to
+    ///      remain broker-implementation-agnostic — any future broker version that
+    ///      is registered in Core can call forceSettle.
+    ///
+    ///      After this, getCancelOrderState() returns accurate buyTokensOwed.
+    ///      This prevents value destruction during TWAMM order cancellation in seize.
+    ///
+    /// @param key The pool key
+    /// @param zeroForOne The sell direction (matches the TWAMM order direction)
+    /// @param marketId The Core market ID (for broker verification)
+    function forceSettle(
+        PoolKey calldata key,
+        bool zeroForOne,
+        MarketId marketId
+    ) external nonReentrant {
+        // Verify caller is a verified broker in the Core market
+        require(rldCore != address(0), "Core not set");
+        IRLDCore.MarketConfig memory config = IRLDCore(rldCore).getMarketConfig(
+            marketId
+        );
+        require(
+            config.brokerVerifier != address(0) &&
+                IBrokerVerifier(config.brokerVerifier).isValidBroker(
+                    msg.sender
+                ),
+            "Not verified broker"
+        );
+
+        _accrueAndNet(key);
+
+        PoolId poolId = key.toId();
+        JITState storage state = poolStates[poolId];
+
+        uint256 ghostAmount = zeroForOne ? state.accrued0 : state.accrued1;
+        if (ghostAmount == 0) return;
+
+        // Ensure stream is still active (otherwise earnings can't be recorded)
+        StreamPool storage stream = zeroForOne
+            ? state.stream0For1
+            : state.stream1For0;
+        if (stream.sellRateCurrent == 0) return;
+
+        // Market-sell ghost against the V4 pool (no price limit = accept full slippage)
+        SwapParams memory swapParams = SwapParams(
+            zeroForOne,
+            -int256(ghostAmount),
+            zeroForOne
+                ? TickMath.MIN_SQRT_PRICE + 1
+                : TickMath.MAX_SQRT_PRICE - 1
+        );
+
+        bytes memory result = poolManager.unlock(abi.encode(key, swapParams));
+        BalanceDelta delta = abi.decode(result, (BalanceDelta));
+
+        // Calculate swap proceeds
+        uint256 proceeds = zeroForOne
+            ? uint256(uint128(delta.amount1()))
+            : uint256(uint128(delta.amount0()));
+
+        // Record earnings so getCancelOrderState() reflects real value
+        if (proceeds > 0) {
+            _recordEarnings(stream, proceeds);
+        }
+
+        // Clear ghost
+        if (zeroForOne) {
+            state.accrued0 = 0;
+        } else {
+            state.accrued1 = 0;
+        }
+
+        emit ForceSettle(poolId, ghostAmount, proceeds, zeroForOne);
+    }
+
+    /// @notice V4 unlock callback for forceSettle swaps
+    /// @dev Executes the swap and settles token transfers with the pool
+    function unlockCallback(
+        bytes calldata rawData
+    ) external returns (bytes memory) {
+        require(msg.sender == address(poolManager), "Only PoolManager");
+
+        (PoolKey memory key, SwapParams memory swapParams) = abi.decode(
+            rawData,
+            (PoolKey, SwapParams)
+        );
+
+        BalanceDelta delta = poolManager.swap(key, swapParams, "");
+
+        // Settle: pay sold tokens from this contract's balance
+        if (swapParams.zeroForOne) {
+            if (delta.amount0() < 0) {
+                key.currency0.settle(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(-delta.amount0())),
+                    false
+                );
+            }
+            if (delta.amount1() > 0) {
+                key.currency1.take(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(delta.amount1())),
+                    false
+                );
+            }
+        } else {
+            if (delta.amount1() < 0) {
+                key.currency1.settle(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(-delta.amount1())),
+                    false
+                );
+            }
+            if (delta.amount0() > 0) {
+                key.currency0.take(
+                    poolManager,
+                    address(this),
+                    uint256(uint128(delta.amount0())),
+                    false
+                );
+            }
+        }
+
+        return abi.encode(delta);
     }
 }

@@ -204,7 +204,12 @@ interface IRLDCore {
     /* ============================================================================================ */
 
     /// @notice Liquidates an insolvent position (Legacy/Direct mode).
-    function liquidate(MarketId id, address user, uint256 debtToCover) external;
+    function liquidate(
+        MarketId id,
+        address user,
+        uint256 debtToCover,
+        uint256 minCollateralOut
+    ) external;
 
     /* ============================================================================================ */
     /*                                      CURATOR FUNCTIONS                                       */

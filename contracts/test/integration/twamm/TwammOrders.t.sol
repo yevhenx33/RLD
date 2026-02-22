@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {RLDIntegrationBase} from "./shared/RLDIntegrationBase.t.sol";
+import {RLDIntegrationBase} from "../shared/RLDIntegrationBase.t.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -17,7 +17,7 @@ import {
     PoolModifyLiquidityTestNoChecks
 } from "v4-core/src/test/PoolModifyLiquidityTestNoChecks.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
-import {ITWAMM} from "../../src/twamm/ITWAMM.sol";
+import {ITWAMM} from "../../../src/twamm/ITWAMM.sol";
 import "forge-std/console.sol";
 
 /**

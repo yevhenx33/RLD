@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {MarketId} from "../shared/interfaces/IRLDCore.sol";
 
 /// @title IJITTWAMM - Interface for the JIT Time-Weighted Average Market Maker
 /// @notice A complete redesign of the Paradigm TWAMM model. Instead of simulating a virtual
@@ -148,6 +149,14 @@ interface IJITTWAMM {
         uint256 amount1
     );
 
+    /// @notice Emitted when ghost balance is force-settled during liquidation
+    event ForceSettle(
+        PoolId indexed poolId,
+        uint256 ghostAmount,
+        uint256 swapProceeds,
+        bool zeroForOne
+    );
+
     /* ======== EXTERNAL FUNCTIONS ======== */
 
     /// @notice Submit a new streaming order
@@ -217,4 +226,15 @@ interface IJITTWAMM {
         PoolKey calldata key,
         OrderKey calldata orderKey
     ) external view returns (uint256 buyTokensOwed, uint256 sellTokensRefund);
+
+    /// @notice Force-settle ghost balance by market-selling into V4 pool
+    /// @dev ONLY callable by verified brokers during liquidation
+    /// @param key The pool key
+    /// @param zeroForOne The sell direction
+    /// @param marketId Core market ID for broker verification
+    function forceSettle(
+        PoolKey calldata key,
+        bool zeroForOne,
+        MarketId marketId
+    ) external;
 }

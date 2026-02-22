@@ -729,7 +729,7 @@ contract RLDCoreTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IRLDCore.UserSolvent.selector, broker1)
         );
-        core.liquidate(marketId, broker1, 100e6);
+        core.liquidate(marketId, broker1, 100e6, 0);
     }
 
     function test_liquidation_invalidBrokerReverts() public {
@@ -739,7 +739,7 @@ contract RLDCoreTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IRLDCore.InvalidBroker.selector, attacker)
         );
-        core.liquidate(marketId, attacker, 100e6);
+        core.liquidate(marketId, attacker, 100e6, 0);
     }
 
     function test_liquidation_tooSmallAmountReverts() public {
@@ -750,7 +750,7 @@ contract RLDCoreTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IRLDCore.UserSolvent.selector, broker1)
         );
-        core.liquidate(marketId, broker1, 1); // Would also fail amount check, but solvency fires first
+        core.liquidate(marketId, broker1, 1, 0); // Would also fail amount check, but solvency fires first
     }
 
     function test_liquidation_permissionless() public {
@@ -767,7 +767,7 @@ contract RLDCoreTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IRLDCore.UserSolvent.selector, broker1)
         );
-        core.liquidate(marketId, broker1, 100e6);
+        core.liquidate(marketId, broker1, 100e6, 0);
     }
 
     /* =====================================================================
@@ -1218,7 +1218,7 @@ contract RLDCoreTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IRLDCore.UserSolvent.selector, broker1)
         );
-        core.liquidate(marketId, broker1, 100_000e6);
+        core.liquidate(marketId, broker1, 100_000e6, 0);
     }
 
     /* =====================================================================
@@ -1289,6 +1289,6 @@ contract RLDCoreTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(IRLDCore.UserSolvent.selector, broker1)
         );
-        core.liquidate(marketId, broker1, 200e6);
+        core.liquidate(marketId, broker1, 200e6, 0);
     }
 }

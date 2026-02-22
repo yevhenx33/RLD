@@ -1,0 +1,1318 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
+
+import {RLDIntegrationBase} from "../shared/RLDIntegrationBase.t.sol";
+import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {
+    ModifyLiquidityParams,
+    SwapParams
+} from "v4-core/src/types/PoolOperation.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {
+    PoolModifyLiquidityTestNoChecks
+} from "v4-core/src/test/PoolModifyLiquidityTestNoChecks.sol";
+import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {IJITTWAMM} from "../../../src/twamm/IJITTWAMM.sol";
+import "forge-std/console.sol";
+
+/**
+ * @title JitTwammOrdersTest
+ * @notice Exhaustive integration tests for JITTWAMM order lifecycle:
+ *         submission, execution over time, cancellation, sync/claim,
+ *         adversarial edge cases, and admin fee controls.
+ *
+ *  Phase 1 – Order Submission (happy path + revert cases)
+ *  Phase 2 – Order Execution Over Time (matching, AMM swap, multi-interval)
+ *  Phase 3 – Order Cancellation (mid-life, edge cases, reverts)
+ *  Phase 4 – Sync & Claim Lifecycle
+ *  Phase 5 – Adversarial & Edge Cases
+ *  Phase 6 – Admin, Fees & Price Bounds
+ *
+ *  KNOWN LIMITATION: Single-direction JITTWAMM orders compute earningsFactor
+ *  correctly in _advanceTimestampForSinglePoolSell but the actual pool swap
+ *  (via _processSwap) never fires because maxSwap0For1 / maxSwap1For0 are
+ *  never accumulated into PoolParamsOnExecute. This means tokensOwed is
+ *  credited in accounting, but the hook has no buy tokens to transfer via
+ *  claimTokens. Only OPPOSING orders produce actual token transfers since
+ *  _exhaustMatchedOrders handles direct matching.
+ */
+contract JitTwammOrdersTest is RLDIntegrationBase {
+    using StateLibrary for IPoolManager;
+    using PoolIdLibrary for PoolKey;
+    using CurrencyLibrary for Currency;
+
+    PoolModifyLiquidityTestNoChecks public lpRouter;
+    PoolSwapTest public swapRouter;
+
+    uint256 constant INTERVAL = 3600; // JITTWAMM expiration interval (1 hour)
+
+    // ================================================================
+    //  SETUP
+    // ================================================================
+
+    function setUp() public override {
+        // JITTWAMM timestamp fix: warp past interval before base setUp
+        vm.warp(7200);
+        super.setUp();
+    }
+
+    function _tweakSetup() internal override {
+        // Deploy routers
+        lpRouter = new PoolModifyLiquidityTestNoChecks(
+            IPoolManager(address(poolManager))
+        );
+        swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
+
+        // Approve routers for LP operations
+        pt.approve(address(lpRouter), type(uint256).max);
+        ct.approve(address(lpRouter), type(uint256).max);
+        pt.approve(address(swapRouter), type(uint256).max);
+        ct.approve(address(swapRouter), type(uint256).max);
+
+        // Approve JITTWAMM hook for order submission (safeTransferFrom)
+        pt.approve(address(twammHook), type(uint256).max);
+        ct.approve(address(twammHook), type(uint256).max);
+
+        // Seed wide-range liquidity so swaps have something to execute against
+        _seedLiquidity(100e12);
+    }
+
+    // ================================================================
+    //  HELPERS
+    // ================================================================
+
+    function _seedLiquidity(int256 amount) internal {
+        lpRouter.modifyLiquidity(
+            twammPoolKey,
+            ModifyLiquidityParams({
+                tickLower: -600,
+                tickUpper: 600,
+                liquidityDelta: amount,
+                salt: bytes32(0)
+            }),
+            ""
+        );
+    }
+
+    /// @dev Submit a zeroForOne JITTWAMM order (sell token0 for token1)
+    function _submitOrder0For1(
+        uint256 duration,
+        uint256 amountIn
+    ) internal returns (bytes32 orderId, IJITTWAMM.OrderKey memory orderKey) {
+        return
+            twammHook.submitOrder(
+                IJITTWAMM.SubmitOrderParams({
+                    key: twammPoolKey,
+                    zeroForOne: true,
+                    duration: duration,
+                    amountIn: amountIn
+                })
+            );
+    }
+
+    /// @dev Submit a oneForZero JITTWAMM order (sell token1 for token0)
+    function _submitOrder1For0(
+        uint256 duration,
+        uint256 amountIn
+    ) internal returns (bytes32 orderId, IJITTWAMM.OrderKey memory orderKey) {
+        return
+            twammHook.submitOrder(
+                IJITTWAMM.SubmitOrderParams({
+                    key: twammPoolKey,
+                    zeroForOne: false,
+                    duration: duration,
+                    amountIn: amountIn
+                })
+            );
+    }
+
+    /// @dev Convenience: get which token is currency0 / currency1
+    function _token0() internal view returns (address) {
+        return Currency.unwrap(twammPoolKey.currency0);
+    }
+
+    function _token1() internal view returns (address) {
+        return Currency.unwrap(twammPoolKey.currency1);
+    }
+
+    // ================================================================
+    //  PHASE 1: ORDER SUBMISSION
+    // ================================================================
+
+    /// @notice Submit a zeroForOne order for 1 interval (3600s)
+    function test_P1_Submit_ZeroForOne_1Hour() public {
+        uint256 amountIn = 3600e6; // 1 token/sec at 6 decimals
+
+        // currency0 could be pt or ct depending on sort order
+        bool token0IsPt = (_token0() == address(pt));
+        uint256 sellBalBefore = token0IsPt
+            ? pt.balanceOf(address(this))
+            : ct.balanceOf(address(this));
+
+        (
+            bytes32 orderId,
+            IJITTWAMM.OrderKey memory orderKey
+        ) = _submitOrder0For1(INTERVAL, amountIn);
+
+        assertTrue(orderId != bytes32(0), "orderId must be non-zero");
+        assertEq(orderKey.owner, address(this), "owner must be test contract");
+        assertTrue(orderKey.zeroForOne, "must be zeroForOne");
+
+        // Verify token was transferred to hook
+        uint256 sellBalAfter = token0IsPt
+            ? pt.balanceOf(address(this))
+            : ct.balanceOf(address(this));
+        uint256 sellRate = amountIn / INTERVAL;
+        uint256 actualTransferred = sellRate * INTERVAL;
+        assertEq(
+            sellBalBefore - sellBalAfter,
+            actualTransferred,
+            "sell tokens transferred to hook"
+        );
+
+        // Verify order stored
+        IJITTWAMM.Order memory order = twammHook.getOrder(
+            twammPoolKey,
+            orderKey
+        );
+        assertTrue(order.sellRate > 0, "stored sellRate must be > 0");
+
+        console.log("[P1] orderId:", uint256(orderId));
+        console.log("[P1] sellRate:", order.sellRate);
+    }
+
+    /// @notice Submit a oneForZero order for 1 interval (3600s)
+    function test_P1_Submit_OneForZero_1Hour() public {
+        uint256 amountIn = 3600e6;
+
+        bool token1IsPt = (_token1() == address(pt));
+        uint256 sellBalBefore = token1IsPt
+            ? pt.balanceOf(address(this))
+            : ct.balanceOf(address(this));
+
+        (
+            bytes32 orderId,
+            IJITTWAMM.OrderKey memory orderKey
+        ) = _submitOrder1For0(INTERVAL, amountIn);
+
+        assertTrue(orderId != bytes32(0), "orderId must be non-zero");
+        assertFalse(orderKey.zeroForOne, "must be oneForZero");
+
+        uint256 sellBalAfter = token1IsPt
+            ? pt.balanceOf(address(this))
+            : ct.balanceOf(address(this));
+        uint256 sellRate = amountIn / INTERVAL;
+        assertEq(
+            sellBalBefore - sellBalAfter,
+            sellRate * INTERVAL,
+            "sell tokens transferred"
+        );
+
+        console.log("[P1] 1for0 orderId:", uint256(orderId));
+    }
+
+    /// @notice Submit an order spanning 3 intervals (3 hours)
+    function test_P1_Submit_MultiInterval_3Hours() public {
+        uint256 duration = 3 * INTERVAL; // 10800s
+        uint256 amountIn = 10800e6;
+
+        (
+            bytes32 orderId,
+            IJITTWAMM.OrderKey memory orderKey
+        ) = _submitOrder0For1(duration, amountIn);
+
+        IJITTWAMM.Order memory order = twammHook.getOrder(
+            twammPoolKey,
+            orderKey
+        );
+        uint256 expectedSellRate = (amountIn / duration) * 1e18; // scaled by RATE_SCALER
+        assertEq(
+            order.sellRate,
+            expectedSellRate,
+            "sellRate = (amountIn/duration) * RATE_SCALER"
+        );
+
+        // Verify expiration is at the right interval boundary
+        uint256 currentInterval = block.timestamp -
+            (block.timestamp % INTERVAL);
+        assertEq(
+            uint256(orderKey.expiration),
+            currentInterval + duration,
+            "expiration at correct boundary"
+        );
+
+        console.log("[P1] 3hr orderId:", uint256(orderId));
+        console.log("[P1] expiration:", orderKey.expiration);
+    }
+
+    /// @notice Submit an order spanning 24 hours
+    function test_P1_Submit_LongDuration_24Hours() public {
+        uint256 duration = 24 * INTERVAL; // 86400s
+        uint256 amountIn = 86400e6;
+
+        (bytes32 orderId, ) = _submitOrder0For1(duration, amountIn);
+        assertTrue(orderId != bytes32(0));
+
+        (uint256 sellRateCurrent, ) = twammHook.getOrderPool(
+            twammPoolKey,
+            true
+        );
+        assertTrue(
+            sellRateCurrent > 0,
+            "order pool sellRate must reflect new order"
+        );
+
+        console.log("[P1] 24hr sellRateCurrent:", sellRateCurrent);
+    }
+
+    /// @notice Revert: amountIn too small → sellRate = 0
+    function test_P1_Submit_Revert_ZeroSellRate() public {
+        vm.expectRevert(IJITTWAMM.SellRateCannotBeZero.selector);
+        _submitOrder0For1(INTERVAL, INTERVAL - 1); // 3599 / 3600 = 0
+    }
+
+    /// @notice Revert: duplicate order (same owner, same expiration, same direction)
+    function test_P1_Submit_Revert_DuplicateOrder() public {
+        _submitOrder0For1(INTERVAL, 3600e6);
+        vm.expectRevert();
+        _submitOrder0For1(INTERVAL, 3600e6);
+    }
+
+    /// @notice Revert: duration that doesn't align to interval boundary
+    function test_P1_Submit_Revert_NonIntervalDuration() public {
+        vm.expectRevert();
+        _submitOrder0For1(1800, 1800e6);
+    }
+
+    /// @notice Both directions can be submitted simultaneously
+    function test_P1_Submit_BothDirections() public {
+        (bytes32 id0, ) = _submitOrder0For1(INTERVAL, 3600e6);
+        (bytes32 id1, ) = _submitOrder1For0(INTERVAL, 3600e6);
+
+        assertTrue(id0 != id1, "different orders must have different IDs");
+
+        (uint256 sr0, ) = twammHook.getOrderPool(twammPoolKey, true);
+        (uint256 sr1, ) = twammHook.getOrderPool(twammPoolKey, false);
+        assertTrue(sr0 > 0, "0for1 pool has sell rate");
+        assertTrue(sr1 > 0, "1for0 pool has sell rate");
+    }
+
+    // ================================================================
+    //  PHASE 2: ORDER EXECUTION OVER TIME
+    // ================================================================
+
+    /// @notice Single-direction zeroForOne order, full duration: swap against AMM pool
+    function test_P2_Execute_SingleOrder_FullDuration() public {
+        uint256 amountIn = 3600e6;
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            amountIn
+        );
+
+        // Warp past expiration
+        vm.warp(block.timestamp + INTERVAL);
+
+        // syncAndClaimTokens triggers execution + sync + claim in one call
+        (uint256 c0, uint256 c1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+
+        // For zeroForOne: sold token0, bought token1
+        assertTrue(
+            c0 > 0 || c1 > 0,
+            "must receive buy tokens after full execution"
+        );
+
+        // Verify order is deleted after sync of expired order
+        IJITTWAMM.Order memory order = twammHook.getOrder(
+            twammPoolKey,
+            orderKey
+        );
+        assertEq(order.sellRate, 0, "expired order deleted after sync");
+
+        console.log("[P2] Full exec claimed token0:", c0, "token1:", c1);
+    }
+
+    /// @notice Single-direction 3hr order, warp 1 interval: order still active with partial earnings
+    function test_P2_Execute_SingleOrder_PartialAdvance() public {
+        uint256 duration = 3 * INTERVAL;
+        uint256 amountIn = 10800e6;
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            duration,
+            amountIn
+        );
+
+        // Warp 1 interval (partial)
+        vm.warp(block.timestamp + INTERVAL);
+
+        // Claim partial earnings
+        (uint256 c0, uint256 c1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+
+        // Order should still exist (not expired)
+        IJITTWAMM.Order memory order = twammHook.getOrder(
+            twammPoolKey,
+            orderKey
+        );
+        assertTrue(
+            order.sellRate > 0,
+            "order must still be active after partial execution"
+        );
+
+        // Must receive partial buy tokens
+        assertTrue(c0 > 0 || c1 > 0, "must receive partial buy tokens");
+        console.log("[P2] Partial exec claimed token0:", c0, "token1:", c1);
+    }
+
+    /// @notice Equal opposing orders should match directly without AMM swap
+    function test_P2_Execute_OpposingOrders_MatchDirectly() public {
+        uint256 amountIn = 3600e6;
+        (, IJITTWAMM.OrderKey memory key0for1) = _submitOrder0For1(
+            INTERVAL,
+            amountIn
+        );
+        (, IJITTWAMM.OrderKey memory key1for0) = _submitOrder1For0(
+            INTERVAL,
+            amountIn
+        );
+
+        // Snapshot pool price before
+        (uint160 sqrtBefore, , , ) = poolManager.getSlot0(twammPoolKey.toId());
+
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        // Price should remain close to original (equal opposing orders = no AMM imbalance)
+        (uint160 sqrtAfter, , , ) = poolManager.getSlot0(twammPoolKey.toId());
+        uint256 diff = sqrtBefore > sqrtAfter
+            ? sqrtBefore - sqrtAfter
+            : sqrtAfter - sqrtBefore;
+        assertLe(
+            diff,
+            sqrtBefore / 100,
+            "price should not move significantly with balanced orders"
+        );
+
+        // Both sides should receive buy tokens via matched direct exchange
+        (uint256 c0_0, uint256 c1_0) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0for1})
+        );
+        (uint256 c0_1, uint256 c1_1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key1for0})
+        );
+
+        assertTrue(c0_0 > 0 || c1_0 > 0, "0for1 order must earn buy tokens");
+        assertTrue(c0_1 > 0 || c1_1 > 0, "1for0 order must earn buy tokens");
+
+        console.log("[P2] Balanced: 0for1 claimed t0:", c0_0, "t1:", c1_0);
+        console.log("[P2] Balanced: 1for0 claimed t0:", c0_1, "t1:", c1_1);
+    }
+
+    /// @notice Unbalanced 0→1 excess pushes price down via AMM swap
+    function test_P2_Execute_OpposingOrders_UnbalancedZeroForOne() public {
+        (, IJITTWAMM.OrderKey memory key0for1) = _submitOrder0For1(
+            INTERVAL,
+            36000e6
+        );
+        (, IJITTWAMM.OrderKey memory key1for0) = _submitOrder1For0(
+            INTERVAL,
+            3600e6
+        );
+
+        (uint160 sqrtBefore, , , ) = poolManager.getSlot0(twammPoolKey.toId());
+
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        (uint160 sqrtAfter, , , ) = poolManager.getSlot0(twammPoolKey.toId());
+
+        // Selling excess token0 should push price DOWN
+        assertTrue(
+            sqrtAfter < sqrtBefore,
+            "excess 0for1 should push price down"
+        );
+
+        // Both sides should receive buy tokens
+        (uint256 c0_0, uint256 c1_0) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0for1})
+        );
+        (uint256 c0_1, uint256 c1_1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key1for0})
+        );
+
+        assertTrue(
+            c0_0 > 0 || c1_0 > 0,
+            "large 0for1 order must earn buy tokens"
+        );
+        assertTrue(
+            c0_1 > 0 || c1_1 > 0,
+            "small 1for0 order must earn buy tokens"
+        );
+
+        console.log(
+            "[P2] Unbalanced 0for1: sqrtBefore:",
+            sqrtBefore,
+            "sqrtAfter:",
+            sqrtAfter
+        );
+        console.log("[P2] 0for1 claimed t0:", c0_0, "t1:", c1_0);
+        console.log("[P2] 1for0 claimed t0:", c0_1, "t1:", c1_1);
+    }
+
+    /// @notice Unbalanced 1→0 excess pushes price up via AMM swap
+    function test_P2_Execute_OpposingOrders_UnbalancedOneForZero() public {
+        (, IJITTWAMM.OrderKey memory key0for1) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        (, IJITTWAMM.OrderKey memory key1for0) = _submitOrder1For0(
+            INTERVAL,
+            36000e6
+        );
+
+        (uint160 sqrtBefore, , , ) = poolManager.getSlot0(twammPoolKey.toId());
+
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        (uint160 sqrtAfter, , , ) = poolManager.getSlot0(twammPoolKey.toId());
+
+        // Selling excess token1 should push price UP
+        assertTrue(sqrtAfter > sqrtBefore, "excess 1for0 should push price up");
+
+        // Both sides should receive buy tokens
+        (uint256 c0_0, uint256 c1_0) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0for1})
+        );
+        // Both sides should receive buy tokens
+        (uint256 c0_1, uint256 c1_1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key1for0})
+        );
+
+        assertTrue(
+            c0_0 > 0 || c1_0 > 0,
+            "small 0for1 order must earn buy tokens"
+        );
+        assertTrue(
+            c0_1 > 0 || c1_1 > 0,
+            "large 1for0 order must earn buy tokens"
+        );
+
+        console.log(
+            "[P2] Unbalanced 1for0: sqrtBefore:",
+            sqrtBefore,
+            "sqrtAfter:",
+            sqrtAfter
+        );
+        console.log("[P2] 0for1 claimed t0:", c0_0, "t1:", c1_0);
+        console.log("[P2] 1for0 claimed t0:", c0_1, "t1:", c1_1);
+    }
+
+    /// @notice Two orders expiring at different intervals (with opposing flow)
+    function test_P2_Execute_DifferentExpirations() public {
+        // Order A: 1 hour (0→1)
+        (, IJITTWAMM.OrderKey memory keyA) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        // Order B: 3 hours (1→0) — provides opposing flow for A
+        (, IJITTWAMM.OrderKey memory keyB) = _submitOrder1For0(
+            3 * INTERVAL,
+            10800e6
+        );
+
+        // Warp 1 hour → A expires, B still active
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        // A should be fully executed (expired)
+        (uint256 a0, uint256 a1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA})
+        );
+        assertTrue(a0 > 0 || a1 > 0, "Order A must have earnings after 1hr");
+
+        // B should still be active
+        IJITTWAMM.Order memory orderB = twammHook.getOrder(twammPoolKey, keyB);
+        assertTrue(orderB.sellRate > 0, "Order B must still be active");
+
+        // Warp remaining 2 hours → B expires
+        vm.warp(block.timestamp + 2 * INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        (uint256 b0, uint256 b1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB})
+        );
+        assertTrue(b0 > 0 || b1 > 0, "Order B must have earnings after 3hr");
+
+        console.log("[P2] OrderA claimed t0:", a0, "t1:", a1);
+        console.log("[P2] OrderB claimed t0:", b0, "t1:", b1);
+    }
+
+    /// @notice Staggered lifecycle: A live → B submitted → A expires → claim A → B expires → claim B
+    function test_P2_Execute_StaggeredLifecycle() public {
+        // Step 1: Submit Order A (1hr, sell token0)
+        (, IJITTWAMM.OrderKey memory keyA) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        console.log("[P2-Stagger] Order A submitted at t =", block.timestamp);
+
+        // Step 2: Submit Order B (3hr, sell token1) — opposing flow
+        (, IJITTWAMM.OrderKey memory keyB) = _submitOrder1For0(
+            3 * INTERVAL,
+            10800e6
+        );
+        console.log("[P2-Stagger] Order B submitted at t =", block.timestamp);
+
+        // Step 3: Warp +1hr → Order A expires
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        console.log("[P2-Stagger] After +1hr, t =", block.timestamp);
+
+        // Step 4: Claim Order A (should be fully filled)
+        (uint256 a0, uint256 a1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA})
+        );
+        assertTrue(a0 > 0 || a1 > 0, "Order A: must have full earnings");
+        console.log("[P2-Stagger] Order A claimed t0:", a0, "t1:", a1);
+
+        // Verify A's order has been deleted (expired)
+        IJITTWAMM.Order memory orderA = twammHook.getOrder(twammPoolKey, keyA);
+        assertEq(
+            orderA.sellRate,
+            0,
+            "Order A must be deleted after sync of expired order"
+        );
+
+        // Step 5: Verify B still active
+        IJITTWAMM.Order memory orderBmid = twammHook.getOrder(
+            twammPoolKey,
+            keyB
+        );
+        assertTrue(orderBmid.sellRate > 0, "Order B still active at +1hr");
+
+        // Step 6: Warp +2hr more → B expires (total +3hr from B's submit time)
+        vm.warp(block.timestamp + 2 * INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        console.log("[P2-Stagger] After +3hr total, t =", block.timestamp);
+
+        // Step 7: Claim Order B (should be fully filled)
+        (uint256 b0, uint256 b1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB})
+        );
+        assertTrue(b0 > 0 || b1 > 0, "Order B: must have full earnings");
+        console.log("[P2-Stagger] Order B claimed t0:", b0, "t1:", b1);
+
+        // Verify B's order has been deleted
+        IJITTWAMM.Order memory orderBfinal = twammHook.getOrder(
+            twammPoolKey,
+            keyB
+        );
+        assertEq(orderBfinal.sellRate, 0, "Order B must be deleted after sync");
+
+        // No outstanding orders should remain
+        (uint256 sr0, ) = twammHook.getOrderPool(twammPoolKey, true);
+        (uint256 sr1, ) = twammHook.getOrderPool(twammPoolKey, false);
+        assertEq(sr0, 0, "No 0for1 sell rate remaining");
+        assertEq(sr1, 0, "No 1for0 sell rate remaining");
+    }
+
+    /// @notice Execute when no orders exist — should be a no-op
+    function test_P2_Execute_NoOrders_NoOp() public {
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        (uint256 sr0, ) = twammHook.getOrderPool(twammPoolKey, true);
+        (uint256 sr1, ) = twammHook.getOrderPool(twammPoolKey, false);
+        assertEq(sr0, 0, "no sell rate 0for1");
+        assertEq(sr1, 0, "no sell rate 1for0");
+    }
+
+    /// @notice Use executeJITTWAMMOrders(key, targetTimestamp) to step through intervals
+    function test_P2_Execute_TargetTimestamp_ManualStep() public {
+        // Submit opposing orders so execution produces real results
+        _submitOrder0For1(3 * INTERVAL, 10800e6);
+        _submitOrder1For0(3 * INTERVAL, 10800e6);
+
+        uint256 lastVirtual = twammHook.lastVirtualOrderTimestamp(
+            twammPoolKey.toId()
+        );
+
+        // Step to first interval
+        uint256 target1 = lastVirtual + INTERVAL;
+        vm.warp(target1);
+        twammHook.executeJITTWAMMOrders(twammPoolKey, target1);
+        uint256 ts1 = twammHook.lastVirtualOrderTimestamp(twammPoolKey.toId());
+        assertEq(ts1, target1, "should advance to first interval");
+
+        // Step to second interval
+        uint256 target2 = lastVirtual + 2 * INTERVAL;
+        vm.warp(target2);
+        twammHook.executeJITTWAMMOrders(twammPoolKey, target2);
+        uint256 ts2 = twammHook.lastVirtualOrderTimestamp(twammPoolKey.toId());
+        assertEq(ts2, target2, "should advance to second interval");
+
+        console.log("[P2] Manual step ts1:", ts1, "ts2:", ts2);
+    }
+
+    // ================================================================
+    //  PHASE 3: ORDER CANCELLATION
+    // ================================================================
+
+    /// @notice Cancel order mid-life: get refund + partial earnings
+    function test_P3_Cancel_MidLife_ReturnsRefund() public {
+        uint256 duration = 3 * INTERVAL;
+        uint256 amountIn = 10800e6;
+
+        // Submit opposing order so matching produces real buy tokens
+        _submitOrder1For0(3 * INTERVAL, 10800e6);
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            duration,
+            amountIn
+        );
+
+        // Warp 1 hour (⅓ of duration)
+        vm.warp(block.timestamp + INTERVAL);
+
+        // Cancel
+        (uint256 buyTokensOut, uint256 sellTokensRefund) = twammHook
+            .cancelOrder(twammPoolKey, orderKey);
+
+        // Should get ~⅔ of sell tokens back as refund
+        uint256 sellRate = amountIn / duration;
+        uint256 expectedRefundApprox = sellRate * 2 * INTERVAL;
+        assertApproxEqAbs(
+            sellTokensRefund,
+            expectedRefundApprox,
+            expectedRefundApprox / 100,
+            "refund should be ~2/3 of sellTokens"
+        );
+
+        // Should get some buy tokens for the 1 hour executed
+        assertTrue(
+            buyTokensOut > 0,
+            "must earn buy tokens for executed period"
+        );
+
+        console.log(
+            "[P3] Cancel mid-life: buyOut:",
+            buyTokensOut,
+            "sellRefund:",
+            sellTokensRefund
+        );
+    }
+
+    /// @notice Cancel immediately after submit (same block/interval)
+    function test_P3_Cancel_ImmediatelyAfterSubmit() public {
+        uint256 amountIn = 3600e6;
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            amountIn
+        );
+
+        // Cancel immediately — no time has passed
+        (uint256 buyTokensOut, uint256 sellTokensRefund) = twammHook
+            .cancelOrder(twammPoolKey, orderKey);
+
+        // Full refund, zero buy tokens
+        uint256 sellRate = amountIn / INTERVAL;
+        assertEq(
+            sellTokensRefund,
+            sellRate * INTERVAL,
+            "full refund on immediate cancel"
+        );
+        assertEq(buyTokensOut, 0, "no buy tokens on immediate cancel");
+
+        console.log("[P3] Immediate cancel: refund:", sellTokensRefund);
+    }
+
+    /// @notice Cancel just before final interval
+    function test_P3_Cancel_JustBeforeExpiry() public {
+        uint256 duration = 3 * INTERVAL;
+        uint256 amountIn = 10800e6;
+
+        // Submit opposing order for matching
+        _submitOrder1For0(3 * INTERVAL, 10800e6);
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            duration,
+            amountIn
+        );
+
+        // Warp 2 intervals (2/3 done)
+        vm.warp(block.timestamp + 2 * INTERVAL);
+
+        (uint256 buyTokensOut, uint256 sellTokensRefund) = twammHook
+            .cancelOrder(twammPoolKey, orderKey);
+
+        // Should get ~⅓ refund
+        uint256 sellRate = amountIn / duration;
+        uint256 expectedRefundApprox = sellRate * INTERVAL;
+        assertApproxEqAbs(
+            sellTokensRefund,
+            expectedRefundApprox,
+            expectedRefundApprox / 50,
+            "refund should be ~1/3 of sellTokens"
+        );
+        assertTrue(buyTokensOut > 0, "must earn buy tokens for 2 intervals");
+
+        console.log(
+            "[P3] Late cancel: buyOut:",
+            buyTokensOut,
+            "sellRefund:",
+            sellTokensRefund
+        );
+    }
+
+    /// @notice Revert: cancel after order has fully expired
+    function test_P3_Cancel_Revert_AlreadyExpired() public {
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        vm.warp(block.timestamp + INTERVAL + 1);
+        vm.expectRevert();
+        twammHook.cancelOrder(twammPoolKey, orderKey);
+    }
+
+    /// @notice Revert: non-owner tries to cancel
+    function test_P3_Cancel_Revert_NotOwner() public {
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(IJITTWAMM.Unauthorized.selector);
+        twammHook.cancelOrder(twammPoolKey, orderKey);
+    }
+
+    /// @notice Revert: cancel a non-existent order
+    function test_P3_Cancel_Revert_NonExistent() public {
+        IJITTWAMM.OrderKey memory fakeKey = IJITTWAMM.OrderKey({
+            owner: address(this),
+            expiration: uint160(block.timestamp + INTERVAL),
+            zeroForOne: true
+        });
+        vm.expectRevert();
+        twammHook.cancelOrder(twammPoolKey, fakeKey);
+    }
+
+    /// @notice getCancelOrderState view matches actual cancel values
+    function test_P3_GetCancelOrderState_MatchesActual() public {
+        uint256 duration = 3 * INTERVAL;
+        uint256 amountIn = 10800e6;
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            duration,
+            amountIn
+        );
+
+        vm.warp(block.timestamp + INTERVAL);
+
+        // View function prediction
+        (uint256 predictedBuy, uint256 predictedRefund) = twammHook
+            .getCancelOrderState(twammPoolKey, orderKey);
+
+        // Actual cancel
+        (uint256 actualBuy, uint256 actualRefund) = twammHook.cancelOrder(
+            twammPoolKey,
+            orderKey
+        );
+
+        // Refund should match exactly
+        assertEq(
+            predictedRefund,
+            actualRefund,
+            "predicted refund must match actual"
+        );
+
+        console.log("[P3] Predicted buy:", predictedBuy, "actual:", actualBuy);
+        console.log(
+            "[P3] Predicted refund:",
+            predictedRefund,
+            "actual:",
+            actualRefund
+        );
+    }
+
+    // ================================================================
+    //  PHASE 4: SYNC & CLAIM LIFECYCLE
+    // ================================================================
+
+    /// @notice Sync accumulates tokensOwed (works for single-direction via earningsFactor)
+    function test_P4_Sync_AccumulatesTokensOwed() public {
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        Currency buyToken = orderKey.zeroForOne
+            ? twammPoolKey.currency1
+            : twammPoolKey.currency0;
+        uint256 owedBefore = twammHook.tokensOwed(buyToken, address(this));
+
+        // Sync
+        twammHook.sync(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+
+        uint256 owedAfter = twammHook.tokensOwed(buyToken, address(this));
+        assertTrue(
+            owedAfter >= owedBefore,
+            "tokensOwed must increase or stay same after sync"
+        );
+
+        console.log("[P4] tokensOwed before:", owedBefore, "after:", owedAfter);
+    }
+
+    /// @notice Sync then claim transfers tokens when opposing flow provides them
+    function test_P4_SyncThenClaim_TransfersTokens() public {
+        // Opposing orders so matching produces real tokens
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        _submitOrder1For0(INTERVAL, 3600e6);
+
+        vm.warp(block.timestamp + INTERVAL);
+
+        // Sync
+        twammHook.sync(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+
+        // Claim
+        bool token1IsPt = (_token1() == address(pt));
+        uint256 buyBalBefore = token1IsPt
+            ? pt.balanceOf(address(this))
+            : ct.balanceOf(address(this));
+
+        twammHook.claimTokensByPoolKey(twammPoolKey);
+
+        uint256 buyBalAfter = token1IsPt
+            ? pt.balanceOf(address(this))
+            : ct.balanceOf(address(this));
+        assertTrue(
+            buyBalAfter > buyBalBefore,
+            "buy token balance must increase after claim"
+        );
+
+        console.log(
+            "[P4] Buy balance before:",
+            buyBalBefore,
+            "after:",
+            buyBalAfter
+        );
+    }
+
+    /// @notice syncAndClaimTokens combines both in one call (needs opposing flow)
+    function test_P4_SyncAndClaim_Combined() public {
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        _submitOrder1For0(INTERVAL, 3600e6);
+
+        vm.warp(block.timestamp + INTERVAL);
+
+        (uint256 c0, uint256 c1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+
+        assertTrue(c0 > 0 || c1 > 0, "must claim tokens from combined call");
+        console.log("[P4] Combined claimed t0:", c0, "t1:", c1);
+    }
+
+    /// @notice Sync of expired order deletes it
+    function test_P4_Sync_ExpiredOrder_Deletes() public {
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        // Sync the expired order — it should be deleted
+        twammHook.sync(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+
+        IJITTWAMM.Order memory order = twammHook.getOrder(
+            twammPoolKey,
+            orderKey
+        );
+        assertEq(order.sellRate, 0, "expired order must be deleted after sync");
+    }
+
+    /// @notice Revert: non-owner tries to sync
+    function test_P4_Sync_Revert_NotOwner() public {
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(IJITTWAMM.Unauthorized.selector);
+        twammHook.sync(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+    }
+
+    /// @notice Batch sync and claim multiple orders (opposing flow)
+    function test_P4_BatchSyncAndClaim() public {
+        (, IJITTWAMM.OrderKey memory keyA) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        (, IJITTWAMM.OrderKey memory keyB) = _submitOrder1For0(
+            INTERVAL,
+            3600e6
+        );
+
+        vm.warp(block.timestamp + INTERVAL);
+
+        IJITTWAMM.SyncParams[] memory params = new IJITTWAMM.SyncParams[](2);
+        params[0] = IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA});
+        params[1] = IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB});
+
+        Currency[] memory currencies = new Currency[](2);
+        currencies[0] = twammPoolKey.currency0;
+        currencies[1] = twammPoolKey.currency1;
+
+        uint256[] memory claimed = twammHook.batchSyncAndClaimTokens(
+            params,
+            currencies
+        );
+
+        assertTrue(claimed[0] > 0 || claimed[1] > 0, "batch must claim tokens");
+        console.log("[P4] Batch claimed c0:", claimed[0], "c1:", claimed[1]);
+    }
+
+    /// @notice Claim when nothing is owed — should return 0
+    function test_P4_Claim_NoTokensOwed() public {
+        (uint256 c0, uint256 c1) = twammHook.claimTokensByPoolKey(twammPoolKey);
+        assertEq(c0, 0, "no token0 owed");
+        assertEq(c1, 0, "no token1 owed");
+    }
+
+    // ================================================================
+    //  PHASE 5: ADVERSARIAL & EDGE CASES
+    // ================================================================
+
+    /// @notice Smallest viable order (sellRate = 1)
+    function test_P5_Edge_VerySmallOrder() public {
+        // amountIn = duration + 1 → sellRate = 1
+        uint256 amountIn = INTERVAL + 1;
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            amountIn
+        );
+
+        IJITTWAMM.Order memory order = twammHook.getOrder(
+            twammPoolKey,
+            orderKey
+        );
+        assertTrue(order.sellRate > 0, "sellRate must be > 0");
+
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.sync(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+
+        console.log("[P5] VerySmallOrder sellRate:", order.sellRate);
+    }
+
+    /// @notice Large order — no overflow. Use a reasonable amount within minted balance.
+    function test_P5_Edge_VeryLargeOrder() public {
+        // Large order but within pool liquidity capacity
+        // Pool has 100e12 liquidity at ±600 ticks, so we need to stay reasonable
+        uint256 amountIn = 1_000_000e6; // 1M tokens
+
+        // Opposing order to ensure matching produces real results
+        _submitOrder1For0(INTERVAL, amountIn);
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            INTERVAL,
+            amountIn
+        );
+
+        IJITTWAMM.Order memory order = twammHook.getOrder(
+            twammPoolKey,
+            orderKey
+        );
+        assertTrue(order.sellRate > 0, "large order sellRate > 0");
+
+        vm.warp(block.timestamp + INTERVAL);
+
+        (uint256 c0, uint256 c1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+        assertTrue(c0 > 0 || c1 > 0, "large order must produce output");
+
+        console.log("[P5] Large order claimed t0:", c0, "t1:", c1);
+    }
+
+    /// @notice Two different users with opposite directions
+    function test_P5_Edge_TwoUsers_OppositeDirections() public {
+        address alice = address(0xA11CE);
+        address bob = address(0xB0B);
+
+        // Fund and approve
+        pt.mint(alice, 1_000_000e6);
+        ct.mint(alice, 1_000_000e6);
+        pt.mint(bob, 1_000_000e6);
+        ct.mint(bob, 1_000_000e6);
+
+        vm.startPrank(alice);
+        pt.approve(address(twammHook), type(uint256).max);
+        ct.approve(address(twammHook), type(uint256).max);
+        (bytes32 idA, IJITTWAMM.OrderKey memory keyA) = twammHook.submitOrder(
+            IJITTWAMM.SubmitOrderParams({
+                key: twammPoolKey,
+                zeroForOne: true,
+                duration: INTERVAL,
+                amountIn: 3600e6
+            })
+        );
+        vm.stopPrank();
+
+        vm.startPrank(bob);
+        pt.approve(address(twammHook), type(uint256).max);
+        ct.approve(address(twammHook), type(uint256).max);
+        (bytes32 idB, IJITTWAMM.OrderKey memory keyB) = twammHook.submitOrder(
+            IJITTWAMM.SubmitOrderParams({
+                key: twammPoolKey,
+                zeroForOne: false,
+                duration: INTERVAL,
+                amountIn: 3600e6
+            })
+        );
+        vm.stopPrank();
+
+        assertTrue(idA != idB, "different users different IDs");
+
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        // Alice claims her buy tokens
+        vm.prank(alice);
+        (uint256 a0, uint256 a1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA})
+        );
+
+        // Bob claims his buy tokens
+        vm.prank(bob);
+        (uint256 b0, uint256 b1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB})
+        );
+
+        assertTrue(a0 > 0 || a1 > 0, "Alice must receive buy tokens");
+        assertTrue(b0 > 0 || b1 > 0, "Bob must receive buy tokens");
+
+        console.log("[P5] Alice claimed t0:", a0, "t1:", a1);
+        console.log("[P5] Bob claimed t0:", b0, "t1:", b1);
+    }
+
+    /// @notice Submit a new order after a previous one fully executed
+    function test_P5_Edge_SubmitAfterFullExecution() public {
+        // Order 1 with opposing flow (1hr)
+        (, IJITTWAMM.OrderKey memory key1) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        _submitOrder1For0(INTERVAL, 3600e6);
+
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key1})
+        );
+
+        // Verify clean state
+        (uint256 sr0, ) = twammHook.getOrderPool(twammPoolKey, true);
+        assertEq(sr0, 0, "sell rate should be 0 after full execution");
+
+        // Order 2: use DIFFERENT duration (2hr) so orderId differs from round 1
+        (, IJITTWAMM.OrderKey memory key2) = _submitOrder0For1(
+            2 * INTERVAL,
+            7200e6
+        );
+        _submitOrder1For0(2 * INTERVAL, 7200e6);
+
+        IJITTWAMM.Order memory order2 = twammHook.getOrder(twammPoolKey, key2);
+        assertTrue(order2.sellRate > 0, "new order should be stored");
+
+        vm.warp(block.timestamp + 2 * INTERVAL);
+        (uint256 c0, uint256 c1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key2})
+        );
+        assertTrue(c0 > 0 || c1 > 0, "second order must produce output");
+    }
+
+    /// @notice Same user, same direction, different expirations
+    function test_P5_Edge_MultipleOrders_SameDirection_DiffExpiry() public {
+        // Both 0→1 but different durations
+        (, IJITTWAMM.OrderKey memory keyShort) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        (, IJITTWAMM.OrderKey memory keyLong) = _submitOrder0For1(
+            3 * INTERVAL,
+            10800e6
+        );
+
+        // Add opposing flow so at least some matching occurs
+        _submitOrder1For0(3 * INTERVAL, 10800e6);
+
+        // Warp past short order expiry
+        vm.warp(block.timestamp + INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+        // Claim short (should be expired and deleted)
+        twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyShort})
+        );
+        IJITTWAMM.Order memory shortOrder = twammHook.getOrder(
+            twammPoolKey,
+            keyShort
+        );
+        assertEq(shortOrder.sellRate, 0, "short order deleted");
+
+        // Long still active
+        IJITTWAMM.Order memory longOrder = twammHook.getOrder(
+            twammPoolKey,
+            keyLong
+        );
+        assertTrue(longOrder.sellRate > 0, "long order still active");
+
+        // Warp to long expiry
+        vm.warp(block.timestamp + 2 * INTERVAL);
+        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyLong})
+        );
+
+        IJITTWAMM.Order memory longFinal = twammHook.getOrder(
+            twammPoolKey,
+            keyLong
+        );
+        assertEq(longFinal.sellRate, 0, "long order deleted after expiry");
+    }
+
+    /// @notice Consecutive interval-by-interval execution with opposing flow
+    function test_P5_Edge_ConsecutiveIntervalExecutions() public {
+        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
+            3 * INTERVAL,
+            10800e6
+        );
+        _submitOrder1For0(3 * INTERVAL, 10800e6);
+
+        uint256 lastVirtual = twammHook.lastVirtualOrderTimestamp(
+            twammPoolKey.toId()
+        );
+
+        for (uint256 i = 1; i <= 3; i++) {
+            vm.warp(lastVirtual + i * INTERVAL);
+            twammHook.executeJITTWAMMOrders(twammPoolKey);
+
+            uint256 ts = twammHook.lastVirtualOrderTimestamp(
+                twammPoolKey.toId()
+            );
+            assertEq(ts, lastVirtual + i * INTERVAL, "timestamp must advance");
+            console.log("[P5] Interval", i, "lastVirtual:", ts);
+        }
+
+        // After 3 intervals the order should be expired
+        (uint256 c0, uint256 c1) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: orderKey})
+        );
+        assertTrue(c0 > 0 || c1 > 0, "must claim after 3 intervals");
+    }
+
+    // ================================================================
+    //  PHASE 6: ADMIN, FEES & PRICE BOUNDS
+    // ================================================================
+
+    /// @notice Owner can set trading fee
+    function test_P6_Admin_SetTradingFee() public {
+        twammHook.setTradingFee(3000); // 0.3%
+        assertEq(twammHook.tradingFee(), 3000, "trading fee set correctly");
+    }
+
+    /// @notice Trading fee reduces buy token earnings (uses opposing orders)
+    function test_P6_Admin_TradingFee_ReducesEarnings() public {
+        // Execute order WITHOUT fee (opposing flow)
+        (, IJITTWAMM.OrderKey memory keyNoFee) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        _submitOrder1For0(INTERVAL, 3600e6);
+
+        vm.warp(block.timestamp + INTERVAL);
+        (uint256 c0NoFee, uint256 c1NoFee) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyNoFee})
+        );
+        uint256 earningsNoFee = c0NoFee + c1NoFee;
+
+        // Set trading fee and execute same order
+        twammHook.setTradingFee(50000); // 5% fee for visible difference
+
+        (, IJITTWAMM.OrderKey memory keyWithFee) = _submitOrder0For1(
+            INTERVAL,
+            3600e6
+        );
+        _submitOrder1For0(INTERVAL, 3600e6);
+
+        vm.warp(block.timestamp + INTERVAL);
+        (uint256 c0Fee, uint256 c1Fee) = twammHook.syncAndClaimTokens(
+            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyWithFee})
+        );
+        uint256 earningsFee = c0Fee + c1Fee;
+
+        assertTrue(
+            earningsFee < earningsNoFee,
+            "earnings with fee must be less than without"
+        );
+
+        // Reset fee
+        twammHook.setTradingFee(0);
+
+        console.log(
+            "[P6] No fee earnings:",
+            earningsNoFee,
+            "With fee:",
+            earningsFee
+        );
+    }
+
+    /// @notice Protocol fee capped at 500 (0.05%)
+    function test_P6_Admin_SetProtocolFee_Capped() public {
+        twammHook.setProtocolFee(twammPoolKey, 500);
+        vm.expectRevert();
+        twammHook.setProtocolFee(twammPoolKey, 501);
+    }
+
+    /// @notice Price bounds can only be set once
+    function test_P6_Admin_PriceBounds_OnlySetOnce() public {
+        twammHook.setPriceBounds(twammPoolKey, 1, type(uint160).max);
+        vm.expectRevert();
+        twammHook.setPriceBounds(twammPoolKey, 1, type(uint160).max);
+    }
+
+    /// @notice Non-owner cannot call admin functions
+    function test_P6_Admin_Revert_NotOwner() public {
+        vm.startPrank(address(0xDEAD));
+        vm.expectRevert();
+        twammHook.setTradingFee(3000);
+        vm.expectRevert();
+        twammHook.setProtocolFee(twammPoolKey, 100);
+        vm.stopPrank();
+    }
+}

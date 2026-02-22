@@ -20,8 +20,8 @@ interface IPrimeBroker {
     /// @dev Enables two-phase seize: wRLP extracted is burned to offset debt,
     ///      collateral goes to liquidator as bonus.
     struct SeizeOutput {
-        uint256 collateralSeized;     // collateralToken transferred to recipient (liquidator bonus)
-        uint256 wRLPExtracted;        // positionToken (wRLP) sent to Core for burning
+        uint256 collateralSeized; // collateralToken transferred to recipient (liquidator bonus)
+        uint256 wRLPExtracted; // positionToken (wRLP) sent to Core for burning
     }
 
     /// @notice Returns the total Net Asset Value of the account in collateral terms.
@@ -31,14 +31,19 @@ interface IPrimeBroker {
 
     /// @notice Seizes assets from the account during liquidation.
     /// @dev Only callable by RLDCore during liquidation.
-    /// @dev Priority order: Cash → TWAMM → V4 LP
-    /// @dev Design: collateralToken goes to recipient, wRLP goes to caller (Core) for burning,
-    ///      other tokens stay in broker.
+    /// @dev Priority order: wRLP (token terms) → Cash → TWAMM → V4 LP
+    /// @dev Design: wRLP is extracted in TOKEN terms (up to principalToCover) for 1:1 debt
+    ///      cancellation. Collateral goes to recipient (liquidator). Other tokens stay in broker.
     /// @param value The value (in collateral terms) to seize.
+    /// @param principalToCover The wRLP debt principal being covered (in token terms).
     /// @param recipient The liquidator address to receive collateral.
     /// @return output The amounts of collateral and wRLP extracted.
-    function seize(uint256 value, address recipient) external returns (SeizeOutput memory output);
-    
+    function seize(
+        uint256 value,
+        uint256 principalToCover,
+        address recipient
+    ) external returns (SeizeOutput memory output);
+
     /// @notice Emitted when a generic execution is performed.
     event Execute(address indexed target, bytes data);
 
@@ -52,7 +57,7 @@ interface IPrimeBroker {
         address indexed token,
         int256 delta,
         uint256 newBalance,
-        bytes32 reason  // keccak256("deposit"), keccak256("withdraw"), etc.
+        bytes32 reason // keccak256("deposit"), keccak256("withdraw"), etc.
     );
 
     /// @notice Emitted for periodic state verification
@@ -84,7 +89,6 @@ interface IPrimeBroker {
 
     /// @notice Emits a StateAudit event for reconciliation
     function emitStateAudit() external;
-
 
     /// @notice Sets an operator for the Prime Broker.
     /// @dev Operators can perform all actions except ownership transfer.
@@ -130,14 +134,13 @@ interface IPrimeBroker {
     /// @notice Cancels the active TWAMM order and claims proceeds.
     /// @return buyTokensOut Amount of buy tokens received.
     /// @return sellTokensRefund Amount of sell tokens refunded.
-    function cancelTwammOrder() external returns (uint256 buyTokensOut, uint256 sellTokensRefund);
+    function cancelTwammOrder()
+        external
+        returns (uint256 buyTokensOut, uint256 sellTokensRefund);
 
     /* ============================================================================================ */
     /*                                        NFT METADATA                                          */
     /* ============================================================================================ */
 
     // BondMetadata removed - rendering is now dynamic based on chain state
-
 }
-
-

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {RLDIntegrationBase} from "./shared/RLDIntegrationBase.t.sol";
-import {IRLDCore, MarketId} from "../../src/shared/interfaces/IRLDCore.sol";
+import {RLDIntegrationBase} from "../shared/RLDIntegrationBase.t.sol";
+import {IRLDCore, MarketId} from "../../../src/shared/interfaces/IRLDCore.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";

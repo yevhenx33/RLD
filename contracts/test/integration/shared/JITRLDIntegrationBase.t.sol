@@ -320,7 +320,7 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
                 tickSpacing: TICK_SPACING,
                 hooks: IHooks(address(twammHook))
             });
-            poolManager.initialize(twammPoolKey, SQRT_PRICE_1_1);
+            poolManager.initialize(twammPoolKey, _initialSqrtPrice());
         }
 
         // ─────────────────────────────────────────────────────────────
@@ -406,6 +406,13 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
     /// @dev Override in derived tests to adjust state after base setUp completes.
     ///      E.g., set oracle prices, seed LP positions, open broker accounts.
     function _tweakSetup() internal virtual {}
+
+    /// @dev Override in derived tests to change pool initialization price.
+    ///      Default = 1:1 (SQRT_PRICE_1_1). E2E tests should override to
+    ///      match the oracle index price.
+    function _initialSqrtPrice() internal virtual returns (uint160) {
+        return SQRT_PRICE_1_1;
+    }
 
     // ----------------------------------------------------------------
     //  Permit2 bootstrap
@@ -505,7 +512,11 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
                 maintenanceMargin: 1.1e18,
                 liquidationCloseFactor: 0.5e18,
                 liquidationModule: address(liqModule),
-                liquidationParams: bytes32(0),
+                // Packed: [slope=100 << 32 | maxDiscount=1000 << 16 | baseDiscount=0]
+                // base=0%, max=10% (1000 bps), slope=1.0x (scaled 100)
+                liquidationParams: bytes32(
+                    (uint256(100) << 32) | (uint256(1000) << 16) | uint256(0)
+                ),
                 spotOracle: address(testOracle), // configurable spot price
                 rateOracle: address(testOracle), // configurable index price
                 oraclePeriod: 3600,

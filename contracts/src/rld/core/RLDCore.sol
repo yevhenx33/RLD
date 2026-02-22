@@ -596,7 +596,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     function liquidate(
         MarketId id,
         address user,
-        uint256 debtToCover
+        uint256 debtToCover,
+        uint256 minCollateralOut
     ) external override nonReentrant {
         _applyFunding(id);
 
@@ -606,7 +607,11 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         _validateLiquidationChecks(id, user, config);
         _validateLiquidationAmount(debtToCover, config);
 
-        // 2. Debt Calculations & Updates
+        // 2. Snapshot principal BEFORE optimistic reduction
+        // (needed for correct health score in seize calculation)
+        uint256 principalSnapshot = uint256(positions[id][user].debtPrincipal);
+
+        // 3. Debt Calculations & Updates (optimistic reduction)
         (uint256 principalToCover, uint256 normFactor) = _updateLiquidationDebt(
             id,
             user,
@@ -614,23 +619,25 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             config
         );
 
-        // 3. Seize Calculation via Oracle & Module
+        // 4. Seize Calculation via Oracle & Module
         uint256 seizeAmount = _calculateLiquidationSeize(
             id,
             user,
             debtToCover,
             normFactor,
-            config
+            config,
+            principalSnapshot
         );
 
-        // 4. Execution & Settlement (with negative equity protection)
+        // 5. Execution & Settlement (with negative equity protection)
         _settleLiquidation(
             id,
             user,
             seizeAmount,
             principalToCover,
             debtToCover,
-            normFactor
+            normFactor,
+            minCollateralOut
         );
     }
 
@@ -719,7 +726,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         address user,
         uint256 debtToCover,
         uint256 normFactor,
-        MarketConfig memory config
+        MarketConfig memory config,
+        uint256 principalSnapshot
     ) internal view returns (uint256 seizeAmount) {
         MarketAddresses storage addresses = marketAddresses[id];
 
@@ -735,13 +743,11 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             )
             : 1e18;
 
-        // PRICE PROTECTION: Use min(spot, index) for liquidator benefit (conservative debt valuation)
-        // and max(spot, index) for borrower protection (generous collateral valuation)
-        // This prevents arbitrage from price divergence
+        // PRICING: Collateral (waUSDC) IS the unit of account → price = 1.
+        // Debt (wRLP) is priced via indexPrice. Use min for conservative debt valuation
+        // (protects liquidator from overpaying).
         uint256 debtPrice = indexPrice < spotPrice ? indexPrice : spotPrice;
-        uint256 collateralPrice = indexPrice > spotPrice
-            ? indexPrice
-            : spotPrice;
+        uint256 collateralPrice = 1e18; // waUSDC is the valuation currency
 
         ILiquidationModule.PriceData memory priceData = ILiquidationModule
             .PriceData({
@@ -750,16 +756,16 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
                 normalizationFactor: normFactor
             });
 
-        // Use updated debt principal for remaining debt calculation
-        uint256 remainingTrueDebt = uint256(positions[id][user].debtPrincipal)
-            .mulWad(normFactor)
-            .mulWad(debtPrice);
+        // Use pre-reduction principal for correct health score calculation.
+        // The optimistic reduction in _updateLiquidationDebt already modified
+        // storage, so we use the snapshot taken before that step.
+        uint256 remainingPrincipal = principalSnapshot;
 
         (, seizeAmount) = ILiquidationModule(addresses.liquidationModule)
             .calculateSeizeAmount(
                 debtToCover,
                 IPrimeBroker(user).getNetAccountValue(),
-                remainingTrueDebt,
+                remainingPrincipal,
                 priceData,
                 config,
                 config.liquidationParams
@@ -772,7 +778,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint256 seizeAmount,
         uint256 principalToCover,
         uint256 debtToCover,
-        uint256 normFactor
+        uint256 normFactor,
+        uint256 minCollateralOut
     ) internal {
         // NEGATIVE EQUITY PROTECTION: Cap seize at available collateral
         uint256 availableCollateral = IPrimeBroker(user).getNetAccountValue();
@@ -780,17 +787,11 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint256 actualPrincipalToCover = principalToCover;
 
         if (seizeAmount > availableCollateral) {
-            // Adjust seize amount to available collateral
             actualSeizeAmount = availableCollateral;
-
-            // Proportionally reduce debt coverage
-            // actualDebtCovered = (availableCollateral * debtToCover) / seizeAmount
             uint256 actualDebtCovered = availableCollateral
                 .mulWad(debtToCover)
                 .divWad(seizeAmount);
             actualPrincipalToCover = actualDebtCovered.divWad(normFactor);
-
-            // Revert the optimistic debt reduction and apply correct amount
             Position storage pos = positions[id][user];
             pos.debtPrincipal =
                 pos.debtPrincipal +
@@ -800,6 +801,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         IPrimeBroker.SeizeOutput memory seizeOutput = IPrimeBroker(user).seize(
             actualSeizeAmount,
+            actualPrincipalToCover,
             msg.sender
         );
 
@@ -820,6 +822,12 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         }
 
         emit PositionModified(id, user, 0, -int256(actualPrincipalToCover));
+
+        // SLIPPAGE PROTECTION: Ensure liquidator receives minimum collateral
+        require(
+            seizeOutput.collateralSeized >= minCollateralOut,
+            "Slippage: collateral below minimum"
+        );
     }
 
     /* ============================================================================================ */

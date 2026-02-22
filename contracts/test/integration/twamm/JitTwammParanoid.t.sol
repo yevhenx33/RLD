@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {JITRLDIntegrationBase} from "./shared/JITRLDIntegrationBase.t.sol";
+import {JITRLDIntegrationBase} from "../shared/JITRLDIntegrationBase.t.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -17,8 +17,8 @@ import {
     PoolModifyLiquidityTestNoChecks
 } from "v4-core/src/test/PoolModifyLiquidityTestNoChecks.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
-import {IJITTWAMM} from "../../src/twamm/IJITTWAMM.sol";
-import {JITTWAMM} from "../../src/twamm/JITTWAMM.sol";
+import {IJITTWAMM} from "../../../src/twamm/IJITTWAMM.sol";
+import {JITTWAMM} from "../../../src/twamm/JITTWAMM.sol";
 import {
     IERC20Minimal
 } from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
