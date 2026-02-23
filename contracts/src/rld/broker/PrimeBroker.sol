@@ -213,10 +213,18 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /*                                     OPERATOR SYSTEM                                         */
     /* ─────────────────────────────────────────────────────────────────────────────────────────── */
 
+    /// @notice Maximum number of operators per broker
+    /// @dev Bounded to keep freeze() gas costs predictable (max 8 SSTOREs)
+    uint8 public constant MAX_OPERATORS = 8;
+
     /// @notice Addresses authorized to act on behalf of the owner
     /// @dev Operators can do everything EXCEPT modify the operator set
     /// Use case: Keeper bots, automation contracts, multisig signers
     mapping(address => bool) public operators;
+
+    /// @notice Enumerable list of active operators (bounded to MAX_OPERATORS)
+    /// @dev Enables mass revocation during freeze() without iteration over mapping
+    address[] public operatorList;
 
     /// @dev Prevents re-initialization of clones
     /// Set to true in implementation constructor AND after clone initialization
@@ -225,6 +233,14 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @notice Nonces for signature-based operator authorization
     /// @dev Incremented after each successful setOperatorWithSignature call
     mapping(address => uint256) public operatorNonces;
+
+    /* ─────────────────────────────────────────────────────────────────────────────────────────── */
+    /*                                      BOND FREEZE                                            */
+    /* ─────────────────────────────────────────────────────────────────────────────────────────── */
+
+    /// @notice Whether this broker is frozen (bond mode)
+    /// @dev When frozen, all state-changing operations are blocked except seize() and unlock
+    bool public frozen;
 
     /* ============================================================================================ */
     /*                                         MODIFIERS                                           */
@@ -262,6 +278,14 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             uint256(uint160(address(this)))
         );
         require(msg.sender == owner || operators[msg.sender], "Not Authorized");
+        _;
+    }
+
+    /// @dev Restricts function when broker is frozen (bond mode)
+    /// Frozen brokers block ALL state-changing operations to protect bond integrity.
+    /// Only seize() (liquidation), view functions, and unfreeze() bypass this.
+    modifier whenNotFrozen() {
+        require(!frozen, "Broker frozen");
         _;
     }
 
@@ -340,8 +364,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         rateOracle = vars.rateOracle;
 
         // Set initial operators (e.g., BrokerRouter) so they're pre-approved from deploy
+        require(
+            _initialOperators.length <= MAX_OPERATORS,
+            "Too many operators"
+        );
         for (uint256 i = 0; i < _initialOperators.length; i++) {
             operators[_initialOperators[i]] = true;
+            operatorList.push(_initialOperators[i]);
             emit OperatorUpdated(_initialOperators[i], true);
         }
 
@@ -694,7 +723,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @param newTokenId The NFT token ID to track (0 to clear/untrack)
     function setActiveV4Position(
         uint256 newTokenId
-    ) external onlyAuthorized nonReentrant {
+    ) external onlyAuthorized nonReentrant whenNotFrozen {
         if (newTokenId != 0) {
             // SECURITY: Verify this broker actually owns the position
             require(
@@ -728,7 +757,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @param info The TWAMM order info to track (pass empty orderId to clear)
     function setActiveTwammOrder(
         TwammOrderInfo calldata info
-    ) external onlyAuthorized nonReentrant {
+    ) external onlyAuthorized nonReentrant whenNotFrozen {
         if (info.orderId != bytes32(0)) {
             // The TWAMM hook is at info.key.hooks (NOT TWAMM_MODULE)
             address twammHook = address(info.key.hooks);
@@ -754,7 +783,12 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @notice Clears the tracked V4 LP position
     /// @dev Convenience function equivalent to setActiveV4Position(0)
     /// Use after selling/closing your V4 position
-    function clearActiveV4Position() external onlyAuthorized nonReentrant {
+    function clearActiveV4Position()
+        external
+        onlyAuthorized
+        nonReentrant
+        whenNotFrozen
+    {
         activeTokenId = 0;
         require(
             IRLDCore(CORE).isSolvent(marketId, address(this)),
@@ -764,7 +798,12 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
 
     /// @notice Clears the tracked TWAMM order
     /// @dev Convenience function for after an order is fully executed or cancelled
-    function clearActiveTwammOrder() external onlyAuthorized nonReentrant {
+    function clearActiveTwammOrder()
+        external
+        onlyAuthorized
+        nonReentrant
+        whenNotFrozen
+    {
         delete activeTwammOrder;
         require(
             IRLDCore(CORE).isSolvent(marketId, address(this)),
@@ -798,6 +837,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         external
         onlyAuthorized
         nonReentrant
+        whenNotFrozen
         returns (bytes32 orderId, ITWAMM.OrderKey memory orderKey)
     {
         // Determine which token is being sold
@@ -836,6 +876,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         external
         onlyAuthorized
         nonReentrant
+        whenNotFrozen
         returns (uint256 buyTokensOut, uint256 sellTokensRefund)
     {
         require(activeTwammOrder.orderId != bytes32(0), "No active order");
@@ -884,7 +925,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         bytes32 rawMarketId,
         int256 deltaCollateral,
         int256 deltaDebt
-    ) external onlyAuthorized nonReentrant {
+    ) external onlyAuthorized nonReentrant whenNotFrozen {
         MarketId id = MarketId.wrap(rawMarketId);
 
         // SECURITY: Can only modify position in this broker's market
@@ -948,7 +989,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     function withdrawCollateral(
         address recipient,
         uint256 amount
-    ) external onlyAuthorized nonReentrant {
+    ) external onlyAuthorized nonReentrant whenNotFrozen {
         ERC20(collateralToken).safeTransfer(recipient, amount);
         require(
             IRLDCore(CORE).isSolvent(marketId, address(this)),
@@ -963,7 +1004,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     function withdrawPositionToken(
         address recipient,
         uint256 amount
-    ) external onlyAuthorized nonReentrant {
+    ) external onlyAuthorized nonReentrant whenNotFrozen {
         ERC20(positionToken).safeTransfer(recipient, amount);
         require(
             IRLDCore(CORE).isSolvent(marketId, address(this)),
@@ -978,7 +1019,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     function withdrawUnderlying(
         address recipient,
         uint256 amount
-    ) external onlyAuthorized nonReentrant {
+    ) external onlyAuthorized nonReentrant whenNotFrozen {
         ERC20(underlyingToken).safeTransfer(recipient, amount);
         require(
             IRLDCore(CORE).isSolvent(marketId, address(this)),
@@ -1067,7 +1108,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     function setOperator(
         address operator,
         bool active
-    ) external override nonReentrant {
+    ) external override nonReentrant whenNotFrozen {
         address owner = IERC721(factory).ownerOf(
             uint256(uint160(address(this)))
         );
@@ -1082,7 +1123,23 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             revert("Not authorized");
         }
 
-        operators[operator] = active;
+        if (active) {
+            require(!operators[operator], "Already operator");
+            require(operatorList.length < MAX_OPERATORS, "Max operators");
+            operators[operator] = true;
+            operatorList.push(operator);
+        } else {
+            require(operators[operator], "Not operator");
+            operators[operator] = false;
+            // Swap-and-pop removal from operatorList
+            for (uint256 i = 0; i < operatorList.length; i++) {
+                if (operatorList[i] == operator) {
+                    operatorList[i] = operatorList[operatorList.length - 1];
+                    operatorList.pop();
+                    break;
+                }
+            }
+        }
         emit OperatorUpdated(operator, active);
     }
 
@@ -1103,7 +1160,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         bool active,
         bytes calldata signature,
         uint256 nonce
-    ) external nonReentrant {
+    ) external nonReentrant whenNotFrozen {
         address owner = IERC721(factory).ownerOf(
             uint256(uint160(address(this)))
         );
@@ -1125,8 +1182,64 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         address signer = ECDSA.recover(ethSignedHash, signature);
         require(signer == owner, "Invalid signature");
 
-        operators[operator] = active;
+        if (active) {
+            require(!operators[operator], "Already operator");
+            require(operatorList.length < MAX_OPERATORS, "Max operators");
+            operators[operator] = true;
+            operatorList.push(operator);
+        } else {
+            require(operators[operator], "Not operator");
+            operators[operator] = false;
+            for (uint256 i = 0; i < operatorList.length; i++) {
+                if (operatorList[i] == operator) {
+                    operatorList[i] = operatorList[operatorList.length - 1];
+                    operatorList.pop();
+                    break;
+                }
+            }
+        }
         emit OperatorUpdated(operator, active);
+    }
+
+    /* ============================================================================================ */
+    /*                                    BOND FREEZE CONTROL                                      */
+    /* ============================================================================================ */
+
+    /// @notice Freezes the broker for bond mode
+    /// @dev Only owner can freeze. Revokes ALL operators atomically.
+    /// While frozen, all state-changing operations are blocked except:
+    ///   - seize() (liquidation must always work)
+    ///   - getNetAccountValue() / getFullState() (read-only)
+    ///   - unfreeze() (owner can exit bond mode)
+    ///
+    /// ## Bond Lifecycle
+    /// 1. Owner sets up position (collateral, debt, TWAMM order)
+    /// 2. Owner calls freeze() → operators revoked, operations blocked
+    /// 3. Owner transfers NFT to bond buyer
+    /// 4. TWAMM unwind continues at hook level (not affected by freeze)
+    /// 5. At maturity, new owner calls unfreeze() and withdraws
+    function freeze() external onlyOwner nonReentrant {
+        require(!frozen, "Already frozen");
+
+        frozen = true;
+
+        // Mass-revoke all operators (bounded by MAX_OPERATORS = 8)
+        for (uint256 i = 0; i < operatorList.length; i++) {
+            operators[operatorList[i]] = false;
+            emit OperatorUpdated(operatorList[i], false);
+        }
+        delete operatorList;
+
+        emit BrokerFrozen(msg.sender);
+    }
+
+    /// @notice Unfreezes the broker, re-enabling all operations
+    /// @dev Only owner (current NFT holder) can unfreeze
+    /// After unfreezing, owner must call setOperator() to re-add operators
+    function unfreeze() external onlyOwner nonReentrant {
+        require(frozen, "Not frozen");
+        frozen = false;
+        emit BrokerUnfrozen(msg.sender);
     }
 
     /* ============================================================================================ */

@@ -1,0 +1,458 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
+
+import {JITRLDIntegrationBase} from "../shared/JITRLDIntegrationBase.t.sol";
+import {IRLDCore, MarketId} from "../../../src/shared/interfaces/IRLDCore.sol";
+import {PrimeBroker} from "../../../src/rld/broker/PrimeBroker.sol";
+import {PrimeBrokerFactory} from "../../../src/rld/core/PrimeBrokerFactory.sol";
+import {
+    BrokerVerifier
+} from "../../../src/rld/modules/verifier/BrokerVerifier.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
+
+/// @title BrokerBondLock — Bond Freeze Penetration Tests
+/// @notice Tests for the freeze/unfreeze bond lock mechanism, operator array storage,
+///         and whenNotFrozen modifier coverage.
+///
+/// Coverage Map:
+///
+///     ### 2.1 Freeze Mechanics
+///     | #  | Test                                                     |
+///     |----|----------------------------------------------------------|
+///     | 1  | test_freeze_sets_frozen_true                              |
+///     | 2  | test_freeze_revokes_all_operators                         |
+///     | 3  | test_freeze_reverts_if_already_frozen                     |
+///     | 4  | test_only_owner_can_freeze                                |
+///     | 5  | test_unfreeze_sets_frozen_false                           |
+///     | 6  | test_unfreeze_reverts_if_not_frozen                       |
+///     | 7  | test_only_owner_can_unfreeze                              |
+///
+///     ### 2.2 Freeze Blocks Operations
+///     | #  | Test                                                     |
+///     |----|----------------------------------------------------------|
+///     | 8  | test_frozen_blocks_all_state_changing_ops                 |
+///     | 9  | test_frozen_allows_seize                                  |
+///     | 10 | test_frozen_allows_nav_and_state_reads                    |
+///
+///     ### 2.3 Bond Lifecycle
+///     | #  | Test                                                     |
+///     |----|----------------------------------------------------------|
+///     | 11 | test_freeze_transfer_unfreeze_lifecycle                   |
+///     | 12 | test_add_operators_after_unfreeze                         |
+///
+///     ### 2.4 Operator Array & Cap
+///     | #  | Test                                                     |
+///     |----|----------------------------------------------------------|
+///     | 13 | test_operator_cap_enforced_at_max                         |
+///     | 14 | test_operator_array_tracks_additions_and_removals         |
+///     | 15 | test_double_add_same_operator_reverts                     |
+///     | 16 | test_remove_non_operator_reverts                          |
+///
+contract BrokerBondLock is JITRLDIntegrationBase {
+    PrimeBrokerFactory public brokerFactory;
+    PrimeBroker public broker;
+    address public brokerAddr;
+
+    // Test addresses
+    address public alice;
+    uint256 public alicePk;
+    address public bob;
+    address public attacker;
+    address public operator1;
+    address public operator2;
+    address public operator3;
+
+    uint256 brokerNonce;
+
+    function _tweakSetup() internal override {
+        // Get factory from market config's broker verifier
+        IRLDCore.MarketAddresses memory ma = core.getMarketAddresses(marketId);
+        IRLDCore.MarketConfig memory mc = core.getMarketConfig(marketId);
+        brokerFactory = PrimeBrokerFactory(
+            BrokerVerifier(mc.brokerVerifier).FACTORY()
+        );
+
+        // Generate keyed accounts
+        (alice, alicePk) = makeAddrAndKey("alice");
+        bob = makeAddr("bob");
+        attacker = makeAddr("attacker");
+        operator1 = makeAddr("operator1");
+        operator2 = makeAddr("operator2");
+        operator3 = makeAddr("operator3");
+
+        // Create a broker — test contract is caller, so test contract is NFT owner
+        broker = _createBroker();
+        brokerAddr = address(broker);
+
+        // Transfer NFT to alice so she is the broker owner
+        uint256 tokenId = uint256(uint160(brokerAddr));
+        brokerFactory.transferFrom(address(this), alice, tokenId);
+
+        // Seed broker with collateral using the actual market collateral token
+        MockERC20(ma.collateralToken).transfer(brokerAddr, 100_000e6);
+    }
+
+    function _createBroker() internal returns (PrimeBroker) {
+        bytes32 salt = keccak256(abi.encodePacked("broker", brokerNonce++));
+        return PrimeBroker(payable(brokerFactory.createBroker(salt)));
+    }
+
+    /// @dev Helper to add operators via alice (owner)
+    function _addOperators(address[] memory ops) internal {
+        for (uint256 i = 0; i < ops.length; i++) {
+            vm.prank(alice);
+            broker.setOperator(ops[i], true);
+        }
+    }
+
+    // ================================================================
+    //  2.1 FREEZE MECHANICS
+    // ================================================================
+
+    /// @notice Test #1: freeze() sets frozen to true
+    function test_freeze_sets_frozen_true() public {
+        assertFalse(broker.frozen(), "Should start unfrozen");
+
+        vm.prank(alice);
+        broker.freeze();
+
+        assertTrue(broker.frozen(), "Should be frozen after freeze()");
+    }
+
+    /// @notice Test #2: freeze() revokes ALL operators atomically
+    function test_freeze_revokes_all_operators() public {
+        // Add 3 operators
+        address[] memory ops = new address[](3);
+        ops[0] = operator1;
+        ops[1] = operator2;
+        ops[2] = operator3;
+        _addOperators(ops);
+
+        // Verify they're active
+        assertTrue(broker.operators(operator1), "op1 should be active");
+        assertTrue(broker.operators(operator2), "op2 should be active");
+        assertTrue(broker.operators(operator3), "op3 should be active");
+
+        // Note: BrokerRouter is also an operator (from initialize)
+        assertTrue(
+            broker.operators(address(brokerRouter)),
+            "Router should be active"
+        );
+
+        // Freeze
+        vm.prank(alice);
+        broker.freeze();
+
+        // ALL operators should be revoked (including BrokerRouter from init)
+        assertFalse(broker.operators(operator1), "op1 should be revoked");
+        assertFalse(broker.operators(operator2), "op2 should be revoked");
+        assertFalse(broker.operators(operator3), "op3 should be revoked");
+        assertFalse(
+            broker.operators(address(brokerRouter)),
+            "Router should be revoked"
+        );
+    }
+
+    /// @notice Test #3: freeze() reverts if already frozen
+    function test_freeze_reverts_if_already_frozen() public {
+        vm.prank(alice);
+        broker.freeze();
+
+        vm.prank(alice);
+        vm.expectRevert("Already frozen");
+        broker.freeze();
+    }
+
+    /// @notice Test #4: Only owner can freeze — operator and attacker rejected
+    function test_only_owner_can_freeze() public {
+        // Add operator
+        vm.prank(alice);
+        broker.setOperator(operator1, true);
+
+        // Operator cannot freeze
+        vm.prank(operator1);
+        vm.expectRevert("Not Owner");
+        broker.freeze();
+
+        // Attacker cannot freeze
+        vm.prank(attacker);
+        vm.expectRevert("Not Owner");
+        broker.freeze();
+
+        // Owner can freeze
+        vm.prank(alice);
+        broker.freeze();
+        assertTrue(broker.frozen());
+    }
+
+    /// @notice Test #5: unfreeze() sets frozen to false
+    function test_unfreeze_sets_frozen_false() public {
+        vm.prank(alice);
+        broker.freeze();
+        assertTrue(broker.frozen());
+
+        vm.prank(alice);
+        broker.unfreeze();
+        assertFalse(broker.frozen(), "Should be unfrozen after unfreeze()");
+    }
+
+    /// @notice Test #6: unfreeze() reverts if not currently frozen
+    function test_unfreeze_reverts_if_not_frozen() public {
+        vm.prank(alice);
+        vm.expectRevert("Not frozen");
+        broker.unfreeze();
+    }
+
+    /// @notice Test #7: Only owner can unfreeze
+    function test_only_owner_can_unfreeze() public {
+        vm.prank(alice);
+        broker.freeze();
+
+        // Attacker cannot unfreeze
+        vm.prank(attacker);
+        vm.expectRevert("Not Owner");
+        broker.unfreeze();
+
+        // Owner can unfreeze
+        vm.prank(alice);
+        broker.unfreeze();
+        assertFalse(broker.frozen());
+    }
+
+    // ================================================================
+    //  2.2 FREEZE BLOCKS OPERATIONS
+    // ================================================================
+
+    /// @notice Test #8: All state-changing operations revert when frozen
+    function test_frozen_blocks_all_state_changing_ops() public {
+        vm.prank(alice);
+        broker.freeze();
+
+        // --- withdrawCollateral ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.withdrawCollateral(alice, 1e6);
+
+        // --- withdrawPositionToken ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.withdrawPositionToken(alice, 1e6);
+
+        // --- withdrawUnderlying ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.withdrawUnderlying(alice, 1e6);
+
+        // --- modifyPosition ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.modifyPosition(MarketId.unwrap(marketId), 0, 0);
+
+        // --- setActiveV4Position ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.setActiveV4Position(999);
+
+        // --- clearActiveV4Position ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.clearActiveV4Position();
+
+        // --- clearActiveTwammOrder ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.clearActiveTwammOrder();
+
+        // --- setOperator ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.setOperator(operator1, true);
+
+        // --- setOperatorWithSignature ---
+        vm.prank(alice);
+        vm.expectRevert("Broker frozen");
+        broker.setOperatorWithSignature(operator1, true, new bytes(65), 0);
+    }
+
+    /// @notice Test #9: seize() is NOT blocked by freeze (liquidation must always work)
+    function test_frozen_allows_seize() public {
+        vm.prank(alice);
+        broker.freeze();
+
+        // seize() should not revert with "Broker frozen" — it should either succeed
+        // or revert with a different error (since we're not calling from Core)
+        vm.prank(attacker);
+        vm.expectRevert("Not Core");
+        broker.seize(1e6, 1e18, attacker);
+        // The revert is "Not Core" NOT "Broker frozen" — proving freeze doesn't block seize
+    }
+
+    /// @notice Test #10: View functions work normally during freeze
+    function test_frozen_allows_nav_and_state_reads() public {
+        vm.prank(alice);
+        broker.freeze();
+
+        // getNetAccountValue should still work
+        uint256 nav = broker.getNetAccountValue();
+        assertTrue(nav > 0, "NAV should be readable while frozen");
+
+        // getFullState should still work
+        PrimeBroker.BrokerState memory state = broker.getFullState();
+        assertTrue(state.collateralBalance > 0, "State should be readable");
+
+        // frozen getter should work
+        assertTrue(broker.frozen(), "frozen() should be readable");
+    }
+
+    // ================================================================
+    //  2.3 BOND LIFECYCLE
+    // ================================================================
+
+    /// @notice Test #11: Full bond lifecycle — freeze, transfer, unfreeze by new owner
+    function test_freeze_transfer_unfreeze_lifecycle() public {
+        uint256 tokenId = uint256(uint160(brokerAddr));
+
+        // Step 1: Alice adds operators and sets up position
+        vm.prank(alice);
+        broker.setOperator(operator1, true);
+
+        // Step 2: Alice freezes (bond issuance)
+        vm.prank(alice);
+        broker.freeze();
+
+        // Step 3: Alice transfers NFT to Bob (bond sale)
+        vm.prank(alice);
+        brokerFactory.transferFrom(alice, bob, tokenId);
+
+        // Step 4: Alice can no longer unfreeze (not owner)
+        vm.prank(alice);
+        vm.expectRevert("Not Owner");
+        broker.unfreeze();
+
+        // Step 5: Bob (new owner) unfreezes
+        vm.prank(bob);
+        broker.unfreeze();
+        assertFalse(broker.frozen(), "Bob should be able to unfreeze");
+
+        // Step 6: Bob can now withdraw (operations re-enabled)
+        vm.prank(bob);
+        broker.withdrawCollateral(bob, 1e6);
+    }
+
+    /// @notice Test #12: Can add fresh operators after unfreeze cycle
+    function test_add_operators_after_unfreeze() public {
+        // Add operators, freeze, then unfreeze
+        vm.prank(alice);
+        broker.setOperator(operator1, true);
+
+        vm.prank(alice);
+        broker.freeze();
+        assertFalse(broker.operators(operator1), "operator1 should be revoked");
+
+        vm.prank(alice);
+        broker.unfreeze();
+
+        // Can add fresh operators after unfreeze
+        vm.prank(alice);
+        broker.setOperator(operator2, true);
+        assertTrue(
+            broker.operators(operator2),
+            "operator2 should be active after unfreeze"
+        );
+
+        // Can also re-add previously revoked operator
+        vm.prank(alice);
+        broker.setOperator(operator1, true);
+        assertTrue(
+            broker.operators(operator1),
+            "operator1 should be re-addable"
+        );
+    }
+
+    // ================================================================
+    //  2.4 OPERATOR ARRAY & CAP
+    // ================================================================
+
+    /// @notice Test #13: Cannot exceed MAX_OPERATORS (8)
+    function test_operator_cap_enforced_at_max() public {
+        // BrokerRouter is already an operator from initialize (1 slot used)
+        // Add 7 more to hit the cap
+        for (uint256 i = 0; i < 7; i++) {
+            address op = address(uint160(0xBEEF + i));
+            vm.prank(alice);
+            broker.setOperator(op, true);
+        }
+
+        // 9th operator should revert
+        address op9 = address(uint160(0xDEAD));
+        vm.prank(alice);
+        vm.expectRevert("Max operators");
+        broker.setOperator(op9, true);
+    }
+
+    /// @notice Test #14: Operator array correctly tracks additions and removals
+    function test_operator_array_tracks_additions_and_removals() public {
+        // Add two operators
+        vm.prank(alice);
+        broker.setOperator(operator1, true);
+        vm.prank(alice);
+        broker.setOperator(operator2, true);
+
+        // operatorList should have: [brokerRouter, operator1, operator2]
+        // (brokerRouter was added during initialize)
+        assertEq(
+            broker.operatorList(0),
+            address(brokerRouter),
+            "Index 0 should be brokerRouter"
+        );
+        assertEq(
+            broker.operatorList(1),
+            operator1,
+            "Index 1 should be operator1"
+        );
+        assertEq(
+            broker.operatorList(2),
+            operator2,
+            "Index 2 should be operator2"
+        );
+
+        // Remove operator1 — should swap-and-pop
+        vm.prank(alice);
+        broker.setOperator(operator1, false);
+
+        // After removal: [brokerRouter, operator2] (operator2 swapped into index 1)
+        assertEq(
+            broker.operatorList(0),
+            address(brokerRouter),
+            "Index 0 still brokerRouter"
+        );
+        assertEq(
+            broker.operatorList(1),
+            operator2,
+            "Index 1 should be operator2 after swap"
+        );
+
+        // operatorList length should be 2
+        // Verify by checking that index 2 reverts (out of bounds)
+        vm.expectRevert();
+        broker.operatorList(2);
+    }
+
+    /// @notice Test #15: Cannot add the same operator twice
+    function test_double_add_same_operator_reverts() public {
+        vm.prank(alice);
+        broker.setOperator(operator1, true);
+
+        vm.prank(alice);
+        vm.expectRevert("Already operator");
+        broker.setOperator(operator1, true);
+    }
+
+    /// @notice Test #16: Cannot remove a non-operator
+    function test_remove_non_operator_reverts() public {
+        vm.prank(alice);
+        vm.expectRevert("Not operator");
+        broker.setOperator(operator1, false);
+    }
+}

@@ -588,11 +588,16 @@ JITTWAMM cannot call V4's `donate()` because `BEFORE_DONATE_FLAG` is not set in 
 
 **Mitigation**: `collectedDust` accumulates dust; owner redistributes manually via `claimDust()`.
 
-### 4. Single Order per Direction per Epoch
+### 4. Single Order per Direction per Epoch (By Design)
 
-A user can have at most one active order per `(zeroForOne, expiration)` pair. Attempting to submit a duplicate reverts with `OrderAlreadyExists`.
+A user can have at most one active order per `(zeroForOne, expiration)` pair. Attempting to submit a duplicate reverts with `OrderAlreadyExists`. This is a deliberate design choice:
 
-**Workaround**: Use different durations to get different expiration epochs.
+- **Deterministic lookups**: Anyone can reconstruct an `orderId` from `keccak256(owner, expiration, zeroForOne)` — no hidden nonces or salts needed
+- **No state bloat**: No per-user nonce mappings that accumulate permanently
+- **Natural consolidation**: Users batch their intent into one well-sized TWAP order rather than fragmenting across many small ones
+- **Simpler UX**: Users only need to track direction + expiration, not arbitrary order IDs
+
+Users who need additional throughput can use different durations to land on different expiration epochs.
 
 ### 5. Seed Liquidity Sensitivity
 

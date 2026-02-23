@@ -139,6 +139,25 @@ interface IPrimeBroker {
         returns (uint256 buyTokensOut, uint256 sellTokensRefund);
 
     /* ============================================================================================ */
+    /*                                      BOND FREEZE                                            */
+    /* ============================================================================================ */
+
+    /// @notice Emitted when the broker is frozen for bond mode
+    event BrokerFrozen(address indexed owner);
+
+    /// @notice Emitted when the broker is unfrozen
+    event BrokerUnfrozen(address indexed owner);
+
+    /// @notice Whether this broker is currently frozen
+    function frozen() external view returns (bool);
+
+    /// @notice Freezes the broker — revokes all operators and blocks state changes
+    function freeze() external;
+
+    /// @notice Unfreezes the broker — re-enables all operations
+    function unfreeze() external;
+
+    /* ============================================================================================ */
     /*                                        NFT METADATA                                          */
     /* ============================================================================================ */
 
