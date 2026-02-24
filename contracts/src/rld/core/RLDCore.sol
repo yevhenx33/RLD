@@ -166,7 +166,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         marketStates[id] = MarketState({
             normalizationFactor: 1e18, // Start at 1:1 (no accrued interest)
             totalDebt: 0, // No debt initially
-            lastUpdateTimestamp: uint48(block.timestamp)
+            lastUpdateTimestamp: uint48(block.timestamp),
+            badDebt: 0 // No bad debt initially
         });
 
         emit MarketCreated(
@@ -317,41 +318,32 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         if (deltaDebt != 0) {
             uint256 newDebt = _applyDelta(pos.debtPrincipal, deltaDebt);
             pos.debtPrincipal = uint128(newDebt);
-
-            // Update total debt and check debt cap
-            if (deltaDebt > 0) {
-                // Increasing debt - check debt cap against TRUE debt (economic USD)
-                uint256 newTotalDebt = uint256(state.totalDebt) +
-                    uint256(deltaDebt);
-
-                // Debt cap check — type(uint128).max = unlimited (skip entirely)
-                uint128 cap = _getEffectiveConfig(id).debtCap;
-                if (cap < type(uint128).max) {
-                    uint256 trueTotalDebt = newTotalDebt.mulWad(
-                        state.normalizationFactor
-                    );
-                    if (trueTotalDebt > cap) {
-                        revert DebtCapExceeded();
-                    }
-                }
-
-                state.totalDebt = uint128(newTotalDebt);
-            } else {
-                // Decreasing debt
-                state.totalDebt = uint128(
-                    uint256(state.totalDebt) - uint256(-deltaDebt)
-                );
-            }
         }
 
         // 3. Tokenize Debt Changes (wRLP)
         // wRLP tokens represent debt obligations and can be traded
+        // NOTE: Mint/burn BEFORE debt cap check so totalSupply() is current
         if (deltaDebt > 0) {
             // Minting debt = creating short position
             PositionToken(addresses.positionToken).mint(
                 msg.sender,
                 uint256(deltaDebt)
             );
+
+            // Debt cap check — uses totalSupply() as source of truth
+            // F-07 NOTE: Cap is enforced in ECONOMIC terms (principal × normFactor).
+            // As normFactor drifts, the effective principal limit changes:
+            //   NF=0.5 → allows 2× more principal; NF=2.0 → allows half.
+            // type(uint128).max = unlimited (skip entirely)
+            uint128 cap = _getEffectiveConfig(id).debtCap;
+            if (cap < type(uint128).max) {
+                uint256 trueTotalDebt = PositionToken(addresses.positionToken)
+                    .totalSupply()
+                    .mulWad(state.normalizationFactor);
+                if (trueTotalDebt > cap) {
+                    revert DebtCapExceeded();
+                }
+            }
         } else if (deltaDebt < 0) {
             // Repaying debt = closing short position
             PositionToken(addresses.positionToken).burn(
@@ -360,7 +352,15 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             );
         }
 
-        // 4. Track Action Type for Solvency Ratio Selection
+        // 4. Sync totalDebt from totalSupply (single source of truth)
+        // Kept in struct for integration consumers (indexers, UIs)
+        if (deltaDebt != 0) {
+            state.totalDebt = uint128(
+                PositionToken(addresses.positionToken).totalSupply()
+            );
+        }
+
+        // 5. Track Action Type for Solvency Ratio Selection
         // - Type 1: Maintenance operations → uses maintenanceMargin (less strict)
         // - Type 2: New minting → uses minColRatio (more strict)
         bytes32 actionKey = keccak256(abi.encode(id, msg.sender, ACTION_SALT));
@@ -372,7 +372,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             TransientStorage.tstore(actionKey, newType);
         }
 
-        // 5. Add to Touched List for Post-Lock Solvency Check
+        // 6. Add to Touched List for Post-Lock Solvency Check
         _addTouchedPosition(id, msg.sender);
 
         emit PositionModified(id, msg.sender, deltaCollateral, deltaDebt);
@@ -506,9 +506,16 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /*                                     FUNDING APPLICATION                                      */
     /* ============================================================================================ */
 
+    /// @dev Socialization period for bad debt (7 days)
+    uint256 constant BAD_DEBT_PERIOD = 7 days;
+
+    /// @dev Minimum chunk divisor: chunk floor = totalSupply / MIN_CHUNK_DIVISOR (0.0001%)
+    uint256 constant MIN_CHUNK_DIVISOR = 1_000_000;
+
     /// @notice Applies pending funding rate to update the normalization factor.
     /// @dev Called lazily on first interaction per block.
     /// @dev Normalization factor compounds over time to track accumulated interest.
+    /// @dev If bad debt exists, a second NF adjustment gradually socializes it over 7 days.
     /// @param id The market ID to apply funding for
     function _applyFunding(MarketId id) internal {
         MarketState storage state = marketStates[id];
@@ -541,6 +548,26 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
                 timeDelta
             );
         }
+
+        // 3. Bad debt bleeding: gradually socialize unbacked debt via NF over 7 days
+        if (state.badDebt > 0 && timeDelta > 0) {
+            uint256 supply = PositionToken(addresses.positionToken)
+                .totalSupply();
+            uint256 minChunk = supply / MIN_CHUNK_DIVISOR;
+            uint256 chunk = (uint256(state.badDebt) * timeDelta) /
+                BAD_DEBT_PERIOD;
+            if (chunk < minChunk) chunk = minChunk;
+            if (chunk > state.badDebt) chunk = state.badDebt;
+            state.normalizationFactor += uint128((chunk * 1e18) / supply);
+            state.badDebt -= uint128(chunk);
+            emit BadDebtSocialized(
+                id,
+                uint128(chunk),
+                state.badDebt,
+                state.normalizationFactor
+            );
+        }
+
         state.lastUpdateTimestamp = uint48(block.timestamp);
     }
 
@@ -785,6 +812,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint256 availableCollateral = IPrimeBroker(user).getNetAccountValue();
         uint256 actualSeizeAmount = seizeAmount;
         uint256 actualPrincipalToCover = principalToCover;
+        Position storage pos = positions[id][user];
 
         if (seizeAmount > availableCollateral) {
             actualSeizeAmount = availableCollateral;
@@ -792,13 +820,15 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
                 .mulWad(debtToCover)
                 .divWad(seizeAmount);
             actualPrincipalToCover = actualDebtCovered.divWad(normFactor);
-            Position storage pos = positions[id][user];
+            // Restore uncovered principal to pos.debtPrincipal
+            // (_updateLiquidationDebt optimistically reduced it by full principalToCover)
             pos.debtPrincipal =
                 pos.debtPrincipal +
                 uint128(principalToCover) -
                 uint128(actualPrincipalToCover);
         }
 
+        // Execute seize — broker may unwind positions (TWAMM, LP) during this call
         IPrimeBroker.SeizeOutput memory seizeOutput = IPrimeBroker(user).seize(
             actualSeizeAmount,
             actualPrincipalToCover,
@@ -823,6 +853,23 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         emit PositionModified(id, user, 0, -int256(actualPrincipalToCover));
 
+        // BAD DEBT DETECTION: After all seize & burns, check what's left
+        // If the user still has debtPrincipal, it is truly unbacked.
+        // Transfer it to state.badDebt and fully clear the user's position.
+        MarketState storage state = marketStates[id];
+        if (pos.debtPrincipal > 0 && seizeAmount > availableCollateral) {
+            uint128 badDebtAmount = pos.debtPrincipal;
+            state.badDebt += badDebtAmount;
+            pos.debtPrincipal = 0;
+            emit BadDebtRegistered(id, badDebtAmount, state.badDebt);
+        }
+
+        // Sync totalDebt from totalSupply (single source of truth)
+        // F-01 FIX: Previously totalDebt was never decremented during liquidation
+        state.totalDebt = uint128(PositionToken(positionToken).totalSupply());
+
+        emit MarketStateUpdated(id, state.normalizationFactor, state.totalDebt);
+
         // SLIPPAGE PROTECTION: Ensure liquidator receives minimum collateral
         require(
             seizeOutput.collateralSeized >= minCollateralOut,
@@ -845,6 +892,57 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     ) external view override returns (bool) {
         MarketConfig memory config = _getEffectiveConfig(id);
         return _isSolvent(id, user, uint256(config.maintenanceMargin));
+    }
+
+    /// @notice F-06 FIX: Checks solvency after simulating pending funding.
+    /// @dev Unlike isSolvent(), this simulates the normFactor update that would
+    ///      occur when _applyFunding() runs, giving off-chain consumers an
+    ///      accurate view of whether a position is liquidatable.
+    /// @param id The market ID
+    /// @param user The user to check
+    /// @return True if position would be solvent after funding is applied
+    function isSolventAfterFunding(
+        MarketId id,
+        address user
+    ) external view returns (bool) {
+        Position memory pos = positions[id][user];
+        if (pos.debtPrincipal == 0) return true;
+
+        MarketAddresses storage addresses = marketAddresses[id];
+        MarketState memory state = marketStates[id];
+        MarketConfig memory config = _getEffectiveConfig(id);
+
+        // Simulate funding: call the funding model (it's a view/pure function)
+        (uint256 simNormFactor, ) = IFundingModel(addresses.fundingModel)
+            .calculateFunding(
+                MarketId.unwrap(id),
+                address(this),
+                state.normalizationFactor,
+                state.lastUpdateTimestamp
+            );
+
+        // Use simulated normFactor for debt calculation
+        if (config.brokerVerifier == address(0)) return false;
+        if (!IBrokerVerifier(config.brokerVerifier).isValidBroker(user))
+            return false;
+
+        uint256 trueDebt = uint256(pos.debtPrincipal).mulWad(simNormFactor);
+        uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
+            addresses.underlyingPool,
+            addresses.underlyingToken
+        );
+        uint256 debtValue = trueDebt.mulWad(indexPrice);
+
+        uint256 totalAssets;
+        try IPrimeBroker(user).getNetAccountValue() returns (uint256 value) {
+            totalAssets = value;
+        } catch {
+            return false;
+        }
+        if (totalAssets < debtValue) return false;
+        uint256 netWorth = totalAssets - debtValue;
+        uint256 marginRequirement = uint256(config.maintenanceMargin) - 1e18;
+        return netWorth >= debtValue.mulWad(marginRequirement);
     }
 
     /// @notice Checks if a market exists.

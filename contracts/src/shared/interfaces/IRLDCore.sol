@@ -37,6 +37,7 @@ interface IRLDCore {
         uint128 normalizationFactor; // Debt Scaler (starts at 1e18)
         uint128 totalDebt; // Total debt principal across all positions
         uint48 lastUpdateTimestamp;
+        uint128 badDebt; // Unbacked wRLP principal, socialized via NF over 7 days
     }
 
     struct Position {
@@ -110,6 +111,21 @@ interface IRLDCore {
         MarketId indexed marketId,
         uint128 normalizationFactor,
         uint128 totalDebt
+    );
+
+    /// @notice Emitted when bad debt is registered from an underwater liquidation
+    event BadDebtRegistered(
+        MarketId indexed marketId,
+        uint128 amount,
+        uint128 totalBadDebt
+    );
+
+    /// @notice Emitted when bad debt is socialized via NF bleeding in _applyFunding
+    event BadDebtSocialized(
+        MarketId indexed marketId,
+        uint128 chunk,
+        uint128 remainingBadDebt,
+        uint128 newNormFactor
     );
 
     /// @notice Emitted for account state verification

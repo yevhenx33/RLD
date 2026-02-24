@@ -67,45 +67,38 @@ Marked for removal in the source code itself.
 
 ---
 
-## V2 Roadmap
+## Roadmap
 
-### 🔴 P0-6: Normalization Factor Influence on Debt & Liquidation
+### ✅ P0-6: Normalization Factor Influence on Debt & Liquidation — RESOLVED
 
 **Priority:** P0 — Critical Correctness
-**Files:** `StandardFundingModel.sol`, `RLDCore.sol`, `DutchLiquidationModule.sol`
+**Files:** `StandardFundingModel.sol`, `RLDCore.sol`
 
-**Problem:** Normalization factor is applied lazily (`_applyFunding` only on interaction). For large `dt` (days/weeks without market interaction), `exp(-rate × dt / period)` can produce extreme normFactor changes, potentially:
-
-- Silently forgiving debt (normFactor → 0 at extreme negative rates)
-- Exploding debt beyond liquidation buffer
-- Overflow/underflow in `expWad` at extreme exponents
-
-**Approach:**
-
-1. Add `MAX_NORM_FACTOR_DELTA` bounds per update
-2. Chunk large `dt` into `fundingPeriod`-sized segments
-3. Add invariant fuzz tests for normFactor bounds
+**Status:** Exponent clamping (`MAX_EXPONENT`, `MIN_EXPONENT`) and `NormFactorCollapseBlocked` guard already implemented in `StandardFundingModel.sol`. NF cannot reach zero or overflow.
 
 ---
 
-### 🔴 P0-7: Bad Debt Socialization
+### ✅ P0-7: Bad Debt Socialization — RESOLVED (NF Bleeding Implemented)
 
 **Priority:** P0 — Critical Correctness
-**Files:** `RLDCore.sol` (L789-800), new `InsuranceFund.sol` (optional)
+**Files:** `IRLDCore.sol`, `RLDCore.sol`, `BadDebtBleeding.t.sol`
 
-**Problem:** After `_settleLiquidation()`, if `seizeAmount > availableCollateral`, remaining `debtPrincipal > 0` stays on books forever. This:
+**Solution:** Gradual NF bleeding. When a liquidation creates negative equity, unbacked wRLP principal is transferred to a global `state.badDebt` counter. Each `_applyFunding()` call bleeds a chunk into the normalization factor over 7 days, socializing the cost across all borrowers.
 
-- Permanently blocks broker from becoming solvent
-- Inflates `totalDebt`, distorting utilization
-- Creates unbacked wRLP supply
+**Changes:**
 
-**Approach:**
+- `MarketState.badDebt` — new `uint128` field tracking unbacked principal
+- `_settleLiquidation()` — detects bad debt **after** seize, transfers to `state.badDebt`, clears user position
+- `_applyFunding()` — `chunk = badDebt × dt / 7d`, with `minChunk` floor (0.0001% of supply) and overshoot ceiling
+- Events: `BadDebtRegistered`, `BadDebtSocialized`
 
-1. **Phase 1 — Write-off**: After seize, if `NAV == 0 && debtPrincipal > 0`, zero out debt, emit `BadDebtWriteOff`
-2. **Phase 2 — Insurance fund**: Collect fraction of funding fees into reserve; cover bad debt from reserve
-3. **Phase 3 — Socialization**: Spread losses across short holders via normFactor adjustment
+**Tests (6/6 pass):**
 
----
+- T40: Bad debt registered, user cleared
+- T41: NF bleeds over 14d → `badDebt = 0`, NF +4.6%
+- T42: Stacking two events → fully resolved
+- T43: No bad debt when insolvent but not underwater
+- T44: No bleeding when `badDebt = 0`
 
 ### 🟡 P1-3: Comprehensive Fuzzing
 
@@ -140,33 +133,34 @@ Marked for removal in the source code itself.
 
 ---
 
-### 🟡 P1-2: Updated Simulation
+### � P1-2: Updated Simulation & Front-End Integration
 
-**Priority:** P1 — Post-Fix Validation
-**Scope:** Re-deploy contracts with 5 bug fixes to simulation environment
+**Priority:** P1 — **NEXT UP**
+**Scope:** Re-deploy contracts with all fixes (bad debt, funding, liquidation) and integrate with front-end for user flow testing.
 
 **Steps:**
 
 1. Re-compile contracts, re-generate ABIs
 2. Re-deploy to Docker simulation stack
 3. Run full scenario suite (long, short, leverage, close, liquidate)
-4. Verify indexer event parsing with corrected `closeShort` behavior
-5. Update dashboard if needed
+4. Integrate front-end actions panel (TWAP, LP, Loop, Batch)
+5. Test user flows end-to-end via UI before final audit prep
+6. Verify indexer event parsing with new `BadDebtRegistered`/`BadDebtSocialized` events
 
 ---
 
-### 🟢 P2-1: Multiple Broker Types
+### ✅ P2-1: Multiple Broker Types — RESOLVED (Deferred to Post-Launch)
 
 **Priority:** P2 — Feature Expansion
-**Files:** New `SimpleBroker.sol`, `SimpleBrokerFactory.sol`, modified `BrokerVerifier.sol`
+**Status:** Architecture discussion completed. Modular broker design documented. Implementation deferred — will revisit after V1 launch if needed.
 
-**Goal:** Support collateral-only brokers (waUSDC-only, no position minting) alongside full PrimeBrokers in the same market.
+**Design docs:** See `modular_broker_design.md` and `multi_broker_architecture.md` in project artifacts.
 
-**Approach:**
+**Key decisions:**
 
-1. New `SimpleBroker` — stripped PrimeBroker: deposit/withdraw only, no debt
-2. Upgraded `BrokerVerifier` — accept `address[]` factories instead of single factory
-3. Core already handles `debtPrincipal == 0` as "always solvent"
+- PDLP integration can be achieved within V1 by extending PrimeBroker with a new module (no Core changes)
+- Full modular broker (pluggable `IBrokerModule` with configurable liquidation priorities) designed for V2
+- Aave-style versioned deployments preferred over upgradeable proxies
 
 ---
 
