@@ -75,7 +75,7 @@ containers_json+="]"
 
 # ── API health + response times ──
 rates_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 http://localhost:8081/ 2>/dev/null || echo "-1")
-sim_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 http://localhost:8080/ 2>/dev/null || echo "-1")
+sim_rt=$(curl -sf -o /dev/null -w "%{time_total}" -m 3 http://localhost:8080/ 2>/dev/null) || sim_rt="-1"
 bot_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 http://localhost:8082/health 2>/dev/null || echo "-1")
 nginx_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 https://rld.fi/ 2>/dev/null || echo "-1")
 
@@ -89,7 +89,7 @@ rates_block=$(curl -sf -m 2 http://localhost:8081/ 2>/dev/null | python3 -c "imp
 # ── Anvil ──
 anvil_ok="false"
 anvil_block=""
-anvil_resp=$(curl -sf -m 2 -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' http://localhost:8545 2>/dev/null)
+anvil_resp=$(curl -sf -m 2 -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' http://localhost:8545 2>/dev/null || true)
 if [ -n "$anvil_resp" ]; then
   anvil_ok="true"
   anvil_block=$(echo "$anvil_resp" | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))" 2>/dev/null || echo "")
@@ -202,7 +202,7 @@ except Exception as e:
     result['clean_rates'] = {'error': str(e)}
 
 print(json.dumps(result))
-" 2>/dev/null || echo '{}')
+" 2>/dev/null) || DB_JSON='{}'
 
 # ── History tracking (keep last 60 data points = ~1 hour) ──
 if [ -f "$HISTORY" ]; then
