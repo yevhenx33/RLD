@@ -15,16 +15,13 @@ contract LiquidationEdgeCases is LiquidationBase {
     // 60% reverts, 50% succeeds.
     function test_T8_CloseFactorReverts() public {
         console.log("=== T8: Close Factor Enforcement ===");
-        (PrimeBroker broker, ) = _setupBroker(50_000e6, 5_000e6, 0, 0);
+        (PrimeBroker broker,) = _setupBroker(50_000e6, 5_000e6, 0, 0);
 
         _setOraclePrice(9e18);
         uint256 nav = broker.getNetAccountValue();
         uint256 dv = FullMath.mulDiv(USER_DEBT, 9e18, 1e18);
         console.log("  NAV:", nav / 1e6, "debtVal:", dv / 1e6);
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "must be insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "must be insolvent");
         assertTrue(nav >= dv, "must NOT be underwater");
 
         vm.prank(liquidator);
@@ -40,7 +37,7 @@ contract LiquidationEdgeCases is LiquidationBase {
     // T9: Close factor bypass when underwater. 100% allowed.
     function test_T9_CloseFactorBypassUnderwater() public {
         console.log("=== T9: Close Factor Bypass (Underwater) ===");
-        (PrimeBroker broker, ) = _setupBroker(80_000e6, 0, 0, 0);
+        (PrimeBroker broker,) = _setupBroker(80_000e6, 0, 0, 0);
 
         _setOraclePrice(9e18);
         uint256 nav = broker.getNetAccountValue();
@@ -57,13 +54,10 @@ contract LiquidationEdgeCases is LiquidationBase {
     // T10: Slippage protection. minCollateralOut=100k reverts, 0 succeeds.
     function test_T10_SlippageProtectionReverts() public {
         console.log("=== T10: Slippage Protection ===");
-        (PrimeBroker broker, ) = _setupBroker(50_000e6, 5_000e6, 0, 0);
+        (PrimeBroker broker,) = _setupBroker(50_000e6, 5_000e6, 0, 0);
 
         _setOraclePrice(9e18);
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "must be insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "must be insolvent");
 
         vm.prank(liquidator);
         vm.expectRevert("Slippage: collateral below minimum");
@@ -78,25 +72,16 @@ contract LiquidationEdgeCases is LiquidationBase {
     // T11: Sequential liquidation. Liquidate twice on same position.
     function test_T11_SequentialLiquidation() public {
         console.log("=== T11: Sequential Liquidation ===");
-        (PrimeBroker broker, ) = _setupBroker(50_000e6, 5_000e6, 0, 0);
+        (PrimeBroker broker,) = _setupBroker(50_000e6, 5_000e6, 0, 0);
 
         _setOraclePrice(9e18);
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "must be insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "must be insolvent");
 
         vm.prank(liquidator);
         core.liquidate(marketId, address(broker), 5_000e6, 0);
 
-        IRLDCore.Position memory pos1 = core.getPosition(
-            marketId,
-            address(broker)
-        );
-        console.log(
-            "  After 1st liq, principal:",
-            uint256(pos1.debtPrincipal) / 1e6
-        );
+        IRLDCore.Position memory pos1 = core.getPosition(marketId, address(broker));
+        console.log("  After 1st liq, principal:", uint256(pos1.debtPrincipal) / 1e6);
 
         bool stillInsolvent = !core.isSolvent(marketId, address(broker));
         console.log("  Still insolvent:", stillInsolvent);
@@ -107,18 +92,9 @@ contract LiquidationEdgeCases is LiquidationBase {
             vm.prank(liquidator);
             core.liquidate(marketId, address(broker), dtc2, 0);
 
-            IRLDCore.Position memory pos2 = core.getPosition(
-                marketId,
-                address(broker)
-            );
-            console.log(
-                "  After 2nd liq, principal:",
-                uint256(pos2.debtPrincipal) / 1e6
-            );
-            assertTrue(
-                pos2.debtPrincipal < pos1.debtPrincipal,
-                "debt must decrease"
-            );
+            IRLDCore.Position memory pos2 = core.getPosition(marketId, address(broker));
+            console.log("  After 2nd liq, principal:", uint256(pos2.debtPrincipal) / 1e6);
+            assertTrue(pos2.debtPrincipal < pos1.debtPrincipal, "debt must decrease");
         }
         _setOraclePrice(INDEX_PRICE_WAD);
     }

@@ -50,12 +50,23 @@ contract BrokerExecutorMulticall is LiquidationBase {
     /// @dev Sign a setOperatorWithSignature message for the executor
     function _signOperatorAuth(
         PrimeBroker broker,
-        address operator
+        address operator,
+        BrokerExecutor.Call[] memory calls
     ) internal view returns (bytes memory) {
         uint256 nonce = broker.operatorNonces(operator);
-        // Must match PrimeBroker.setOperatorWithSignature hash construction
+        bytes32 callsHash = keccak256(abi.encode(calls));
+        // Must match PrimeBroker.setOperatorWithSignature hash construction:
+        // (operator, active, broker, nonce, caller, commitment, chainId)
         bytes32 structHash = keccak256(
-            abi.encode(operator, address(broker), nonce, operator)
+            abi.encode(
+                operator,
+                true,
+                address(broker),
+                nonce,
+                operator,
+                callsHash,
+                block.chainid
+            )
         );
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)
@@ -93,7 +104,7 @@ contract BrokerExecutorMulticall is LiquidationBase {
             )
         });
 
-        bytes memory sig = _signOperatorAuth(broker, address(executor));
+        bytes memory sig = _signOperatorAuth(broker, address(executor), calls);
 
         // Verify executor is NOT operator before
         assertFalse(
@@ -138,7 +149,7 @@ contract BrokerExecutorMulticall is LiquidationBase {
             )
         });
 
-        bytes memory sig = _signOperatorAuth(broker, address(executor));
+        bytes memory sig = _signOperatorAuth(broker, address(executor), calls);
 
         // Execute should revert (no collateral → transfer fails)
         vm.expectRevert();
@@ -180,7 +191,7 @@ contract BrokerExecutorMulticall is LiquidationBase {
             )
         });
 
-        bytes memory sig = _signOperatorAuth(broker, address(executor));
+        bytes memory sig = _signOperatorAuth(broker, address(executor), calls);
         executor.execute(address(broker), sig, calls);
 
         // Nonce should now be 1
@@ -192,7 +203,7 @@ contract BrokerExecutorMulticall is LiquidationBase {
         executor.execute(address(broker), sig, calls);
 
         // Second valid execution with fresh signature (nonce=1)
-        bytes memory sig2 = _signOperatorAuth(broker, address(executor));
+        bytes memory sig2 = _signOperatorAuth(broker, address(executor), calls);
         executor.execute(address(broker), sig2, calls);
 
         assertEq(
@@ -233,7 +244,7 @@ contract BrokerExecutorMulticall is LiquidationBase {
             )
         });
 
-        bytes memory sig = _signOperatorAuth(broker, address(executor));
+        bytes memory sig = _signOperatorAuth(broker, address(executor), calls);
         executor.execute(address(broker), sig, calls);
 
         // Owner should have received 10k collateral
@@ -256,36 +267,15 @@ contract BrokerExecutorMulticall is LiquidationBase {
         PrimeBroker broker = _createOwnedBroker();
         collateralMock.transfer(address(broker), 100_000e6);
 
-        // Build a call that calls executor.execute() again (reentrancy)
+        // Build inner calls (empty — just re-entering is enough)
         BrokerExecutor.Call[] memory innerCalls = new BrokerExecutor.Call[](0);
-        bytes memory innerSig = _signOperatorAuth(broker, address(executor));
+        bytes memory innerSig = _signOperatorAuth(
+            broker,
+            address(executor),
+            innerCalls
+        );
 
-        // Outer call tries to re-enter executor
-        BrokerExecutor.Call[] memory calls = new BrokerExecutor.Call[](1);
-        calls[0] = BrokerExecutor.Call({
-            target: address(executor),
-            data: abi.encodeCall(
-                BrokerExecutor.execute,
-                (address(broker), innerSig, innerCalls)
-            )
-        });
-
-        // Sign for outer call (nonce=0 already consumed by innerSig above...
-        // Actually wait — _signOperatorAuth reads the nonce from broker which is still 0.
-        // Both sigs use nonce=0. That's a problem.
-        // The inner sig was signed at nonce=0. After outer sets operator (nonce→1),
-        // the inner call would fail with "Invalid nonce" before reentrancy guard triggers.
-        // But that's still a valid test — the call should revert one way or another.)
-
-        // We need nonce=0 for outer, nonce=1 for inner. But we can't get nonce=1
-        // signature because we sign before the first call happens.
-        // The cleanest test: just try to call execute from within execute.
-        // Regardless of nonce, reentrancy guard should trigger first.
-
-        // Fresh approach: use nonce=0 sig for the outer call
-        bytes memory outerSig = _signOperatorAuth(broker, address(executor));
-
-        // Build inner call that re-enters (will fail one way or another)
+        // Build outer call that re-enters executor.execute()
         BrokerExecutor.Call[] memory reentrantCalls = new BrokerExecutor.Call[](
             1
         );
@@ -293,11 +283,18 @@ contract BrokerExecutorMulticall is LiquidationBase {
             target: address(executor),
             data: abi.encodeCall(
                 BrokerExecutor.execute,
-                (address(broker), outerSig, innerCalls) // reuse sig (will fail)
+                (address(broker), innerSig, innerCalls)
             )
         });
 
-        // This should revert (either reentrancy guard or nonce fail)
+        // Sign outer call — commitment binds to reentrantCalls, not innerCalls
+        bytes memory outerSig = _signOperatorAuth(
+            broker,
+            address(executor),
+            reentrantCalls
+        );
+
+        // This should revert (reentrancy guard or nonce mismatch)
         vm.expectRevert();
         executor.execute(address(broker), outerSig, reentrantCalls);
 
@@ -311,22 +308,47 @@ contract BrokerExecutorMulticall is LiquidationBase {
 
     function test_hash_functions_consistency() public {
         PrimeBroker broker = _createOwnedBroker();
+        collateralMock.transfer(address(broker), 10_000e6);
         uint256 nonce = broker.operatorNonces(address(executor));
 
+        // Build calls first — needed for commitment hash
+        BrokerExecutor.Call[] memory calls = new BrokerExecutor.Call[](1);
+        calls[0] = BrokerExecutor.Call({
+            target: address(broker),
+            data: abi.encodeCall(
+                PrimeBroker.modifyPosition,
+                (
+                    MarketId.unwrap(marketId),
+                    int256(uint256(10_000e6)),
+                    int256(0)
+                )
+            )
+        });
+        bytes32 callsHash = keccak256(abi.encode(calls));
+
         // Get hashes from executor
-        bytes32 msgHash = executor.getMessageHash(address(broker), nonce);
+        bytes32 msgHash = executor.getMessageHash(
+            address(broker),
+            nonce,
+            callsHash
+        );
         bytes32 ethHash = executor.getEthSignedMessageHash(
             address(broker),
-            nonce
+            nonce,
+            callsHash
         );
 
         // Manually compute expected hashes
+        // Must match: (operator, active, broker, nonce, caller, commitment, chainId)
         bytes32 expectedMsgHash = keccak256(
             abi.encode(
                 address(executor), // operator
+                true, // active
                 address(broker), // broker
                 nonce, // nonce
-                address(executor) // caller (executor)
+                address(executor), // caller (executor)
+                callsHash, // commitment
+                block.chainid // chain ID
             )
         );
         bytes32 expectedEthHash = keccak256(
@@ -342,21 +364,6 @@ contract BrokerExecutorMulticall is LiquidationBase {
         // Verify that signing with this hash actually works end-to-end
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(OWNER_PK, ethHash);
         bytes memory sig = abi.encodePacked(r, s, v);
-
-        collateralMock.transfer(address(broker), 10_000e6);
-
-        BrokerExecutor.Call[] memory calls = new BrokerExecutor.Call[](1);
-        calls[0] = BrokerExecutor.Call({
-            target: address(broker),
-            data: abi.encodeCall(
-                PrimeBroker.modifyPosition,
-                (
-                    MarketId.unwrap(marketId),
-                    int256(uint256(10_000e6)),
-                    int256(0)
-                )
-            )
-        });
 
         // Should succeed — hashes are correct and signature is valid
         executor.execute(address(broker), sig, calls);

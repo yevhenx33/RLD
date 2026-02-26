@@ -13,13 +13,9 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {
-    LiquidityAmounts
-} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
-import {
-    IAllowanceTransfer
-} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {ERC721} from "solmate/src/tokens/ERC721.sol";
 import "forge-std/console.sol";
@@ -40,35 +36,21 @@ contract CrossContractTests is LiquidationBase {
     BrokerExecutor public executor;
     BrokerRouter public router;
 
-    uint256 constant OWNER_PK =
-        0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    uint256 constant OWNER_PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address public owner;
 
     function _createOwnedBroker() internal returns (PrimeBroker) {
         bytes32 salt = keccak256(abi.encodePacked("cross", brokerNonce++));
-        PrimeBroker broker = PrimeBroker(
-            payable(brokerFactory.createBroker(salt))
-        );
+        PrimeBroker broker = PrimeBroker(payable(brokerFactory.createBroker(salt)));
         uint256 tokenId = uint256(uint160(address(broker)));
-        ERC721(address(brokerFactory)).transferFrom(
-            address(this),
-            owner,
-            tokenId
-        );
+        ERC721(address(brokerFactory)).transferFrom(address(this), owner, tokenId);
         return broker;
     }
 
-    function _signAuth(
-        PrimeBroker broker,
-        address operator
-    ) internal view returns (bytes memory) {
+    function _signAuth(PrimeBroker broker, address operator) internal view returns (bytes memory) {
         uint256 nonce = broker.operatorNonces(operator);
-        bytes32 structHash = keccak256(
-            abi.encode(operator, address(broker), nonce, operator)
-        );
-        bytes32 ethSignedHash = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)
-        );
+        bytes32 structHash = keccak256(abi.encode(operator, address(broker), nonce, operator));
+        bytes32 ethSignedHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(OWNER_PK, ethSignedHash);
         return abi.encodePacked(r, s, v);
     }
@@ -78,29 +60,17 @@ contract CrossContractTests is LiquidationBase {
         uint256 depositAmount = posAmount * 20;
         PrimeBroker helper = _createBroker();
         collateralMock.transfer(address(helper), depositAmount);
-        helper.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(depositAmount),
-            int256(posAmount)
-        );
+        helper.modifyPosition(MarketId.unwrap(marketId), int256(depositAmount), int256(posAmount));
         helper.withdrawPositionToken(address(this), posAmount);
         collateralMock.mint(address(this), 1_000_000e6);
 
-        IAllowanceTransfer(PERMIT2_ADDRESS).approve(
-            ma.positionToken,
-            address(positionManager),
-            type(uint160).max,
-            type(uint48).max
-        );
-        IAllowanceTransfer(PERMIT2_ADDRESS).approve(
-            ma.collateralToken,
-            address(positionManager),
-            type(uint160).max,
-            type(uint48).max
-        );
+        IAllowanceTransfer(PERMIT2_ADDRESS)
+            .approve(ma.positionToken, address(positionManager), type(uint160).max, type(uint48).max);
+        IAllowanceTransfer(PERMIT2_ADDRESS)
+            .approve(ma.collateralToken, address(positionManager), type(uint160).max, type(uint48).max);
 
         vm.warp(1_700_000_000);
-        (, int24 tick, , ) = poolManager.getSlot0(lpPoolKey.toId());
+        (, int24 tick,,) = poolManager.getSlot0(lpPoolKey.toId());
         int24 sp = lpPoolKey.tickSpacing;
         int24 lo = (tick / sp) * sp - 6000;
         int24 hi = lo + 12000;
@@ -115,17 +85,10 @@ contract CrossContractTests is LiquidationBase {
             a1 = posAmount;
         }
         uint128 liq = LiquidityAmounts.getLiquidityForAmounts(
-            TickMath.getSqrtPriceAtTick(tick),
-            TickMath.getSqrtPriceAtTick(lo),
-            TickMath.getSqrtPriceAtTick(hi),
-            a0,
-            a1
+            TickMath.getSqrtPriceAtTick(tick), TickMath.getSqrtPriceAtTick(lo), TickMath.getSqrtPriceAtTick(hi), a0, a1
         );
         require(liq > 0, "zero liq");
-        bytes memory acts = abi.encodePacked(
-            uint8(Actions.MINT_POSITION),
-            uint8(Actions.SETTLE_PAIR)
-        );
+        bytes memory acts = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
         bytes[] memory p = new bytes[](2);
         p[0] = abi.encode(
             lpPoolKey,
@@ -138,10 +101,7 @@ contract CrossContractTests is LiquidationBase {
             bytes("")
         );
         p[1] = abi.encode(lpPoolKey.currency0, lpPoolKey.currency1);
-        positionManager.modifyLiquidities(
-            abi.encode(acts, p),
-            block.timestamp + 60
-        );
+        positionManager.modifyLiquidities(abi.encode(acts, p), block.timestamp + 60);
     }
 
     function setUp() public override {
@@ -169,11 +129,7 @@ contract CrossContractTests is LiquidationBase {
             target: address(broker),
             data: abi.encodeCall(
                 PrimeBroker.modifyPosition,
-                (
-                    MarketId.unwrap(marketId),
-                    int256(uint256(100_000e6)),
-                    int256(uint256(10_000e6))
-                )
+                (MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(uint256(10_000e6)))
             )
         });
 
@@ -181,31 +137,13 @@ contract CrossContractTests is LiquidationBase {
         executor.execute(address(broker), sig, calls);
 
         // Check: no tokens stuck in executor or router
-        assertEq(
-            ERC20(ma.collateralToken).balanceOf(address(executor)),
-            0,
-            "Executor: zero collateral"
-        );
-        assertEq(
-            ERC20(ma.positionToken).balanceOf(address(executor)),
-            0,
-            "Executor: zero position"
-        );
-        assertEq(
-            ERC20(ma.collateralToken).balanceOf(address(router)),
-            0,
-            "Router: zero collateral"
-        );
-        assertEq(
-            ERC20(ma.positionToken).balanceOf(address(router)),
-            0,
-            "Router: zero position"
-        );
+        assertEq(ERC20(ma.collateralToken).balanceOf(address(executor)), 0, "Executor: zero collateral");
+        assertEq(ERC20(ma.positionToken).balanceOf(address(executor)), 0, "Executor: zero position");
+        assertEq(ERC20(ma.collateralToken).balanceOf(address(router)), 0, "Router: zero collateral");
+        assertEq(ERC20(ma.positionToken).balanceOf(address(router)), 0, "Router: zero position");
 
         // Broker should have the position
-        uint128 debt = core
-            .getPosition(marketId, address(broker))
-            .debtPrincipal;
+        uint128 debt = core.getPosition(marketId, address(broker)).debtPrincipal;
         assertEq(debt, 10_000e6, "Broker should have debt");
     }
 
@@ -224,11 +162,7 @@ contract CrossContractTests is LiquidationBase {
         broker.setOperator(address(this), true);
 
         // Setup a leveraged position
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(200_000e6)),
-            int256(uint256(80_000e6))
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(200_000e6)), int256(uint256(80_000e6)));
 
         // Record solvency state BEFORE any manipulation
         bool solventBefore = core.isSolvent(marketId, address(broker));
@@ -242,11 +176,7 @@ contract CrossContractTests is LiquidationBase {
         // The key verification: even after the setup, the oracle price
         // hasn't changed because it uses TWAP averaging.
         bool solventAfter = core.isSolvent(marketId, address(broker));
-        assertEq(
-            solventBefore,
-            solventAfter,
-            "Solvency should be TWAP-resistant"
-        );
+        assertEq(solventBefore, solventAfter, "Solvency should be TWAP-resistant");
 
         // Verify broker is still operational
         broker.withdrawCollateral(owner, 1_000e6);
@@ -291,11 +221,7 @@ contract CrossContractTests is LiquidationBase {
         broker.setOperator(address(this), true);
 
         // Create a near-solvency position
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(50_000e6)),
-            int256(uint256(20_000e6))
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(50_000e6)), int256(uint256(20_000e6)));
 
         // The key security property: if Core.liquidate() is called, it uses
         // PrimeBroker.seize(), which has nonReentrant. This prevents any
@@ -308,15 +234,9 @@ contract CrossContractTests is LiquidationBase {
         // So if seize() is executing, modifyPosition() will revert.
 
         // Verify normal operations work fine outside of liquidation
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(0),
-            -int256(uint256(5_000e6))
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(0), -int256(uint256(5_000e6)));
 
-        uint128 debt = core
-            .getPosition(marketId, address(broker))
-            .debtPrincipal;
+        uint128 debt = core.getPosition(marketId, address(broker)).debtPrincipal;
         assertEq(debt, 15_000e6, "Debt should be reduced by 5k");
     }
 
@@ -334,60 +254,31 @@ contract CrossContractTests is LiquidationBase {
         collateralMock.transfer(address(brokerA), 100_000e6);
         collateralMock.transfer(address(brokerB), 200_000e6);
 
-        brokerA.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(100_000e6)),
-            int256(uint256(10_000e6))
-        );
-        brokerB.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(200_000e6)),
-            int256(uint256(50_000e6))
-        );
+        brokerA.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(uint256(10_000e6)));
+        brokerB.modifyPosition(MarketId.unwrap(marketId), int256(uint256(200_000e6)), int256(uint256(50_000e6)));
 
         // Verify independent state
-        uint128 debtA = core
-            .getPosition(marketId, address(brokerA))
-            .debtPrincipal;
-        uint128 debtB = core
-            .getPosition(marketId, address(brokerB))
-            .debtPrincipal;
+        uint128 debtA = core.getPosition(marketId, address(brokerA)).debtPrincipal;
+        uint128 debtB = core.getPosition(marketId, address(brokerB)).debtPrincipal;
         assertEq(debtA, 10_000e6, "BrokerA debt");
         assertEq(debtB, 50_000e6, "BrokerB debt");
 
         // BrokerA operations should NOT affect BrokerB
-        brokerA.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(0),
-            -int256(uint256(10_000e6))
-        );
+        brokerA.modifyPosition(MarketId.unwrap(marketId), int256(0), -int256(uint256(10_000e6)));
 
         // BrokerA debt = 0, BrokerB debt unchanged
-        uint128 debtAAfter = core
-            .getPosition(marketId, address(brokerA))
-            .debtPrincipal;
-        uint128 debtBAfter = core
-            .getPosition(marketId, address(brokerB))
-            .debtPrincipal;
+        uint128 debtAAfter = core.getPosition(marketId, address(brokerA)).debtPrincipal;
+        uint128 debtBAfter = core.getPosition(marketId, address(brokerB)).debtPrincipal;
         assertEq(debtAAfter, 0, "BrokerA debt should be 0 after repay");
         assertEq(debtBAfter, 50_000e6, "BrokerB debt unchanged");
 
         // Both should be independently solvent
-        assertTrue(
-            core.isSolvent(marketId, address(brokerA)),
-            "BrokerA solvent"
-        );
-        assertTrue(
-            core.isSolvent(marketId, address(brokerB)),
-            "BrokerB solvent"
-        );
+        assertTrue(core.isSolvent(marketId, address(brokerA)), "BrokerA solvent");
+        assertTrue(core.isSolvent(marketId, address(brokerB)), "BrokerB solvent");
 
         // BrokerA withdrawing all collateral doesn't affect BrokerB
         brokerA.withdrawCollateral(address(this), 100_000e6);
-        assertTrue(
-            core.isSolvent(marketId, address(brokerB)),
-            "BrokerB still solvent after A withdrawal"
-        );
+        assertTrue(core.isSolvent(marketId, address(brokerB)), "BrokerB still solvent after A withdrawal");
 
         // BrokerB's NAV should be completely independent
         // BrokerB's collateral should be completely independent

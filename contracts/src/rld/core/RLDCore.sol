@@ -506,8 +506,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /*                                     FUNDING APPLICATION                                      */
     /* ============================================================================================ */
 
-    /// @dev Socialization period for bad debt (7 days)
-    uint256 constant BAD_DEBT_PERIOD = 7 days;
+    // NOTE: Bad debt socialization period is now per-market via config.badDebtPeriod
 
     /// @dev Minimum chunk divisor: chunk floor = totalSupply / MIN_CHUNK_DIVISOR (0.0001%)
     uint256 constant MIN_CHUNK_DIVISOR = 1_000_000;
@@ -549,13 +548,14 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             );
         }
 
-        // 3. Bad debt bleeding: gradually socialize unbacked debt via NF over 7 days
+        // 3. Bad debt bleeding: gradually socialize unbacked debt via NF over configurable period
         if (state.badDebt > 0 && timeDelta > 0) {
             uint256 supply = PositionToken(addresses.positionToken)
                 .totalSupply();
             uint256 minChunk = supply / MIN_CHUNK_DIVISOR;
-            uint256 chunk = (uint256(state.badDebt) * timeDelta) /
-                BAD_DEBT_PERIOD;
+            uint256 bdPeriod = uint256(marketConfigs[id].badDebtPeriod);
+            if (bdPeriod == 0) bdPeriod = 7 days; // fallback for legacy markets
+            uint256 chunk = (uint256(state.badDebt) * timeDelta) / bdPeriod;
             if (chunk < minChunk) chunk = minChunk;
             if (chunk > state.badDebt) chunk = state.badDebt;
             state.normalizationFactor += uint128((chunk * 1e18) / supply);
@@ -1013,6 +1013,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint64 maintenanceMargin,
         uint64 liquidationCloseFactor,
         uint32 fundingPeriod,
+        uint32 badDebtPeriod,
         uint128 debtCap,
         uint128 minLiquidation,
         bytes32 liquidationParams
@@ -1030,6 +1031,9 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         if (fundingPeriod < 1 days || fundingPeriod > 365 days) {
             revert InvalidParam("Invalid period");
         }
+        if (badDebtPeriod < 1 days || badDebtPeriod > 90 days) {
+            revert InvalidParam("Invalid badDebtPeriod");
+        }
 
         // Store pending update
         uint48 executeAt = uint48(block.timestamp + CONFIG_TIMELOCK);
@@ -1039,6 +1043,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             maintenanceMargin: maintenanceMargin,
             liquidationCloseFactor: liquidationCloseFactor,
             fundingPeriod: fundingPeriod,
+            badDebtPeriod: badDebtPeriod,
             debtCap: debtCap,
             minLiquidation: minLiquidation,
             liquidationParams: liquidationParams,
@@ -1157,6 +1162,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             config.maintenanceMargin = pending.maintenanceMargin;
             config.liquidationCloseFactor = pending.liquidationCloseFactor;
             config.fundingPeriod = pending.fundingPeriod;
+            config.badDebtPeriod = pending.badDebtPeriod;
             config.debtCap = pending.debtCap;
             config.minLiquidation = pending.minLiquidation;
             config.liquidationParams = pending.liquidationParams;

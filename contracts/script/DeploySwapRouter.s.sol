@@ -16,13 +16,13 @@ contract DeploySwapRouter is Script {
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
-        
+
         vm.startBroadcast(deployerKey);
-        
+
         LifecycleSwapRouter router = new LifecycleSwapRouter(IPoolManager(V4_POOL_MANAGER));
-        
+
         vm.stopBroadcast();
-        
+
         console.log("SWAP_ROUTER:", address(router));
     }
 }

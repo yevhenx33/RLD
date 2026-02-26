@@ -27,8 +27,8 @@ import {
     UniswapV4BrokerModule
 } from "../../../src/rld/modules/broker/UniswapV4BrokerModule.sol";
 import {
-    JitTwammBrokerModule
-} from "../../../src/rld/modules/broker/JitTwammBrokerModule.sol";
+    JTMBrokerModule
+} from "../../../src/rld/modules/broker/JTMBrokerModule.sol";
 import {
     RLDAaveOracle
 } from "../../../src/rld/modules/oracles/RLDAaveOracle.sol";
@@ -45,7 +45,7 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
-import {JITTWAMM} from "../../../src/twamm/JITTWAMM.sol";
+import {JTM} from "../../../src/twamm/JTM.sol";
 import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 // V4 Periphery (PositionManager)
@@ -95,6 +95,7 @@ contract ConfigurableOracle is IRLDOracle, ISpotOracle {
     function setIndexPrice(uint256 _price) external {
         indexPrice = _price;
     }
+
     function setSpotPrice(uint256 _price) external {
         spotPrice = _price;
     }
@@ -102,9 +103,11 @@ contract ConfigurableOracle is IRLDOracle, ISpotOracle {
     function getIndexPrice(address, address) external view returns (uint256) {
         return indexPrice;
     }
+
     function getMarkPrice(address, address) external view returns (uint256) {
         return spotPrice;
     }
+
     function getSpotPrice(address, address) external view returns (uint256) {
         return spotPrice;
     }
@@ -135,8 +138,8 @@ address constant PERMIT2_ADDRESS = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
  * Deployment order mirrors `DeployRLDProtocol.s.sol` exactly:
  *
  *  Phase 0 – Infra: Permit2 (vm.etch), PoolManager, PositionManager
- *  Phase 1 – Modules: DutchLiquidation, StandardFunding, V4Oracle, V4BrokerModule, JitTwammBrokerModule
- *  Phase 2 – JITTWAMM hook (HookMiner + CREATE2)
+ *  Phase 1 – Modules: DutchLiquidation, StandardFunding, V4Oracle, V4BrokerModule, JTMBrokerModule
+ *  Phase 2 – JTM hook (HookMiner + CREATE2)
  *  Phase 3 – V4 pool initialization (PT 18-dec / CT 6-dec)
  *  Phase 4 – Templates: PositionToken impl, PrimeBroker impl
  *  Phase 5 – BrokerRouter
@@ -167,7 +170,7 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
     StandardFundingModel public fundingModel;
     UniswapV4SingletonOracle public v4Oracle; // mark oracle (pool price)
     UniswapV4BrokerModule public v4BrokerModule;
-    JitTwammBrokerModule public twammBrokerModule;
+    JTMBrokerModule public twammBrokerModule;
     ConfigurableOracle public testOracle; // rate + spot oracle (configurable)
     MinimalMetadataRenderer public metadataRenderer;
 
@@ -179,9 +182,9 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
     BrokerRouter public brokerRouter;
 
     // ----------------------------------------------------------------
-    //  JITTWAMM Hook  (mirrors Phase 2 of DeployRLDProtocol.s.sol)
+    //  JTM Hook  (mirrors Phase 2 of DeployRLDProtocol.s.sol)
     // ----------------------------------------------------------------
-    JITTWAMM public twammHook;
+    JTM public twammHook;
     PoolKey public twammPoolKey;
 
     // ----------------------------------------------------------------
@@ -203,10 +206,10 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
     /// @dev sqrtPriceX96 = √1 × 2^96  (1:1 price ratio, raw units)
     uint160 constant SQRT_PRICE_1_1 = 79228162514264337593543950336;
 
-    /// @dev JITTWAMM order expiration interval (1 hour)
-    uint256 constant JITTWAMM_EXPIRATION_INTERVAL = 3600;
+    /// @dev JTM order expiration interval (1 hour)
+    uint256 constant JTM_EXPIRATION_INTERVAL = 3600;
 
-    /// @dev Tick spacing for the JITTWAMM pool (matches production market configs)
+    /// @dev Tick spacing for the JTM pool (matches production market configs)
     int24 constant TICK_SPACING = 60;
 
     /// @dev Fee tier: 0.3% (matches production)
@@ -257,7 +260,7 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
 
         metadataRenderer = new MinimalMetadataRenderer();
         v4BrokerModule = new UniswapV4BrokerModule();
-        twammBrokerModule = new JitTwammBrokerModule();
+        twammBrokerModule = new JTMBrokerModule();
 
         liqModule = new DutchLiquidationModule();
         fundingModel = new StandardFundingModel();
@@ -265,7 +268,7 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
         testOracle = new ConfigurableOracle(); // rate + spot (configurable)
 
         // ─────────────────────────────────────────────────────────────
-        // Phase 2: JITTWAMM Hook — HookMiner + CREATE2
+        // Phase 2: JTM Hook — HookMiner + CREATE2
         // Mirrors DeployRLDProtocol.s.sol exactly.
         // Flags: beforeInitialize | beforeAddLiquidity | beforeRemoveLiquidity
         //        | beforeSwap | afterSwap | beforeSwapReturnDelta
@@ -279,10 +282,10 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
                     Hooks.AFTER_SWAP_FLAG |
                     Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
             );
-            bytes memory creationCode = type(JITTWAMM).creationCode;
+            bytes memory creationCode = type(JTM).creationCode;
             bytes memory constructorArgs = abi.encode(
                 poolManager,
-                JITTWAMM_EXPIRATION_INTERVAL,
+                JTM_EXPIRATION_INTERVAL,
                 address(this), // initialOwner (test contract)
                 address(0) // rldCore — wired later via twammHook.setRldCore()
             );
@@ -292,15 +295,15 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
                 creationCode,
                 constructorArgs
             );
-            twammHook = new JITTWAMM{salt: salt}(
+            twammHook = new JTM{salt: salt}(
                 poolManager,
-                JITTWAMM_EXPIRATION_INTERVAL,
+                JTM_EXPIRATION_INTERVAL,
                 address(this),
                 address(0)
             );
             require(
                 address(twammHook) == hookAddress,
-                "JITRLDIntegrationBase: JITTWAMM address mismatch"
+                "JITRLDIntegrationBase: JTM address mismatch"
             );
         }
 
@@ -331,7 +334,7 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
         PositionTokenImpl posImpl = new PositionTokenImpl();
         PrimeBroker brokerImpl = new PrimeBroker(
             address(v4BrokerModule), // _v4Module   (real UniswapV4BrokerModule)
-            address(twammBrokerModule), // _twammModule (real JitTwammBrokerModule)
+            address(twammBrokerModule), // _twammModule (real JTMBrokerModule)
             address(positionManager) // _posm        (real V4 PositionManager)
         );
 
@@ -364,7 +367,10 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
         );
         rldFactory.initializeCore(address(core));
 
-        // Wire JITTWAMM hook to core (matches production DeployRLDProtocol.s.sol Phase 5)
+        // F-04: Transfer oracle ownership to factory (so factory can registerPool)
+        v4Oracle.transferOwnership(address(rldFactory));
+
+        // Wire JTM hook to core (matches production DeployRLDProtocol.s.sol Phase 5)
         twammHook.setRldCore(address(core));
 
         // ─────────────────────────────────────────────────────────────
@@ -387,6 +393,9 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
         IRLDCore.MarketAddresses memory ma = core.getMarketAddresses(marketId);
         wrlpToken = ma.positionToken;
 
+        // FIN-01: Factory defaults debtCap=0. Set unlimited cap for tests.
+        _setUnlimitedDebtCap();
+
         // ─────────────────────────────────────────────────────────────
         // Phase 8: Seed TWAP oracle with a second observation
         // The oracle needs cardinality >= 2 for TWAP (avoids OracleNotReady).
@@ -394,10 +403,10 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
         // one more write at a different timestamp to bump cardinality to 10.
         // ─────────────────────────────────────────────────────────────
         // Warp to the next interval boundary so lastUpdateTimestamp stays clean
-        uint256 currentInterval = (block.timestamp /
-            JITTWAMM_EXPIRATION_INTERVAL) * JITTWAMM_EXPIRATION_INTERVAL;
-        vm.warp(currentInterval + JITTWAMM_EXPIRATION_INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        uint256 currentInterval = (block.timestamp / JTM_EXPIRATION_INTERVAL) *
+            JTM_EXPIRATION_INTERVAL;
+        vm.warp(currentInterval + JTM_EXPIRATION_INTERVAL);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Optional subclass customisation hook
         _tweakSetup();
@@ -406,6 +415,25 @@ abstract contract JITRLDIntegrationBase is Test, DeployPermit2 {
     /// @dev Override in derived tests to adjust state after base setUp completes.
     ///      E.g., set oracle prices, seed LP positions, open broker accounts.
     function _tweakSetup() internal virtual {}
+
+    /// @dev FIN-01: Factory defaults debtCap=0. This helper proposes a risk update
+    ///      with unlimited debt cap (type(uint128).max), then warps past the 7-day
+    ///      timelock so the config becomes effective for testing.
+    function _setUnlimitedDebtCap() internal {
+        IRLDCore.MarketConfig memory cfg = core.getMarketConfig(marketId);
+        core.proposeRiskUpdate(
+            marketId,
+            cfg.minColRatio,
+            cfg.maintenanceMargin,
+            cfg.liquidationCloseFactor,
+            cfg.fundingPeriod,
+            cfg.badDebtPeriod,
+            type(uint128).max, // unlimited debt cap
+            cfg.minLiquidation,
+            cfg.liquidationParams
+        );
+        vm.warp(block.timestamp + 7 days + 1);
+    }
 
     /// @dev Override in derived tests to change pool initialization price.
     ///      Default = 1:1 (SQRT_PRICE_1_1). E2E tests should override to

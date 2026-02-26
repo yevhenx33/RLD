@@ -7,7 +7,7 @@ import {RLDMarketFactory} from "../src/rld/core/RLDMarketFactory.sol";
 import {IRLDCore} from "../src/shared/interfaces/IRLDCore.sol";
 import {MarketId} from "../src/shared/interfaces/IRLDCore.sol";
 
-import {ITWAMM} from "../src/twamm/ITWAMM.sol";
+import {IJTM} from "../src/twamm/IJTM.sol";
 import {RLDDeployConfig as C} from "../src/shared/config/RLDDeployConfig.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -25,10 +25,7 @@ contract CreateTestMarket is Script {
         string memory json = vm.readFile("./deployments.json");
         address coreAddr = vm.parseJsonAddress(json, ".RLDCore");
         address factoryAddr = vm.parseJsonAddress(json, ".RLDMarketFactory");
-        address liqModule = vm.parseJsonAddress(
-            json,
-            ".DutchLiquidationModule"
-        );
+        address liqModule = vm.parseJsonAddress(json, ".DutchLiquidationModule");
         address aaveOracle = vm.parseJsonAddress(json, ".RLDAaveOracle");
 
         address twammAddr = vm.parseJsonAddress(json, ".TWAMM");
@@ -48,30 +45,27 @@ contract CreateTestMarket is Script {
         RLDCore core = RLDCore(coreAddr);
 
         // Create market params
-        RLDMarketFactory.DeployParams memory params = RLDMarketFactory
-            .DeployParams({
-                underlyingPool: C.AAVE_POOL,
-                underlyingToken: C.USDC,
-                collateralToken: C.AUSDC,
-                curator: deployer,
-                positionTokenName: C.POSITION_TOKEN_NAME,
-                positionTokenSymbol: C.POSITION_TOKEN_SYMBOL,
-                minColRatio: C.MIN_COL_RATIO,
-                maintenanceMargin: C.MAINTENANCE_MARGIN,
-                liquidationCloseFactor: C.LIQUIDATION_CLOSE_FACTOR,
-                liquidationModule: liqModule,
-                liquidationParams: C.LIQUIDATION_PARAMS,
-                spotOracle: address(0),
-                rateOracle: aaveOracle, // index
-                oraclePeriod: C.ORACLE_PERIOD,
-                poolFee: C.POOL_FEE,
-                tickSpacing: C.TICK_SPACING
-            });
+        RLDMarketFactory.DeployParams memory params = RLDMarketFactory.DeployParams({
+            underlyingPool: C.AAVE_POOL,
+            underlyingToken: C.USDC,
+            collateralToken: C.AUSDC,
+            curator: deployer,
+            positionTokenName: C.POSITION_TOKEN_NAME,
+            positionTokenSymbol: C.POSITION_TOKEN_SYMBOL,
+            minColRatio: C.MIN_COL_RATIO,
+            maintenanceMargin: C.MAINTENANCE_MARGIN,
+            liquidationCloseFactor: C.LIQUIDATION_CLOSE_FACTOR,
+            liquidationModule: liqModule,
+            liquidationParams: C.LIQUIDATION_PARAMS,
+            spotOracle: address(0),
+            rateOracle: aaveOracle, // index
+            oraclePeriod: C.ORACLE_PERIOD,
+            poolFee: C.POOL_FEE,
+            tickSpacing: C.TICK_SPACING
+        });
 
         // Create the market
-        (MarketId marketId, address brokerFactory) = factory.createMarket(
-            params
-        );
+        (MarketId marketId, address brokerFactory) = factory.createMarket(params);
 
         console.log("");
         console.log("=== MARKET CREATED ===");
@@ -79,9 +73,7 @@ contract CreateTestMarket is Script {
         console.log("BrokerFactory:", brokerFactory);
 
         // --- Increase Oracle Cardinality to Maximum ---
-        IRLDCore.MarketAddresses memory addrs = core.getMarketAddresses(
-            marketId
-        );
+        IRLDCore.MarketAddresses memory addrs = core.getMarketAddresses(marketId);
 
         Currency currency0 = Currency.wrap(addrs.positionToken);
         Currency currency1 = Currency.wrap(params.collateralToken);
@@ -99,10 +91,7 @@ contract CreateTestMarket is Script {
 
         PoolId poolId = key.toId();
         console.log("Setting Oracle Cardinality to MAX for PoolId...");
-        uint16 nextCard = ITWAMM(address(factory.TWAMM())).increaseCardinality(
-            poolId,
-            type(uint16).max
-        );
+        uint16 nextCard = IJTM(address(factory.TWAMM())).increaseCardinality(poolId, type(uint16).max);
         console.log("New Cardinality Next:", nextCard);
 
         vm.stopBroadcast();
@@ -148,11 +137,7 @@ contract CreateTestMarket is Script {
         // ============================================
         string memory jsonObj = "market_deployment";
         vm.serializeAddress(jsonObj, "BrokerFactory", brokerFactory);
-        string memory finalJson = vm.serializeBytes32(
-            jsonObj,
-            "MarketId",
-            MarketId.unwrap(marketId)
-        );
+        string memory finalJson = vm.serializeBytes32(jsonObj, "MarketId", MarketId.unwrap(marketId));
 
         vm.writeJson(finalJson, "./market_deployments.json");
         console.log("Market data saved to ./market_deployments.json");

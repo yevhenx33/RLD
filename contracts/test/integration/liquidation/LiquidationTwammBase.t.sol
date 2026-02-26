@@ -2,8 +2,8 @@
 pragma solidity ^0.8.26;
 
 import {LiquidationBase} from "./LiquidationBase.t.sol";
-import {IJITTWAMM} from "../../../src/twamm/IJITTWAMM.sol";
-import {ITWAMM} from "../../../src/twamm/ITWAMM.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
 import {IPrimeBroker} from "../../../src/shared/interfaces/IPrimeBroker.sol";
 import {IRLDCore, MarketId} from "../../../src/shared/interfaces/IRLDCore.sol";
 import {PrimeBroker} from "../../../src/rld/broker/PrimeBroker.sol";
@@ -20,7 +20,7 @@ import "forge-std/console.sol";
 /// ## Production Pool Architecture
 ///
 /// The factory creates a production pool: positionToken(wRLP) / collateralToken(ct)
-/// with the JITTWAMM hook. This is the pool used for TWAMM orders. It trades the
+/// with the JTM hook. This is the pool used for TWAMM orders. It trades the
 /// ACTUAL market tokens — not raw pt/ct mocks. This means:
 ///   - Selling collateral via TWAMM → earns positionToken (wRLP)
 ///   - wRLP is recognized by the seize pipeline → can be swept
@@ -37,9 +37,9 @@ import "forge-std/console.sol";
 /// Without matching, canceled orders lose accrued tokens permanently.
 /// Tests that need buyTokensOut > 0 MUST call clear() first.
 abstract contract LiquidationTwammBase is LiquidationBase {
-    uint256 constant TWAMM_INTERVAL = 3600; // 1-hour interval (matches JITTWAMM)
+    uint256 constant TWAMM_INTERVAL = 3600; // 1-hour interval (matches JTM)
 
-    /// @dev The production TWAMM pool key: positionToken/collateralToken + JITTWAMM hook.
+    /// @dev The production TWAMM pool key: positionToken/collateralToken + JTM hook.
     ///      Constructed in setUp from market addresses. Unlike twammPoolKey (raw pt/ct),
     ///      this key trades the actual wrapped tokens visible to the seize pipeline.
     PoolKey public marketTwammKey;
@@ -86,7 +86,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
     }
 
     /// @dev Place a TWAMM order on behalf of the broker using the PRODUCTION pool.
-    ///      Uses vm.prank to submit directly via JITTWAMM, then registers
+    ///      Uses vm.prank to submit directly via JTM, then registers
     ///      via broker.setActiveTwammOrder().
     ///
     ///      For sellCollateral=true:
@@ -99,7 +99,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         uint256 amountIn,
         bool sellCollateral,
         uint256 duration
-    ) internal returns (bytes32 orderId, IJITTWAMM.OrderKey memory orderKey) {
+    ) internal returns (bytes32 orderId, IJTM.OrderKey memory orderKey) {
         // Determine direction based on token ordering
         bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
             ma.collateralToken;
@@ -117,7 +117,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         // Submit order as broker
         vm.prank(address(broker));
         (orderId, orderKey) = twammHook.submitOrder(
-            IJITTWAMM.SubmitOrderParams({
+            IJTM.SubmitOrderParams({
                 key: marketTwammKey,
                 zeroForOne: zeroForOne,
                 duration: duration,
@@ -129,7 +129,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         broker.setActiveTwammOrder(
             IPrimeBroker.TwammOrderInfo({
                 key: marketTwammKey,
-                orderKey: ITWAMM.OrderKey({
+                orderKey: IJTM.OrderKey({
                     owner: orderKey.owner,
                     expiration: orderKey.expiration,
                     zeroForOne: orderKey.zeroForOne
@@ -211,7 +211,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL) + 1) *
             TWAMM_INTERVAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _placeTwammOrder(broker, twammAmount, sellCollateral, duration);
 
@@ -268,7 +268,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         );
 
         // Step 1: Align time. We need to be at a TWAMM interval boundary
-        //         for order placement. Don't call executeJITTWAMMOrders
+        //         for order placement. Don't call executeJTMOrders
         //         because no TWAMM orders exist yet (crossing 472k empty
         //         intervals would cause OutOfGas).
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL) + 1) *
@@ -282,7 +282,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         }
 
         // Step 3: Re-align to TWAMM interval after LP warp.
-        //         Still no orders, so skip executeJITTWAMMOrders.
+        //         Still no orders, so skip executeJTMOrders.
         nextInterval =
             ((block.timestamp / TWAMM_INTERVAL) + 1) *
             TWAMM_INTERVAL;

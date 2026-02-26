@@ -691,6 +691,7 @@ contract RLDMarketFactory is ReentrancyGuard {
             maintenanceMargin: params.maintenanceMargin,
             liquidationCloseFactor: params.liquidationCloseFactor,
             fundingPeriod: FUNDING_PERIOD,
+            badDebtPeriod: 7 days, // Default 7-day socialization period
             debtCap: type(uint128).max, // Unlimited by default (max sentinel = no cap)
             minLiquidation: 0, // Default 0. Curator must manually configure based on asset price.
             liquidationParams: params.liquidationParams,

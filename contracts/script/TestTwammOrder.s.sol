@@ -6,7 +6,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
-import {ITWAMM} from "../src/twamm/ITWAMM.sol";
+import {IJTM} from "../src/twamm/IJTM.sol";
 
 /**
  * @title TestTwammOrder
@@ -26,7 +26,7 @@ contract TestTwammOrder is Script {
         address twammHook = vm.envAddress("TWAMM_HOOK");
         uint256 amountIn = vm.envUint("AMOUNT_IN");
         uint256 durationSeconds = vm.envUint("DURATION_SECONDS");
-        
+
         uint256 privateKey = vm.envUint("USER_C_PRIVATE_KEY");
         address userC = vm.addr(privateKey);
 
@@ -49,13 +49,12 @@ contract TestTwammOrder is Script {
         // Step 1: Approve TWAMM hook to spend waUSDC
         console.log("Approving TWAMM hook...");
         ERC20(waUSDC).approve(twammHook, amountIn);
-        
+
         // Step 2: Construct PoolKey
         // Tokens must be sorted by address
-        (address currency0, address currency1) = waUSDC < positionToken 
-            ? (waUSDC, positionToken) 
-            : (positionToken, waUSDC);
-        
+        (address currency0, address currency1) =
+            waUSDC < positionToken ? (waUSDC, positionToken) : (positionToken, waUSDC);
+
         PoolKey memory poolKey = PoolKey({
             currency0: Currency.wrap(currency0),
             currency1: Currency.wrap(currency1),
@@ -63,45 +62,42 @@ contract TestTwammOrder is Script {
             tickSpacing: TICK_SPACING,
             hooks: IHooks(twammHook)
         });
-        
+
         // Step 3: Determine zeroForOne
         // We want to sell waUSDC and buy wRLP
         // zeroForOne = true means selling token0 for token1
         bool zeroForOne = (waUSDC == currency0);
-        
+
         console.log("Currency0:", currency0);
         console.log("Currency1:", currency1);
         console.log("zeroForOne (selling waUSDC):", zeroForOne);
-        
+
         // Step 4: Submit TWAMM order
         console.log("");
         console.log("Submitting TWAMM order...");
-        
-        ITWAMM.SubmitOrderParams memory orderParams = ITWAMM.SubmitOrderParams({
-            key: poolKey,
-            zeroForOne: zeroForOne,
-            duration: durationSeconds,
-            amountIn: amountIn
+
+        IJTM.SubmitOrderParams memory orderParams = IJTM.SubmitOrderParams({
+            key: poolKey, zeroForOne: zeroForOne, duration: durationSeconds, amountIn: amountIn
         });
-        
-        (bytes32 orderId, ITWAMM.OrderKey memory orderKey) = ITWAMM(twammHook).submitOrder(orderParams);
-        
+
+        (bytes32 orderId, IJTM.OrderKey memory orderKey) = IJTM(twammHook).submitOrder(orderParams);
+
         console.log("");
         console.log("=== ORDER CREATED ===");
         console.log("Order ID:", vm.toString(orderId));
         console.log("Owner:", orderKey.owner);
         console.log("Expiration:", orderKey.expiration);
         console.log("zeroForOne:", orderKey.zeroForOne);
-        
+
         // Step 5: Verify order exists
-        ITWAMM.Order memory order = ITWAMM(twammHook).getOrder(poolKey, orderKey);
+        IJTM.Order memory order = IJTM(twammHook).getOrder(poolKey, orderKey);
         console.log("");
         console.log("=== ORDER STATE ===");
         console.log("Sell Rate:", order.sellRate / 1e18, "(scaled)");
         console.log("Earnings Factor Last:", order.earningsFactorLast);
-        
+
         require(order.sellRate > 0, "Order not created - sellRate is 0");
-        
+
         vm.stopBroadcast();
 
         console.log("");

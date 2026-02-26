@@ -29,8 +29,8 @@ import {
     UniswapV4BrokerModule
 } from "../../../src/rld/modules/broker/UniswapV4BrokerModule.sol";
 import {
-    TwammBrokerModule
-} from "../../../src/rld/modules/broker/TwammBrokerModule.sol";
+    JTMBrokerModule
+} from "../../../src/rld/modules/broker/JTMBrokerModule.sol";
 import {
     BrokerVerifier
 } from "../../../src/rld/modules/verifier/BrokerVerifier.sol";
@@ -39,7 +39,7 @@ import {
 import {BrokerRouter} from "../../../src/periphery/BrokerRouter.sol";
 
 // ─── TWAMM ───────────────────────────────────────────────────────────────────
-import {TWAMM} from "../../../src/twamm/TWAMM.sol";
+import {JTM} from "../../../src/twamm/JTM.sol";
 
 // ─── Shared Utils ────────────────────────────────────────────────────────────
 import {
@@ -118,7 +118,7 @@ contract RLDMarketFactoryTest is Test {
     // Core
     RLDMarketFactory factory;
     RLDCore core;
-    TWAMM twammHook;
+    JTM twammHook;
 
     // Actors
     address deployer;
@@ -174,7 +174,7 @@ contract RLDMarketFactoryTest is Test {
         metadataRenderer = address(new MinimalMetadataRenderer());
 
         v4ValuationModule = address(new UniswapV4BrokerModule());
-        twammValuationModule = address(new TwammBrokerModule());
+        twammValuationModule = address(new JTMBrokerModule());
 
         // ── Phase 0.5: TWAMM Hook (with salt mining) ──────────────────
 
@@ -183,10 +183,11 @@ contract RLDMarketFactoryTest is Test {
                 Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
                 Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
                 Hooks.BEFORE_SWAP_FLAG |
-                Hooks.AFTER_SWAP_FLAG
+                Hooks.AFTER_SWAP_FLAG |
+                Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
         );
 
-        bytes memory creationCode = type(TWAMM).creationCode;
+        bytes memory creationCode = type(JTM).creationCode;
         bytes memory constructorArgs = abi.encode(
             IPoolManager(C.POOL_MANAGER),
             C.TWAMM_EXPIRATION_INTERVAL,
@@ -201,7 +202,7 @@ contract RLDMarketFactoryTest is Test {
             constructorArgs
         );
 
-        twammHook = new TWAMM{salt: salt}(
+        twammHook = new JTM{salt: salt}(
             IPoolManager(C.POOL_MANAGER),
             C.TWAMM_EXPIRATION_INTERVAL,
             deployer,
@@ -259,6 +260,10 @@ contract RLDMarketFactoryTest is Test {
 
         factory.initializeCore(address(core));
         twammHook.setRldCore(address(core));
+        twammHook.setAuthorizedFactory(address(factory));
+
+        // F-04: Transfer oracle ownership to factory (so factory can registerPool)
+        UniswapV4SingletonOracle(v4Oracle).transferOwnership(address(factory));
     }
 
     /* =====================================================================
@@ -503,7 +508,21 @@ contract RLDMarketFactoryTest is Test {
     function test_revert_zeroOraclePeriod() public {
         RLDMarketFactory.DeployParams memory params = _defaultParams();
         params.oraclePeriod = 0;
-        vm.expectRevert("Invalid OraclePeriod");
+        vm.expectRevert("OraclePeriod < 1 min");
+        factory.createMarket(params);
+    }
+
+    function test_revert_zeroCurator() public {
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.curator = address(0);
+        vm.expectRevert("Invalid Curator");
+        factory.createMarket(params);
+    }
+
+    function test_revert_oraclePeriodTooShort() public {
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.oraclePeriod = 59; // Just below 60-second minimum
+        vm.expectRevert("OraclePeriod < 1 min");
         factory.createMarket(params);
     }
 
@@ -1229,6 +1248,425 @@ contract RLDMarketFactoryTest is Test {
         assertTrue(
             poolMarkPrice >= lowerBound && poolMarkPrice <= upperBound,
             "Mark price must be within 1% of index price at initialization"
+        );
+    }
+
+    /* =====================================================================
+       FUZZ GROUP 1: VALIDATION BOUNDARY FUZZING
+       ===================================================================== */
+
+    /// @notice Fuzz: Any minColRatio <= 1e18 must revert
+    function testFuzz_revert_minColRatio_belowOrEqual100(uint64 ratio) public {
+        vm.assume(ratio <= 1e18);
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.minColRatio = ratio;
+        vm.expectRevert("MinCol < 100%");
+        factory.createMarket(params);
+    }
+
+    /// @notice Fuzz: Any maintenanceMargin < 1e18 must revert
+    function testFuzz_revert_maintenanceMargin_below100(uint64 margin) public {
+        vm.assume(margin < 1e18);
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.maintenanceMargin = margin;
+        vm.expectRevert("Maintenance < 100%");
+        factory.createMarket(params);
+    }
+
+    /// @notice Fuzz: minColRatio must always be > maintenanceMargin
+    function testFuzz_revert_minColRatio_lte_maintenance(
+        uint256 seed1,
+        uint256 seed2
+    ) public {
+        // maint must be >= 1e18 + 1 so that bound(seed2, 1e18+1, maint) doesn't have min > max
+        uint256 maint = bound(seed1, 1e18 + 1, 5e18);
+        uint256 minCol = bound(seed2, 1e18 + 1, maint);
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.minColRatio = uint64(minCol);
+        params.maintenanceMargin = uint64(maint);
+        vm.expectRevert("Risk Config Error");
+        factory.createMarket(params);
+    }
+
+    /// @notice Fuzz: Valid risk param combos should deploy successfully
+    function testFuzz_validRiskParams_passValidation(
+        uint256 seed1,
+        uint256 seed2,
+        uint256 seed3
+    ) public {
+        uint256 minCol = bound(seed1, 1e18 + 2, 10e18);
+        uint256 maint = bound(seed2, 1e18, minCol - 1);
+        uint256 closeFactor = bound(seed3, 1, 1e18);
+
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.minColRatio = uint64(minCol);
+        params.maintenanceMargin = uint64(maint);
+        params.liquidationCloseFactor = uint64(closeFactor);
+
+        (MarketId marketId, ) = factory.createMarket(params);
+        assertTrue(
+            MarketId.unwrap(marketId) != bytes32(0),
+            "Valid params should create market"
+        );
+    }
+
+    /// @notice Fuzz: liquidationCloseFactor must be in (0, 1e18]
+    function testFuzz_revert_closeFactor_invalid(uint64 cf) public {
+        vm.assume(cf == 0 || cf > 1e18);
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.liquidationCloseFactor = cf;
+        vm.expectRevert("Invalid CloseFactor");
+        factory.createMarket(params);
+    }
+
+    /// @notice Fuzz: Any oraclePeriod < 60 must revert (EDGE-01 fix)
+    function testFuzz_revert_oraclePeriod_tooShort(uint32 period) public {
+        vm.assume(period < 60);
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.oraclePeriod = period;
+        vm.expectRevert("OraclePeriod < 1 min");
+        factory.createMarket(params);
+    }
+
+    /// @notice Fuzz: tickSpacing must be > 0
+    function testFuzz_revert_tickSpacing_nonPositive(int24 ts) public {
+        vm.assume(ts <= 0);
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        params.tickSpacing = ts;
+        vm.expectRevert("Invalid TickSpacing");
+        factory.createMarket(params);
+    }
+
+    /* =====================================================================
+       FUZZ GROUP 2: ACCESS CONTROL FUZZING
+       ===================================================================== */
+
+    /// @notice Fuzz: Random addresses should never be able to call createMarket
+    function testFuzz_revert_createMarket_randomCaller(address caller_) public {
+        vm.assume(caller_ != deployer);
+        vm.assume(caller_ != address(0));
+        RLDMarketFactory.DeployParams memory params = _defaultParams();
+        vm.prank(caller_);
+        vm.expectRevert();
+        factory.createMarket(params);
+    }
+
+    /* =====================================================================
+       FUZZ GROUP 3: MARKET ID DETERMINISM
+       ===================================================================== */
+
+    /// @notice Fuzz: MarketId = keccak256(collateral, underlying, pool) — always deterministic
+    function testFuzz_marketId_isDeterministic(
+        address col,
+        address underlying,
+        address pool
+    ) public pure {
+        vm.assume(
+            col != address(0) && underlying != address(0) && pool != address(0)
+        );
+        bytes32 first = keccak256(abi.encode(col, underlying, pool));
+        bytes32 second = keccak256(abi.encode(col, underlying, pool));
+        assertEq(first, second, "MarketId must be deterministic");
+    }
+
+    /// @notice Fuzz: Different inputs must produce different MarketIds
+    function testFuzz_marketId_collisionResistance(
+        address col1,
+        address underlying1,
+        address pool1,
+        address col2,
+        address underlying2,
+        address pool2
+    ) public pure {
+        vm.assume(col1 != col2 || underlying1 != underlying2 || pool1 != pool2);
+        bytes32 id1 = keccak256(abi.encode(col1, underlying1, pool1));
+        bytes32 id2 = keccak256(abi.encode(col2, underlying2, pool2));
+        assertTrue(
+            id1 != id2,
+            "Different inputs should produce different MarketIds"
+        );
+    }
+
+    /* =====================================================================
+       FUZZ GROUP 4: PRICE MATH — sqrtPriceX96 DERIVATION
+       ===================================================================== */
+
+    /// @notice Fuzz: sqrt(price) * 2^96 / 1e9 must not overflow for valid prices
+    function testFuzz_sqrtPriceX96_noOverflow(uint256 indexPrice) public pure {
+        indexPrice = bound(indexPrice, 1e14, 100e18);
+        uint256 sqrtVal = FixedPointMathLib.sqrt(indexPrice);
+        uint256 intermediate = sqrtVal * (1 << 96);
+        assertTrue(intermediate >= sqrtVal, "Intermediate overflow");
+        uint160 result = uint160(intermediate / 1e9);
+        assertTrue(
+            uint256(result) == intermediate / 1e9,
+            "Doesn't fit uint160"
+        );
+        assertTrue(result > 0, "sqrtPriceX96 must be non-zero");
+    }
+
+    /// @notice Fuzz: price inversion must be consistent (round-trip ≈ original)
+    function testFuzz_priceInversion_roundTrip(uint256 indexPrice) public pure {
+        indexPrice = bound(indexPrice, 1e14, 100e18);
+        uint256 inverted = 1e36 / indexPrice;
+        uint256 roundTrip = 1e36 / inverted;
+        uint256 diff = indexPrice > roundTrip
+            ? indexPrice - roundTrip
+            : roundTrip - indexPrice;
+        assertTrue(
+            diff <= indexPrice / 1e14,
+            "Round-trip inversion error too large"
+        );
+    }
+
+    /// @notice Fuzz: Both token orderings must produce valid non-zero sqrtPriceX96
+    function testFuzz_sqrtPriceX96_bothOrderings(
+        uint256 indexPrice
+    ) public pure {
+        indexPrice = bound(indexPrice, 1e14, 100e18);
+        uint160 price0 = uint160(
+            (FixedPointMathLib.sqrt(indexPrice) * (1 << 96)) / 1e9
+        );
+        uint256 invertedPrice = 1e36 / indexPrice;
+        uint160 price1 = uint160(
+            (FixedPointMathLib.sqrt(invertedPrice) * (1 << 96)) / 1e9
+        );
+        assertTrue(price0 > 0, "token0 sqrtPrice must be non-zero");
+        assertTrue(price1 > 0, "token1 sqrtPrice must be non-zero");
+    }
+
+    /// @notice Fuzz: sqrtPriceX96 within JTM bounds for token0 case
+    function testFuzz_sqrtPrice_withinBounds_token0(
+        uint256 indexPrice
+    ) public pure {
+        indexPrice = bound(indexPrice, 1e14, 100e18);
+        uint160 sqrtPrice = uint160(
+            (FixedPointMathLib.sqrt(indexPrice) * (1 << 96)) / 1e9
+        );
+        uint256 Q96 = 1 << 96;
+        assertTrue(sqrtPrice >= uint160(Q96 / 100), "below token0 min");
+        assertTrue(sqrtPrice <= uint160(Q96 * 10), "above token0 max");
+    }
+
+    /// @notice Fuzz: sqrtPriceX96 within JTM bounds for token1 case (inverted)
+    function testFuzz_sqrtPrice_withinBounds_token1(
+        uint256 indexPrice
+    ) public pure {
+        indexPrice = bound(indexPrice, 1e14, 100e18);
+        uint256 invertedPrice = 1e36 / indexPrice;
+        uint160 sqrtPrice = uint160(
+            (FixedPointMathLib.sqrt(invertedPrice) * (1 << 96)) / 1e9
+        );
+        uint256 Q96 = 1 << 96;
+        assertTrue(sqrtPrice >= uint160(Q96 / 10), "below token1 min");
+        assertTrue(sqrtPrice <= uint160(Q96 * 100), "above token1 max");
+    }
+
+    /// @notice Fuzz: Reconstructing price from sqrtPriceX96 must recover ≈ original (± 1%)
+    function testFuzz_sqrtPriceX96_reconstructs_price(
+        uint256 indexPrice
+    ) public pure {
+        indexPrice = bound(indexPrice, 1e15, 100e18);
+        uint160 sqrtPrice = uint160(
+            (FixedPointMathLib.sqrt(indexPrice) * (1 << 96)) / 1e9
+        );
+        uint256 sqrtAsWad = (uint256(sqrtPrice) * 1e9) / (1 << 96);
+        uint256 reconstructed = sqrtAsWad * sqrtAsWad;
+        uint256 lowerBound = (indexPrice * 99) / 100;
+        uint256 upperBound = (indexPrice * 101) / 100;
+        assertTrue(
+            reconstructed >= lowerBound && reconstructed <= upperBound,
+            "Outside 1% tolerance"
+        );
+    }
+
+    /* =====================================================================
+       FUZZ GROUP 5: ORACLE PRICE RANGE FUZZING
+       ===================================================================== */
+
+    /// @notice Fuzz: Oracle formula P = (rate * K) / 1e9 with floor and cap
+    function testFuzz_oraclePrice_formula(uint128 rawRateRay) public pure {
+        uint256 rate = uint256(rawRateRay);
+        if (rate > 1e27) rate = 1e27;
+        uint256 calculated = (rate * 100) / 1e9;
+        uint256 result = calculated < 1e14 ? 1e14 : calculated;
+        assertTrue(result >= 1e14, "Below MIN_PRICE");
+        assertTrue(result <= 100e18, "Above MAX_PRICE");
+    }
+
+    /// @notice Fuzz: Oracle output always within Factory's [MIN_PRICE, MAX_PRICE]
+    function testFuzz_oraclePrice_withinFactoryBounds(
+        uint128 rawRateRay
+    ) public pure {
+        uint256 rate = uint256(rawRateRay);
+        if (rate > 1e27) rate = 1e27;
+        uint256 calculated = (rate * 100) / 1e9;
+        uint256 result = calculated < 1e14 ? 1e14 : calculated;
+        assertTrue(
+            result >= 1e14 && result <= 100e18,
+            "Outside Factory bounds"
+        );
+    }
+
+    /* =====================================================================
+       FUZZ GROUP 6: POST-DEPLOYMENT INVARIANT CHECK
+       ===================================================================== */
+
+    /// @notice Verify all post-deployment invariants hold
+    function test_fuzz_postDeployment_allInvariants() public {
+        (MarketId marketId, address brokerFactoryAddr) = factory.createMarket(
+            _defaultParams()
+        );
+
+        // Core state
+        assertTrue(core.marketExists(marketId), "INV: market must exist");
+        IRLDCore.MarketState memory state = core.getMarketState(marketId);
+        assertEq(state.normalizationFactor, 1e18, "INV: NF must be 1.0");
+        assertEq(state.totalDebt, 0, "INV: totalDebt must be 0");
+        assertEq(state.badDebt, 0, "INV: badDebt must be 0");
+        assertEq(
+            state.lastUpdateTimestamp,
+            uint48(block.timestamp),
+            "INV: timestamp"
+        );
+
+        // Config — FIN-01 fix
+        IRLDCore.MarketConfig memory config = core.getMarketConfig(marketId);
+        assertEq(config.debtCap, 0, "INV: debtCap must be 0");
+        assertTrue(config.brokerVerifier != address(0), "INV: verifier set");
+
+        // Addresses
+        IRLDCore.MarketAddresses memory addrs = core.getMarketAddresses(
+            marketId
+        );
+        assertTrue(addrs.positionToken != address(0), "INV: positionToken");
+        assertEq(addrs.markOracle, v4Oracle, "INV: markOracle");
+        assertEq(addrs.fundingModel, standardFundingModel, "INV: fundingModel");
+
+        // Position token
+        PositionToken pt = PositionToken(addrs.positionToken);
+        assertEq(pt.owner(), address(core), "INV: wRLP owner");
+        assertEq(
+            MarketId.unwrap(pt.marketId()),
+            MarketId.unwrap(marketId),
+            "INV: wRLP marketId"
+        );
+        assertEq(
+            pt.decimals(),
+            ERC20(C.AUSDC).decimals(),
+            "INV: wRLP decimals"
+        );
+        assertEq(pt.totalSupply(), 0, "INV: initial supply 0");
+
+        // BrokerVerifier chain
+        BrokerVerifier verifier = BrokerVerifier(config.brokerVerifier);
+        assertEq(
+            verifier.FACTORY(),
+            brokerFactoryAddr,
+            "INV: verifier->factory"
+        );
+
+        // Oracle registration
+        (, , , uint32 period, bool set) = UniswapV4SingletonOracle(v4Oracle)
+            .poolSettings(addrs.positionToken);
+        assertTrue(set, "INV: oracle registered");
+        assertEq(period, C.ORACLE_PERIOD, "INV: oracle period");
+
+        // V4 pool + TWAMM bounds
+        Currency c0 = Currency.wrap(addrs.positionToken);
+        Currency c1 = Currency.wrap(C.AUSDC);
+        if (c0 > c1) (c0, c1) = (c1, c0);
+        PoolKey memory key = PoolKey({
+            currency0: c0,
+            currency1: c1,
+            fee: C.POOL_FEE,
+            tickSpacing: C.TICK_SPACING,
+            hooks: IHooks(address(twammHook))
+        });
+        (uint160 sqrtPriceX96, , , ) = IPoolManager(C.POOL_MANAGER).getSlot0(
+            key.toId()
+        );
+        assertTrue(sqrtPriceX96 > 0, "INV: pool initialized");
+        (uint160 sMin, uint160 sMax) = twammHook.priceBounds(key.toId());
+        assertTrue(sMin > 0 && sMax > sMin, "INV: bounds set");
+        assertTrue(
+            sqrtPriceX96 >= sMin && sqrtPriceX96 <= sMax,
+            "INV: price in bounds"
+        );
+    }
+
+    /* =====================================================================
+       FUZZ GROUP 7: PRICE BOUNDARY STRESS TESTS
+       ===================================================================== */
+
+    function test_fuzz_sqrtPriceX96_atMinPrice() public pure {
+        uint160 s = uint160((FixedPointMathLib.sqrt(1e14) * (1 << 96)) / 1e9);
+        uint256 Q = 1 << 96;
+        assertTrue(s > 0 && s >= uint160(Q / 100) && s <= uint160(Q * 10));
+    }
+
+    function test_fuzz_sqrtPriceX96_atMaxPrice() public pure {
+        uint160 s = uint160((FixedPointMathLib.sqrt(100e18) * (1 << 96)) / 1e9);
+        uint256 Q = 1 << 96;
+        assertTrue(s > 0 && s >= uint160(Q / 100) && s <= uint160(Q * 10));
+    }
+
+    function test_fuzz_sqrtPriceX96_invertedMinPrice() public pure {
+        uint160 s = uint160(
+            (FixedPointMathLib.sqrt(1e36 / 1e14) * (1 << 96)) / 1e9
+        );
+        uint256 Q = 1 << 96;
+        assertTrue(s >= uint160(Q / 10) && s <= uint160(Q * 100));
+    }
+
+    function test_fuzz_sqrtPriceX96_invertedMaxPrice() public pure {
+        uint160 s = uint160(
+            (FixedPointMathLib.sqrt(1e36 / 100e18) * (1 << 96)) / 1e9
+        );
+        uint256 Q = 1 << 96;
+        assertTrue(s >= uint160(Q / 10) && s <= uint160(Q * 100));
+    }
+
+    /// @notice Fuzz: sqrt accuracy — sqrt(x)^2 <= x < (sqrt(x)+1)^2
+    function testFuzz_sqrt_accuracy(uint256 x) public pure {
+        x = bound(x, 1, type(uint128).max);
+        uint256 root = FixedPointMathLib.sqrt(x);
+        assertTrue(root * root <= x, "sqrt(x)^2 must be <= x");
+        assertTrue((root + 1) * (root + 1) > x, "(sqrt(x)+1)^2 must be > x");
+    }
+
+    /* =====================================================================
+       FUZZ GROUP 8: PRICE MONOTONICITY
+       ===================================================================== */
+
+    /// @notice Fuzz: Higher price → higher sqrtPriceX96 (monotonicity)
+    function testFuzz_sqrtPriceX96_monotonic(
+        uint256 price1,
+        uint256 price2
+    ) public pure {
+        price1 = bound(price1, 1e14, 100e18);
+        price2 = bound(price2, 1e14, 100e18);
+        vm.assume(price1 < price2);
+        uint160 sqrt1 = uint160(
+            (FixedPointMathLib.sqrt(price1) * (1 << 96)) / 1e9
+        );
+        uint160 sqrt2 = uint160(
+            (FixedPointMathLib.sqrt(price2) * (1 << 96)) / 1e9
+        );
+        assertTrue(sqrt2 >= sqrt1, "sqrtPriceX96 must increase monotonically");
+    }
+
+    /// @notice Fuzz: Higher price → lower inverted price (anti-monotonicity)
+    function testFuzz_invertedPrice_antiMonotonic(
+        uint256 seed1,
+        uint256 seed2
+    ) public pure {
+        uint256 price1 = bound(seed1, 1e14, 99e18);
+        uint256 price2 = bound(seed2, price1 + 1e12, 100e18);
+        vm.assume(price2 > price1);
+        assertTrue(
+            1e36 / price1 > 1e36 / price2,
+            "Inverted price must decrease"
         );
     }
 }

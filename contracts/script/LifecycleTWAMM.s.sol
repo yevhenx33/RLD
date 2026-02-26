@@ -9,7 +9,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-import {ITWAMM} from "../src/twamm/ITWAMM.sol";
+import {IJTM} from "../src/twamm/IJTM.sol";
 
 /**
  * @title LifecycleTWAMM
@@ -26,7 +26,7 @@ contract LifecycleTWAMM is Script {
 
     function run() external {
         console.log("====== LIFECYCLE TWAMM ======");
-        
+
         // 1. Read SORTED currency addresses from environment
         address token0 = vm.envAddress("TOKEN0");
         address token1 = vm.envAddress("TOKEN1");
@@ -35,12 +35,12 @@ contract LifecycleTWAMM is Script {
         uint256 durationSeconds = vm.envUint("DURATION_SECONDS");
         bool zeroForOne = vm.envBool("ZERO_FOR_ONE");
         uint256 userKey = vm.envUint("TWAMM_USER_KEY");
-        
+
         address user = vm.addr(userKey);
-        
+
         // 2. CRITICAL: Verify currencies are sorted correctly
         require(token0 < token1, "FATAL: TOKEN0 must be < TOKEN1");
-        
+
         console.log("Token0:", token0);
         console.log("Token1:", token1);
         console.log("Hook (TWAMM):", hook);
@@ -48,7 +48,7 @@ contract LifecycleTWAMM is Script {
         console.log("Duration (seconds):", durationSeconds);
         console.log("zeroForOne:", zeroForOne);
         console.log("User:", user);
-        
+
         // 3. Build pool key
         PoolKey memory poolKey = PoolKey({
             currency0: Currency.wrap(token0),
@@ -57,86 +57,83 @@ contract LifecycleTWAMM is Script {
             tickSpacing: TICK_SPACING,
             hooks: IHooks(hook)
         });
-        
+
         IPoolManager pm = IPoolManager(V4_POOL_MANAGER);
         PoolId poolId = poolKey.toId();
-        
+
         // 4. Get pool state
         (uint160 sqrtPriceX96, int24 tick,,) = pm.getSlot0(poolId);
-        
+
         console.log("");
         console.log("=== POOL STATE ===");
         console.log("Current tick:", tick);
         console.log("sqrtPriceX96:", sqrtPriceX96);
-        
+
         // 5. Check user balances before
         uint256 user0Before = ERC20(token0).balanceOf(user);
         uint256 user1Before = ERC20(token1).balanceOf(user);
-        
+
         console.log("");
         console.log("=== USER BALANCES BEFORE ===");
         console.log("Token0:", user0Before);
         console.log("Token1:", user1Before);
-        
+
         // Verify user has enough of the input token
         address inputToken = zeroForOne ? token0 : token1;
         uint256 inputBalance = zeroForOne ? user0Before : user1Before;
         require(inputBalance >= orderAmount, "Insufficient balance for TWAMM order");
-        
+
         // 6. Submit TWAMM order using SubmitOrderParams
         vm.startBroadcast(userKey);
-        
+
         // Approve TWAMM hook to spend tokens
         ERC20(inputToken).approve(hook, orderAmount);
         console.log("Approved input token to TWAMM hook");
-        
+
         // Build order params using the simpler SubmitOrderParams struct
-        ITWAMM.SubmitOrderParams memory orderParams = ITWAMM.SubmitOrderParams({
-            key: poolKey,
-            zeroForOne: zeroForOne,
-            duration: durationSeconds,
-            amountIn: orderAmount
+        IJTM.SubmitOrderParams memory orderParams = IJTM.SubmitOrderParams({
+            key: poolKey, zeroForOne: zeroForOne, duration: durationSeconds, amountIn: orderAmount
         });
-        
+
         console.log("Submitting TWAMM order...");
-        
+
         // Submit the order - returns orderId and orderKey
-        (bytes32 orderId, ITWAMM.OrderKey memory orderKey) = ITWAMM(hook).submitOrder(orderParams);
-        
+        (bytes32 orderId, IJTM.OrderKey memory orderKey) = IJTM(hook).submitOrder(orderParams);
+
         vm.stopBroadcast();
-        
+
         console.log("");
         console.log("=== ORDER SUBMITTED ===");
         console.log("Order ID:", vm.toString(orderId));
         console.log("Expiration:", orderKey.expiration);
-        
+
         // 7. Verify order exists by querying state
-        ITWAMM.Order memory order = ITWAMM(hook).getOrder(poolKey, orderKey);
-        
+        IJTM.Order memory order = IJTM(hook).getOrder(poolKey, orderKey);
+
         console.log("");
         console.log("=== ORDER STATE ===");
         console.log("Sell rate:", order.sellRate);
-        
+
         require(order.sellRate > 0, "Order not found - submission failed!");
-        
+
         // 8. Check user balances after
         uint256 user0After = ERC20(token0).balanceOf(user);
         uint256 user1After = ERC20(token1).balanceOf(user);
-        
+
         console.log("");
         console.log("=== USER BALANCES AFTER ===");
         console.log("Token0:", user0After);
         console.log("Token1:", user1After);
-        
+
         // Calculate changes
         int256 change0 = int256(user0After) - int256(user0Before);
         int256 change1 = int256(user1After) - int256(user1Before);
-        
+
         console.log("");
         console.log("=== BALANCE CHANGES ===");
         console.log("Token0 change:", change0);
         console.log("Token1 change:", change1);
-        
+
         // Verify order locked the tokens
         if (zeroForOne) {
             require(change0 < 0, "Expected to spend token0");

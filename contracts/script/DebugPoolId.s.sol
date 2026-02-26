@@ -12,7 +12,7 @@ contract DebugPoolId is Script {
         address token0 = vm.envAddress("TOKEN0");
         address token1 = vm.envAddress("TOKEN1");
         address twamm = vm.envAddress("TWAMM_HOOK");
-        
+
         PoolKey memory key = PoolKey({
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
@@ -20,7 +20,7 @@ contract DebugPoolId is Script {
             tickSpacing: 60,
             hooks: IHooks(twamm)
         });
-        
+
         PoolId poolId = key.toId();
         console.log("POOL_ID:", uint256(PoolId.unwrap(poolId)));
         console.logBytes32(PoolId.unwrap(poolId));

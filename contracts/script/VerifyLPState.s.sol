@@ -45,9 +45,9 @@ contract VerifyLPState is Script, StdCheats {
     address constant AUSDC = 0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c;
     address WRLP;
 
-    // Pool parameters  
-    int24 constant TICK_LOWER = 6930;   // ~$2
-    int24 constant TICK_UPPER = 29960;  // ~$20
+    // Pool parameters
+    int24 constant TICK_LOWER = 6930; // ~$2
+    int24 constant TICK_UPPER = 29960; // ~$20
     uint24 constant FEE = 500;
     int24 constant TICK_SPACING = 5;
 
@@ -62,7 +62,7 @@ contract VerifyLPState is Script, StdCheats {
         address brokerFactory = vm.parseJsonAddress(json, ".BrokerFactory");
 
         WRLP = IRLDCore(coreAddr).getMarketAddresses(MarketId.wrap(marketId)).positionToken;
-        
+
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
 
@@ -74,10 +74,11 @@ contract VerifyLPState is Script, StdCheats {
         IERC20(USDC).approve(AAVE_POOL, type(uint256).max);
         IAavePool(AAVE_POOL).supply(USDC, 10_000_000 * 1e6, deployer, 0);
 
-        address broker = PrimeBrokerFactory(brokerFactory).createBroker(keccak256(abi.encode(block.timestamp, deployer)));
+        address broker =
+            PrimeBrokerFactory(brokerFactory).createBroker(keccak256(abi.encode(block.timestamp, deployer)));
         uint256 collateralAmount = 5_000_000 * 1e6;
         IERC20(AUSDC).transfer(broker, collateralAmount);
-        
+
         uint256 wRLPToMint = 100_000 * 1e6;
         PrimeBroker(payable(broker)).modifyPosition(marketId, int256(collateralAmount), int256(wRLPToMint));
         PrimeBroker(payable(broker)).withdrawPositionToken(deployer, 50_000 * 1e6);
@@ -98,8 +99,11 @@ contract VerifyLPState is Script, StdCheats {
         });
 
         (uint160 sqrtPriceX96, int24 currentTick,,) = IPoolManager(POOL_MANAGER).getSlot0(poolKey.toId());
-        uint128 liquidity = LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96, TickMath.getSqrtPriceAtTick(TICK_UPPER), wRLPAmount);
-        uint256 aUSDCAmount = FullMath.mulDiv(uint256(liquidity), sqrtPriceX96 - TickMath.getSqrtPriceAtTick(TICK_LOWER), FixedPoint96.Q96) + 1000;
+        uint128 liquidity =
+            LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96, TickMath.getSqrtPriceAtTick(TICK_UPPER), wRLPAmount);
+        uint256 aUSDCAmount = FullMath.mulDiv(
+            uint256(liquidity), sqrtPriceX96 - TickMath.getSqrtPriceAtTick(TICK_LOWER), FixedPoint96.Q96
+        ) + 1000;
 
         bytes memory unlockData = _buildPOSMData(deployer, liquidity, wRLPAmount, aUSDCAmount, poolKey);
         IPositionManager(POSM).modifyLiquidities(unlockData, block.timestamp + 600);
@@ -107,9 +111,9 @@ contract VerifyLPState is Script, StdCheats {
         uint256 tokenId = IPositionManager(POSM).nextTokenId() - 1;
 
         console.log("\n=== 3. VERIFICATION: POOL STATE ===");
-        (sqrtPriceX96, currentTick, , ) = IPoolManager(POOL_MANAGER).getSlot0(poolKey.toId());
+        (sqrtPriceX96, currentTick,,) = IPoolManager(POOL_MANAGER).getSlot0(poolKey.toId());
         uint128 poolLiquidity = IPoolManager(POOL_MANAGER).getLiquidity(poolKey.toId());
-        
+
         console.log("Pool ID:", vm.toString(PoolId.unwrap(poolKey.toId())));
         console.log("sqrtPriceX96:", sqrtPriceX96);
         console.log("Current Tick:", currentTick);
@@ -118,7 +122,7 @@ contract VerifyLPState is Script, StdCheats {
         console.log("\n=== 4. VERIFICATION: NFT STATE (ID: %s) ===", tokenId);
         uint128 posLiquidity = IPositionManager(POSM).getPositionLiquidity(tokenId);
         (PoolKey memory nftPoolKey, PositionInfo info) = IPositionManager(POSM).getPoolAndPositionInfo(tokenId);
-        
+
         console.log("NFT Liquidity:", posLiquidity);
         console.log("NFT Tick Lower:", info.tickLower());
         console.log("NFT Tick Upper:", info.tickUpper());
@@ -128,18 +132,23 @@ contract VerifyLPState is Script, StdCheats {
         vm.stopPrank();
     }
 
-    function _buildPOSMData(address recipient, uint128 liquidity, uint256 wRLPAmount, uint256 aUSDCAmount, PoolKey memory poolKey) internal view returns (bytes memory) {
+    function _buildPOSMData(
+        address recipient,
+        uint128 liquidity,
+        uint256 wRLPAmount,
+        uint256 aUSDCAmount,
+        PoolKey memory poolKey
+    ) internal view returns (bytes memory) {
         bytes memory actions = abi.encodePacked(
-            uint8(Actions.MINT_POSITION), 
-            uint8(Actions.SETTLE_PAIR),
-            uint8(Actions.TAKE_PAIR)
+            uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR), uint8(Actions.TAKE_PAIR)
         );
-        
+
         bytes[] memory params = new bytes[](3);
-        params[0] = abi.encode(poolKey, TICK_LOWER, TICK_UPPER, liquidity, wRLPAmount, aUSDCAmount * 2, recipient, bytes(""));
+        params[0] =
+            abi.encode(poolKey, TICK_LOWER, TICK_UPPER, liquidity, wRLPAmount, aUSDCAmount * 2, recipient, bytes(""));
         params[1] = abi.encode(poolKey.currency0, poolKey.currency1);
         params[2] = abi.encode(poolKey.currency0, poolKey.currency1, recipient, type(uint128).max);
-        
+
         return abi.encode(actions, params);
     }
 }

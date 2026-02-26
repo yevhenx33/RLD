@@ -6,16 +6,16 @@ import {LeverageShortExecutor} from "../src/periphery/LeverageShortExecutor.sol"
 
 contract DeployLeverageShortExecutor is Script {
     address constant V4_POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
-    
+
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        
+
         vm.startBroadcast(deployerKey);
-        
+
         LeverageShortExecutor executor = new LeverageShortExecutor(V4_POOL_MANAGER);
-        
+
         console.log("LEVERAGE_SHORT_EXECUTOR=%s", address(executor));
-        
+
         vm.stopBroadcast();
     }
 }

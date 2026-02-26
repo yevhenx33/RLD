@@ -16,21 +16,13 @@ import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PrimeBroker} from "../../../src/rld/broker/PrimeBroker.sol";
 import {PrimeBrokerFactory} from "../../../src/rld/core/PrimeBrokerFactory.sol";
-import {
-    BrokerVerifier
-} from "../../../src/rld/modules/verifier/BrokerVerifier.sol";
+import {BrokerVerifier} from "../../../src/rld/modules/verifier/BrokerVerifier.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
-import {
-    IPositionManager
-} from "v4-periphery/src/interfaces/IPositionManager.sol";
-import {
-    IAllowanceTransfer
-} from "permit2/src/interfaces/IAllowanceTransfer.sol";
-import {
-    LiquidityAmounts
-} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "forge-std/console.sol";
 
@@ -134,7 +126,7 @@ import "forge-std/console.sol";
 ///     ### Ghost-Aware NAV Coverage
 ///
 ///     Tests T17a, T17b, T18a, T18b, T19/T19b, T20/T20b, T22/T22b, T23/T23b
-///     exercise the `JitTwammBrokerModule.getValue()` three-term formula:
+///     exercise the `JTMBrokerModule.getValue()` three-term formula:
 ///       - "no clear" variants verify ghost is visible in NAV (term 3)
 ///       - "with clear" variants verify cleared earnings are visible (term 2)
 ///       - Oracle price shocks account for ghost-inclusive NAV
@@ -158,26 +150,20 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
     uint256 constant LIQUIDATOR_CASH = 1_000_000e6;
 
     function _initialSqrtPrice() internal override returns (uint160) {
-        uint256 p = (address(ct) > address(pt))
-            ? INDEX_PRICE_WAD
-            : FullMath.mulDiv(1e18, 1e18, INDEX_PRICE_WAD);
+        uint256 p = (address(ct) > address(pt)) ? INDEX_PRICE_WAD : FullMath.mulDiv(1e18, 1e18, INDEX_PRICE_WAD);
         return _computeSqrtPriceX96(p);
     }
 
     function _tweakSetup() internal override {
         ma = core.getMarketAddresses(marketId);
         IRLDCore.MarketConfig memory mc = core.getMarketConfig(marketId);
-        brokerFactory = PrimeBrokerFactory(
-            BrokerVerifier(mc.brokerVerifier).FACTORY()
-        );
+        brokerFactory = PrimeBrokerFactory(BrokerVerifier(mc.brokerVerifier).FACTORY());
         collateralMock = MockERC20(ma.collateralToken);
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
         vm.mockCall(
             address(v4Oracle),
             abi.encodeWithSelector(
-                bytes4(keccak256("getSpotPrice(address,address)")),
-                ma.positionToken,
-                ma.collateralToken
+                bytes4(keccak256("getSpotPrice(address,address)")), ma.positionToken, ma.collateralToken
             ),
             abi.encode(INDEX_PRICE_WAD)
         );
@@ -189,11 +175,7 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
     function _fundLiquidator() internal {
         PrimeBroker helper = _createBroker();
         collateralMock.transfer(address(helper), LIQUIDATOR_WRLP * 20);
-        helper.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(LIQUIDATOR_WRLP * 20),
-            int256(LIQUIDATOR_WRLP)
-        );
+        helper.modifyPosition(MarketId.unwrap(marketId), int256(LIQUIDATOR_WRLP * 20), int256(LIQUIDATOR_WRLP));
         helper.withdrawPositionToken(liquidator, LIQUIDATOR_WRLP);
         collateralMock.transfer(liquidator, LIQUIDATOR_CASH);
         vm.prank(liquidator);
@@ -208,20 +190,11 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
     function _initLPPool() internal {
         address posToken = ma.positionToken;
         address colToken = ma.collateralToken;
-        (Currency c0, Currency c1) = _sortCurrencies(
-            Currency.wrap(posToken),
-            Currency.wrap(colToken)
-        );
-        lpPoolKey = PoolKey({
-            currency0: c0,
-            currency1: c1,
-            fee: 3000,
-            tickSpacing: int24(60),
-            hooks: IHooks(address(0))
-        });
-        uint256 price = (Currency.unwrap(c0) == colToken)
-            ? FullMath.mulDiv(1e18, 1e18, INDEX_PRICE_WAD)
-            : INDEX_PRICE_WAD;
+        (Currency c0, Currency c1) = _sortCurrencies(Currency.wrap(posToken), Currency.wrap(colToken));
+        lpPoolKey =
+            PoolKey({currency0: c0, currency1: c1, fee: 3000, tickSpacing: int24(60), hooks: IHooks(address(0))});
+        uint256 price =
+            (Currency.unwrap(c0) == colToken) ? FullMath.mulDiv(1e18, 1e18, INDEX_PRICE_WAD) : INDEX_PRICE_WAD;
         poolManager.initialize(lpPoolKey, _computeSqrtPriceX96(price));
         ERC20(posToken).approve(address(swapRouter), type(uint256).max);
         ERC20(colToken).approve(address(swapRouter), type(uint256).max);
@@ -231,28 +204,16 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
 
     // ======================== LP PROVISION ========================
 
-    function _provideV4LP(
-        PrimeBroker broker,
-        uint256 wAmt,
-        uint256 cAmt
-    ) internal returns (uint256 tokenId) {
+    function _provideV4LP(PrimeBroker broker, uint256 wAmt, uint256 cAmt) internal returns (uint256 tokenId) {
         broker.withdrawPositionToken(address(this), wAmt);
         broker.withdrawCollateral(address(this), cAmt);
         vm.warp(1_700_000_000);
-        IAllowanceTransfer(PERMIT2_ADDRESS).approve(
-            ma.positionToken,
-            address(positionManager),
-            type(uint160).max,
-            type(uint48).max
-        );
-        IAllowanceTransfer(PERMIT2_ADDRESS).approve(
-            ma.collateralToken,
-            address(positionManager),
-            type(uint160).max,
-            type(uint48).max
-        );
+        IAllowanceTransfer(PERMIT2_ADDRESS)
+            .approve(ma.positionToken, address(positionManager), type(uint160).max, type(uint48).max);
+        IAllowanceTransfer(PERMIT2_ADDRESS)
+            .approve(ma.collateralToken, address(positionManager), type(uint160).max, type(uint48).max);
 
-        (, int24 tick, , ) = poolManager.getSlot0(lpPoolKey.toId());
+        (, int24 tick,,) = poolManager.getSlot0(lpPoolKey.toId());
         int24 sp = lpPoolKey.tickSpacing;
         int24 lo = (tick / sp) * sp - 3000;
         int24 hi = lo + 6000;
@@ -266,17 +227,10 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
             a1 = wAmt;
         }
         uint128 liq = LiquidityAmounts.getLiquidityForAmounts(
-            TickMath.getSqrtPriceAtTick(tick),
-            TickMath.getSqrtPriceAtTick(lo),
-            TickMath.getSqrtPriceAtTick(hi),
-            a0,
-            a1
+            TickMath.getSqrtPriceAtTick(tick), TickMath.getSqrtPriceAtTick(lo), TickMath.getSqrtPriceAtTick(hi), a0, a1
         );
         require(liq > 0, "zero liq");
-        bytes memory acts = abi.encodePacked(
-            uint8(Actions.MINT_POSITION),
-            uint8(Actions.SETTLE_PAIR)
-        );
+        bytes memory acts = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
         bytes[] memory p = new bytes[](2);
         p[0] = abi.encode(
             lpPoolKey,
@@ -289,28 +243,16 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
             bytes("")
         );
         p[1] = abi.encode(lpPoolKey.currency0, lpPoolKey.currency1);
-        positionManager.modifyLiquidities(
-            abi.encode(acts, p),
-            block.timestamp + 60
-        );
+        positionManager.modifyLiquidities(abi.encode(acts, p), block.timestamp + 60);
         tokenId = positionManager.nextTokenId() - 1;
-        IERC721(address(positionManager)).transferFrom(
-            address(this),
-            address(broker),
-            tokenId
-        );
+        IERC721(address(positionManager)).transferFrom(address(this), address(broker), tokenId);
         broker.setActiveV4Position(tokenId);
     }
 
     /// @dev Provide V4 LP at tick range entirely above or below current tick.
     ///      `above=true` → holds token0 only. `above=false` → holds token1 only.
-    function _provideV4LPOutOfRange(
-        PrimeBroker broker,
-        uint256 amount,
-        bool above
-    ) internal returns (uint256 tokenId) {
-        bool wRLPisC0 = Currency.unwrap(lpPoolKey.currency0) ==
-            ma.positionToken;
+    function _provideV4LPOutOfRange(PrimeBroker broker, uint256 amount, bool above) internal returns (uint256 tokenId) {
+        bool wRLPisC0 = Currency.unwrap(lpPoolKey.currency0) == ma.positionToken;
         if (above) {
             if (wRLPisC0) broker.withdrawPositionToken(address(this), amount);
             else broker.withdrawCollateral(address(this), amount);
@@ -320,20 +262,12 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
         }
 
         vm.warp(1_700_000_000);
-        IAllowanceTransfer(PERMIT2_ADDRESS).approve(
-            ma.positionToken,
-            address(positionManager),
-            type(uint160).max,
-            type(uint48).max
-        );
-        IAllowanceTransfer(PERMIT2_ADDRESS).approve(
-            ma.collateralToken,
-            address(positionManager),
-            type(uint160).max,
-            type(uint48).max
-        );
+        IAllowanceTransfer(PERMIT2_ADDRESS)
+            .approve(ma.positionToken, address(positionManager), type(uint160).max, type(uint48).max);
+        IAllowanceTransfer(PERMIT2_ADDRESS)
+            .approve(ma.collateralToken, address(positionManager), type(uint160).max, type(uint48).max);
 
-        (, int24 tick, , ) = poolManager.getSlot0(lpPoolKey.toId());
+        (, int24 tick,,) = poolManager.getSlot0(lpPoolKey.toId());
         int24 sp = lpPoolKey.tickSpacing;
         int24 lo;
         int24 hi;
@@ -348,18 +282,11 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
         uint256 a0 = above ? amount : 0;
         uint256 a1 = above ? 0 : amount;
         uint128 liq = LiquidityAmounts.getLiquidityForAmounts(
-            TickMath.getSqrtPriceAtTick(tick),
-            TickMath.getSqrtPriceAtTick(lo),
-            TickMath.getSqrtPriceAtTick(hi),
-            a0,
-            a1
+            TickMath.getSqrtPriceAtTick(tick), TickMath.getSqrtPriceAtTick(lo), TickMath.getSqrtPriceAtTick(hi), a0, a1
         );
         require(liq > 0, "zero liq OOR");
 
-        bytes memory acts = abi.encodePacked(
-            uint8(Actions.MINT_POSITION),
-            uint8(Actions.SETTLE_PAIR)
-        );
+        bytes memory acts = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
         bytes[] memory p = new bytes[](2);
         p[0] = abi.encode(
             lpPoolKey,
@@ -372,16 +299,9 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
             bytes("")
         );
         p[1] = abi.encode(lpPoolKey.currency0, lpPoolKey.currency1);
-        positionManager.modifyLiquidities(
-            abi.encode(acts, p),
-            block.timestamp + 60
-        );
+        positionManager.modifyLiquidities(abi.encode(acts, p), block.timestamp + 60);
         tokenId = positionManager.nextTokenId() - 1;
-        IERC721(address(positionManager)).transferFrom(
-            address(this),
-            address(broker),
-            tokenId
-        );
+        IERC721(address(positionManager)).transferFrom(address(this), address(broker), tokenId);
         broker.setActiveV4Position(tokenId);
     }
 
@@ -393,19 +313,13 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
                 ? FullMath.mulDiv(1e18, 1e18, targetPriceWad)
                 : targetPriceWad
         );
-        bool wRLPisCurrency0 = Currency.unwrap(lpPoolKey.currency0) ==
-            ma.positionToken;
+        bool wRLPisCurrency0 = Currency.unwrap(lpPoolKey.currency0) == ma.positionToken;
         swapRouter.swap(
             lpPoolKey,
             SwapParams({
-                zeroForOne: !wRLPisCurrency0,
-                amountSpecified: -int256(100_000e6),
-                sqrtPriceLimitX96: targetSqrt
+                zeroForOne: !wRLPisCurrency0, amountSpecified: -int256(100_000e6), sqrtPriceLimitX96: targetSqrt
             }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
     }
@@ -416,9 +330,7 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
         vm.mockCall(
             address(v4Oracle),
             abi.encodeWithSelector(
-                bytes4(keccak256("getSpotPrice(address,address)")),
-                ma.positionToken,
-                ma.collateralToken
+                bytes4(keccak256("getSpotPrice(address,address)")), ma.positionToken, ma.collateralToken
             ),
             abi.encode(priceWad)
         );
@@ -426,47 +338,29 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
 
     // ======================== BROKER SETUP ========================
 
-    function _setupBroker(
-        uint256 targetCash,
-        uint256 targetWRLP,
-        uint256 lpWRLP,
-        uint256 lpCol
-    ) internal returns (PrimeBroker broker, uint256 tokenId) {
+    function _setupBroker(uint256 targetCash, uint256 targetWRLP, uint256 lpWRLP, uint256 lpCol)
+        internal
+        returns (PrimeBroker broker, uint256 tokenId)
+    {
         broker = _createBroker();
 
         uint256 buffer = (lpWRLP > 0) ? 100_000e6 : 0;
         uint256 totalTransfer = targetCash + lpCol + buffer;
         collateralMock.transfer(address(broker), totalTransfer);
 
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(totalTransfer),
-            int256(USER_DEBT)
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(totalTransfer), int256(USER_DEBT));
 
         if (lpWRLP > 0 && lpCol > 0) {
             tokenId = _provideV4LP(broker, lpWRLP, lpCol);
         }
 
-        uint256 currentWRLP = ERC20(ma.positionToken).balanceOf(
-            address(broker)
-        );
+        uint256 currentWRLP = ERC20(ma.positionToken).balanceOf(address(broker));
         if (currentWRLP > targetWRLP) {
-            broker.withdrawPositionToken(
-                address(this),
-                currentWRLP - targetWRLP
-            );
+            broker.withdrawPositionToken(address(this), currentWRLP - targetWRLP);
         }
-        uint256 currentCash = ERC20(ma.collateralToken).balanceOf(
-            address(broker)
-        );
+        uint256 currentCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         if (currentCash > targetCash) {
-            try
-                broker.withdrawCollateral(
-                    address(this),
-                    currentCash - targetCash
-                )
-            {} catch {}
+            try broker.withdrawCollateral(address(this), currentCash - targetCash) {} catch {}
         }
 
         uint256 fc = ERC20(ma.collateralToken).balanceOf(address(broker));
@@ -475,59 +369,37 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
         console.log("  Setup: wRLP:", fw / 1e6);
     }
 
-    function _setupBrokerOOR(
-        uint256 targetCash,
-        uint256 targetWRLP,
-        uint256 lpAmount,
-        bool above
-    ) internal returns (PrimeBroker broker, uint256 tokenId) {
+    function _setupBrokerOOR(uint256 targetCash, uint256 targetWRLP, uint256 lpAmount, bool above)
+        internal
+        returns (PrimeBroker broker, uint256 tokenId)
+    {
         broker = _createBroker();
 
         uint256 buffer = 50_000e6;
         uint256 totalTransfer = targetCash + lpAmount + buffer;
         collateralMock.transfer(address(broker), totalTransfer);
 
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(totalTransfer),
-            int256(USER_DEBT)
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(totalTransfer), int256(USER_DEBT));
 
         if (lpAmount > 0) {
             tokenId = _provideV4LPOutOfRange(broker, lpAmount, above);
         }
 
-        uint256 currentWRLP = ERC20(ma.positionToken).balanceOf(
-            address(broker)
-        );
+        uint256 currentWRLP = ERC20(ma.positionToken).balanceOf(address(broker));
         if (currentWRLP > targetWRLP) {
-            broker.withdrawPositionToken(
-                address(this),
-                currentWRLP - targetWRLP
-            );
+            broker.withdrawPositionToken(address(this), currentWRLP - targetWRLP);
         }
-        uint256 currentCash = ERC20(ma.collateralToken).balanceOf(
-            address(broker)
-        );
+        uint256 currentCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         if (currentCash > targetCash) {
-            try
-                broker.withdrawCollateral(
-                    address(this),
-                    currentCash - targetCash
-                )
-            {} catch {}
+            try broker.withdrawCollateral(address(this), currentCash - targetCash) {} catch {}
         }
 
         uint256 fc = ERC20(ma.collateralToken).balanceOf(address(broker));
         uint256 fw = ERC20(ma.positionToken).balanceOf(address(broker));
         console.log("  Setup: cash:", fc / 1e6);
         console.log("  Setup: wRLP:", fw / 1e6);
-        bool isC0wRLP = Currency.unwrap(lpPoolKey.currency0) ==
-            ma.positionToken;
-        console.log(
-            "  OOR LP:",
-            above ? "above (token0 only)" : "below (token1 only)"
-        );
+        bool isC0wRLP = Currency.unwrap(lpPoolKey.currency0) == ma.positionToken;
+        console.log("  OOR LP:", above ? "above (token0 only)" : "below (token1 only)");
         console.log("  token0 is:", isC0wRLP ? "wRLP" : "collateral");
     }
 
@@ -541,10 +413,7 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
         uint256 lWRLP;
     }
 
-    function _snap(
-        PrimeBroker broker,
-        uint256 tid
-    ) internal view returns (Snap memory s) {
+    function _snap(PrimeBroker broker, uint256 tid) internal view returns (Snap memory s) {
         s.bCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         s.bWRLP = ERC20(ma.positionToken).balanceOf(address(broker));
         s.lpLiq = tid > 0 ? positionManager.getPositionLiquidity(tid) : 0;
@@ -560,22 +429,21 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
             uint256 pct = (uint256(a.lpLiq) * 100) / uint256(b.lpLiq);
             console.log("  LP remaining:", pct, "%");
         }
-        if (b.bWRLP > a.bWRLP)
+        if (b.bWRLP > a.bWRLP) {
             console.log("  wRLP extracted:", (b.bWRLP - a.bWRLP) / 1e6);
-        if (b.bCash > a.bCash)
+        }
+        if (b.bCash > a.bCash) {
             console.log("  Cash seized:", (b.bCash - a.bCash) / 1e6);
-        if (b.lWRLP > a.lWRLP)
+        }
+        if (b.lWRLP > a.lWRLP) {
             console.log("  Liq wRLP spent:", (b.lWRLP - a.lWRLP) / 1e6);
-        if (a.lCash > b.lCash)
+        }
+        if (a.lCash > b.lCash) {
             console.log("  Liq cash gained:", (a.lCash - b.lCash) / 1e6);
+        }
     }
 
-    function _liquidate(
-        PrimeBroker broker,
-        uint256 tokenId,
-        uint256 priceWad,
-        bool movePool
-    ) internal {
+    function _liquidate(PrimeBroker broker, uint256 tokenId, uint256 priceWad, bool movePool) internal {
         Snap memory b = _snap(broker, tokenId);
         if (movePool) _movePoolPrice(priceWad);
         _setOraclePrice(priceWad);

@@ -54,7 +54,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
     //  LP returns only token0 on unwind.
     function test_T28_TWAMM_OOR_LP_Above() public {
         console.log("=== T28: TWAMM + OOR LP Above ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammOOR(
+        (PrimeBroker broker,) = _setupBrokerTwammOOR(
             0, // no cash
             0, // no wRLP
             TWAMM_AMT,
@@ -63,7 +63,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
             true // LP above tick
         );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _logGhost();
 
@@ -77,7 +77,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
     //  Same as T28 but LP is below tick → token1 only on unwind.
     function test_T29_TWAMM_OOR_LP_Below() public {
         console.log("=== T29: TWAMM + OOR LP Below ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammOOR(
+        (PrimeBroker broker,) = _setupBrokerTwammOOR(
             0, // no cash
             0, // no wRLP
             TWAMM_AMT,
@@ -86,7 +86,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
             false // LP below tick
         );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _logGhost();
 
@@ -100,7 +100,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
     //  Waterfall: Cash → TWAMM cancel → OOR LP unwind (token0 only).
     function test_T30_Cash_TWAMM_OOR_Above() public {
         console.log("=== T30: Cash + TWAMM + OOR LP Above ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammOOR(
+        (PrimeBroker broker,) = _setupBrokerTwammOOR(
             20_000e6, // cash
             0, // no wRLP
             TWAMM_AMT,
@@ -109,7 +109,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
             true // LP above tick
         );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _logGhost();
 
@@ -123,7 +123,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
     //  Same as T30 but LP below tick → token1 only on unwind.
     function test_T31_Cash_TWAMM_OOR_Below() public {
         console.log("=== T31: Cash + TWAMM + OOR LP Below ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammOOR(
+        (PrimeBroker broker,) = _setupBrokerTwammOOR(
             20_000e6, // cash
             0, // no wRLP
             TWAMM_AMT,
@@ -132,7 +132,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
             false // LP below tick
         );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _logGhost();
 
@@ -147,7 +147,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
     //  Full waterfall: Cash → wRLP → TWAMM cancel → OOR LP unwind.
     function test_T32_Full_OOR_Above() public {
         console.log("=== T32: Full + OOR LP Above ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammOOR(
+        (PrimeBroker broker,) = _setupBrokerTwammOOR(
             10_000e6, // cash
             3_000e6, // wRLP
             TWAMM_AMT,
@@ -156,7 +156,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
             true // LP above tick
         );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _logGhost();
 
@@ -170,7 +170,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
     //  Cash + wRLP + TWAMM + OOR LP (below).
     function test_T33_Full_OOR_Below() public {
         console.log("=== T33: Full + OOR LP Below ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammOOR(
+        (PrimeBroker broker,) = _setupBrokerTwammOOR(
             10_000e6, // cash
             3_000e6, // wRLP
             TWAMM_AMT,
@@ -179,7 +179,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
             false // LP below tick
         );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _logGhost();
 
@@ -198,16 +198,17 @@ contract LiquidationPermutations is LiquidationTwammBase {
     //  Asserts 100% liquidation (full debt).
     function test_T34_Full_OOR_Above_Underwater() public {
         console.log("=== T34: Full + OOR Above, Underwater ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammOOR(
-            10_000e6,
-            3_000e6,
-            TWAMM_AMT,
-            5_000e6,
-            true, // sellCollateral
-            true // LP above tick
-        );
+        (PrimeBroker broker,) =
+            _setupBrokerTwammOOR(
+                10_000e6,
+                3_000e6,
+                TWAMM_AMT,
+                5_000e6,
+                true, // sellCollateral
+                true // LP above tick
+            );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _setOraclePrice(40e18);
         uint256 nav = broker.getNetAccountValue();
@@ -218,8 +219,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
         uint256 preLiq = ERC20(ma.collateralToken).balanceOf(liquidator);
         vm.prank(liquidator);
         core.liquidate(marketId, address(broker), USER_DEBT, 0);
-        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) -
-            preLiq;
+        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq;
         console.log("  Liq gained:", liqGain / 1e6);
 
         _setOraclePrice(INDEX_PRICE_WAD);
@@ -230,16 +230,17 @@ contract LiquidationPermutations is LiquidationTwammBase {
     //  Full stack with OOR LP below, deeply underwater.
     function test_T35_Full_OOR_Below_Underwater() public {
         console.log("=== T35: Full + OOR Below, Underwater ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammOOR(
-            10_000e6,
-            3_000e6,
-            TWAMM_AMT,
-            10_000e6,
-            true, // sellCollateral
-            false // LP below tick
-        );
+        (PrimeBroker broker,) =
+            _setupBrokerTwammOOR(
+                10_000e6,
+                3_000e6,
+                TWAMM_AMT,
+                10_000e6,
+                true, // sellCollateral
+                false // LP below tick
+            );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _setOraclePrice(40e18);
         uint256 nav = broker.getNetAccountValue();
@@ -250,8 +251,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
         uint256 preLiq = ERC20(ma.collateralToken).balanceOf(liquidator);
         vm.prank(liquidator);
         core.liquidate(marketId, address(broker), USER_DEBT, 0);
-        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) -
-            preLiq;
+        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq;
         console.log("  Liq gained:", liqGain / 1e6);
 
         _setOraclePrice(INDEX_PRICE_WAD);
@@ -274,17 +274,14 @@ contract LiquidationPermutations is LiquidationTwammBase {
             TWAMM_INTERVAL
         );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _setOraclePrice(25e18);
         uint256 nav = broker.getNetAccountValue();
         uint256 debtVal = FullMath.mulDiv(USER_DEBT, 25e18, 1e18);
         console.log("  NAV:", nav / 1e6, "debtVal:", debtVal / 1e6);
 
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "T36: must be insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "T36: must be insolvent");
 
         // Sell-position direction preserves NAV better → NOT underwater.
         // Use 50% close factor.
@@ -311,17 +308,14 @@ contract LiquidationPermutations is LiquidationTwammBase {
             TWAMM_INTERVAL
         );
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _setOraclePrice(20e18);
         uint256 nav = broker.getNetAccountValue();
         uint256 debtVal = FullMath.mulDiv(USER_DEBT, 20e18, 1e18);
         console.log("  NAV:", nav / 1e6, "debtVal:", debtVal / 1e6);
 
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "T37: must be insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "T37: must be insolvent");
         assertGt(nav, debtVal, "T37: NOT underwater");
 
         vm.prank(liquidator);
@@ -339,26 +333,18 @@ contract LiquidationPermutations is LiquidationTwammBase {
     // ================================================================
 
     function _logGhost() internal view {
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         uint256 ghost = colIsC0 ? a0 : a1;
         console.log("  Ghost:", ghost / 1e6);
     }
 
-    function _assertInsolventAndLiquidate(
-        PrimeBroker broker,
-        uint256 priceWad,
-        bool expectUnderwater
-    ) internal {
+    function _assertInsolventAndLiquidate(PrimeBroker broker, uint256 priceWad, bool expectUnderwater) internal {
         uint256 nav = broker.getNetAccountValue();
         uint256 debtVal = FullMath.mulDiv(USER_DEBT, priceWad, 1e18);
         console.log("  NAV:", nav / 1e6, "debtVal:", debtVal / 1e6);
 
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "must be insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "must be insolvent");
 
         if (expectUnderwater) {
             assertLt(nav, debtVal, "must be underwater");
@@ -368,8 +354,7 @@ contract LiquidationPermutations is LiquidationTwammBase {
         uint256 preLiq = ERC20(ma.collateralToken).balanceOf(liquidator);
         vm.prank(liquidator);
         core.liquidate(marketId, address(broker), dtc, 0);
-        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) -
-            preLiq;
+        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq;
 
         uint256 postCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         uint256 postWRLP = ERC20(ma.positionToken).balanceOf(address(broker));

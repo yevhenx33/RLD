@@ -62,47 +62,27 @@ contract TwammInitializationTest is RLDIntegrationBase {
 
     /// @notice Pool was initialized at exactly sqrtPriceX96 = SQRT_PRICE_1_1 (√1 × 2^96)
     function test_Phase0a_PoolInitialized_AtSqrtPrice_1_1() public view {
-        (uint160 sqrtPriceX96, int24 tick, , ) = poolManager.getSlot0(
-            twammPoolKey.toId()
-        );
-        assertEq(
-            sqrtPriceX96,
-            SQRT_PRICE_1_1,
-            "Pool must be initialized at 1:1 sqrtPrice"
-        );
+        (uint160 sqrtPriceX96, int24 tick,,) = poolManager.getSlot0(twammPoolKey.toId());
+        assertEq(sqrtPriceX96, SQRT_PRICE_1_1, "Pool must be initialized at 1:1 sqrtPrice");
         assertEq(tick, 0, "Tick must be 0 at 1:1 price");
         console.log("[Phase 0a] sqrtPriceX96 :", sqrtPriceX96);
         console.log("[Phase 0a] tick         :", tick);
     }
 
     /// @notice V4 invariant: currency0.address < currency1.address
-    function test_Phase0a_TokenOrdering_Currency0_LessThan_Currency1()
-        public
-        view
-    {
+    function test_Phase0a_TokenOrdering_Currency0_LessThan_Currency1() public view {
         address c0 = Currency.unwrap(twammPoolKey.currency0);
         address c1 = Currency.unwrap(twammPoolKey.currency1);
-        assertTrue(
-            c0 < c1,
-            "currency0 address must be < currency1 (V4 invariant)"
-        );
+        assertTrue(c0 < c1, "currency0 address must be < currency1 (V4 invariant)");
         console.log("[Phase 0a] currency0:", c0);
         console.log("[Phase 0a] currency1:", c1);
     }
 
     /// @notice Pool key must reference the TWAMM hook at the correct bit-flagged address
     function test_Phase0a_PoolKey_HasTwammHook() public view {
-        assertEq(
-            address(twammPoolKey.hooks),
-            address(twammHook),
-            "Pool key must reference TWAMM hook"
-        );
+        assertEq(address(twammPoolKey.hooks), address(twammHook), "Pool key must reference TWAMM hook");
         assertEq(twammPoolKey.fee, FEE, "Pool fee mismatch");
-        assertEq(
-            twammPoolKey.tickSpacing,
-            TICK_SPACING,
-            "Tick spacing mismatch"
-        );
+        assertEq(twammPoolKey.tickSpacing, TICK_SPACING, "Tick spacing mismatch");
     }
 
     /// @notice A never-initialized pool should have sqrtPrice = 0
@@ -114,26 +94,17 @@ contract TwammInitializationTest is RLDIntegrationBase {
             tickSpacing: 1,
             hooks: IHooks(address(0))
         });
-        (uint160 sqrtP, , , ) = poolManager.getSlot0(freshKey.toId());
+        (uint160 sqrtP,,,) = poolManager.getSlot0(freshKey.toId());
         assertEq(sqrtP, 0, "Uninitialized pool must have sqrtPrice = 0");
     }
 
     /// @notice Full RLD market was created with valid wRLP and collateral tokens
     function test_Phase0a_RLDMarket_Created_WithCorrectPool() public view {
-        assertTrue(
-            MarketId.unwrap(marketId) != bytes32(0),
-            "Market ID must be non-zero"
-        );
+        assertTrue(MarketId.unwrap(marketId) != bytes32(0), "Market ID must be non-zero");
         IRLDCore.MarketAddresses memory ma = core.getMarketAddresses(marketId);
         assertTrue(ma.positionToken != address(0), "wRLP token not deployed");
-        assertTrue(
-            ma.collateralToken != address(0),
-            "Collateral token not set"
-        );
-        console.log(
-            "[Phase 0a] market ID  :",
-            uint256(MarketId.unwrap(marketId))
-        );
+        assertTrue(ma.collateralToken != address(0), "Collateral token not set");
+        console.log("[Phase 0a] market ID  :", uint256(MarketId.unwrap(marketId)));
         console.log("[Phase 0a] wRLP token  :", ma.positionToken);
         console.log("[Phase 0a] collateral  :", ma.collateralToken);
     }
@@ -153,22 +124,12 @@ contract TwammInitializationTest is RLDIntegrationBase {
      *         raw 1:1 sqrtPrice correctly represents 1:1 economic price.
      *         No decimal adjustment needed when both tokens share decimals.
      */
-    function test_Phase0b_Price_InitializedAt_SqrtX96_ForMatchingDecimals()
-        public
-    {
+    function test_Phase0b_Price_InitializedAt_SqrtX96_ForMatchingDecimals() public {
         vm.warp(block.timestamp + 1);
-        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(
-            twammPoolKey.toId()
-        );
-        assertEq(
-            sqrtPriceX96,
-            SQRT_PRICE_1_1,
-            "sqrtPrice must still be SQRT_PRICE_1_1"
-        );
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(twammPoolKey.toId());
+        assertEq(sqrtPriceX96, SQRT_PRICE_1_1, "sqrtPrice must still be SQRT_PRICE_1_1");
         console.log("[Phase 0b] sqrtPriceX96:", sqrtPriceX96);
-        console.log(
-            "[Phase 0b] Semantic: 1:1 at 6/6 dec => true 1:1 economic price"
-        );
+        console.log("[Phase 0b] Semantic: 1:1 at 6/6 dec => true 1:1 economic price");
     }
 
     // ================================================================
@@ -179,21 +140,13 @@ contract TwammInitializationTest is RLDIntegrationBase {
     function test_Phase0c_AaveOracleFormula_5pct_Rate() public pure {
         uint256 FIVE_PCT_RAY = 0.05e27;
         uint256 indexPrice = (FIVE_PCT_RAY * AAVE_K_SCALAR) / 1e9;
-        assertEq(
-            indexPrice,
-            5e18,
-            "5% Aave rate must yield 5.0 WAD index price"
-        );
+        assertEq(indexPrice, 5e18, "5% Aave rate must yield 5.0 WAD index price");
     }
 
     /// @notice sqrtPriceX96 derivation with decimal adjustment; round-trip < 1 bip
-    function test_Phase0c_SqrtPriceX96_Derivation_With_DecimalAdjustment()
-        public
-        view
-    {
+    function test_Phase0c_SqrtPriceX96_Derivation_With_DecimalAdjustment() public view {
         uint256 indexPrice_WAD = 5e18;
-        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) ==
-            address(pt));
+        bool token0IsPT = (Currency.unwrap(twammPoolKey.currency0) == address(pt));
         uint256 dec0 = token0IsPT ? 18 : 6;
         uint256 dec1 = token0IsPT ? 6 : 18;
 
@@ -201,14 +154,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
         uint160 computedSqrt = _computeSqrtPriceX96(rawPriceWAD);
         assertTrue(computedSqrt > 0, "sqrtPriceX96 must be non-zero");
 
-        uint256 recovered = FullMath.mulDiv(
-            uint256(computedSqrt) * uint256(computedSqrt),
-            1e18,
-            1 << 192
-        );
-        uint256 diff = rawPriceWAD > recovered
-            ? rawPriceWAD - recovered
-            : recovered - rawPriceWAD;
+        uint256 recovered = FullMath.mulDiv(uint256(computedSqrt) * uint256(computedSqrt), 1e18, 1 << 192);
+        uint256 diff = rawPriceWAD > recovered ? rawPriceWAD - recovered : recovered - rawPriceWAD;
         assertLe(diff, rawPriceWAD / 10_000, "Round-trip loss must be < 1 bip");
 
         console.log("[Phase 0c] index price WAD  :", indexPrice_WAD);
@@ -223,10 +170,7 @@ contract TwammInitializationTest is RLDIntegrationBase {
         uint256 indexPrice_WAD = (RATE_RAY * AAVE_K_SCALAR) / 1e9;
 
         testOracle.setIndexPrice(indexPrice_WAD);
-        assertEq(
-            testOracle.getIndexPrice(address(0), address(0)),
-            indexPrice_WAD
-        );
+        assertEq(testOracle.getIndexPrice(address(0), address(0)), indexPrice_WAD);
 
         uint256 dec0 = 6;
         uint256 dec1 = 6;
@@ -234,30 +178,17 @@ contract TwammInitializationTest is RLDIntegrationBase {
         uint256 rawPriceWAD = _decimalAdjustPrice(indexPrice_WAD, dec0, dec1);
         uint160 targetSqrt = _computeSqrtPriceX96(rawPriceWAD);
 
-        uint256 markRaw = FullMath.mulDiv(
-            uint256(targetSqrt) * uint256(targetSqrt),
-            1e18,
-            1 << 192
-        );
+        uint256 markRaw = FullMath.mulDiv(uint256(targetSqrt) * uint256(targetSqrt), 1e18, 1 << 192);
         uint256 markPrice_WAD = dec0 >= dec1
             ? FullMath.mulDiv(markRaw, 1, 10 ** (dec0 - dec1))
             : FullMath.mulDiv(markRaw, 10 ** (dec1 - dec0), 1);
 
-        uint256 diff = indexPrice_WAD > markPrice_WAD
-            ? indexPrice_WAD - markPrice_WAD
-            : markPrice_WAD - indexPrice_WAD;
-        assertLe(
-            diff,
-            indexPrice_WAD / 100,
-            "Mark price must be within 1% of index price"
-        );
+        uint256 diff = indexPrice_WAD > markPrice_WAD ? indexPrice_WAD - markPrice_WAD : markPrice_WAD - indexPrice_WAD;
+        assertLe(diff, indexPrice_WAD / 100, "Mark price must be within 1% of index price");
 
         console.log("[Phase 0c] indexPrice    :", indexPrice_WAD);
         console.log("[Phase 0c] markPrice     :", markPrice_WAD);
-        console.log(
-            "[Phase 0c] diff bips     :",
-            indexPrice_WAD > 0 ? (diff * 10_000) / indexPrice_WAD : 0
-        );
+        console.log("[Phase 0c] diff bips     :", indexPrice_WAD > 0 ? (diff * 10_000) / indexPrice_WAD : 0);
     }
 
     // ================================================================
@@ -279,9 +210,9 @@ contract TwammInitializationTest is RLDIntegrationBase {
             uint256(0.01e27), // 1%
             uint256(0.02e27), // 2%
             uint256(0.05e27), // 5%
-            uint256(0.10e27), // 10%
-            uint256(0.20e27), // 20%
-            uint256(0.50e27) // 50%
+            uint256(0.1e27), // 10%
+            uint256(0.2e27), // 20%
+            uint256(0.5e27) // 50%
         ];
         uint256[7] memory expected = [
             uint256(0.5e18), // 0.5 WAD
@@ -315,13 +246,7 @@ contract TwammInitializationTest is RLDIntegrationBase {
         uint256 dec1 = 6;
 
         uint256[7] memory indexPrices = [
-            uint256(0.5e18),
-            uint256(1e18),
-            uint256(2e18),
-            uint256(5e18),
-            uint256(10e18),
-            uint256(20e18),
-            uint256(50e18)
+            uint256(0.5e18), uint256(1e18), uint256(2e18), uint256(5e18), uint256(10e18), uint256(20e18), uint256(50e18)
         ];
 
         for (uint256 i = 0; i < indexPrices.length; i++) {
@@ -332,11 +257,7 @@ contract TwammInitializationTest is RLDIntegrationBase {
             uint160 sqrtP = _computeSqrtPriceX96(rawAdj);
 
             // Reverse: sqrt → raw → undecimal-adjust → index
-            uint256 rawBack = FullMath.mulDiv(
-                uint256(sqrtP) * uint256(sqrtP),
-                1e18,
-                1 << 192
-            );
+            uint256 rawBack = FullMath.mulDiv(uint256(sqrtP) * uint256(sqrtP), 1e18, 1 << 192);
             uint256 idxBack = dec0 >= dec1
                 ? FullMath.mulDiv(rawBack, 1, 10 ** (dec0 - dec1))
                 : FullMath.mulDiv(rawBack, 10 ** (dec1 - dec0), 1);
@@ -344,21 +265,9 @@ contract TwammInitializationTest is RLDIntegrationBase {
             uint256 diff = idx > idxBack ? idx - idxBack : idxBack - idx;
             uint256 bipError = idx > 0 ? (diff * 10_000) / idx : 0;
 
-            assertLe(
-                bipError,
-                1,
-                string.concat(
-                    "Round-trip error > 1 bip at indexPrice=",
-                    vm.toString(idx)
-                )
-            );
+            assertLe(bipError, 1, string.concat("Round-trip error > 1 bip at indexPrice=", vm.toString(idx)));
             console.log(
-                string.concat(
-                    "[Phase 1b] indexPrice=",
-                    vm.toString(idx),
-                    " bips_error=",
-                    vm.toString(bipError)
-                )
+                string.concat("[Phase 1b] indexPrice=", vm.toString(idx), " bips_error=", vm.toString(bipError))
             );
         }
     }
@@ -383,35 +292,17 @@ contract TwammInitializationTest is RLDIntegrationBase {
         assertEq(rawA, 5e18, "6/6 pair: rawPrice must equal indexPrice (5e18)");
 
         uint256 rawB = _decimalAdjustPrice(indexPrice_WAD, 6, 6);
-        assertEq(
-            rawB,
-            5e18,
-            "Reversed 6/6: rawPrice must also equal indexPrice"
-        );
+        assertEq(rawB, 5e18, "Reversed 6/6: rawPrice must also equal indexPrice");
 
         // Both cases encode the exact same sqrtPriceX96
         uint160 sqrtA = _computeSqrtPriceX96(rawA);
         uint160 sqrtB = _computeSqrtPriceX96(rawB);
-        assertEq(
-            uint256(sqrtA),
-            uint256(sqrtB),
-            "Both orderings must produce identical sqrtPrice"
-        );
+        assertEq(uint256(sqrtA), uint256(sqrtB), "Both orderings must produce identical sqrtPrice");
 
         // Recover economic price — trivially indexPrice since no adjustment
-        uint256 rawBack = FullMath.mulDiv(
-            uint256(sqrtA) * uint256(sqrtA),
-            1e18,
-            1 << 192
-        );
-        uint256 diff = indexPrice_WAD > rawBack
-            ? indexPrice_WAD - rawBack
-            : rawBack - indexPrice_WAD;
-        assertLe(
-            diff * 10_000,
-            indexPrice_WAD,
-            "Round-trip must be within 1 bip"
-        );
+        uint256 rawBack = FullMath.mulDiv(uint256(sqrtA) * uint256(sqrtA), 1e18, 1 << 192);
+        uint256 diff = indexPrice_WAD > rawBack ? indexPrice_WAD - rawBack : rawBack - indexPrice_WAD;
+        assertLe(diff * 10_000, indexPrice_WAD, "Round-trip must be within 1 bip");
 
         console.log("[Phase 1c] rawPrice (6/6):", rawA);
         console.log("[Phase 1c] recovered    :", rawBack);
@@ -455,26 +346,13 @@ contract TwammInitializationTest is RLDIntegrationBase {
 
             // Our target sqrtP must lie IN [sqrtAtTick, sqrtAtTickNext)
             assertTrue(sqrtP >= sqrtAtTick, "sqrtP below tick boundary");
-            assertTrue(
-                sqrtP <= sqrtAtTickNext,
-                "sqrtP above next tick boundary"
-            );
+            assertTrue(sqrtP <= sqrtAtTickNext, "sqrtP above next tick boundary");
 
             // Price error from rounding to tick is at most the tick size (~0.01%)
-            uint256 loPrice = FullMath.mulDiv(
-                uint256(sqrtAtTick) * uint256(sqrtAtTick),
-                1e18,
-                1 << 192
-            );
-            uint256 hiPrice = FullMath.mulDiv(
-                uint256(sqrtAtTickNext) * uint256(sqrtAtTickNext),
-                1e18,
-                1 << 192
-            );
+            uint256 loPrice = FullMath.mulDiv(uint256(sqrtAtTick) * uint256(sqrtAtTick), 1e18, 1 << 192);
+            uint256 hiPrice = FullMath.mulDiv(uint256(sqrtAtTickNext) * uint256(sqrtAtTickNext), 1e18, 1 << 192);
             uint256 midRaw = (loPrice + hiPrice) / 2;
-            uint256 diffRaw = rawAdj > midRaw
-                ? rawAdj - midRaw
-                : midRaw - rawAdj;
+            uint256 diffRaw = rawAdj > midRaw ? rawAdj - midRaw : midRaw - rawAdj;
 
             // Tick error < 1 tick = < 0.01% per tick (TICK_SPACING=60 → ~0.6% max rounding)
             assertLe(diffRaw, rawAdj / 100, "Tick rounding error > 1%");
@@ -540,9 +418,7 @@ contract TwammInitializationTest is RLDIntegrationBase {
      *         avoid collision) — one with the "natural" ordering, one reversed —
      *         and verify round-tripped economic prices agree within 1 bip.
      */
-    function test_Phase1f_CurrencyOrder_BothOrderings_SameEconomicPrice()
-        public
-    {
+    function test_Phase1f_CurrencyOrder_BothOrderings_SameEconomicPrice() public {
         uint256 indexPrice_WAD = 5e18; // 5 CT per PT (economic)
 
         address ptAddr = address(pt);
@@ -565,11 +441,7 @@ contract TwammInitializationTest is RLDIntegrationBase {
 
         // Recover economic CT/PT price from case A (PT=token0 case)
         // Pool price = token1/token0 = CT-atoms/PT-atoms → /1e12 to get WAD
-        uint256 rawBackA = FullMath.mulDiv(
-            uint256(sqrtA) * uint256(sqrtA),
-            1e18,
-            1 << 192
-        );
+        uint256 rawBackA = FullMath.mulDiv(uint256(sqrtA) * uint256(sqrtA), 1e18, 1 << 192);
         uint256 ecoFromA = dec0A >= dec1A
             ? FullMath.mulDiv(rawBackA, 1, 10 ** (dec0A - dec1A))
             : FullMath.mulDiv(rawBackA, 10 ** (dec1A - dec0A), 1);
@@ -577,50 +449,25 @@ contract TwammInitializationTest is RLDIntegrationBase {
         // Recover economic CT/PT price from case B (CT=token0 case)
         // Pool price = token1/token0 = PT-atoms/CT-atoms
         // Economic CT/PT = 1 / poolPrice (in raw terms; with decimal adjustment)
-        uint256 rawBackB = FullMath.mulDiv(
-            uint256(sqrtB) * uint256(sqrtB),
-            1e18,
-            1 << 192
-        );
+        uint256 rawBackB = FullMath.mulDiv(uint256(sqrtB) * uint256(sqrtB), 1e18, 1 << 192);
         uint256 ecoFromB = dec0B >= dec1B
             ? FullMath.mulDiv(rawBackB, 1, 10 ** (dec0B - dec1B))
             : FullMath.mulDiv(rawBackB, 10 ** (dec1B - dec0B), 1);
 
         // Both must recover ≈ 5 CT/PT within 1 bip
-        uint256 diffA = indexPrice_WAD > ecoFromA
-            ? indexPrice_WAD - ecoFromA
-            : ecoFromA - indexPrice_WAD;
-        uint256 diffB = indexPrice_WAD > ecoFromB
-            ? indexPrice_WAD - ecoFromB
-            : ecoFromB - indexPrice_WAD;
+        uint256 diffA = indexPrice_WAD > ecoFromA ? indexPrice_WAD - ecoFromA : ecoFromA - indexPrice_WAD;
+        uint256 diffB = indexPrice_WAD > ecoFromB ? indexPrice_WAD - ecoFromB : ecoFromB - indexPrice_WAD;
 
-        assertLe(
-            diffA * 10_000,
-            indexPrice_WAD,
-            "PT-first ordering: economic price deviates > 1 bip from oracle"
-        );
-        assertLe(
-            diffB * 10_000,
-            indexPrice_WAD,
-            "CT-first ordering: economic price deviates > 1 bip from oracle"
-        );
+        assertLe(diffA * 10_000, indexPrice_WAD, "PT-first ordering: economic price deviates > 1 bip from oracle");
+        assertLe(diffB * 10_000, indexPrice_WAD, "CT-first ordering: economic price deviates > 1 bip from oracle");
 
         // And both recovered economic prices must match each other within 1 bip
-        uint256 diffAB = ecoFromA > ecoFromB
-            ? ecoFromA - ecoFromB
-            : ecoFromB - ecoFromA;
-        assertLe(
-            diffAB * 10_000,
-            indexPrice_WAD,
-            "Two orderings produce different economic prices (> 1 bip apart)"
-        );
+        uint256 diffAB = ecoFromA > ecoFromB ? ecoFromA - ecoFromB : ecoFromB - ecoFromA;
+        assertLe(diffAB * 10_000, indexPrice_WAD, "Two orderings produce different economic prices (> 1 bip apart)");
 
         console.log("[Phase 1f] PT-as-token0 eco:", ecoFromA);
         console.log("[Phase 1f] CT-as-token0 eco:", ecoFromB);
-        console.log(
-            "[Phase 1f] bips apart         :",
-            indexPrice_WAD > 0 ? (diffAB * 10_000) / indexPrice_WAD : 0
-        );
+        console.log("[Phase 1f] bips apart         :", indexPrice_WAD > 0 ? (diffAB * 10_000) / indexPrice_WAD : 0);
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -638,14 +485,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
         uint256 rawAdj = _decimalAdjustPrice(indexPrice_WAD, dec0, dec1);
         uint160 sqrtP = _computeSqrtPriceX96(rawAdj);
         assertTrue(sqrtP > 0, "sqrtP must be > 0 even for 0.1% rate");
-        assertTrue(
-            sqrtP >= TickMath.MIN_SQRT_PRICE,
-            "sqrtP must be >= MIN_SQRT_PRICE"
-        );
-        assertTrue(
-            sqrtP <= TickMath.MAX_SQRT_PRICE,
-            "sqrtP must be <= MAX_SQRT_PRICE"
-        );
+        assertTrue(sqrtP >= TickMath.MIN_SQRT_PRICE, "sqrtP must be >= MIN_SQRT_PRICE");
+        assertTrue(sqrtP <= TickMath.MAX_SQRT_PRICE, "sqrtP must be <= MAX_SQRT_PRICE");
         console.log("[Phase 1g] 0.1% rate sqrtP:", sqrtP);
     }
 
@@ -659,14 +500,8 @@ contract TwammInitializationTest is RLDIntegrationBase {
         uint256 rawAdj = _decimalAdjustPrice(indexPrice_WAD, dec0, dec1);
         uint160 sqrtP = _computeSqrtPriceX96(rawAdj);
         assertTrue(sqrtP > 0, "sqrtP must be non-zero at 50%");
-        assertTrue(
-            sqrtP >= TickMath.MIN_SQRT_PRICE,
-            "sqrtP must be >= MIN_SQRT_PRICE"
-        );
-        assertTrue(
-            sqrtP <= TickMath.MAX_SQRT_PRICE,
-            "sqrtP must be <= MAX_SQRT_PRICE"
-        );
+        assertTrue(sqrtP >= TickMath.MIN_SQRT_PRICE, "sqrtP must be >= MIN_SQRT_PRICE");
+        assertTrue(sqrtP <= TickMath.MAX_SQRT_PRICE, "sqrtP must be <= MAX_SQRT_PRICE");
         console.log("[Phase 1g] 50% rate sqrtP:", sqrtP);
     }
 
@@ -682,25 +517,15 @@ contract TwammInitializationTest is RLDIntegrationBase {
      *         Note: the economic reading of the price differs by ordering, but the
      *         raw sqrtPriceX96 is monotone in oracle index price in ALL cases.
      */
-    function test_Phase1g_Monotonicity_HigherRate_HigherSqrtPrice()
-        public
-        view
-    {
+    function test_Phase1g_Monotonicity_HigherRate_HigherSqrtPrice() public view {
         uint256 dec0 = 6;
         uint256 dec1 = 6;
 
-        uint256[4] memory rates = [
-            uint256(1e18),
-            uint256(5e18),
-            uint256(10e18),
-            uint256(20e18)
-        ];
+        uint256[4] memory rates = [uint256(1e18), uint256(5e18), uint256(10e18), uint256(20e18)];
         uint160 prevSqrt;
 
         for (uint256 i = 0; i < rates.length; i++) {
-            uint160 sqrtP = _computeSqrtPriceX96(
-                _decimalAdjustPrice(rates[i], dec0, dec1)
-            );
+            uint160 sqrtP = _computeSqrtPriceX96(_decimalAdjustPrice(rates[i], dec0, dec1));
             if (i > 0) {
                 // sqrtPrice always increases with higher index price, regardless of
                 // which token is currency0 (both rawA and rawB scale positively with index).
@@ -711,14 +536,7 @@ contract TwammInitializationTest is RLDIntegrationBase {
                 );
             }
             prevSqrt = sqrtP;
-            console.log(
-                string.concat(
-                    "[Phase 1g] rate=",
-                    vm.toString(rates[i]),
-                    " sqrt=",
-                    vm.toString(sqrtP)
-                )
-            );
+            console.log(string.concat("[Phase 1g] rate=", vm.toString(rates[i]), " sqrt=", vm.toString(sqrtP)));
         }
     }
 
@@ -733,11 +551,7 @@ contract TwammInitializationTest is RLDIntegrationBase {
      *      Uses fee+tickSpacing parameters that differ from the main TWAMM pool
      *      to avoid pool-id collision.
      */
-    function _assertLivePoolSeededCorrectly(
-        uint256 indexPrice_WAD,
-        uint24 fee,
-        int24 tickSpacing
-    ) internal {
+    function _assertLivePoolSeededCorrectly(uint256 indexPrice_WAD, uint24 fee, int24 tickSpacing) internal {
         uint256 dec0 = 6;
         uint256 dec1 = 6;
 
@@ -755,39 +569,21 @@ contract TwammInitializationTest is RLDIntegrationBase {
         poolManager.initialize(auxKey, sqrtSeed);
 
         // Verify the pool stores the price we seeded
-        (uint160 storedSqrt, int24 storedTick, , ) = poolManager.getSlot0(
-            auxKey.toId()
-        );
-        assertEq(
-            storedSqrt,
-            sqrtSeed,
-            "Stored sqrtPriceX96 must equal seed price"
-        );
+        (uint160 storedSqrt, int24 storedTick,,) = poolManager.getSlot0(auxKey.toId());
+        assertEq(storedSqrt, sqrtSeed, "Stored sqrtPriceX96 must equal seed price");
 
         // Consistency: storedTick must correspond to storedSqrt
         int24 expectedTick = TickMath.getTickAtSqrtPrice(sqrtSeed);
-        assertEq(
-            storedTick,
-            expectedTick,
-            "Stored tick must match sqrtPriceX96"
-        );
+        assertEq(storedTick, expectedTick, "Stored tick must match sqrtPriceX96");
 
         // Round-trip price sanity (< 1 bip)
-        uint256 rawBack = FullMath.mulDiv(
-            uint256(storedSqrt) * uint256(storedSqrt),
-            1e18,
-            1 << 192
-        );
+        uint256 rawBack = FullMath.mulDiv(uint256(storedSqrt) * uint256(storedSqrt), 1e18, 1 << 192);
         uint256 idxBack = dec0 >= dec1
             ? FullMath.mulDiv(rawBack, 1, 10 ** (dec0 - dec1))
             : FullMath.mulDiv(rawBack, 10 ** (dec1 - dec0), 1);
 
-        uint256 diff = indexPrice_WAD > idxBack
-            ? indexPrice_WAD - idxBack
-            : idxBack - indexPrice_WAD;
-        uint256 bipErr = indexPrice_WAD > 0
-            ? (diff * 10_000) / indexPrice_WAD
-            : 0;
+        uint256 diff = indexPrice_WAD > idxBack ? indexPrice_WAD - idxBack : idxBack - indexPrice_WAD;
+        uint256 bipErr = indexPrice_WAD > 0 ? (diff * 10_000) / indexPrice_WAD : 0;
         assertLe(bipErr, 1, "Pool price round-trip must be within 1 bip");
 
         console.log("[LivePool] indexPrice_WAD:", indexPrice_WAD);

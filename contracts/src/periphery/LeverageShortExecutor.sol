@@ -130,7 +130,13 @@ contract LeverageShortExecutor is ReentrancyGuard {
 
         // 1. Set self as operator
         uint256 nonce = pb.operatorNonces(address(this));
-        pb.setOperatorWithSignature(address(this), true, ownerSignature, nonce);
+        pb.setOperatorWithSignature(
+            address(this),
+            true,
+            ownerSignature,
+            nonce,
+            bytes32(0)
+        );
 
         // 2. Deposit initial collateral and mint all target debt
         pb.modifyPosition(
@@ -273,7 +279,17 @@ contract LeverageShortExecutor is ReentrancyGuard {
         uint256 nonce
     ) external view returns (bytes32) {
         return
-            keccak256(abi.encode(address(this), broker, nonce, address(this)));
+            keccak256(
+                abi.encode(
+                    address(this),
+                    true,
+                    broker,
+                    nonce,
+                    address(this),
+                    bytes32(0),
+                    block.chainid
+                )
+            );
     }
 
     function getEthSignedMessageHash(
@@ -281,7 +297,15 @@ contract LeverageShortExecutor is ReentrancyGuard {
         uint256 nonce
     ) external view returns (bytes32) {
         bytes32 messageHash = keccak256(
-            abi.encode(address(this), broker, nonce, address(this))
+            abi.encode(
+                address(this),
+                true,
+                broker,
+                nonce,
+                address(this),
+                bytes32(0),
+                block.chainid
+            )
         );
         return
             keccak256(

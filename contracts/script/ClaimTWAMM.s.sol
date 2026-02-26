@@ -6,7 +6,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {ITWAMM} from "../src/twamm/ITWAMM.sol";
+import {IJTM} from "../src/twamm/IJTM.sol";
 
 /**
  * @title ClaimTWAMM
@@ -18,21 +18,21 @@ contract ClaimTWAMM is Script {
 
     function run() external {
         console.log("====== CLAIM TWAMM PROCEEDS ======");
-        
+
         address token0 = vm.envAddress("TOKEN0");
         address token1 = vm.envAddress("TOKEN1");
         address hook = vm.envAddress("TWAMM_HOOK");
         uint256 userKey = vm.envUint("CLAIM_USER_KEY");
-        
+
         address user = vm.addr(userKey);
-        
+
         require(token0 < token1, "TOKEN0 must be < TOKEN1");
-        
+
         console.log("Token0:", token0);
         console.log("Token1:", token1);
         console.log("Hook:", hook);
         console.log("User:", user);
-        
+
         // Build pool key
         PoolKey memory poolKey = PoolKey({
             currency0: Currency.wrap(token0),
@@ -41,38 +41,39 @@ contract ClaimTWAMM is Script {
             tickSpacing: TICK_SPACING,
             hooks: IHooks(hook)
         });
-        
+
         // Get balances before
         uint256 bal0Before = ERC20(token0).balanceOf(user);
         uint256 bal1Before = ERC20(token1).balanceOf(user);
-        
+
         console.log("");
         console.log("=== BALANCES BEFORE ===");
         console.log("Token0:", bal0Before);
         console.log("Token1:", bal1Before);
-        
+
         // Claim tokens
         vm.startBroadcast(userKey);
-        ITWAMM(hook).claimTokensByPoolKey(poolKey);
+        IJTM(hook).claimTokens(poolKey, Currency.wrap(token0));
+        IJTM(hook).claimTokens(poolKey, Currency.wrap(token1));
         vm.stopBroadcast();
-        
+
         // Get balances after
         uint256 bal0After = ERC20(token0).balanceOf(user);
         uint256 bal1After = ERC20(token1).balanceOf(user);
-        
+
         console.log("");
         console.log("=== BALANCES AFTER ===");
         console.log("Token0:", bal0After);
         console.log("Token1:", bal1After);
-        
+
         int256 change0 = int256(bal0After) - int256(bal0Before);
         int256 change1 = int256(bal1After) - int256(bal1Before);
-        
+
         console.log("");
         console.log("=== CLAIMED ===");
         console.log("Token0 change:", change0);
         console.log("Token1 change:", change1);
-        
+
         if (change0 > 0 || change1 > 0) {
             console.log("SUCCESS: Tokens claimed!");
         } else {

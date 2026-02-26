@@ -113,11 +113,13 @@ interface IPrimeBroker {
     /// @param active True to grant, false to revoke.
     /// @param signature EIP-191 signature from the NFT owner.
     /// @param nonce Must match operatorNonces[msg.sender].
+    /// @param commitment Opaque data commitment bound to the signature (e.g. callsHash).
     function setOperatorWithSignature(
         address operator,
         bool active,
         bytes calldata signature,
-        uint256 nonce
+        uint256 nonce,
+        bytes32 commitment
     ) external;
 
     /// @notice Submits a TWAMM order with automatic registration for solvency tracking.

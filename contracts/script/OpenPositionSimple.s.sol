@@ -22,7 +22,7 @@ contract OpenPositionSimple is Script {
         address CORE = vm.parseJsonAddress(json, ".RLDCore");
         address BROKER_FACTORY = vm.parseJsonAddress(json, ".BrokerFactory");
         bytes32 MARKET_ID = vm.parseJsonBytes32(json, ".MarketId");
-        
+
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
 

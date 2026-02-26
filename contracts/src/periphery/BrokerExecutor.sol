@@ -91,8 +91,17 @@ contract BrokerExecutor is ReentrancyGuard {
         // Get current nonce for this executor on this broker
         uint256 nonce = pb.operatorNonces(address(this));
 
+        // Bind signature to these specific calls via commitment
+        bytes32 callsHash = keccak256(abi.encode(calls));
+
         // Set self as operator using owner's signature
-        pb.setOperatorWithSignature(address(this), true, ownerSignature, nonce);
+        pb.setOperatorWithSignature(
+            address(this),
+            true,
+            ownerSignature,
+            nonce,
+            callsHash
+        );
 
         // Execute all calls
         for (uint256 i = 0; i < calls.length; i++) {
@@ -120,18 +129,23 @@ contract BrokerExecutor is ReentrancyGuard {
     ///
     /// @param broker The broker address
     /// @param nonce The current nonce from broker.operatorNonces(executor)
+    /// @param callsHash The keccak256 hash of the encoded calls array
     /// @return The keccak256 hash to be signed (before EIP-191 prefix)
     function getMessageHash(
         address broker,
-        uint256 nonce
+        uint256 nonce,
+        bytes32 callsHash
     ) external view returns (bytes32) {
         return
             keccak256(
                 abi.encode(
                     address(this), // operator (this executor)
+                    true, // active (always granting)
                     broker, // broker address
                     nonce, // nonce
-                    address(this) // caller (also this executor)
+                    address(this), // caller (also this executor)
+                    callsHash, // commitment (calls binding)
+                    block.chainid // chain ID
                 )
             );
     }
@@ -141,13 +155,23 @@ contract BrokerExecutor is ReentrancyGuard {
     ///
     /// @param broker The broker address
     /// @param nonce The current nonce from broker.operatorNonces(executor)
+    /// @param callsHash The keccak256 hash of the encoded calls array
     /// @return The EIP-191 prefixed hash to sign
     function getEthSignedMessageHash(
         address broker,
-        uint256 nonce
+        uint256 nonce,
+        bytes32 callsHash
     ) external view returns (bytes32) {
         bytes32 messageHash = keccak256(
-            abi.encode(address(this), broker, nonce, address(this))
+            abi.encode(
+                address(this),
+                true,
+                broker,
+                nonce,
+                address(this),
+                callsHash,
+                block.chainid
+            )
         );
         return
             keccak256(

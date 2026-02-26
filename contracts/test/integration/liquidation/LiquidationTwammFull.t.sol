@@ -18,29 +18,19 @@ contract LiquidationTwammFull is LiquidationTwammBase {
     // ================================================================
     function test_T22_FullStack_NotUnderwater() public {
         console.log("=== T22: Full Stack (not UW), NO clear ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammCascade(
-            20_000e6,
-            3_000e6,
-            60_000e6,
-            3_000e6,
-            15_000e6
-        );
+        (PrimeBroker broker,) = _setupBrokerTwammCascade(20_000e6, 3_000e6, 60_000e6, 3_000e6, 15_000e6);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         console.log("  Ghost (LOST):", (colIsC0 ? a0 : a1) / 1e6);
 
         _setOraclePrice(20e18);
         uint256 nav = broker.getNetAccountValue();
         uint256 debtVal = FullMath.mulDiv(USER_DEBT, 20e18, 1e18);
         console.log("  NAV:", nav / 1e6, "debtVal:", debtVal / 1e6);
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "T22: insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "T22: insolvent");
         assertGt(nav, debtVal, "T22: NOT underwater");
 
         uint256 preLiq = ERC20(ma.collateralToken).balanceOf(liquidator);
@@ -49,8 +39,7 @@ contract LiquidationTwammFull is LiquidationTwammBase {
 
         uint256 postCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         uint256 postWRLP = ERC20(ma.positionToken).balanceOf(address(broker));
-        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) -
-            preLiq;
+        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq;
         console.log("  Post: cash:", postCash / 1e6, "wRLP:", postWRLP / 1e6);
         console.log("  Liq gained:", liqGain / 1e6);
 
@@ -65,19 +54,12 @@ contract LiquidationTwammFull is LiquidationTwammBase {
     // ================================================================
     function test_T22b_FullStack_NotUnderwater_Cleared() public {
         console.log("=== T22b: Full Stack (not UW), WITH clear ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammCascade(
-            20_000e6,
-            3_000e6,
-            60_000e6,
-            3_000e6,
-            15_000e6
-        );
+        (PrimeBroker broker,) = _setupBrokerTwammCascade(20_000e6, 3_000e6, 60_000e6, 3_000e6, 15_000e6);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         console.log("  Ghost before clear:", (colIsC0 ? a0 : a1) / 1e6);
 
         _clearTwammAuction(colIsC0, type(uint256).max);
@@ -100,29 +82,19 @@ contract LiquidationTwammFull is LiquidationTwammBase {
     // ================================================================
     function test_T23_FullStack_Underwater() public {
         console.log("=== T23: Full Stack (UW), NO clear ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammCascade(
-            20_000e6,
-            3_000e6,
-            60_000e6,
-            3_000e6,
-            15_000e6
-        );
+        (PrimeBroker broker,) = _setupBrokerTwammCascade(20_000e6, 3_000e6, 60_000e6, 3_000e6, 15_000e6);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         console.log("  Ghost (LOST):", (colIsC0 ? a0 : a1) / 1e6);
 
         _setOraclePrice(30e18);
         uint256 nav = broker.getNetAccountValue();
         uint256 debtVal = FullMath.mulDiv(USER_DEBT, 30e18, 1e18);
         console.log("  NAV:", nav / 1e6, "debtVal:", debtVal / 1e6);
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "T23: insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "T23: insolvent");
         assertLt(nav, debtVal, "T23: must be underwater");
 
         uint256 preLiq = ERC20(ma.collateralToken).balanceOf(liquidator);
@@ -131,8 +103,7 @@ contract LiquidationTwammFull is LiquidationTwammBase {
 
         uint256 postCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         uint256 postWRLP = ERC20(ma.positionToken).balanceOf(address(broker));
-        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) -
-            preLiq;
+        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq;
         console.log("  Post: cash:", postCash / 1e6, "wRLP:", postWRLP / 1e6);
         console.log("  Liq gained:", liqGain / 1e6);
 
@@ -147,19 +118,12 @@ contract LiquidationTwammFull is LiquidationTwammBase {
     // ================================================================
     function test_T23b_FullStack_Underwater_Cleared() public {
         console.log("=== T23b: Full Stack (UW), WITH clear ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammCascade(
-            20_000e6,
-            3_000e6,
-            60_000e6,
-            3_000e6,
-            15_000e6
-        );
+        (PrimeBroker broker,) = _setupBrokerTwammCascade(20_000e6, 3_000e6, 60_000e6, 3_000e6, 15_000e6);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         console.log("  Ghost before clear:", (colIsC0 ? a0 : a1) / 1e6);
 
         _clearTwammAuction(colIsC0, type(uint256).max);

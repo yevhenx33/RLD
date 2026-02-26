@@ -1155,11 +1155,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @param active True to grant, false to revoke
     /// @param signature EIP-191 signature from the NFT owner
     /// @param nonce Must match operatorNonces[msg.sender]
+    /// @param commitment Opaque data commitment bound to the signature (e.g. callsHash)
     function setOperatorWithSignature(
         address operator,
         bool active,
         bytes calldata signature,
-        uint256 nonce
+        uint256 nonce,
+        bytes32 commitment
     ) external nonReentrant whenNotFrozen {
         address owner = IERC721(factory).ownerOf(
             uint256(uint160(address(this)))
@@ -1170,9 +1172,17 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         operatorNonces[msg.sender]++;
 
         // Build signed message hash
-        // Includes: operator, broker, nonce, caller (executor)
+        // Includes: operator, active, broker, nonce, caller (executor), commitment, chainId
         bytes32 structHash = keccak256(
-            abi.encode(operator, address(this), nonce, msg.sender)
+            abi.encode(
+                operator,
+                active,
+                address(this),
+                nonce,
+                msg.sender,
+                commitment,
+                block.chainid
+            )
         );
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)

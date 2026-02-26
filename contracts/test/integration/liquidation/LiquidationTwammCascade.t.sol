@@ -22,34 +22,24 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
     // ================================================================
     function test_T19_CashPlusTWAMM() public {
         console.log("=== T19: Cash + TWAMM, NO clear ===");
-        PrimeBroker broker = _setupBrokerTwamm(
-            50_000e6,
-            200_000e6,
-            true,
-            TWAMM_INTERVAL
-        );
+        PrimeBroker broker = _setupBrokerTwamm(50_000e6, 200_000e6, true, TWAMM_INTERVAL);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         uint256 ghost = colIsC0 ? a0 : a1;
         console.log("  Ghost (LOST):", ghost / 1e6);
 
         _setOraclePrice(30e18);
         uint256 nav = broker.getNetAccountValue();
         console.log("  NAV:", nav / 1e6);
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "T19: insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "T19: insolvent");
 
         uint256 preLiq = ERC20(ma.collateralToken).balanceOf(liquidator);
         vm.prank(liquidator);
         core.liquidate(marketId, address(broker), USER_DEBT, 0);
-        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) -
-            preLiq;
+        uint256 liqGain = ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq;
         console.log("  Liq gained:", liqGain / 1e6);
         console.log("  Result: 100k ghost LOST, broker drained");
 
@@ -64,25 +54,19 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
     // ================================================================
     function test_T19b_CashPlusTWAMM_Cleared() public {
         console.log("=== T19b: Cash + TWAMM, WITH clear ===");
-        PrimeBroker broker = _setupBrokerTwamm(
-            50_000e6,
-            200_000e6,
-            true,
-            TWAMM_INTERVAL
-        );
+        PrimeBroker broker = _setupBrokerTwamm(50_000e6, 200_000e6, true, TWAMM_INTERVAL);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         uint256 ghostBefore = colIsC0 ? a0 : a1;
         console.log("  Ghost before clear:", ghostBefore / 1e6);
 
         // CLEAR: ghost -> wRLP earnings (only auction discount lost)
         _clearTwammAuction(colIsC0, type(uint256).max);
 
-        (a0, a1, , ) = twammHook.getStreamState(marketTwammKey);
+        (a0, a1,,) = twammHook.getStreamState(marketTwammKey);
         uint256 ghostAfter = colIsC0 ? a0 : a1;
         assertEq(ghostAfter, 0, "T19b: ghost cleared");
 
@@ -96,9 +80,7 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
         console.log("  Solvent?", solvent);
         assertTrue(solvent, "T19b: clearing made broker SOLVENT");
 
-        console.log(
-            "  Result: clearing saved 100k, broker solvent, NO liquidation needed"
-        );
+        console.log("  Result: clearing saved 100k, broker solvent, NO liquidation needed");
 
         _setOraclePrice(INDEX_PRICE_WAD);
     }
@@ -108,36 +90,23 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
     // ================================================================
     function test_T20_TWAMMplusLP() public {
         console.log("=== T20: TWAMM + LP, NO clear ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammCascade(
-            0,
-            0,
-            60_000e6,
-            3_000e6,
-            15_000e6
-        );
+        (PrimeBroker broker,) = _setupBrokerTwammCascade(0, 0, 60_000e6, 3_000e6, 15_000e6);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         console.log("  Ghost (LOST):", (colIsC0 ? a0 : a1) / 1e6);
 
         _setOraclePrice(25e18);
         uint256 nav = broker.getNetAccountValue();
         console.log("  NAV:", nav / 1e6);
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "T20: insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "T20: insolvent");
 
         uint256 preLiq = ERC20(ma.collateralToken).balanceOf(liquidator);
         vm.prank(liquidator);
         core.liquidate(marketId, address(broker), USER_DEBT, 0);
-        console.log(
-            "  Liq gained:",
-            (ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq) / 1e6
-        );
+        console.log("  Liq gained:", (ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq) / 1e6);
 
         _setOraclePrice(INDEX_PRICE_WAD);
     }
@@ -147,19 +116,12 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
     // ================================================================
     function test_T20b_TWAMMplusLP_Cleared() public {
         console.log("=== T20b: TWAMM + LP, WITH clear ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammCascade(
-            0,
-            0,
-            60_000e6,
-            3_000e6,
-            15_000e6
-        );
+        (PrimeBroker broker,) = _setupBrokerTwammCascade(0, 0, 60_000e6, 3_000e6, 15_000e6);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         console.log("  Ghost before clear:", (colIsC0 ? a0 : a1) / 1e6);
 
         _clearTwammAuction(colIsC0, type(uint256).max);
@@ -173,9 +135,7 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
         console.log("  Solvent?", solvent);
         assertTrue(solvent, "T20b: clearing made broker SOLVENT");
 
-        console.log(
-            "  Result: clearing saved 30k, broker solvent, NO liquidation needed"
-        );
+        console.log("  Result: clearing saved 30k, broker solvent, NO liquidation needed");
         _setOraclePrice(INDEX_PRICE_WAD);
     }
 
@@ -184,28 +144,18 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
     // ================================================================
     function test_T21_FullCascade() public {
         console.log("=== T21: Cash + TWAMM + LP, NO clear ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammCascade(
-            30_000e6,
-            0,
-            60_000e6,
-            3_000e6,
-            15_000e6
-        );
+        (PrimeBroker broker,) = _setupBrokerTwammCascade(30_000e6, 0, 60_000e6, 3_000e6, 15_000e6);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         console.log("  Ghost (LOST):", (colIsC0 ? a0 : a1) / 1e6);
 
         _setOraclePrice(25e18);
         uint256 nav = broker.getNetAccountValue();
         console.log("  NAV:", nav / 1e6);
-        assertFalse(
-            core.isSolvent(marketId, address(broker)),
-            "T21: insolvent"
-        );
+        assertFalse(core.isSolvent(marketId, address(broker)), "T21: insolvent");
 
         uint256 preLiq = ERC20(ma.collateralToken).balanceOf(liquidator);
         vm.prank(liquidator);
@@ -213,10 +163,7 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
         uint256 postCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         uint256 postWRLP = ERC20(ma.positionToken).balanceOf(address(broker));
         console.log("  Post: cash:", postCash / 1e6, "wRLP:", postWRLP / 1e6);
-        console.log(
-            "  Liq gained:",
-            (ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq) / 1e6
-        );
+        console.log("  Liq gained:", (ERC20(ma.collateralToken).balanceOf(liquidator) - preLiq) / 1e6);
 
         _setOraclePrice(INDEX_PRICE_WAD);
     }
@@ -226,19 +173,12 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
     // ================================================================
     function test_T21b_FullCascade_Cleared() public {
         console.log("=== T21b: Cash + TWAMM + LP, WITH clear ===");
-        (PrimeBroker broker, ) = _setupBrokerTwammCascade(
-            30_000e6,
-            0,
-            60_000e6,
-            3_000e6,
-            15_000e6
-        );
+        (PrimeBroker broker,) = _setupBrokerTwammCascade(30_000e6, 0, 60_000e6, 3_000e6, 15_000e6);
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
+        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) == ma.collateralToken;
+        (uint256 a0, uint256 a1,,) = twammHook.getStreamState(marketTwammKey);
         console.log("  Ghost before clear:", (colIsC0 ? a0 : a1) / 1e6);
 
         _clearTwammAuction(colIsC0, type(uint256).max);
@@ -252,9 +192,7 @@ contract LiquidationTwammCascade is LiquidationTwammBase {
         console.log("  Solvent?", solvent);
         assertTrue(solvent, "T21b: clearing made broker SOLVENT");
 
-        console.log(
-            "  Result: clearing saved 30k, broker solvent, NO liquidation needed"
-        );
+        console.log("  Result: clearing saved 30k, broker solvent, NO liquidation needed");
         _setOraclePrice(INDEX_PRICE_WAD);
     }
 }

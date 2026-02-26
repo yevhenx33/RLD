@@ -71,8 +71,19 @@ contract LeverageShortTests is LiquidationBase {
         address operator
     ) internal view returns (bytes memory) {
         uint256 nonce = broker.operatorNonces(operator);
+        // Must match PrimeBroker.setOperatorWithSignature hash:
+        // (operator, active, broker, nonce, caller, commitment, chainId)
+        // LeverageShortExecutor uses bytes32(0) as commitment (hardcoded flow)
         bytes32 structHash = keccak256(
-            abi.encode(operator, address(broker), nonce, operator)
+            abi.encode(
+                operator,
+                true,
+                address(broker),
+                nonce,
+                operator,
+                bytes32(0),
+                block.chainid
+            )
         );
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)

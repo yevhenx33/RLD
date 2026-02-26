@@ -27,8 +27,8 @@ import {
     UniswapV4BrokerModule
 } from "../../../src/rld/modules/broker/UniswapV4BrokerModule.sol";
 import {
-    TwammBrokerModule
-} from "../../../src/rld/modules/broker/TwammBrokerModule.sol";
+    JTMBrokerModule
+} from "../../../src/rld/modules/broker/JTMBrokerModule.sol";
 import {
     RLDAaveOracle
 } from "../../../src/rld/modules/oracles/RLDAaveOracle.sol";
@@ -45,7 +45,7 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
-import {TWAMM} from "../../../src/twamm/TWAMM.sol";
+import {JTM} from "../../../src/twamm/JTM.sol";
 import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 // V4 Periphery (PositionManager)
@@ -95,6 +95,7 @@ contract ConfigurableOracle is IRLDOracle, ISpotOracle {
     function setIndexPrice(uint256 _price) external {
         indexPrice = _price;
     }
+
     function setSpotPrice(uint256 _price) external {
         spotPrice = _price;
     }
@@ -102,9 +103,11 @@ contract ConfigurableOracle is IRLDOracle, ISpotOracle {
     function getIndexPrice(address, address) external view returns (uint256) {
         return indexPrice;
     }
+
     function getMarkPrice(address, address) external view returns (uint256) {
         return spotPrice;
     }
+
     function getSpotPrice(address, address) external view returns (uint256) {
         return spotPrice;
     }
@@ -135,7 +138,7 @@ address constant PERMIT2_ADDRESS = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
  * Deployment order mirrors `DeployRLDProtocol.s.sol` exactly:
  *
  *  Phase 0 – Infra: Permit2 (vm.etch), PoolManager, PositionManager
- *  Phase 1 – Modules: DutchLiquidation, StandardFunding, V4Oracle, V4BrokerModule, TwammBrokerModule
+ *  Phase 1 – Modules: DutchLiquidation, StandardFunding, V4Oracle, V4BrokerModule, JTMBrokerModule
  *  Phase 2 – TWAMM hook (HookMiner + CREATE2)
  *  Phase 3 – V4 pool initialization (PT 18-dec / CT 6-dec)
  *  Phase 4 – Templates: PositionToken impl, PrimeBroker impl
@@ -167,7 +170,7 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
     StandardFundingModel public fundingModel;
     UniswapV4SingletonOracle public v4Oracle; // mark oracle (pool price)
     UniswapV4BrokerModule public v4BrokerModule;
-    TwammBrokerModule public twammBrokerModule;
+    JTMBrokerModule public twammBrokerModule;
     ConfigurableOracle public testOracle; // rate + spot oracle (configurable)
     MinimalMetadataRenderer public metadataRenderer;
 
@@ -181,7 +184,7 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
     // ----------------------------------------------------------------
     //  TWAMM Hook  (mirrors Phase 2 of DeployRLDProtocol.s.sol)
     // ----------------------------------------------------------------
-    TWAMM public twammHook;
+    JTM public twammHook;
     PoolKey public twammPoolKey;
 
     // ----------------------------------------------------------------
@@ -257,7 +260,7 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
 
         metadataRenderer = new MinimalMetadataRenderer();
         v4BrokerModule = new UniswapV4BrokerModule();
-        twammBrokerModule = new TwammBrokerModule();
+        twammBrokerModule = new JTMBrokerModule();
 
         liqModule = new DutchLiquidationModule();
         fundingModel = new StandardFundingModel();
@@ -268,7 +271,7 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
         // Phase 2: TWAMM Hook — HookMiner + CREATE2
         // Mirrors DeployRLDProtocol.s.sol exactly.
         // Flags: beforeInitialize | beforeAddLiquidity | beforeRemoveLiquidity
-        //        | beforeSwap | afterSwap  →  0x2AC0
+        //        | beforeSwap | afterSwap | beforeSwapReturnDelta
         // ─────────────────────────────────────────────────────────────
         {
             uint160 flags = uint160(
@@ -276,9 +279,10 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
                     Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
                     Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
                     Hooks.BEFORE_SWAP_FLAG |
-                    Hooks.AFTER_SWAP_FLAG
+                    Hooks.AFTER_SWAP_FLAG |
+                    Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
             );
-            bytes memory creationCode = type(TWAMM).creationCode;
+            bytes memory creationCode = type(JTM).creationCode;
             bytes memory constructorArgs = abi.encode(
                 poolManager,
                 TWAMM_EXPIRATION_INTERVAL,
@@ -291,7 +295,7 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
                 creationCode,
                 constructorArgs
             );
-            twammHook = new TWAMM{salt: salt}(
+            twammHook = new JTM{salt: salt}(
                 poolManager,
                 TWAMM_EXPIRATION_INTERVAL,
                 address(this),
@@ -330,7 +334,7 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
         PositionTokenImpl posImpl = new PositionTokenImpl();
         PrimeBroker brokerImpl = new PrimeBroker(
             address(v4BrokerModule), // _v4Module   (real UniswapV4BrokerModule)
-            address(twammBrokerModule), // _twammModule (real TwammBrokerModule)
+            address(twammBrokerModule), // _twammModule (real JTMBrokerModule)
             address(positionManager) // _posm        (real V4 PositionManager)
         );
 
@@ -363,8 +367,14 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
         );
         rldFactory.initializeCore(address(core));
 
+        // F-04: Transfer oracle ownership to factory (so factory can registerPool)
+        v4Oracle.transferOwnership(address(rldFactory));
+
         // Wire TWAMM hook to core (matches production DeployRLDProtocol.s.sol Phase 5)
         twammHook.setRldCore(address(core));
+
+        // Wire factory as authorized caller for setPriceBounds during createMarket
+        twammHook.setAuthorizedFactory(address(rldFactory));
 
         // ─────────────────────────────────────────────────────────────
         // Phase 7: First RLD Market
@@ -373,6 +383,9 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
         IRLDCore.MarketAddresses memory ma = core.getMarketAddresses(marketId);
         wrlpToken = ma.positionToken;
 
+        // FIN-01: Factory defaults debtCap=0. Set unlimited cap for tests.
+        _setUnlimitedDebtCap();
+
         // Optional subclass customisation hook
         _tweakSetup();
     }
@@ -380,6 +393,25 @@ abstract contract RLDIntegrationBase is Test, DeployPermit2 {
     /// @dev Override in derived tests to adjust state after base setUp completes.
     ///      E.g., set oracle prices, seed LP positions, open broker accounts.
     function _tweakSetup() internal virtual {}
+
+    /// @dev FIN-01: Factory defaults debtCap=0. This helper proposes a risk update
+    ///      with unlimited debt cap (type(uint128).max), then warps past the 7-day
+    ///      timelock so the config becomes effective for testing.
+    function _setUnlimitedDebtCap() internal {
+        IRLDCore.MarketConfig memory cfg = core.getMarketConfig(marketId);
+        core.proposeRiskUpdate(
+            marketId,
+            cfg.minColRatio,
+            cfg.maintenanceMargin,
+            cfg.liquidationCloseFactor,
+            cfg.fundingPeriod,
+            cfg.badDebtPeriod,
+            type(uint128).max, // unlimited debt cap
+            cfg.minLiquidation,
+            cfg.liquidationParams
+        );
+        vm.warp(block.timestamp + 7 days + 1);
+    }
 
     // ----------------------------------------------------------------
     //  Permit2 bootstrap

@@ -24,11 +24,11 @@ contract DeployWrappedMarket is Script {
         address coreAddr = vm.parseJsonAddress(json, ".RLDCore");
         address factoryAddr = vm.parseJsonAddress(json, ".RLDMarketFactory");
         address liqModule = vm.parseJsonAddress(json, ".DutchLiquidationModule");
-        
+
         // Check if using mock oracle (for testnet with live rate sync)
         bool useMockOracle = vm.envOr("USE_MOCK_ORACLE", false);
         address rateOracle;
-        
+
         if (useMockOracle) {
             rateOracle = vm.envAddress("MOCK_ORACLE");
             console.log("Using MockRLDAaveOracle:", rateOracle);
@@ -39,31 +39,27 @@ contract DeployWrappedMarket is Script {
 
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
-        
+
         console.log("");
         console.log("=== DEPLOYING WAUSDC WRAPPER ===");
         console.log("Deployer:", deployer);
-        
+
         vm.startBroadcast(deployerKey);
-        
+
         // 1. Deploy waUSDC wrapper
-        WrappedAToken waUSDC = new WrappedAToken(
-            AUSDC,
-            "Wrapped aUSDC",
-            "waUSDC"
-        );
+        WrappedAToken waUSDC = new WrappedAToken(AUSDC, "Wrapped aUSDC", "waUSDC");
         console.log("waUSDC deployed:", address(waUSDC));
-        
+
         // 2. Create new market with waUSDC as collateral
         console.log("");
         console.log("=== CREATING waUSDC MARKET ===");
-        
+
         RLDMarketFactory factory = RLDMarketFactory(factoryAddr);
-        
+
         RLDMarketFactory.DeployParams memory params = RLDMarketFactory.DeployParams({
             underlyingPool: AAVE_V3_POOL,
             underlyingToken: USDC,
-            collateralToken: address(waUSDC),  // Use waUSDC instead of aUSDC!
+            collateralToken: address(waUSDC), // Use waUSDC instead of aUSDC!
             curator: deployer,
             positionTokenName: "Wrapped RLD LP waUSDC",
             positionTokenSymbol: "wRLPwaUSDC",
@@ -78,31 +74,33 @@ contract DeployWrappedMarket is Script {
             poolFee: 500,
             tickSpacing: 5
         });
-        
+
         (MarketId marketId, address brokerFactory) = factory.createMarket(params);
-        
+
         console.log("");
         console.log("=== WRAPPED MARKET CREATED ===");
         console.log("MarketId:", vm.toString(MarketId.unwrap(marketId)));
         console.log("BrokerFactory:", brokerFactory);
-        
+
         vm.stopBroadcast();
-        
+
         // Query market addresses
         RLDCore core = RLDCore(coreAddr);
         IRLDCore.MarketAddresses memory addrs = core.getMarketAddresses(marketId);
-        
+
         console.log("");
         console.log("=== MARKET ADDRESSES ===");
         console.log("collateralToken (waUSDC):", addrs.collateralToken);
         console.log("positionToken (wRLP):", addrs.positionToken);
-        
+
         // Output for script consumption (simple format for shell parsing)
         console.log("");
         string memory wausdcStr = string(abi.encodePacked("WAUSDC_ADDRESS=", vm.toString(address(waUSDC))));
-        string memory marketIdStr = string(abi.encodePacked("WRAPPED_MARKET_ID=", vm.toString(MarketId.unwrap(marketId))));
+        string memory marketIdStr =
+            string(abi.encodePacked("WRAPPED_MARKET_ID=", vm.toString(MarketId.unwrap(marketId))));
         string memory brokerStr = string(abi.encodePacked("WRAPPED_BROKER_FACTORY=", vm.toString(brokerFactory)));
-        string memory positionStr = string(abi.encodePacked("WRAPPED_POSITION_TOKEN=", vm.toString(addrs.positionToken)));
+        string memory positionStr =
+            string(abi.encodePacked("WRAPPED_POSITION_TOKEN=", vm.toString(addrs.positionToken)));
         console.log(wausdcStr);
         console.log(marketIdStr);
         console.log(brokerStr);

@@ -11,7 +11,7 @@ contract LiquidationSingleAsset is LiquidationBase {
     // T1: Pure Cash. 80k cash, 0 wRLP, 10k debt. Price->9.
     function test_T1_PureCash() public {
         console.log("=== T1: Pure Cash ===");
-        (PrimeBroker broker, ) = _setupBroker(80_000e6, 0, 0, 0);
+        (PrimeBroker broker,) = _setupBroker(80_000e6, 0, 0, 0);
         _liquidate(broker, 0, 9e18, false);
     }
 
@@ -19,7 +19,7 @@ contract LiquidationSingleAsset is LiquidationBase {
     // Price->11 to cross mm threshold. P1 takes wRLP, P2 cash.
     function test_T2_PureWRLP() public {
         console.log("=== T2: Pure wRLP ===");
-        (PrimeBroker broker, ) = _setupBroker(10_000e6, 10_000e6, 0, 0);
+        (PrimeBroker broker,) = _setupBroker(10_000e6, 10_000e6, 0, 0);
         _liquidate(broker, 0, 11e18, false);
     }
 
@@ -27,12 +27,7 @@ contract LiquidationSingleAsset is LiquidationBase {
     // Price->15. Unlock MUST unwind LP, sweep takes unwound cash.
     function test_T3_LPOnly() public {
         console.log("=== T3: LP Only ===");
-        (PrimeBroker broker, uint256 tokenId) = _setupBroker(
-            0,
-            0,
-            10_000e6,
-            30_000e6
-        );
+        (PrimeBroker broker, uint256 tokenId) = _setupBroker(0, 0, 10_000e6, 30_000e6);
         _liquidate(broker, tokenId, 15e18, true);
     }
 }

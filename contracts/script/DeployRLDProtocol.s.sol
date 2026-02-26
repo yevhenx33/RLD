@@ -26,10 +26,8 @@ import {RLDAaveOracle} from "../src/rld/modules/oracles/RLDAaveOracle.sol";
 import {
     UniswapV4BrokerModule
 } from "../src/rld/modules/broker/UniswapV4BrokerModule.sol";
-import {
-    TwammBrokerModule
-} from "../src/rld/modules/broker/TwammBrokerModule.sol";
-import {TWAMM} from "../src/twamm/TWAMM.sol";
+import {JTMBrokerModule} from "../src/rld/modules/broker/JTMBrokerModule.sol";
+import {JTM} from "../src/twamm/JTM.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -110,7 +108,7 @@ contract DeployRLDProtocol is Script {
         v4ValuationModule = address(v4Module);
         console.log("V4 Valuation Module:", v4ValuationModule);
 
-        TwammBrokerModule twammModule = new TwammBrokerModule();
+        JTMBrokerModule twammModule = new JTMBrokerModule();
         twammValuationModule = address(twammModule);
         console.log("TWAMM Valuation Module:", twammValuationModule);
 
@@ -123,10 +121,11 @@ contract DeployRLDProtocol is Script {
                 Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
                 Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
                 Hooks.BEFORE_SWAP_FLAG |
-                Hooks.AFTER_SWAP_FLAG
+                Hooks.AFTER_SWAP_FLAG |
+                Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
         );
 
-        bytes memory creationCode = type(TWAMM).creationCode;
+        bytes memory creationCode = type(JTM).creationCode;
         bytes memory constructorArgs = abi.encode(
             IPoolManager(C.POOL_MANAGER),
             C.TWAMM_EXPIRATION_INTERVAL,
@@ -143,7 +142,7 @@ contract DeployRLDProtocol is Script {
         );
         console.log("Mined salt:", vm.toString(salt));
 
-        TWAMM twammHook = new TWAMM{salt: salt}(
+        JTM twammHook = new JTM{salt: salt}(
             IPoolManager(C.POOL_MANAGER),
             C.TWAMM_EXPIRATION_INTERVAL,
             deployer,
@@ -322,7 +321,7 @@ contract DeployRLDProtocol is Script {
         );
         vm.serializeAddress(jsonObj, "UniswapV4SingletonOracle", v4Oracle);
         vm.serializeAddress(jsonObj, "RLDAaveOracle", rldAaveOracle);
-        vm.serializeAddress(jsonObj, "TwammBrokerModule", twammValuationModule);
+        vm.serializeAddress(jsonObj, "JTMBrokerModule", twammValuationModule);
         vm.serializeAddress(
             jsonObj,
             "UniswapV4BrokerModule",

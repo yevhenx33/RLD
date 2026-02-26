@@ -208,8 +208,9 @@ contract BrokerRouter is ReentrancyGuard {
         address brokerOwner = ERC721(pb.factory()).ownerOf(
             uint256(uint160(broker))
         );
-        if (msg.sender != brokerOwner && !pb.operators(msg.sender))
+        if (msg.sender != brokerOwner && !pb.operators(msg.sender)) {
             revert NotAuthorized();
+        }
         _;
     }
 

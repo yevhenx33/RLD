@@ -8,20 +8,13 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {
-    ModifyLiquidityParams,
-    SwapParams
-} from "v4-core/src/types/PoolOperation.sol";
+import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {
-    PoolModifyLiquidityTestNoChecks
-} from "v4-core/src/test/PoolModifyLiquidityTestNoChecks.sol";
+import {PoolModifyLiquidityTestNoChecks} from "v4-core/src/test/PoolModifyLiquidityTestNoChecks.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
-import {IJITTWAMM} from "../../../src/twamm/IJITTWAMM.sol";
-import {JITTWAMM} from "../../../src/twamm/JITTWAMM.sol";
-import {
-    IERC20Minimal
-} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
+import {JTM} from "../../../src/twamm/JTM.sol";
+import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 import "forge-std/console.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
@@ -29,7 +22,7 @@ import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
  * @title JitTwammParanoidTest
  * @notice Paranoid test suite: 117 tests across 13 groups.
  *         Covers every function, branch, revert, and edge case
- *         in JITTWAMM.sol.
+ *         in JTM.sol.
  *
  * Extends JITRLDIntegrationBase which deploys the REAL JIT-TWAMM hook
  * with HookMiner + CREATE2, matching the production deployment pipeline.
@@ -55,9 +48,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     }
 
     function _tweakSetup() internal override {
-        lpRouter = new PoolModifyLiquidityTestNoChecks(
-            IPoolManager(address(poolManager))
-        );
+        lpRouter = new PoolModifyLiquidityTestNoChecks(IPoolManager(address(poolManager)));
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
 
         pt.approve(address(lpRouter), type(uint256).max);
@@ -77,44 +68,27 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function _seedLiquidity(int256 amount) internal {
         lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: amount,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: amount, salt: bytes32(0)}),
             ""
         );
     }
 
-    function _submitOrder0For1(
-        uint256 duration,
-        uint256 amountIn
-    ) internal returns (bytes32 orderId, IJITTWAMM.OrderKey memory orderKey) {
-        return
-            twammHook.submitOrder(
-                IJITTWAMM.SubmitOrderParams({
-                    key: twammPoolKey,
-                    zeroForOne: true,
-                    duration: duration,
-                    amountIn: amountIn
-                })
-            );
+    function _submitOrder0For1(uint256 duration, uint256 amountIn)
+        internal
+        returns (bytes32 orderId, IJTM.OrderKey memory orderKey)
+    {
+        return twammHook.submitOrder(
+            IJTM.SubmitOrderParams({key: twammPoolKey, zeroForOne: true, duration: duration, amountIn: amountIn})
+        );
     }
 
-    function _submitOrder1For0(
-        uint256 duration,
-        uint256 amountIn
-    ) internal returns (bytes32 orderId, IJITTWAMM.OrderKey memory orderKey) {
-        return
-            twammHook.submitOrder(
-                IJITTWAMM.SubmitOrderParams({
-                    key: twammPoolKey,
-                    zeroForOne: false,
-                    duration: duration,
-                    amountIn: amountIn
-                })
-            );
+    function _submitOrder1For0(uint256 duration, uint256 amountIn)
+        internal
+        returns (bytes32 orderId, IJTM.OrderKey memory orderKey)
+    {
+        return twammHook.submitOrder(
+            IJTM.SubmitOrderParams({key: twammPoolKey, zeroForOne: false, duration: duration, amountIn: amountIn})
+        );
     }
 
     function _token0() internal view returns (address) {
@@ -131,14 +105,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
             SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: amountSpecified,
-                sqrtPriceLimitX96: zeroForOne
-                    ? TickMath.MIN_SQRT_PRICE + 1
-                    : TickMath.MAX_SQRT_PRICE - 1
+                sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
             }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
     }
@@ -152,22 +121,16 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         vm.stopPrank();
     }
 
-    function _submitAs(
-        address user,
-        bool zeroForOne,
-        uint256 duration,
-        uint256 amountIn
-    ) internal returns (bytes32 orderId, IJITTWAMM.OrderKey memory orderKey) {
+    function _submitAs(address user, bool zeroForOne, uint256 duration, uint256 amountIn)
+        internal
+        returns (bytes32 orderId, IJTM.OrderKey memory orderKey)
+    {
         vm.prank(user);
-        return
-            twammHook.submitOrder(
-                IJITTWAMM.SubmitOrderParams({
-                    key: twammPoolKey,
-                    zeroForOne: zeroForOne,
-                    duration: duration,
-                    amountIn: amountIn
-                })
-            );
+        return twammHook.submitOrder(
+            IJTM.SubmitOrderParams({
+                key: twammPoolKey, zeroForOne: zeroForOne, duration: duration, amountIn: amountIn
+            })
+        );
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -179,9 +142,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     }
 
     function test_Init_PoolInitialized() public view {
-        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(
-            twammPoolKey.toId()
-        );
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(twammPoolKey.toId());
         assertTrue(sqrtPriceX96 > 0, "pool initialized");
     }
 
@@ -192,11 +153,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     }
 
     function test_Init_ExpirationInterval() public view {
-        assertEq(
-            twammHook.expirationInterval(),
-            INTERVAL,
-            "expiration interval stored"
-        );
+        assertEq(twammHook.expirationInterval(), INTERVAL, "expiration interval stored");
     }
 
     function test_Init_DefaultTunables() public view {
@@ -250,9 +207,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_Admin_SetPriceBounds() public view {
         // Bounds are now set during setUp via JITRLDIntegrationBase.
         // Verify they're stored correctly.
-        (uint160 storedMin, uint160 storedMax) = twammHook.priceBounds(
-            twammPoolKey.toId()
-        );
+        (uint160 storedMin, uint160 storedMax) = twammHook.priceBounds(twammPoolKey.toId());
         assertTrue(storedMin > 0, "min stored");
         assertTrue(storedMax > storedMin, "max > min");
     }
@@ -279,12 +234,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // Add more within that same range - should succeed
         lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -120,
-                tickUpper: 120,
-                liquidityDelta: 1e12,
-                salt: bytes32(uint256(1))
-            }),
+            ModifyLiquidityParams({tickLower: -120, tickUpper: 120, liquidityDelta: 1e12, salt: bytes32(uint256(1))}),
             ""
         );
     }
@@ -298,22 +248,12 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // Add then remove - removal should never revert
         lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -120,
-                tickUpper: 120,
-                liquidityDelta: 1e12,
-                salt: bytes32(uint256(2))
-            }),
+            ModifyLiquidityParams({tickLower: -120, tickUpper: 120, liquidityDelta: 1e12, salt: bytes32(uint256(2))}),
             ""
         );
         lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -120,
-                tickUpper: 120,
-                liquidityDelta: -1e12,
-                salt: bytes32(uint256(2))
-            }),
+            ModifyLiquidityParams({tickLower: -120, tickUpper: 120, liquidityDelta: -1e12, salt: bytes32(uint256(2))}),
             ""
         );
     }
@@ -332,9 +272,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
     function test_Bounds_SwapDoesNotExceedBounds() public view {
         // Get current price and check it's within bounds
-        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(
-            twammPoolKey.toId()
-        );
+        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(twammPoolKey.toId());
         (uint160 min, uint160 max) = twammHook.priceBounds(twammPoolKey.toId());
         if (min != 0) {
             assertTrue(sqrtPriceX96 >= min, "price above min");
@@ -348,28 +286,19 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
     function test_Submit_0For1_Basic() public {
         uint256 amountIn = 3600e6;
-        (
-            bytes32 orderId,
-            IJITTWAMM.OrderKey memory orderKey
-        ) = _submitOrder0For1(INTERVAL, amountIn);
+        (bytes32 orderId, IJTM.OrderKey memory orderKey) = _submitOrder0For1(INTERVAL, amountIn);
 
         assertTrue(orderId != bytes32(0), "orderId non-zero");
         assertEq(orderKey.owner, address(this), "owner correct");
         assertTrue(orderKey.zeroForOne, "direction correct");
 
-        IJITTWAMM.Order memory order = twammHook.getOrder(
-            twammPoolKey,
-            orderKey
-        );
+        IJTM.Order memory order = twammHook.getOrder(twammPoolKey, orderKey);
         assertTrue(order.sellRate > 0, "sellRate stored");
     }
 
     function test_Submit_1For0_Basic() public {
         uint256 amountIn = 3600e6;
-        (
-            bytes32 orderId,
-            IJITTWAMM.OrderKey memory orderKey
-        ) = _submitOrder1For0(INTERVAL, amountIn);
+        (bytes32 orderId, IJTM.OrderKey memory orderKey) = _submitOrder1For0(INTERVAL, amountIn);
 
         assertTrue(orderId != bytes32(0));
         assertFalse(orderKey.zeroForOne, "direction 1for0");
@@ -392,13 +321,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 sellRate = amountIn / INTERVAL;
         uint256 actualDeposit = sellRate * INTERVAL;
 
-        uint256 hookBefore = IERC20Minimal(_token0()).balanceOf(
-            address(twammHook)
-        );
+        uint256 hookBefore = IERC20Minimal(_token0()).balanceOf(address(twammHook));
         _submitOrder0For1(INTERVAL, amountIn);
-        uint256 hookAfter = IERC20Minimal(_token0()).balanceOf(
-            address(twammHook)
-        );
+        uint256 hookAfter = IERC20Minimal(_token0()).balanceOf(address(twammHook));
 
         assertEq(hookAfter - hookBefore, actualDeposit, "hook received");
     }
@@ -407,14 +332,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 amountIn = 3600e6;
         uint256 expectedSellRate = (amountIn / INTERVAL) * RATE_SCALER;
 
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            INTERVAL,
-            amountIn
-        );
-        IJITTWAMM.Order memory order = twammHook.getOrder(
-            twammPoolKey,
-            orderKey
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(INTERVAL, amountIn);
+        IJTM.Order memory order = twammHook.getOrder(twammPoolKey, orderKey);
 
         assertEq(order.sellRate, expectedSellRate, "sell rate scaled");
     }
@@ -431,10 +350,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         uint256 deducted = balBefore - balAfter;
         assertEq(deducted, actualDeposit, "only sellRate*duration deducted");
-        assertTrue(
-            deducted <= amountIn,
-            "deducted <= amountIn (dust stays with user)"
-        );
+        assertTrue(deducted <= amountIn, "deducted <= amountIn (dust stays with user)");
     }
 
     function test_Submit_MultipleOrdersSameDirection() public {
@@ -446,9 +362,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitAs(alice, true, INTERVAL, 3600e6);
         _submitAs(bob, true, INTERVAL, 7200e6);
 
-        (uint256 sr, ) = twammHook.getStreamPool(twammPoolKey, true);
-        uint256 expected = ((3600e6 / INTERVAL) + (7200e6 / INTERVAL)) *
-            RATE_SCALER;
+        (uint256 sr,) = twammHook.getStreamPool(twammPoolKey, true);
+        uint256 expected = ((3600e6 / INTERVAL) + (7200e6 / INTERVAL)) * RATE_SCALER;
         assertEq(sr, expected, "aggregate sellRate is sum");
     }
 
@@ -457,27 +372,20 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Get current earningsFactor
         (, uint256 efBefore) = twammHook.getStreamPool(twammPoolKey, true);
 
         // Submit new order - its earningsFactorLast should match efBefore
-        (, IJITTWAMM.OrderKey memory newKey) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
-        IJITTWAMM.Order memory order = twammHook.getOrder(twammPoolKey, newKey);
+        (, IJTM.OrderKey memory newKey) = _submitOrder0For1(INTERVAL, 3600e6);
+        IJTM.Order memory order = twammHook.getOrder(twammPoolKey, newKey);
 
-        assertEq(
-            order.earningsFactorLast,
-            efBefore,
-            "snapshot matches stream current"
-        );
+        assertEq(order.earningsFactorLast, efBefore, "snapshot matches stream current");
     }
 
     function test_Submit_Revert_ZeroSellRate() public {
-        vm.expectRevert(IJITTWAMM.SellRateCannotBeZero.selector);
+        vm.expectRevert(IJTM.SellRateCannotBeZero.selector);
         _submitOrder0For1(INTERVAL, INTERVAL - 1);
     }
 
@@ -498,15 +406,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
     function test_Cancel_Immediate_FullRefund() public {
         uint256 amountIn = 3600e6;
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            INTERVAL,
-            amountIn
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(INTERVAL, amountIn);
 
-        (uint256 buyOut, uint256 sellRefund) = twammHook.cancelOrder(
-            twammPoolKey,
-            orderKey
-        );
+        (uint256 buyOut, uint256 sellRefund) = twammHook.cancelOrder(twammPoolKey, orderKey);
 
         uint256 sellRate = amountIn / INTERVAL;
         assertEq(sellRefund, sellRate * INTERVAL, "full refund");
@@ -518,10 +420,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 amountIn = 10800e6;
 
         _submitOrder1For0(duration, amountIn); // opposing
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            duration,
-            amountIn
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(duration, amountIn);
 
         vm.warp(block.timestamp + INTERVAL); // 1/3 elapsed
 
@@ -542,43 +441,31 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 amountIn = 10800e6;
 
         _submitOrder1For0(duration, amountIn); // opposing
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            duration,
-            amountIn
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(duration, amountIn);
 
         vm.warp(block.timestamp + INTERVAL);
 
-        (uint256 buyOut, ) = twammHook.cancelOrder(twammPoolKey, orderKey);
+        (uint256 buyOut,) = twammHook.cancelOrder(twammPoolKey, orderKey);
         assertTrue(buyOut > 0, "earned buy tokens");
     }
 
     function test_Cancel_SellRateRemoved() public {
         uint256 amountIn = 3600e6;
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            INTERVAL,
-            amountIn
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(INTERVAL, amountIn);
 
-        (uint256 srBefore, ) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 srBefore,) = twammHook.getStreamPool(twammPoolKey, true);
         assertTrue(srBefore > 0, "sellRate active before cancel");
 
         twammHook.cancelOrder(twammPoolKey, orderKey);
 
-        (uint256 srAfter, ) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 srAfter,) = twammHook.getStreamPool(twammPoolKey, true);
         assertEq(srAfter, 0, "sellRate zeroed after cancel");
     }
 
     function test_Cancel_OrderDeleted() public {
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(INTERVAL, 3600e6);
         twammHook.cancelOrder(twammPoolKey, orderKey);
-        IJITTWAMM.Order memory order = twammHook.getOrder(
-            twammPoolKey,
-            orderKey
-        );
+        IJTM.Order memory order = twammHook.getOrder(twammPoolKey, orderKey);
         assertEq(order.sellRate, 0, "order deleted");
     }
 
@@ -587,20 +474,14 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 duration = 3 * INTERVAL;
 
         _submitOrder1For0(duration, amountIn);
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            duration,
-            amountIn
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(duration, amountIn);
 
         vm.warp(block.timestamp + INTERVAL);
 
         uint256 bal0Before = IERC20Minimal(_token0()).balanceOf(address(this));
         uint256 bal1Before = IERC20Minimal(_token1()).balanceOf(address(this));
 
-        (uint256 buyOut, uint256 sellRefund) = twammHook.cancelOrder(
-            twammPoolKey,
-            orderKey
-        );
+        (uint256 buyOut, uint256 sellRefund) = twammHook.cancelOrder(twammPoolKey, orderKey);
 
         uint256 bal0After = IERC20Minimal(_token0()).balanceOf(address(this));
         uint256 bal1After = IERC20Minimal(_token1()).balanceOf(address(this));
@@ -612,30 +493,22 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     }
 
     function test_Cancel_Revert_NotOwner() public {
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(INTERVAL, 3600e6);
         vm.prank(address(0xDEAD));
-        vm.expectRevert(IJITTWAMM.Unauthorized.selector);
+        vm.expectRevert(IJTM.Unauthorized.selector);
         twammHook.cancelOrder(twammPoolKey, orderKey);
     }
 
     function test_Cancel_Revert_OrderExpired() public {
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL + 1);
         vm.expectRevert();
         twammHook.cancelOrder(twammPoolKey, orderKey);
     }
 
     function test_Cancel_Revert_OrderDoesNotExist() public {
-        IJITTWAMM.OrderKey memory fakeKey = IJITTWAMM.OrderKey({
-            owner: address(this),
-            expiration: uint160(block.timestamp + INTERVAL),
-            zeroForOne: true
+        IJTM.OrderKey memory fakeKey = IJTM.OrderKey({
+            owner: address(this), expiration: uint160(block.timestamp + INTERVAL), zeroForOne: true
         });
         vm.expectRevert();
         twammHook.cancelOrder(twammPoolKey, fakeKey);
@@ -646,135 +519,84 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     // ════════════════════════════════════════════════════════════════════
 
     function test_Sync_CreditsEarnings_Proper() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
 
-        uint256 earnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        uint256 earnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
 
         Currency buyToken = twammPoolKey.currency1;
-        uint256 owed = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            buyToken,
-            address(this)
-        );
+        uint256 owed = twammHook.tokensOwed(twammPoolKey.toId(), buyToken, address(this));
 
         assertTrue(owed > 0, "tokensOwed credited");
         assertEq(owed, earnings, "earnings matches owed");
     }
 
     function test_Sync_UpdatesEarningsFactorLast() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL / 2);
 
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
 
-        IJITTWAMM.Order memory order = twammHook.getOrder(twammPoolKey, key0);
+        IJTM.Order memory order = twammHook.getOrder(twammPoolKey, key0);
         (, uint256 efCurrent) = twammHook.getStreamPool(twammPoolKey, true);
 
-        assertEq(
-            order.earningsFactorLast,
-            efCurrent,
-            "earningsFactorLast updated"
-        );
+        assertEq(order.earningsFactorLast, efCurrent, "earningsFactorLast updated");
     }
 
     function test_Sync_IdempotentDoubleSync() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
 
-        uint256 e1 = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
-        uint256 e2 = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        uint256 e1 = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
+        uint256 e2 = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
 
         assertTrue(e1 > 0, "first sync has earnings");
         assertEq(e2, 0, "second sync is no-op");
     }
 
     function test_Sync_AccumulatesAcrossMultiplePeriods() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            3 * INTERVAL,
-            10800e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(3 * INTERVAL, 10800e6);
         _submitOrder1For0(3 * INTERVAL, 10800e6);
 
         // Don't sync during epochs
         vm.warp(block.timestamp + 2 * INTERVAL);
 
-        uint256 earnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        uint256 earnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
 
         assertTrue(earnings > 0, "accumulated earnings across 2 epochs");
     }
 
     function test_Sync_Revert_OrderDoesNotExist() public {
-        IJITTWAMM.OrderKey memory fakeKey = IJITTWAMM.OrderKey({
-            owner: address(this),
-            expiration: uint160(block.timestamp + INTERVAL),
-            zeroForOne: true
+        IJTM.OrderKey memory fakeKey = IJTM.OrderKey({
+            owner: address(this), expiration: uint160(block.timestamp + INTERVAL), zeroForOne: true
         });
         vm.expectRevert();
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: fakeKey})
-        );
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: fakeKey}));
     }
 
     function test_ClaimTokens_TransfersOwed() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
 
         Currency buyToken = twammPoolKey.currency1;
-        uint256 owed = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            buyToken,
-            address(this)
-        );
+        uint256 owed = twammHook.tokensOwed(twammPoolKey.toId(), buyToken, address(this));
         assertTrue(owed > 0, "has tokens owed");
 
-        uint256 balBefore = IERC20Minimal(Currency.unwrap(buyToken)).balanceOf(
-            address(this)
-        );
+        uint256 balBefore = IERC20Minimal(Currency.unwrap(buyToken)).balanceOf(address(this));
         twammHook.claimTokens(twammPoolKey, buyToken);
-        uint256 balAfter = IERC20Minimal(Currency.unwrap(buyToken)).balanceOf(
-            address(this)
-        );
+        uint256 balAfter = IERC20Minimal(Currency.unwrap(buyToken)).balanceOf(address(this));
 
         assertEq(balAfter - balBefore, owed, "claimed correct amount");
-        assertEq(
-            twammHook.tokensOwed(twammPoolKey.toId(), buyToken, address(this)),
-            0,
-            "tokensOwed zeroed"
-        );
+        assertEq(twammHook.tokensOwed(twammPoolKey.toId(), buyToken, address(this)), 0, "tokensOwed zeroed");
     }
 
     function test_ClaimTokens_ZeroIfNothingOwed() public {
@@ -784,39 +606,29 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     }
 
     function test_SyncAndClaim_ExpiresOrder() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
 
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
 
-        IJITTWAMM.Order memory order = twammHook.getOrder(twammPoolKey, key0);
+        IJTM.Order memory order = twammHook.getOrder(twammPoolKey, key0);
         assertEq(order.sellRate, 0, "expired order deleted");
     }
 
     function test_SyncAndClaim_NoDoubleSubtract_Regression() public {
         // Regression test for the double-subtraction bug
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
 
         // This should NOT revert with arithmetic underflow
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
 
         // sellRateCurrent should be 0 (epoch crossed, orders expired)
-        (uint256 sr, ) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr,) = twammHook.getStreamPool(twammPoolKey, true);
         assertEq(sr, 0, "sellRate properly cleaned by crossEpoch only");
     }
 
@@ -830,12 +642,10 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder1For0(INTERVAL, amountIn);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // After full netting, ghost balances should be ~0
-        (uint256 accrued0, uint256 accrued1, , ) = twammHook.getStreamState(
-            twammPoolKey
-        );
+        (uint256 accrued0, uint256 accrued1,,) = twammHook.getStreamState(twammPoolKey);
         // Due to TWAP pricing, amounts might not be exactly zero but should be very small
         assertLe(accrued0, 1e6, "accrued0 near zero after netting");
         assertLe(accrued1, 1e6, "accrued1 near zero after netting");
@@ -848,27 +658,17 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // Check accrued BEFORE expiry (pre-epoch crossing)
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (uint256 accrued0Mid, , , ) = twammHook.getStreamState(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
+        (uint256 accrued0Mid,,,) = twammHook.getStreamState(twammPoolKey);
         assertTrue(accrued0Mid > 0, "large side has accrued mid-stream");
         console.log("[L1] mid-stream accrued0:", accrued0Mid);
 
         // After expiry, accrued moves to pendingDonation (dust fix)
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (uint256 accrued0Post, uint256 accrued1Post, , ) = twammHook
-            .getStreamState(twammPoolKey);
-        assertEq(
-            accrued0Post,
-            0,
-            "accrued0 moved to pendingDonation after expiry"
-        );
-        console.log(
-            "[L1] post-expiry accrued0:",
-            accrued0Post,
-            "accrued1:",
-            accrued1Post
-        );
+        twammHook.executeJTMOrders(twammPoolKey);
+        (uint256 accrued0Post, uint256 accrued1Post,,) = twammHook.getStreamState(twammPoolKey);
+        assertEq(accrued0Post, 0, "accrued0 moved to pendingDonation after expiry");
+        console.log("[L1] post-expiry accrued0:", accrued0Post, "accrued1:", accrued1Post);
     }
 
     function test_L1_NoOpposingFlow_NoNetting() public {
@@ -876,59 +676,43 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // Check mid-stream: accrued0 should be building
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (uint256 accrued0Mid, , , ) = twammHook.getStreamState(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
+        (uint256 accrued0Mid,,,) = twammHook.getStreamState(twammPoolKey);
         assertTrue(accrued0Mid > 0, "ghost balance builds with no opposing");
 
         // After expiry: accrued moved to pendingDonation (dust fix)
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (uint256 accrued0Post, , , ) = twammHook.getStreamState(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
+        (uint256 accrued0Post,,,) = twammHook.getStreamState(twammPoolKey);
         assertEq(accrued0Post, 0, "accrued0 orphaned after expiry");
     }
 
     function test_L1_PriceDoesNotMove() public {
         // Equal opposing → ZERO net AMM pressure
-        (uint160 sqrtBefore, , , ) = poolManager.getSlot0(twammPoolKey.toId());
+        (uint160 sqrtBefore,,,) = poolManager.getSlot0(twammPoolKey.toId());
 
         _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint160 sqrtAfter, , , ) = poolManager.getSlot0(twammPoolKey.toId());
-        uint256 diff = sqrtBefore > sqrtAfter
-            ? sqrtBefore - sqrtAfter
-            : sqrtAfter - sqrtBefore;
+        (uint160 sqrtAfter,,,) = poolManager.getSlot0(twammPoolKey.toId());
+        uint256 diff = sqrtBefore > sqrtAfter ? sqrtBefore - sqrtAfter : sqrtAfter - sqrtBefore;
         assertEq(diff, 0, "price must not move with perfectly balanced flow");
     }
 
     function test_L1_BothStreamsEarnCorrectToken() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
-        (, IJITTWAMM.OrderKey memory key1) = _submitOrder1For0(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(INTERVAL, 3600e6);
+        (, IJTM.OrderKey memory key1) = _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key1})
-        );
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key1}));
 
         // 0→1 sells token0, earns token1
-        uint256 owed1ForKey0 = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            twammPoolKey.currency1,
-            address(this)
-        );
+        uint256 owed1ForKey0 = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency1, address(this));
         assertTrue(owed1ForKey0 > 0, "0for1 earns token1");
     }
 
@@ -939,84 +723,56 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Execute again with no active orders - should be a no-op
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey); // should not revert
+        twammHook.executeJTMOrders(twammPoolKey); // should not revert
     }
 
     function test_L1_NetBeforeEpoch_Regression() public {
         // Regression: netting MUST happen before epoch crossing
         // If epoch crosses first, sellRateCurrent could go to zero
         // and _recordEarnings would silently fail (div by zero)
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
-        (, IJITTWAMM.OrderKey memory key1) = _submitOrder1For0(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(INTERVAL, 3600e6);
+        (, IJTM.OrderKey memory key1) = _submitOrder1For0(INTERVAL, 3600e6);
 
         // Warp exactly to epoch boundary (where orders expire)
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Both should have earnings despite expiring at epoch boundary
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key1})
-        );
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key1}));
 
-        uint256 owedC0 = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            twammPoolKey.currency0,
-            address(this)
-        );
-        uint256 owedC1 = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            twammPoolKey.currency1,
-            address(this)
-        );
+        uint256 owedC0 = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency0, address(this));
+        uint256 owedC1 = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency1, address(this));
         assertTrue(owedC0 > 0 || owedC1 > 0, "earnings recorded at boundary");
     }
 
     function test_L1_Netting_AcrossMultipleEpochs() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            3 * INTERVAL,
-            10800e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(3 * INTERVAL, 10800e6);
         _submitOrder1For0(3 * INTERVAL, 10800e6);
 
         // Step through each epoch
         for (uint256 i = 1; i <= 3; i++) {
             vm.warp(block.timestamp + INTERVAL);
-            twammHook.executeJITTWAMMOrders(twammPoolKey);
+            twammHook.executeJTMOrders(twammPoolKey);
         }
 
-        uint256 earnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        uint256 earnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
         assertTrue(earnings > 0, "3-epoch netting produces earnings");
     }
 
     function test_L1_Netting_AsymmetricAmounts() public {
         // 10:1 ratio - smaller side fully matched
         _submitOrder0For1(INTERVAL, 36000e6);
-        (, IJITTWAMM.OrderKey memory keySmall) = _submitOrder1For0(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory keySmall) = _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        uint256 earnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keySmall})
-        );
+        uint256 earnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: keySmall}));
         assertTrue(earnings > 0, "small side earns from netting");
     }
 
@@ -1033,7 +789,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // Build ghost balance via single-direction order
         _submitOrder0For1(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Ghost balance of token0 exists. Swap 1→0 (buy token0) should fill from ghost.
         _doSwap(false, -500e6);
@@ -1042,9 +798,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L2_FillDecreasesAccrued() public {
         _submitOrder0For1(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accruedBefore, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accruedBefore,,,) = twammHook.getStreamState(twammPoolKey);
         assertTrue(accruedBefore > 0, "has ghost before swap");
 
         // Swap in direction that consumes accrued0 (swap 1→0)
@@ -1058,7 +814,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // because the taker wants token1, but ghost is token0.
         _submitOrder0For1(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // This swap should just go through AMM
         _doSwap(true, -500e6);
@@ -1070,7 +826,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // After netting, only leftover ghost from larger side
         // Swap should work
@@ -1080,7 +836,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L2_MultipleSwaps_DrainsGhost() public {
         _submitOrder0For1(INTERVAL, 36000e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Multiple swaps depleting ghost
         for (uint256 i = 0; i < 3; i++) {
@@ -1094,7 +850,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         _doSwap(true, -500e6); // consumes accrued1
         _doSwap(false, -500e6); // consumes accrued0
@@ -1104,7 +860,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // After full expiry + netting, ghost should be minimal
         // Swap should still work (no revert)
@@ -1114,7 +870,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L2_LargeSwap_CappedByGhost() public {
         _submitOrder0For1(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Swap much larger than ghost - should fill from ghost + AMM
         _doSwap(false, -1_000_000e6);
@@ -1123,7 +879,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L2_SwapZeroAmount_Reverts() public {
         _submitOrder0For1(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // V4 rejects zero-amount swaps with SwapAmountCannotBeZero
         vm.expectRevert();
@@ -1138,9 +894,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // Use 2hr order so stream is still active after 1hr (NoActiveStream guard)
         _submitOrder0For1(2 * INTERVAL, 7200e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
         if (accrued0 > 0) {
             twammHook.clear(twammPoolKey, true, accrued0, 0);
         }
@@ -1149,12 +905,12 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L3_Clear_DiscountGrowsWithTime() public {
         _submitOrder0For1(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (, , uint256 discount1, ) = twammHook.getStreamState(twammPoolKey);
+        (,, uint256 discount1,) = twammHook.getStreamState(twammPoolKey);
 
         vm.warp(block.timestamp + 30); // 30 more seconds
-        (, , uint256 discount2, ) = twammHook.getStreamState(twammPoolKey);
+        (,, uint256 discount2,) = twammHook.getStreamState(twammPoolKey);
 
         assertTrue(discount2 >= discount1, "discount grows with time");
     }
@@ -1162,11 +918,11 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L3_Clear_DiscountCapped() public {
         _submitOrder0For1(INTERVAL, 3600e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Warp way past to ensure cap
         vm.warp(block.timestamp + 10000);
-        (, , uint256 discount, ) = twammHook.getStreamState(twammPoolKey);
+        (,, uint256 discount,) = twammHook.getStreamState(twammPoolKey);
 
         assertLe(discount, twammHook.maxDiscountBps(), "discount capped");
     }
@@ -1174,14 +930,14 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L3_Clear_PartialClear() public {
         _submitOrder0For1(2 * INTERVAL, 7200e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
         if (accrued0 > 1) {
             uint256 partialAmount = accrued0 / 2;
             twammHook.clear(twammPoolKey, true, partialAmount, 0);
 
-            (uint256 remaining, , , ) = twammHook.getStreamState(twammPoolKey);
+            (uint256 remaining,,,) = twammHook.getStreamState(twammPoolKey);
             assertTrue(remaining < accrued0, "partially cleared");
         }
     }
@@ -1189,13 +945,13 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L3_Clear_FullClear() public {
         _submitOrder0For1(2 * INTERVAL, 7200e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
         if (accrued0 > 0) {
             twammHook.clear(twammPoolKey, true, accrued0, 0);
 
-            (uint256 remaining, , , ) = twammHook.getStreamState(twammPoolKey);
+            (uint256 remaining,,,) = twammHook.getStreamState(twammPoolKey);
             assertEq(remaining, 0, "fully cleared");
         }
     }
@@ -1203,22 +959,16 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L3_Clear_ResetsLastClearTimestamp() public {
         _submitOrder0For1(2 * INTERVAL, 7200e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
         if (accrued0 > 0) {
             vm.warp(block.timestamp + 50); // build discount
             twammHook.clear(twammPoolKey, true, accrued0 / 2, 0);
 
             // After clear, discount should reset significantly
-            (, , uint256 discountAfter, ) = twammHook.getStreamState(
-                twammPoolKey
-            );
-            assertLe(
-                discountAfter,
-                5,
-                "discount reset after clear (near-zero time elapsed)"
-            );
+            (,, uint256 discountAfter,) = twammHook.getStreamState(twammPoolKey);
+            assertLe(discountAfter, 5, "discount reset after clear (near-zero time elapsed)");
         }
     }
 
@@ -1227,21 +977,16 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // If the order has expired, sellRateCurrent = 0 and _recordEarnings
         // is a no-op (div-by-zero guard). That's correct behavior - but
         // we want to test the ACTIVE path here.
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            2 * INTERVAL,
-            7200e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(2 * INTERVAL, 7200e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
         if (accrued0 > 0) {
             twammHook.clear(twammPoolKey, true, accrued0, 0);
 
             // Sync order - should now have earnings from clear
-            uint256 earnings = twammHook.sync(
-                IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-            );
+            uint256 earnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
             assertTrue(earnings > 0, "clear produced earnings");
         }
     }
@@ -1249,46 +994,38 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_L3_Clear_ArbReceivesTokens() public {
         _submitOrder0For1(2 * INTERVAL, 7200e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
         if (accrued0 > 0) {
-            uint256 balBefore = IERC20Minimal(_token0()).balanceOf(
-                address(this)
-            );
+            uint256 balBefore = IERC20Minimal(_token0()).balanceOf(address(this));
             twammHook.clear(twammPoolKey, true, accrued0, 0);
-            uint256 balAfter = IERC20Minimal(_token0()).balanceOf(
-                address(this)
-            );
+            uint256 balAfter = IERC20Minimal(_token0()).balanceOf(address(this));
 
-            assertEq(
-                balAfter - balBefore,
-                accrued0,
-                "arb received cleared tokens"
-            );
+            assertEq(balAfter - balBefore, accrued0, "arb received cleared tokens");
         }
     }
 
     function test_L3_Clear_Revert_NothingToClear() public {
-        vm.expectRevert(IJITTWAMM.NothingToClear.selector);
+        vm.expectRevert(IJTM.NothingToClear.selector);
         twammHook.clear(twammPoolKey, true, 1e6, 0);
     }
 
     function test_L3_Clear_SequentialClears() public {
         _submitOrder0For1(2 * INTERVAL, 7200e6);
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
         if (accrued0 > 1) {
             // First clear: partial
             twammHook.clear(twammPoolKey, true, accrued0 / 2, 0);
 
             // Warp to build more ghost + discount
             vm.warp(block.timestamp + INTERVAL / 2);
-            twammHook.executeJITTWAMMOrders(twammPoolKey);
+            twammHook.executeJTMOrders(twammPoolKey);
 
-            (uint256 newAccrued, , , ) = twammHook.getStreamState(twammPoolKey);
+            (uint256 newAccrued,,,) = twammHook.getStreamState(twammPoolKey);
             if (newAccrued > 0) {
                 // Second clear
                 twammHook.clear(twammPoolKey, true, newAccrued, 0);
@@ -1302,11 +1039,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder1For0(2 * INTERVAL, 7200e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, uint256 accrued1, , ) = twammHook.getStreamState(
-            twammPoolKey
-        );
+        (uint256 accrued0, uint256 accrued1,,) = twammHook.getStreamState(twammPoolKey);
 
         if (accrued0 > 0) {
             twammHook.clear(twammPoolKey, true, accrued0, 0);
@@ -1323,11 +1058,11 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     function test_Engine_NoOpIfNoTimePassed() public {
         _submitOrder0For1(INTERVAL, 3600e6);
 
-        (uint256 accruedBefore, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accruedBefore,,,) = twammHook.getStreamState(twammPoolKey);
 
         // Execute in same block → no time delta → no accrual
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Both calls should be idempotent in same timestamp
     }
@@ -1338,9 +1073,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         uint256 halfInterval = INTERVAL / 2;
         vm.warp(block.timestamp + halfInterval);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
 
         uint256 sellRate = amountIn / INTERVAL;
         uint256 expected = sellRate * halfInterval;
@@ -1356,9 +1091,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder0For1(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 sr, ) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr,) = twammHook.getStreamPool(twammPoolKey, true);
         assertEq(sr, 0, "expired sellRate removed");
     }
 
@@ -1368,34 +1103,30 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // Warp 3 epochs at once (no intermediate execute calls)
         vm.warp(block.timestamp + 3 * INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 sr0, ) = twammHook.getStreamPool(twammPoolKey, true);
-        (uint256 sr1, ) = twammHook.getStreamPool(twammPoolKey, false);
+        (uint256 sr0,) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr1,) = twammHook.getStreamPool(twammPoolKey, false);
         assertEq(sr0, 0, "all expired after 3 epochs");
         assertEq(sr1, 0, "all expired after 3 epochs");
     }
 
     function test_Engine_UpdatesTimestamp() public {
-        uint256 tsBefore = twammHook.lastVirtualOrderTimestamp(
-            twammPoolKey.toId()
-        );
+        uint256 tsBefore = twammHook.lastVirtualOrderTimestamp(twammPoolKey.toId());
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        uint256 tsAfter = twammHook.lastVirtualOrderTimestamp(
-            twammPoolKey.toId()
-        );
+        uint256 tsAfter = twammHook.lastVirtualOrderTimestamp(twammPoolKey.toId());
         assertTrue(tsAfter > tsBefore, "timestamp advanced");
     }
 
     function test_Engine_NoOrders_NoOp() public {
         // Execute with no orders should not revert
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 sr0, ) = twammHook.getStreamPool(twammPoolKey, true);
-        (uint256 sr1, ) = twammHook.getStreamPool(twammPoolKey, false);
+        (uint256 sr0,) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr1,) = twammHook.getStreamPool(twammPoolKey, false);
         assertEq(sr0, 0, "no sell rate");
         assertEq(sr1, 0, "no sell rate");
     }
@@ -1409,20 +1140,14 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         vm.warp(block.timestamp + INTERVAL / 2);
         // DO NOT execute - view should still show pending accrual
-        (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
         assertTrue(accrued0 > 0, "pending accrual in view");
     }
 
     function test_View_GetOrder_MatchesSubmission() public {
         uint256 amountIn = 3600e6;
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            INTERVAL,
-            amountIn
-        );
-        IJITTWAMM.Order memory order = twammHook.getOrder(
-            twammPoolKey,
-            orderKey
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(INTERVAL, amountIn);
+        IJTM.Order memory order = twammHook.getOrder(twammPoolKey, orderKey);
 
         uint256 expectedSellRate = (amountIn / INTERVAL) * RATE_SCALER;
         assertEq(order.sellRate, expectedSellRate, "sell rate matches");
@@ -1433,23 +1158,14 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 amountIn = 10800e6;
 
         _submitOrder1For0(duration, amountIn);
-        (, IJITTWAMM.OrderKey memory orderKey) = _submitOrder0For1(
-            duration,
-            amountIn
-        );
+        (, IJTM.OrderKey memory orderKey) = _submitOrder0For1(duration, amountIn);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 viewBuy, uint256 viewRefund) = twammHook.getCancelOrderState(
-            twammPoolKey,
-            orderKey
-        );
+        (uint256 viewBuy, uint256 viewRefund) = twammHook.getCancelOrderState(twammPoolKey, orderKey);
 
-        (uint256 actualBuy, uint256 actualRefund) = twammHook.cancelOrder(
-            twammPoolKey,
-            orderKey
-        );
+        (uint256 actualBuy, uint256 actualRefund) = twammHook.cancelOrder(twammPoolKey, orderKey);
 
         // These should be approximately equal (view might not include current block accrual)
         assertApproxEqAbs(
@@ -1464,10 +1180,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder0For1(INTERVAL, 3600e6);
 
         (uint256 sr1, uint256 ef1) = twammHook.getOrderPool(twammPoolKey, true);
-        (uint256 sr2, uint256 ef2) = twammHook.getStreamPool(
-            twammPoolKey,
-            true
-        );
+        (uint256 sr2, uint256 ef2) = twammHook.getStreamPool(twammPoolKey, true);
 
         assertEq(sr1, sr2, "sellRate matches");
         assertEq(ef1, ef2, "earningsFactor matches");
@@ -1498,134 +1211,84 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         address bob = address(0xB0B);
         _fundAndApprove(bob);
 
-        (, IJITTWAMM.OrderKey memory keyA) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory keyA) = _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(2 * INTERVAL, 7200e6); // opposing flow
 
         vm.warp(block.timestamp + INTERVAL / 2); // t+1800
-        (, IJITTWAMM.OrderKey memory keyB) = _submitAs(
-            bob,
-            true,
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory keyB) = _submitAs(bob, true, INTERVAL, 3600e6);
 
         // Warp to A's expiry
         vm.warp(block.timestamp + INTERVAL / 2); // t+3600
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Claim A
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA})
-        );
-        IJITTWAMM.Order memory orderA = twammHook.getOrder(twammPoolKey, keyA);
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyA}));
+        IJTM.Order memory orderA = twammHook.getOrder(twammPoolKey, keyA);
         assertEq(orderA.sellRate, 0, "A expired and deleted");
 
         // B should still be active
-        IJITTWAMM.Order memory orderB = twammHook.getOrder(twammPoolKey, keyB);
+        IJTM.Order memory orderB = twammHook.getOrder(twammPoolKey, keyB);
         assertTrue(orderB.sellRate > 0, "B still active");
 
         // Warp to B's expiry
         vm.warp(block.timestamp + INTERVAL / 2); // t+5400
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         vm.prank(bob);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB})
-        );
-        IJITTWAMM.Order memory orderBFinal = twammHook.getOrder(
-            twammPoolKey,
-            keyB
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyB}));
+        IJTM.Order memory orderBFinal = twammHook.getOrder(twammPoolKey, keyB);
         assertEq(orderBFinal.sellRate, 0, "B expired and deleted");
 
         // All 0→1 streams should be empty
-        (uint256 sr0, ) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr0,) = twammHook.getStreamPool(twammPoolKey, true);
         assertEq(sr0, 0, "no residual sellRate");
     }
 
     function test_Overlap_A3hr_B1hr_AtHour2() public {
-        (, IJITTWAMM.OrderKey memory keyA) = _submitOrder0For1(
-            3 * INTERVAL,
-            10800e6
-        );
+        (, IJTM.OrderKey memory keyA) = _submitOrder0For1(3 * INTERVAL, 10800e6);
 
         vm.warp(block.timestamp + 2 * INTERVAL); // t+2hr
 
-        (, IJITTWAMM.OrderKey memory keyB) = _submitOrder1For0(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory keyB) = _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL); // t+3hr - both expire
 
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // B should earn from netting during its 1hr window
-        uint256 earningsB = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB})
-        );
+        uint256 earningsB = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: keyB}));
         assertTrue(earningsB > 0, "B earns during overlap");
 
         // A should earn from netting during hours 2-3
-        uint256 earningsA = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA})
-        );
+        uint256 earningsA = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: keyA}));
         assertTrue(earningsA > 0, "A earns during overlap");
     }
 
     function test_Overlap_SameUserTwoOrders_DiffExpiry() public {
-        (, IJITTWAMM.OrderKey memory keyShort) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
-        (, IJITTWAMM.OrderKey memory keyLong) = _submitOrder0For1(
-            3 * INTERVAL,
-            10800e6
-        );
+        (, IJTM.OrderKey memory keyShort) = _submitOrder0For1(INTERVAL, 3600e6);
+        (, IJTM.OrderKey memory keyLong) = _submitOrder0For1(3 * INTERVAL, 10800e6);
         _submitOrder1For0(3 * INTERVAL, 10800e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Short expires, long stays
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyShort})
-        );
-        IJITTWAMM.Order memory shortOrder = twammHook.getOrder(
-            twammPoolKey,
-            keyShort
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyShort}));
+        IJTM.Order memory shortOrder = twammHook.getOrder(twammPoolKey, keyShort);
         assertEq(shortOrder.sellRate, 0, "short order deleted");
 
-        IJITTWAMM.Order memory longOrder = twammHook.getOrder(
-            twammPoolKey,
-            keyLong
-        );
+        IJTM.Order memory longOrder = twammHook.getOrder(twammPoolKey, keyLong);
         assertTrue(longOrder.sellRate > 0, "long order still active");
 
         vm.warp(block.timestamp + 2 * INTERVAL);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyLong})
-        );
-        IJITTWAMM.Order memory longFinal = twammHook.getOrder(
-            twammPoolKey,
-            keyLong
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyLong}));
+        IJTM.Order memory longFinal = twammHook.getOrder(twammPoolKey, keyLong);
         assertEq(longFinal.sellRate, 0, "long order deleted after expiry");
     }
 
     function test_Overlap_CancelDuringOverlap() public {
-        (, IJITTWAMM.OrderKey memory keyA) = _submitOrder0For1(
-            2 * INTERVAL,
-            7200e6
-        );
-        (, IJITTWAMM.OrderKey memory keyB) = _submitOrder1For0(
-            2 * INTERVAL,
-            7200e6
-        );
+        (, IJTM.OrderKey memory keyA) = _submitOrder0For1(2 * INTERVAL, 7200e6);
+        (, IJTM.OrderKey memory keyB) = _submitOrder1For0(2 * INTERVAL, 7200e6);
 
         vm.warp(block.timestamp + INTERVAL / 2); // 30 min in
 
@@ -1634,9 +1297,9 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // B continues alone for remaining 1.5 hours
         vm.warp(block.timestamp + INTERVAL + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 sr1, ) = twammHook.getStreamPool(twammPoolKey, false);
+        (uint256 sr1,) = twammHook.getStreamPool(twammPoolKey, false);
         assertEq(sr1, 0, "B expired, no residual");
     }
 
@@ -1649,54 +1312,33 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _fundAndApprove(carol);
 
         // Alice: 2hr 0→1
-        (, IJITTWAMM.OrderKey memory keyA) = _submitAs(
-            alice,
-            true,
-            2 * INTERVAL,
-            7200e6
-        );
+        (, IJTM.OrderKey memory keyA) = _submitAs(alice, true, 2 * INTERVAL, 7200e6);
 
         vm.warp(block.timestamp + INTERVAL / 2); // t+0.5hr
         // Bob: 1hr 1→0
-        (, IJITTWAMM.OrderKey memory keyB) = _submitAs(
-            bob,
-            false,
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory keyB) = _submitAs(bob, false, INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL); // t+1.5hr (Bob expires)
         // Carol: 1hr 0→1
-        (, IJITTWAMM.OrderKey memory keyC) = _submitAs(
-            carol,
-            true,
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory keyC) = _submitAs(carol, true, INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL); // t+2.5hr (Alice & Carol expire)
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // All should be able to sync
         vm.prank(alice);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyA}));
         vm.prank(bob);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyB}));
         vm.prank(carol);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyC})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyC}));
     }
 
     // ── 12b: 10-Actor Stress Tests ──
 
     function test_Stress_10Actors_SameEpoch() public {
         address[10] memory actors;
-        IJITTWAMM.OrderKey[10] memory keys;
+        IJTM.OrderKey[10] memory keys;
 
         for (uint256 i = 0; i < 10; i++) {
             actors[i] = address(uint160(0x1000 + i));
@@ -1707,25 +1349,23 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         }
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // All sync + claim
         for (uint256 i = 0; i < 10; i++) {
             vm.prank(actors[i]);
-            twammHook.syncAndClaimTokens(
-                IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keys[i]})
-            );
+            twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keys[i]}));
         }
 
-        (uint256 sr0, ) = twammHook.getStreamPool(twammPoolKey, true);
-        (uint256 sr1, ) = twammHook.getStreamPool(twammPoolKey, false);
+        (uint256 sr0,) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr1,) = twammHook.getStreamPool(twammPoolKey, false);
         assertEq(sr0, 0, "no residual 0for1");
         assertEq(sr1, 0, "no residual 1for0");
     }
 
     function test_Stress_10Actors_StaggeredEntry() public {
         address[10] memory actors;
-        IJITTWAMM.OrderKey[10] memory keys;
+        IJTM.OrderKey[10] memory keys;
 
         for (uint256 i = 0; i < 10; i++) {
             actors[i] = address(uint160(0x2000 + i));
@@ -1736,7 +1376,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         for (uint256 i = 0; i < 10; i++) {
             if (i > 0) {
                 vm.warp(block.timestamp + INTERVAL / 2);
-                twammHook.executeJITTWAMMOrders(twammPoolKey);
+                twammHook.executeJTMOrders(twammPoolKey);
             }
 
             bool zeroForOne = i % 2 == 0;
@@ -1745,19 +1385,17 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // Warp past all expirations
         vm.warp(block.timestamp + 2 * INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // All sync - credit earnings to tokensOwed
         for (uint256 i = 0; i < 10; i++) {
             vm.prank(actors[i]);
-            twammHook.sync(
-                IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keys[i]})
-            );
+            twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: keys[i]}));
         }
 
         // Verify sell rates zeroed (main invariant)
-        (uint256 sr0, ) = twammHook.getStreamPool(twammPoolKey, true);
-        (uint256 sr1, ) = twammHook.getStreamPool(twammPoolKey, false);
+        (uint256 sr0,) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr1,) = twammHook.getStreamPool(twammPoolKey, false);
         assertEq(sr0, 0, "clean 0for1");
         assertEq(sr1, 0, "clean 1for0");
     }
@@ -1778,7 +1416,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         ];
 
         address[10] memory actors;
-        IJITTWAMM.OrderKey[10] memory keys;
+        IJTM.OrderKey[10] memory keys;
 
         for (uint256 i = 0; i < 10; i++) {
             actors[i] = address(uint160(0x3000 + i));
@@ -1786,29 +1424,19 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
             bool zeroForOne = i % 2 == 0;
             uint256 amountIn = (3600e6 * durations[i]) / INTERVAL;
-            (, keys[i]) = _submitAs(
-                actors[i],
-                zeroForOne,
-                durations[i],
-                amountIn
-            );
+            (, keys[i]) = _submitAs(actors[i], zeroForOne, durations[i], amountIn);
         }
 
         // Step through 3 epochs
         for (uint256 epoch = 1; epoch <= 3; epoch++) {
             vm.warp(block.timestamp + INTERVAL);
-            twammHook.executeJITTWAMMOrders(twammPoolKey);
+            twammHook.executeJTMOrders(twammPoolKey);
 
             // Claim expired orders
             for (uint256 i = 0; i < 10; i++) {
                 if (durations[i] == epoch * INTERVAL) {
                     vm.prank(actors[i]);
-                    twammHook.syncAndClaimTokens(
-                        IJITTWAMM.SyncParams({
-                            key: twammPoolKey,
-                            orderKey: keys[i]
-                        })
-                    );
+                    twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keys[i]}));
                 }
             }
         }
@@ -1816,8 +1444,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // Everything should be clean - but the claim above deletes orders
         // that should have zeroed the sellRate via crossEpoch. Verify each
         // side went to zero after its orders expired.
-        (uint256 sr0, ) = twammHook.getStreamPool(twammPoolKey, true);
-        (uint256 sr1, ) = twammHook.getStreamPool(twammPoolKey, false);
+        (uint256 sr0,) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr1,) = twammHook.getStreamPool(twammPoolKey, false);
         // With alternating even/odd, counts may not be exactly equal.
         // The test verifies that claiming does not panic, and that
         // sellRateCurrent drops with each epoch crossing.
@@ -1827,33 +1455,26 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
     // ── 12c: 10-Epoch Stress Tests ──
 
     function test_Stress_10Epochs_SingleOrder() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            10 * INTERVAL,
-            36000e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(10 * INTERVAL, 36000e6);
         _submitOrder1For0(10 * INTERVAL, 36000e6);
 
         uint256 prevEarnings = 0;
         for (uint256 i = 1; i <= 10; i++) {
             vm.warp(block.timestamp + INTERVAL);
-            twammHook.executeJITTWAMMOrders(twammPoolKey);
+            twammHook.executeJTMOrders(twammPoolKey);
 
-            uint256 ts = twammHook.lastVirtualOrderTimestamp(
-                twammPoolKey.toId()
-            );
+            uint256 ts = twammHook.lastVirtualOrderTimestamp(twammPoolKey.toId());
             assertEq(ts % INTERVAL, 0, "timestamp on boundary");
         }
 
-        uint256 totalEarnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        uint256 totalEarnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
         assertTrue(totalEarnings > 0, "10-epoch earnings");
     }
 
     function test_Stress_10Epochs_RollingOrders() public {
         // Each epoch, new user submits 1hr order (alternating direction)
         address[10] memory actors;
-        IJITTWAMM.OrderKey[10] memory keys;
+        IJTM.OrderKey[10] memory keys;
 
         for (uint256 i = 0; i < 10; i++) {
             actors[i] = address(uint160(0x4000 + i));
@@ -1863,27 +1484,20 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
             (, keys[i]) = _submitAs(actors[i], zeroForOne, INTERVAL, 3600e6);
 
             vm.warp(block.timestamp + INTERVAL);
-            twammHook.executeJITTWAMMOrders(twammPoolKey);
+            twammHook.executeJTMOrders(twammPoolKey);
 
             // Claim previous epoch's expired order
             if (i > 0) {
                 vm.prank(actors[i - 1]);
-                twammHook.syncAndClaimTokens(
-                    IJITTWAMM.SyncParams({
-                        key: twammPoolKey,
-                        orderKey: keys[i - 1]
-                    })
-                );
+                twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keys[i - 1]}));
             }
         }
 
         // Claim the last one
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
         vm.prank(actors[9]);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keys[9]})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keys[9]}));
     }
 
     function test_Stress_10Epochs_WithClears() public {
@@ -1895,16 +1509,16 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         for (uint256 i = 1; i <= 10; i++) {
             vm.warp(block.timestamp + INTERVAL);
-            twammHook.executeJITTWAMMOrders(twammPoolKey);
+            twammHook.executeJTMOrders(twammPoolKey);
 
             // Check accrued ghost immediately after execute (no extra warp)
-            (uint256 accrued0, , , ) = twammHook.getStreamState(twammPoolKey);
+            (uint256 accrued0,,,) = twammHook.getStreamState(twammPoolKey);
             if (accrued0 > 0) {
                 twammHook.clear(twammPoolKey, true, accrued0, 0);
             }
         }
 
-        (uint256 finalAccrued, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 finalAccrued,,,) = twammHook.getStreamState(twammPoolKey);
         assertEq(finalAccrued, 0, "all ghost cleared across 10 epochs");
     }
 
@@ -1915,75 +1529,51 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL / 2); // 30min of netting
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Late joiner (different user) tries to steal earnings.
         // Must be a different user because same (owner, expiration, direction)
         // would collide with the existing order → OrderAlreadyExists.
         address lateUser = address(0xBAD);
         _fundAndApprove(lateUser);
-        (, IJITTWAMM.OrderKey memory lateKey) = _submitAs(
-            lateUser,
-            true,
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory lateKey) = _submitAs(lateUser, true, INTERVAL, 3600e6);
 
         // Sync immediately - should get 0 (earningsFactorLast = current)
         vm.prank(lateUser);
-        uint256 earnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: lateKey})
-        );
+        uint256 earnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: lateKey}));
         assertEq(earnings, 0, "late joiner gets zero");
     }
 
     function test_Adversarial_CancelAndResubmit() public {
-        (, IJITTWAMM.OrderKey memory key1) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key1) = _submitOrder0For1(INTERVAL, 3600e6);
         twammHook.cancelOrder(twammPoolKey, key1);
 
         // Re-submit with different expiration
-        (, IJITTWAMM.OrderKey memory key2) = _submitOrder0For1(
-            2 * INTERVAL,
-            7200e6
-        );
+        (, IJTM.OrderKey memory key2) = _submitOrder0For1(2 * INTERVAL, 7200e6);
 
         assertTrue(key1.expiration != key2.expiration, "different expiry");
-        IJITTWAMM.Order memory order2 = twammHook.getOrder(twammPoolKey, key2);
+        IJTM.Order memory order2 = twammHook.getOrder(twammPoolKey, key2);
         assertTrue(order2.sellRate > 0, "resubmitted order active");
     }
 
     function test_Adversarial_SubmitAfterFullExecution() public {
-        (, IJITTWAMM.OrderKey memory key1) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory key1) = _submitOrder0For1(INTERVAL, 3600e6);
         _submitOrder1For0(INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key1})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: key1}));
 
         // Submit new order after full lifecycle
-        (, IJITTWAMM.OrderKey memory key2) = _submitOrder0For1(
-            2 * INTERVAL,
-            7200e6
-        );
-        IJITTWAMM.Order memory order2 = twammHook.getOrder(twammPoolKey, key2);
+        (, IJTM.OrderKey memory key2) = _submitOrder0For1(2 * INTERVAL, 7200e6);
+        IJTM.Order memory order2 = twammHook.getOrder(twammPoolKey, key2);
         assertTrue(order2.sellRate > 0, "new order works after full lifecycle");
     }
 
     function test_Adversarial_VerySmallOrder() public {
         // Minimum viable: 1 token/sec (INTERVAL tokens total)
-        (, IJITTWAMM.OrderKey memory key) = _submitOrder0For1(
-            INTERVAL,
-            INTERVAL
-        );
+        (, IJTM.OrderKey memory key) = _submitOrder0For1(INTERVAL, INTERVAL);
 
-        IJITTWAMM.Order memory order = twammHook.getOrder(twammPoolKey, key);
+        IJTM.Order memory order = twammHook.getOrder(twammPoolKey, key);
         assertEq(order.sellRate, RATE_SCALER, "1 token/sec scaled");
     }
 
@@ -1993,14 +1583,14 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder1For0(INTERVAL, amountIn);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
         // Should not overflow
     }
 
     function test_Adversarial_ExecuteNoOrders() public {
         // No orders active → should be safe no-op
         vm.warp(block.timestamp + 5 * INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
     }
 
     function test_Adversarial_ExecuteOverload_SameResult() public {
@@ -2010,7 +1600,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         vm.warp(block.timestamp + INTERVAL);
 
         // Both overloads should execute identically
-        twammHook.executeJITTWAMMOrders(twammPoolKey, block.timestamp);
+        twammHook.executeJTMOrders(twammPoolKey, block.timestamp);
     }
 
     // ════════════════════════════════════════════════════════════════════
@@ -2019,114 +1609,69 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
     function test_Ported_DifferentExpirations() public {
         // A: 1hr 0→1, B: 3hr 1→0
-        (, IJITTWAMM.OrderKey memory keyA) = _submitOrder0For1(
-            INTERVAL,
-            3600e6
-        );
-        (, IJITTWAMM.OrderKey memory keyB) = _submitOrder1For0(
-            3 * INTERVAL,
-            10800e6
-        );
+        (, IJTM.OrderKey memory keyA) = _submitOrder0For1(INTERVAL, 3600e6);
+        (, IJTM.OrderKey memory keyB) = _submitOrder1For0(3 * INTERVAL, 10800e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyA}));
 
         vm.warp(block.timestamp + 2 * INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyB}));
 
-        (uint256 sr0, ) = twammHook.getStreamPool(twammPoolKey, true);
-        (uint256 sr1, ) = twammHook.getStreamPool(twammPoolKey, false);
+        (uint256 sr0,) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr1,) = twammHook.getStreamPool(twammPoolKey, false);
         assertEq(sr0, 0, "A expired");
         assertEq(sr1, 0, "B expired");
     }
 
     function test_Ported_UnbalancedZeroForOne_10x() public {
-        (, IJITTWAMM.OrderKey memory keyBig) = _submitOrder0For1(
-            INTERVAL,
-            36000e6
-        );
-        (, IJITTWAMM.OrderKey memory keySmall) = _submitOrder1For0(
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory keyBig) = _submitOrder0For1(INTERVAL, 36000e6);
+        (, IJTM.OrderKey memory keySmall) = _submitOrder1For0(INTERVAL, 3600e6);
 
-        (uint160 sqrtBefore, , , ) = poolManager.getSlot0(twammPoolKey.toId());
+        (uint160 sqrtBefore,,,) = poolManager.getSlot0(twammPoolKey.toId());
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Both should have earnings
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyBig})
-        );
-        twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keySmall})
-        );
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: keyBig}));
+        twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: keySmall}));
 
-        uint256 owedBig = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            twammPoolKey.currency1,
-            address(this)
-        );
-        uint256 owedSmall = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            twammPoolKey.currency0,
-            address(this)
-        );
-        assertTrue(
-            owedBig > 0 || owedSmall > 0,
-            "unbalanced produces earnings"
-        );
+        uint256 owedBig = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency1, address(this));
+        uint256 owedSmall = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency0, address(this));
+        assertTrue(owedBig > 0 || owedSmall > 0, "unbalanced produces earnings");
     }
 
     function test_Ported_UnbalancedOneForZero_10x() public {
         _submitOrder0For1(INTERVAL, 3600e6);
-        (, IJITTWAMM.OrderKey memory keyBig) = _submitOrder1For0(
-            INTERVAL,
-            36000e6
-        );
+        (, IJTM.OrderKey memory keyBig) = _submitOrder1For0(INTERVAL, 36000e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        uint256 earnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyBig})
-        );
+        uint256 earnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: keyBig}));
         assertTrue(earnings > 0, "large 1for0 earns");
     }
 
     function test_Ported_ConsecutiveIntervalExecution() public {
-        (, IJITTWAMM.OrderKey memory key0) = _submitOrder0For1(
-            3 * INTERVAL,
-            10800e6
-        );
+        (, IJTM.OrderKey memory key0) = _submitOrder0For1(3 * INTERVAL, 10800e6);
         _submitOrder1For0(3 * INTERVAL, 10800e6);
 
-        uint256 lastVirtual = twammHook.lastVirtualOrderTimestamp(
-            twammPoolKey.toId()
-        );
+        uint256 lastVirtual = twammHook.lastVirtualOrderTimestamp(twammPoolKey.toId());
 
         for (uint256 i = 1; i <= 3; i++) {
             vm.warp(lastVirtual + i * INTERVAL);
-            twammHook.executeJITTWAMMOrders(twammPoolKey);
+            twammHook.executeJTMOrders(twammPoolKey);
 
-            uint256 ts = twammHook.lastVirtualOrderTimestamp(
-                twammPoolKey.toId()
-            );
+            uint256 ts = twammHook.lastVirtualOrderTimestamp(twammPoolKey.toId());
             assertEq(ts, lastVirtual + i * INTERVAL, "timestamp advances");
         }
 
-        uint256 earnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: key0})
-        );
+        uint256 earnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: key0}));
         assertTrue(earnings > 0, "3-interval earnings");
     }
 
@@ -2136,42 +1681,20 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _fundAndApprove(alice);
         _fundAndApprove(bob);
 
-        (, IJITTWAMM.OrderKey memory keyA) = _submitAs(
-            alice,
-            true,
-            INTERVAL,
-            3600e6
-        );
-        (, IJITTWAMM.OrderKey memory keyB) = _submitAs(
-            bob,
-            false,
-            INTERVAL,
-            3600e6
-        );
+        (, IJTM.OrderKey memory keyA) = _submitAs(alice, true, INTERVAL, 3600e6);
+        (, IJTM.OrderKey memory keyB) = _submitAs(bob, false, INTERVAL, 3600e6);
 
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         vm.prank(alice);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyA})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyA}));
         vm.prank(bob);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keyB})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keyB}));
 
         // Both should have received buy tokens
-        uint256 aliceOwed = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            twammPoolKey.currency1,
-            alice
-        );
-        uint256 bobOwed = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            twammPoolKey.currency0,
-            bob
-        );
+        uint256 aliceOwed = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency1, alice);
+        uint256 bobOwed = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency0, bob);
         // After syncAndClaim, owed should be 0 (claimed)
         assertEq(aliceOwed, 0, "alice claimed");
         assertEq(bobOwed, 0, "bob claimed");
@@ -2201,9 +1724,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 orderAmount = 7200e6; // each actor puts in 7200
 
         address[] memory actors = new address[](totalActors);
-        IJITTWAMM.OrderKey[] memory keys = new IJITTWAMM.OrderKey[](
-            totalActors
-        );
+        IJTM.OrderKey[] memory keys = new IJTM.OrderKey[](totalActors);
 
         for (uint256 i = 0; i < totalActors; i++) {
             actors[i] = address(uint160(0xA000 + i));
@@ -2213,12 +1734,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // Submit: actors 0-5 sell token0, actors 6-7 sell token1
         for (uint256 i = 0; i < totalActors; i++) {
             bool zeroForOne = i < nSell0;
-            (, keys[i]) = _submitAs(
-                actors[i],
-                zeroForOne,
-                2 * INTERVAL,
-                orderAmount
-            );
+            (, keys[i]) = _submitAs(actors[i], zeroForOne, 2 * INTERVAL, orderAmount);
         }
 
         console.log("=== GAP CONVERGENCE TEST ===");
@@ -2226,12 +1742,10 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // ── Phase 2: Warp 1 hour, execute ──
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Check ghost balance - the imbalance should produce accrued0
-        (uint256 accrued0, uint256 accrued1, , ) = twammHook.getStreamState(
-            twammPoolKey
-        );
+        (uint256 accrued0, uint256 accrued1,,) = twammHook.getStreamState(twammPoolKey);
 
         console.log("[After 1hr] accrued0 (ghost token0):", accrued0);
         console.log("[After 1hr] accrued1 (ghost token1):", accrued1);
@@ -2244,9 +1758,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // The arb (test contract) pays token1 and receives token0
         // This injects buy tokens (token1) into the hook
 
-        uint256 hookToken1Before = IERC20Minimal(_token1()).balanceOf(
-            address(twammHook)
-        );
+        uint256 hookToken1Before = IERC20Minimal(_token1()).balanceOf(address(twammHook));
 
         if (accrued0 > 0) {
             twammHook.clear(twammPoolKey, true, accrued0, 0);
@@ -2257,32 +1769,22 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
             console.log("[Clear] Arb cleared", accrued1, "ghost token1");
         }
 
-        uint256 hookToken1After = IERC20Minimal(_token1()).balanceOf(
-            address(twammHook)
-        );
+        uint256 hookToken1After = IERC20Minimal(_token1()).balanceOf(address(twammHook));
 
         // The arb's payment injected token1 into the hook
         console.log(
             "[Clear] token1 injected into hook:",
-            hookToken1After > hookToken1Before
-                ? hookToken1After - hookToken1Before
-                : 0
+            hookToken1After > hookToken1Before ? hookToken1After - hookToken1Before : 0
         );
 
         // ── Phase 4: Warp to expiry, execute ──
         vm.warp(block.timestamp + INTERVAL);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // ── Phase 5: Clear any remaining ghost from last epoch ──
-        (uint256 finalAccrued0, uint256 finalAccrued1, , ) = twammHook
-            .getStreamState(twammPoolKey);
+        (uint256 finalAccrued0, uint256 finalAccrued1,,) = twammHook.getStreamState(twammPoolKey);
 
-        console.log(
-            "[After 2hr] final accrued0:",
-            finalAccrued0,
-            "accrued1:",
-            finalAccrued1
-        );
+        console.log("[After 2hr] final accrued0:", finalAccrued0, "accrued1:", finalAccrued1);
 
         // All orders expired → sellRateCurrent = 0 → can't clear if accrued
         // So if there's still ghost, sync will just credit what was earned
@@ -2302,9 +1804,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
             uint256 bal1Before = IERC20Minimal(_token1()).balanceOf(actors[i]);
 
             vm.prank(actors[i]);
-            (uint256 c0, uint256 c1) = twammHook.syncAndClaimTokens(
-                IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: keys[i]})
-            );
+            (uint256 c0, uint256 c1) =
+                twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: keys[i]}));
 
             uint256 bal0After = IERC20Minimal(_token0()).balanceOf(actors[i]);
             uint256 bal1After = IERC20Minimal(_token1()).balanceOf(actors[i]);
@@ -2317,20 +1818,10 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
             if (i < nSell0) {
                 // 0→1 sellers should receive token1 (buy side)
-                console.log(
-                    "  Actor",
-                    i,
-                    "(sell0): claimed token1 =",
-                    received1
-                );
+                console.log("  Actor", i, "(sell0): claimed token1 =", received1);
             } else {
                 // 1→0 sellers should receive token0 (buy side)
-                console.log(
-                    "  Actor",
-                    i,
-                    "(sell1): claimed token0 =",
-                    received0
-                );
+                console.log("  Actor", i, "(sell1): claimed token0 =", received0);
             }
         }
 
@@ -2340,22 +1831,14 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // ── Phase 7: Post-condition checks ──
 
         // Check sell rates (may have residual in storage until next _accrueAndNet call)
-        (uint256 sr0, ) = twammHook.getStreamPool(twammPoolKey, true);
-        (uint256 sr1, ) = twammHook.getStreamPool(twammPoolKey, false);
+        (uint256 sr0,) = twammHook.getStreamPool(twammPoolKey, true);
+        (uint256 sr1,) = twammHook.getStreamPool(twammPoolKey, false);
         console.log("[Post] sellRate 0for1:", sr0, "1for0:", sr1);
 
         // All tokensOwed should be zero (everyone claimed)
         for (uint256 i = 0; i < totalActors; i++) {
-            uint256 owed0 = twammHook.tokensOwed(
-                twammPoolKey.toId(),
-                twammPoolKey.currency0,
-                actors[i]
-            );
-            uint256 owed1 = twammHook.tokensOwed(
-                twammPoolKey.toId(),
-                twammPoolKey.currency1,
-                actors[i]
-            );
+            uint256 owed0 = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency0, actors[i]);
+            uint256 owed1 = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency1, actors[i]);
             assertEq(owed0, 0, "no residual owed token0");
             assertEq(owed1, 0, "no residual owed token1");
         }
@@ -2364,18 +1847,12 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         for (uint256 i = 0; i < nSell0; i++) {
             uint256 bal1 = IERC20Minimal(_token1()).balanceOf(actors[i]);
             // They started with 100_000_000e6, spent 7200e6, should have > 100M - 7200 + earnings
-            assertTrue(
-                bal1 > 100_000_000e6 - orderAmount,
-                "sell0 actor earned token1"
-            );
+            assertTrue(bal1 > 100_000_000e6 - orderAmount, "sell0 actor earned token1");
         }
         // Every sell1 actor should have earned SOME token0
         for (uint256 i = nSell0; i < totalActors; i++) {
             uint256 bal0 = IERC20Minimal(_token0()).balanceOf(actors[i]);
-            assertTrue(
-                bal0 > 100_000_000e6 - orderAmount,
-                "sell1 actor earned token0"
-            );
+            assertTrue(bal0 > 100_000_000e6 - orderAmount, "sell1 actor earned token0");
         }
 
         console.log("=== GAP CONVERGENCE: ALL CLAIMS SUCCEEDED ===");
@@ -2430,10 +1907,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         lpRouter.modifyLiquidity(
             twammPoolKey,
             ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: int256(lpDeposit),
-                salt: bytes32(uint256(0xBEEF))
+                tickLower: -600, tickUpper: 600, liquidityDelta: int256(lpDeposit), salt: bytes32(uint256(0xBEEF))
             }),
             ""
         );
@@ -2441,61 +1915,44 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 lpAfterDep1 = IERC20Minimal(_token1()).balanceOf(lp);
         uint256 lpSpent0 = lpPre0 - lpAfterDep0;
         uint256 lpSpent1 = lpPre1 - lpAfterDep1;
-        uint256 v4Pre0 = IERC20Minimal(_token0()).balanceOf(
-            address(poolManager)
-        );
-        uint256 v4Pre1 = IERC20Minimal(_token1()).balanceOf(
-            address(poolManager)
-        );
+        uint256 v4Pre0 = IERC20Minimal(_token0()).balanceOf(address(poolManager));
+        uint256 v4Pre1 = IERC20Minimal(_token1()).balanceOf(address(poolManager));
 
         // Phase 2: Alice sells token0 (single-direction)
         uint256 orderAmount = 3600e6;
         vm.prank(alice);
-        (, IJITTWAMM.OrderKey memory aliceKey) = twammHook.submitOrder(
-            IJITTWAMM.SubmitOrderParams({
-                key: twammPoolKey,
-                zeroForOne: true,
-                duration: INTERVAL,
-                amountIn: orderAmount
+        (, IJTM.OrderKey memory aliceKey) = twammHook.submitOrder(
+            IJTM.SubmitOrderParams({
+                key: twammPoolKey, zeroForOne: true, duration: INTERVAL, amountIn: orderAmount
             })
         );
-        uint256 hookMidT0 = IERC20Minimal(_token0()).balanceOf(
-            address(twammHook)
-        );
-        uint256 hookMidT1 = IERC20Minimal(_token1()).balanceOf(
-            address(twammHook)
-        );
+        uint256 hookMidT0 = IERC20Minimal(_token0()).balanceOf(address(twammHook));
+        uint256 hookMidT1 = IERC20Minimal(_token1()).balanceOf(address(twammHook));
 
         // Phase 3: Accrue 30min + L2 JIT fill
         vm.warp(block.timestamp + 1800);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
-        (uint256 acc0, , , ) = twammHook.getStreamState(twammPoolKey);
+        (uint256 acc0,,,) = twammHook.getStreamState(twammPoolKey);
         assertTrue(acc0 > 0, "accrued0 > 0");
 
         vm.prank(taker);
         swapRouter.swap(
             twammPoolKey,
             SwapParams({
-                zeroForOne: false,
-                amountSpecified: -int256(200e6),
-                sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
+                zeroForOne: false, amountSpecified: -int256(200e6), sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
             }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
-        uint256 takerGot0 = IERC20Minimal(_token0()).balanceOf(taker) -
-            takerPre0;
+        uint256 takerGot0 = IERC20Minimal(_token0()).balanceOf(taker) - takerPre0;
         assertTrue(takerGot0 > 0, "Taker received token0");
 
         // Phase 4: L3 clear ALL remaining before expiry
         uint256 expiry = uint256(aliceKey.expiration);
         vm.warp(expiry - 1);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (acc0, , , ) = twammHook.getStreamState(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
+        (acc0,,,) = twammHook.getStreamState(twammPoolKey);
         if (acc0 > 0) {
             vm.prank(arb);
             twammHook.clear(twammPoolKey, true, acc0, 0);
@@ -2503,13 +1960,11 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // Phase 5: Expire
         vm.warp(expiry + 1);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Phase 6: Alice claims
         vm.prank(alice);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: aliceKey})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: aliceKey}));
         uint256 aliceFinal0 = IERC20Minimal(_token0()).balanceOf(alice);
         uint256 aliceFinal1 = IERC20Minimal(_token1()).balanceOf(alice);
         uint256 aliceLoss0 = alicePre0 - aliceFinal0;
@@ -2521,10 +1976,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         lpRouter.modifyLiquidity(
             twammPoolKey,
             ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: -int256(lpDeposit),
-                salt: bytes32(uint256(0xBEEF))
+                tickLower: -600, tickUpper: 600, liquidityDelta: -int256(lpDeposit), salt: bytes32(uint256(0xBEEF))
             }),
             ""
         );
@@ -2542,19 +1994,14 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // INV-3: LP not drained
         // With 100T seed liquidity + 50K deposit, IL from 3600e6 order should be < 0.5%
         assertTrue(
-            lpRec0 >= (lpSpent0 * 995) / 1000 ||
-                lpRec1 >= (lpSpent1 * 995) / 1000,
+            lpRec0 >= (lpSpent0 * 995) / 1000 || lpRec1 >= (lpSpent1 * 995) / 1000,
             "INV-3: LP must recover >= 99.5% on at least one side"
         );
 
         // INV-4: Hook residual — with dust donation, should be near zero
         // Orphaned tokens now move to collectedDust via _flushDonations
-        uint256 hookEnd0 = IERC20Minimal(_token0()).balanceOf(
-            address(twammHook)
-        );
-        uint256 hookEnd1 = IERC20Minimal(_token1()).balanceOf(
-            address(twammHook)
-        );
+        uint256 hookEnd0 = IERC20Minimal(_token0()).balanceOf(address(twammHook));
+        uint256 hookEnd1 = IERC20Minimal(_token1()).balanceOf(address(twammHook));
         uint256 dust0 = twammHook.collectedDust(twammPoolKey.currency0);
         uint256 dust1 = twammHook.collectedDust(twammPoolKey.currency1);
         console.log("[Hook] residual t0:", hookEnd0, "t1:", hookEnd1);
@@ -2567,12 +2014,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         assertTrue(unaccounted1 < 10, "INV-4b: unaccounted hook t1 < 10 wei");
 
         // INV-5: V4 solvent
-        uint256 v4End0 = IERC20Minimal(_token0()).balanceOf(
-            address(poolManager)
-        );
-        uint256 v4End1 = IERC20Minimal(_token1()).balanceOf(
-            address(poolManager)
-        );
+        uint256 v4End0 = IERC20Minimal(_token0()).balanceOf(address(poolManager));
+        uint256 v4End1 = IERC20Minimal(_token1()).balanceOf(address(poolManager));
         assertTrue(v4End0 > 0 && v4End1 > 0, "INV-5: V4 solvent");
 
         // INV-6: Global Token Conservation
@@ -2582,11 +2025,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 supplyT0_after = pt.totalSupply();
         uint256 supplyT1_after = ct.totalSupply();
         uint256 mintedT0 = 100_000_000e6 * 3 + 100_000_000e6; // alice + taker + arb + lp
-        assertEq(
-            supplyT0_after - supplyT0_before,
-            mintedT0,
-            "INV-6a: token0 supply conserved (only actor minting)"
-        );
+        assertEq(supplyT0_after - supplyT0_before, mintedT0, "INV-6a: token0 supply conserved (only actor minting)");
         assertEq(
             supplyT1_after - supplyT1_before,
             mintedT0, // same amount minted for t1
@@ -2596,16 +2035,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // INV-7: No residual owed
         PoolId pid = twammPoolKey.toId();
-        assertEq(
-            twammHook.tokensOwed(pid, twammPoolKey.currency0, alice),
-            0,
-            "INV-7a"
-        );
-        assertEq(
-            twammHook.tokensOwed(pid, twammPoolKey.currency1, alice),
-            0,
-            "INV-7b"
-        );
+        assertEq(twammHook.tokensOwed(pid, twammPoolKey.currency0, alice), 0, "INV-7a");
+        assertEq(twammHook.tokensOwed(pid, twammPoolKey.currency1, alice), 0, "INV-7b");
 
         console.log("=== FULL CYCLE: ALL 7 INVARIANTS PASSED ===");
     }
@@ -2618,9 +2049,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
     function _logPoolState(string memory label) internal view {
         PoolId pid = twammPoolKey.toId();
-        (uint160 sqrtPrice, int24 tick, , uint24 lpFee) = poolManager.getSlot0(
-            pid
-        );
+        (uint160 sqrtPrice, int24 tick,, uint24 lpFee) = poolManager.getSlot0(pid);
         uint128 liq = poolManager.getLiquidity(pid);
         uint256 v4t0 = IERC20Minimal(_token0()).balanceOf(address(poolManager));
         uint256 v4t1 = IERC20Minimal(_token1()).balanceOf(address(poolManager));
@@ -2675,10 +2104,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         lpRouter.modifyLiquidity(
             twammPoolKey,
             ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: liqDelta,
-                salt: bytes32(uint256(0xDEAD))
+                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: liqDelta, salt: bytes32(uint256(0xDEAD))
             }),
             ""
         );
@@ -2694,21 +2120,15 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // ── STEP 2: Alice submits TWAMM order (sells token0) ──
         uint256 orderAmt = 3600e6;
         vm.prank(alice);
-        (, IJITTWAMM.OrderKey memory aliceKey) = twammHook.submitOrder(
-            IJITTWAMM.SubmitOrderParams({
-                key: twammPoolKey,
-                zeroForOne: true,
-                duration: INTERVAL,
-                amountIn: orderAmt
-            })
+        (, IJTM.OrderKey memory aliceKey) = twammHook.submitOrder(
+            IJTM.SubmitOrderParams({key: twammPoolKey, zeroForOne: true, duration: INTERVAL, amountIn: orderAmt})
         );
         _logPoolState("STEP 2: After TWAMM order submit");
 
         // ── STEP 3: Half accrual (30 min) ──
         vm.warp(block.timestamp + 1800);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (uint256 acc0, uint256 acc1, uint256 disc, uint256 secsLeft) = twammHook
-            .getStreamState(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
+        (uint256 acc0, uint256 acc1, uint256 disc, uint256 secsLeft) = twammHook.getStreamState(twammPoolKey);
         _logPoolState("STEP 3: After 30min accrual");
         console.log("  accrued0:", acc0, "accrued1:", acc1);
         console.log("  discount:", disc, "secsLeft:", secsLeft);
@@ -2725,10 +2145,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
                 amountSpecified: -int256(500e6), // exact input 500 token1
                 sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
             }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
         uint256 takerPost0 = IERC20Minimal(_token0()).balanceOf(taker);
@@ -2749,10 +2166,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
                 amountSpecified: -int256(300e6), // exact input 300 token0
                 sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
             }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
         uint256 takerPost0b = IERC20Minimal(_token0()).balanceOf(taker);
@@ -2762,7 +2176,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         console.log("  Taker got  t1:", takerPost1b - takerPre1b);
 
         // ── STEP 6: L3 clear remaining accrued0 ──
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
         (acc0, acc1, disc, secsLeft) = twammHook.getStreamState(twammPoolKey);
         console.log("--- STEP 6: Pre-clear state ---");
         console.log("  accrued0:", acc0, "accrued1:", acc1);
@@ -2782,21 +2196,19 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // ── STEP 7: Warp to near-expiry, clear final, expire ──
         uint256 expiry = uint256(aliceKey.expiration);
         vm.warp(expiry - 1);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (acc0, , , ) = twammHook.getStreamState(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
+        (acc0,,,) = twammHook.getStreamState(twammPoolKey);
         if (acc0 > 0) {
             vm.prank(arb);
             twammHook.clear(twammPoolKey, true, acc0, 0);
         }
         vm.warp(expiry + 1);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
         _logPoolState("STEP 7: After order expiry");
 
         // ── STEP 8: Alice claims ──
         vm.prank(alice);
-        twammHook.syncAndClaimTokens(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: aliceKey})
-        );
+        twammHook.syncAndClaimTokens(IJTM.SyncParams({key: twammPoolKey, orderKey: aliceKey}));
         _logPoolState("STEP 8: After Alice claims");
 
         // ── STEP 9: LP withdraws (exact reverse of deposit) ──
@@ -2804,10 +2216,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         lpRouter.modifyLiquidity(
             twammPoolKey,
             ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: -liqDelta,
-                salt: bytes32(uint256(0xDEAD))
+                tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: -liqDelta, salt: bytes32(uint256(0xDEAD))
             }),
             ""
         );
@@ -2838,27 +2247,18 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // LP should get back at least 99.5% (fees earned offset IL)
         assertTrue(
-            lpWithdT0 >= (lpDepT0 * 995) / 1000 ||
-                lpWithdT1 >= (lpDepT1 * 995) / 1000,
+            lpWithdT0 >= (lpDepT0 * 995) / 1000 || lpWithdT1 >= (lpDepT1 * 995) / 1000,
             "LP-WEI: LP recovered >= 99.5% on at least one side"
         );
 
         // V4 pool must still be solvent
-        uint256 v4End0 = IERC20Minimal(_token0()).balanceOf(
-            address(poolManager)
-        );
-        uint256 v4End1 = IERC20Minimal(_token1()).balanceOf(
-            address(poolManager)
-        );
+        uint256 v4End0 = IERC20Minimal(_token0()).balanceOf(address(poolManager));
+        uint256 v4End1 = IERC20Minimal(_token1()).balanceOf(address(poolManager));
         assertTrue(v4End0 > 0 && v4End1 > 0, "LP-WEI: V4 still solvent");
 
         // Hook residual after full cycle
-        uint256 hookEnd0 = IERC20Minimal(_token0()).balanceOf(
-            address(twammHook)
-        );
-        uint256 hookEnd1 = IERC20Minimal(_token1()).balanceOf(
-            address(twammHook)
-        );
+        uint256 hookEnd0 = IERC20Minimal(_token0()).balanceOf(address(twammHook));
+        uint256 hookEnd1 = IERC20Minimal(_token1()).balanceOf(address(twammHook));
         console.log("  Hook residual t0:", hookEnd0, "t1:", hookEnd1);
 
         console.log("========== LP WEI-PRECISE TEST PASSED ==========");
@@ -2907,10 +2307,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         lpRouter.modifyLiquidity(
             twammPoolKey,
             ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: int256(lpDeposit),
-                salt: bytes32(uint256(0xBEEF))
+                tickLower: -600, tickUpper: 600, liquidityDelta: int256(lpDeposit), salt: bytes32(uint256(0xBEEF))
             }),
             ""
         );
@@ -2923,36 +2320,21 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 aliceAmount = 36000e6;
         uint256 bobAmount = 3600e6;
         vm.prank(alice);
-        (, IJITTWAMM.OrderKey memory aliceKey) = twammHook.submitOrder(
-            IJITTWAMM.SubmitOrderParams({
-                key: twammPoolKey,
-                zeroForOne: true,
-                duration: INTERVAL,
-                amountIn: aliceAmount
+        (, IJTM.OrderKey memory aliceKey) = twammHook.submitOrder(
+            IJTM.SubmitOrderParams({
+                key: twammPoolKey, zeroForOne: true, duration: INTERVAL, amountIn: aliceAmount
             })
         );
         vm.prank(bob);
-        (, IJITTWAMM.OrderKey memory bobKey) = twammHook.submitOrder(
-            IJITTWAMM.SubmitOrderParams({
-                key: twammPoolKey,
-                zeroForOne: false,
-                duration: INTERVAL,
-                amountIn: bobAmount
-            })
+        (, IJTM.OrderKey memory bobKey) = twammHook.submitOrder(
+            IJTM.SubmitOrderParams({key: twammPoolKey, zeroForOne: false, duration: INTERVAL, amountIn: bobAmount})
         );
 
         // Phase 3: Mid-stream accrual — L1 netting should handle the smaller stream
         vm.warp(block.timestamp + INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (uint256 acc0Mid, uint256 acc1Mid, , ) = twammHook.getStreamState(
-            twammPoolKey
-        );
-        console.log(
-            "[ASYM] Mid-stream accrued0:",
-            acc0Mid,
-            "accrued1:",
-            acc1Mid
-        );
+        twammHook.executeJTMOrders(twammPoolKey);
+        (uint256 acc0Mid, uint256 acc1Mid,,) = twammHook.getStreamState(twammPoolKey);
+        console.log("[ASYM] Mid-stream accrued0:", acc0Mid, "accrued1:", acc1Mid);
         // After netting, the smaller side (token1) should be mostly consumed
         // The larger side (token0) should have leftover
         assertTrue(acc0Mid > acc1Mid, "larger stream has more leftover");
@@ -2960,8 +2342,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // Phase 4: L3 clear the excess token0 before expiry
         uint256 expiry = uint256(aliceKey.expiration);
         vm.warp(expiry - 1);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
-        (uint256 acc0Pre, , , ) = twammHook.getStreamState(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
+        (uint256 acc0Pre,,,) = twammHook.getStreamState(twammPoolKey);
         if (acc0Pre > 0) {
             vm.prank(arb);
             twammHook.clear(twammPoolKey, true, acc0Pre, 0);
@@ -2969,7 +2351,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // Phase 5: Expire
         vm.warp(expiry + 1);
-        twammHook.executeJITTWAMMOrders(twammPoolKey);
+        twammHook.executeJTMOrders(twammPoolKey);
 
         // Phase 6: KNOWN LIMITATION — Netting-Backing Gap
         // With asymmetric opposing streams, the arb clears token0 at a 5% discount.
@@ -2985,23 +2367,15 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // Sync both orders to calculate earnings (but DON'T claim yet)
         vm.prank(alice);
-        uint256 aliceEarnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: aliceKey})
-        );
+        uint256 aliceEarnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: aliceKey}));
         vm.prank(bob);
-        uint256 bobEarnings = twammHook.sync(
-            IJITTWAMM.SyncParams({key: twammPoolKey, orderKey: bobKey})
-        );
+        uint256 bobEarnings = twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: bobKey}));
         console.log("[ASYM] Alice earnings (t1):", aliceEarnings);
         console.log("[ASYM] Bob earnings (t0):", bobEarnings);
 
         // Measure the gap: how much token1 does hook have vs how much it owes Alice?
         uint256 hookT1 = IERC20Minimal(_token1()).balanceOf(address(twammHook));
-        uint256 aliceOwedT1 = twammHook.tokensOwed(
-            twammPoolKey.toId(),
-            twammPoolKey.currency1,
-            alice
-        );
+        uint256 aliceOwedT1 = twammHook.tokensOwed(twammPoolKey.toId(), twammPoolKey.currency1, alice);
         console.log("[ASYM] Hook token1 balance:", hookT1);
         console.log("[ASYM] Alice owed token1:", aliceOwedT1);
 
@@ -3017,10 +2391,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
             // For the test, we mint the gap to the hook to prove conservation holds after
             // NOTE: Use Currency.unwrap to get the actual ERC20 address for currency1,
             // since V4 sorts currencies by address and ct may not equal currency1.
-            MockERC20(Currency.unwrap(twammPoolKey.currency1)).mint(
-                address(twammHook),
-                gap
-            );
+            MockERC20(Currency.unwrap(twammPoolKey.currency1)).mint(address(twammHook), gap);
             console.log("[ASYM] Gap filled with", gap, "token1");
         }
 
@@ -3040,10 +2411,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         lpRouter.modifyLiquidity(
             twammPoolKey,
             ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: -int256(lpDeposit),
-                salt: bytes32(uint256(0xBEEF))
+                tickLower: -600, tickUpper: 600, liquidityDelta: -int256(lpDeposit), salt: bytes32(uint256(0xBEEF))
             }),
             ""
         );
@@ -3055,12 +2423,7 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         // ASY-1: Alice earned token1 (sold token0)
         uint256 aliceLoss0 = alicePre0 - aliceFinal0;
         uint256 aliceGain1 = aliceFinal1 - alicePre1;
-        console.log(
-            "[ASYM] Alice sold t0:",
-            aliceLoss0,
-            "earned t1:",
-            aliceGain1
-        );
+        console.log("[ASYM] Alice sold t0:", aliceLoss0, "earned t1:", aliceGain1);
         assertTrue(aliceGain1 > 0, "ASY-1: Alice earned token1");
         assertEq(aliceLoss0, aliceAmount, "ASY-1: Alice sold full order");
 
@@ -3073,18 +2436,13 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
 
         // ASY-3: LP recovery >= 99.5%
         assertTrue(
-            lpRec0 >= (lpSpent0 * 995) / 1000 ||
-                lpRec1 >= (lpSpent0 * 995) / 1000,
+            lpRec0 >= (lpSpent0 * 995) / 1000 || lpRec1 >= (lpSpent0 * 995) / 1000,
             "ASY-3: LP recovery >= 99.5% on at least one side"
         );
 
         // ASY-4: Hook residual fully accounted (dust donation)
-        uint256 hookEnd0 = IERC20Minimal(_token0()).balanceOf(
-            address(twammHook)
-        );
-        uint256 hookEnd1 = IERC20Minimal(_token1()).balanceOf(
-            address(twammHook)
-        );
+        uint256 hookEnd0 = IERC20Minimal(_token0()).balanceOf(address(twammHook));
+        uint256 hookEnd1 = IERC20Minimal(_token1()).balanceOf(address(twammHook));
         uint256 dust0 = twammHook.collectedDust(twammPoolKey.currency0);
         uint256 dust1 = twammHook.collectedDust(twammPoolKey.currency1);
         console.log("[ASYM] Hook residual t0:", hookEnd0, "t1:", hookEnd1);
@@ -3095,12 +2453,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         assertTrue(unaccounted1 < 10, "ASY-4b: unaccounted t1 < 10 wei");
 
         // ASY-5: V4 solvent
-        uint256 v4End0 = IERC20Minimal(_token0()).balanceOf(
-            address(poolManager)
-        );
-        uint256 v4End1 = IERC20Minimal(_token1()).balanceOf(
-            address(poolManager)
-        );
+        uint256 v4End0 = IERC20Minimal(_token0()).balanceOf(address(poolManager));
+        uint256 v4End1 = IERC20Minimal(_token1()).balanceOf(address(poolManager));
         assertTrue(v4End0 > 0 && v4End1 > 0, "ASY-5: V4 solvent");
 
         // ASY-6: Global token conservation via totalSupply
@@ -3114,44 +2468,21 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         uint256 ctDelta = supplyCtAfter - supplyT1_before;
         // One token has exact 400M delta, the other has 400M + gapFilled
         assertTrue(
-            (ptDelta == mintedPerToken &&
-                ctDelta == mintedPerToken + gapFilled) ||
-                (ptDelta == mintedPerToken + gapFilled &&
-                    ctDelta == mintedPerToken),
+            (ptDelta == mintedPerToken && ctDelta == mintedPerToken + gapFilled)
+                || (ptDelta == mintedPerToken + gapFilled && ctDelta == mintedPerToken),
             "ASY-6: supply conserved (one side includes gap-fill)"
         );
         if (gapFilled > 0) {
-            console.log(
-                "[ASY-6] Gap-fill included in conservation:",
-                gapFilled
-            );
+            console.log("[ASY-6] Gap-fill included in conservation:", gapFilled);
         }
 
         // ASY-7: No residual tokensOwed
         PoolId pid = twammPoolKey.toId();
-        assertEq(
-            twammHook.tokensOwed(pid, twammPoolKey.currency0, alice),
-            0,
-            "ASY-7a"
-        );
-        assertEq(
-            twammHook.tokensOwed(pid, twammPoolKey.currency1, alice),
-            0,
-            "ASY-7b"
-        );
-        assertEq(
-            twammHook.tokensOwed(pid, twammPoolKey.currency0, bob),
-            0,
-            "ASY-7c"
-        );
-        assertEq(
-            twammHook.tokensOwed(pid, twammPoolKey.currency1, bob),
-            0,
-            "ASY-7d"
-        );
+        assertEq(twammHook.tokensOwed(pid, twammPoolKey.currency0, alice), 0, "ASY-7a");
+        assertEq(twammHook.tokensOwed(pid, twammPoolKey.currency1, alice), 0, "ASY-7b");
+        assertEq(twammHook.tokensOwed(pid, twammPoolKey.currency0, bob), 0, "ASY-7c");
+        assertEq(twammHook.tokensOwed(pid, twammPoolKey.currency1, bob), 0, "ASY-7d");
 
-        console.log(
-            "=== ASYMMETRIC OPPOSING STREAMS: ALL INVARIANTS PASSED ==="
-        );
+        console.log("=== ASYMMETRIC OPPOSING STREAMS: ALL INVARIANTS PASSED ===");
     }
 }

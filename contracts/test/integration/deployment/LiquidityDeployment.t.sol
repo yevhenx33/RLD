@@ -8,15 +8,10 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {
-    ModifyLiquidityParams,
-    SwapParams
-} from "v4-core/src/types/PoolOperation.sol";
+import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {
-    PoolModifyLiquidityTestNoChecks
-} from "v4-core/src/test/PoolModifyLiquidityTestNoChecks.sol";
+import {PoolModifyLiquidityTestNoChecks} from "v4-core/src/test/PoolModifyLiquidityTestNoChecks.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import "forge-std/console.sol";
 
@@ -68,9 +63,7 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
 
     function _tweakSetup() internal override {
         // Deploy LP test router and swap test router
-        lpRouter = new PoolModifyLiquidityTestNoChecks(
-            IPoolManager(address(poolManager))
-        );
+        lpRouter = new PoolModifyLiquidityTestNoChecks(IPoolManager(address(poolManager)));
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
 
         // CurrencySettler is a library used by lpRouter/swapRouter.
@@ -95,18 +88,13 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         uint256 ctBefore = ct.balanceOf(address(this));
 
         // Get liquidity before
-        (, , , uint128 liqBefore) = poolManager.getSlot0(twammPoolKey.toId());
+        (,,, uint128 liqBefore) = poolManager.getSlot0(twammPoolKey.toId());
 
         // Add liquidity: tickLower = -60, tickUpper = +60, liquidityDelta = 100 ether
         int256 liquidityDelta = 1e12;
         BalanceDelta delta = lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -60,
-                tickUpper: 60,
-                liquidityDelta: liquidityDelta,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: liquidityDelta, salt: bytes32(0)}),
             ""
         );
 
@@ -119,10 +107,7 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // Verify balances decreased
         uint256 ptAfter = pt.balanceOf(address(this));
         uint256 ctAfter = ct.balanceOf(address(this));
-        assertTrue(
-            ptAfter < ptBefore || ctAfter < ctBefore,
-            "At least one token balance must decrease"
-        );
+        assertTrue(ptAfter < ptBefore || ctAfter < ctBefore, "At least one token balance must decrease");
 
         console.log("[Phase 1] Narrow LP delta0:", uint256(-amount0));
         console.log("[Phase 1] Narrow LP delta1:", uint256(-amount1));
@@ -136,12 +121,7 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
 
         BalanceDelta delta = lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: liquidityDelta,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: liquidityDelta, salt: bytes32(0)}),
             ""
         );
 
@@ -163,26 +143,13 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // Add liquidity spanning the current tick
         lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -60,
-                tickUpper: 60,
-                liquidityDelta: 5e12,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: 5e12, salt: bytes32(0)}),
             ""
         );
 
         uint128 liqAfter = poolManager.getLiquidity(twammPoolKey.toId());
-        assertGt(
-            liqAfter,
-            liqBefore,
-            "Active liquidity must increase after LP"
-        );
-        assertEq(
-            uint256(liqAfter) - uint256(liqBefore),
-            5e12,
-            "Liquidity delta must match exactly"
-        );
+        assertGt(liqAfter, liqBefore, "Active liquidity must increase after LP");
+        assertEq(uint256(liqAfter) - uint256(liqBefore), 5e12, "Liquidity delta must match exactly");
 
         console.log("[Phase 1] Liquidity before:", liqBefore);
         console.log("[Phase 1] Liquidity after :", liqAfter);
@@ -193,36 +160,21 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // Range 1: narrow around 0
         lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -60,
-                tickUpper: 60,
-                liquidityDelta: 1e12,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: 1e12, salt: bytes32(0)}),
             ""
         );
 
         // Range 2: above current tick (out of range — only token1 consumed)
         BalanceDelta deltaAbove = lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: 60,
-                tickUpper: 600,
-                liquidityDelta: 1e12,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: 60, tickUpper: 600, liquidityDelta: 1e12, salt: bytes32(0)}),
             ""
         );
 
         // Range 3: below current tick (out of range — only token0 consumed)
         BalanceDelta deltaBelow = lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: -60,
-                liquidityDelta: 1e12,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -600, tickUpper: -60, liquidityDelta: 1e12, salt: bytes32(0)}),
             ""
         );
 
@@ -230,12 +182,10 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // both tokens due to price scaling effects. Verify each position deployed
         // by checking at least one token was consumed.
         assertTrue(
-            deltaAbove.amount0() < 0 || deltaAbove.amount1() < 0,
-            "Above-range LP: must consume at least one token"
+            deltaAbove.amount0() < 0 || deltaAbove.amount1() < 0, "Above-range LP: must consume at least one token"
         );
         assertTrue(
-            deltaBelow.amount0() < 0 || deltaBelow.amount1() < 0,
-            "Below-range LP: must consume at least one token"
+            deltaBelow.amount0() < 0 || deltaBelow.amount1() < 0, "Below-range LP: must consume at least one token"
         );
 
         console.log("[Phase 1] Multi-range LP deployed successfully");
@@ -250,19 +200,12 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // First, seed sufficient liquidity
         lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: 100e12,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 100e12, salt: bytes32(0)}),
             ""
         );
 
         // Snapshot pool state before swap
-        (uint160 sqrtPriceBefore, int24 tickBefore, , ) = poolManager.getSlot0(
-            twammPoolKey.toId()
-        );
+        (uint160 sqrtPriceBefore, int24 tickBefore,,) = poolManager.getSlot0(twammPoolKey.toId());
 
         // Execute a small zeroForOne swap (sell token0 for token1)
 
@@ -273,10 +216,7 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
                 amountSpecified: -1e6, // exact-input: sell 1 unit of token0 (6 dec)
                 sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1 // no price limit
             }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
 
@@ -287,13 +227,8 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         assertTrue(d0 < 0, "Swap must consume token0 input");
 
         // Pool price must have moved
-        (uint160 sqrtPriceAfter, int24 tickAfter, , ) = poolManager.getSlot0(
-            twammPoolKey.toId()
-        );
-        assertTrue(
-            sqrtPriceAfter < sqrtPriceBefore,
-            "zeroForOne swap must decrease sqrtPrice"
-        );
+        (uint160 sqrtPriceAfter, int24 tickAfter,,) = poolManager.getSlot0(twammPoolKey.toId());
+        assertTrue(sqrtPriceAfter < sqrtPriceBefore, "zeroForOne swap must decrease sqrtPrice");
 
         console.log("[Phase 2] Swap token0 in :", uint256(-d0));
         console.log("[Phase 2] Swap token1 out:", uint256(d1));
@@ -306,18 +241,11 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // Seed liquidity
         lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: 100e12,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: 100e12, salt: bytes32(0)}),
             ""
         );
 
-        (uint160 sqrtPriceBefore, , , ) = poolManager.getSlot0(
-            twammPoolKey.toId()
-        );
+        (uint160 sqrtPriceBefore,,,) = poolManager.getSlot0(twammPoolKey.toId());
 
         // oneForZero: sell token1 for token0
         BalanceDelta swapDelta = swapRouter.swap(
@@ -327,10 +255,7 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
                 amountSpecified: -100e6, // exact-input: sell 100 units of token1
                 sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
             }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
 
@@ -339,13 +264,8 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         assertTrue(rd0 > 0, "Reverse swap must produce token0 output");
         assertTrue(rd1 < 0, "Reverse swap must consume token1 input");
 
-        (uint160 sqrtPriceAfter, , , ) = poolManager.getSlot0(
-            twammPoolKey.toId()
-        );
-        assertTrue(
-            sqrtPriceAfter > sqrtPriceBefore,
-            "oneForZero swap must increase sqrtPrice"
-        );
+        (uint160 sqrtPriceAfter,,,) = poolManager.getSlot0(twammPoolKey.toId());
+        assertTrue(sqrtPriceAfter > sqrtPriceBefore, "oneForZero swap must increase sqrtPrice");
 
         console.log("[Phase 2] Reverse swap token0 out:", uint256(rd0));
         console.log("[Phase 2] Reverse swap token1 in :", uint256(-rd1));
@@ -362,21 +282,12 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // Add liquidity
         BalanceDelta addDelta = lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -60,
-                tickUpper: 60,
-                liquidityDelta: liquidityAmount,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: liquidityAmount, salt: bytes32(0)}),
             ""
         );
 
         uint128 liqAfterAdd = poolManager.getLiquidity(twammPoolKey.toId());
-        assertEq(
-            uint256(liqAfterAdd),
-            uint256(liquidityAmount),
-            "Liquidity must match after add"
-        );
+        assertEq(uint256(liqAfterAdd), uint256(liquidityAmount), "Liquidity must match after add");
 
         // Now remove it entirely
         uint256 ptBefore = pt.balanceOf(address(this));
@@ -384,12 +295,7 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
 
         BalanceDelta removeDelta = lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -60,
-                tickUpper: 60,
-                liquidityDelta: -liquidityAmount,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -60, tickUpper: 60, liquidityDelta: -liquidityAmount, salt: bytes32(0)}),
             ""
         );
 
@@ -402,14 +308,8 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
 
         uint256 ptAfter = pt.balanceOf(address(this));
         uint256 ctAfter = ct.balanceOf(address(this));
-        assertTrue(
-            ptAfter > ptBefore,
-            "PT balance must increase after removal"
-        );
-        assertTrue(
-            ctAfter > ctBefore,
-            "CT balance must increase after removal"
-        );
+        assertTrue(ptAfter > ptBefore, "PT balance must increase after removal");
+        assertTrue(ctAfter > ctBefore, "CT balance must increase after removal");
 
         // Amounts returned should match amounts deposited (no swaps occurred)
         // Allow ±1 tolerance for V4's rounding dust
@@ -417,18 +317,8 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         int256 ra1 = int256(removeDelta.amount1());
         int256 aa0 = int256(addDelta.amount0());
         int256 aa1 = int256(addDelta.amount1());
-        assertApproxEqAbs(
-            uint256(ra0),
-            uint256(-aa0),
-            1,
-            "Returned token0 must approx equal deposited (no fees)"
-        );
-        assertApproxEqAbs(
-            uint256(ra1),
-            uint256(-aa1),
-            1,
-            "Returned token1 must approx equal deposited (no fees)"
-        );
+        assertApproxEqAbs(uint256(ra0), uint256(-aa0), 1, "Returned token0 must approx equal deposited (no fees)");
+        assertApproxEqAbs(uint256(ra1), uint256(-aa1), 1, "Returned token1 must approx equal deposited (no fees)");
 
         console.log("[Phase 3] Removed token0:", uint256(ra0));
         console.log("[Phase 3] Removed token1:", uint256(ra1));
@@ -442,27 +332,15 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // Add liquidity
         BalanceDelta addDelta = lpRouter.modifyLiquidity(
             twammPoolKey,
-            ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: liquidityAmount,
-                salt: bytes32(0)
-            }),
+            ModifyLiquidityParams({tickLower: -600, tickUpper: 600, liquidityDelta: liquidityAmount, salt: bytes32(0)}),
             ""
         );
 
         // Execute a swap to generate fees (0.3% fee tier)
         swapRouter.swap(
             twammPoolKey,
-            SwapParams({
-                zeroForOne: true,
-                amountSpecified: -10e6,
-                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-            }),
-            PoolSwapTest.TestSettings({
-                takeClaims: false,
-                settleUsingBurn: false
-            }),
+            SwapParams({zeroForOne: true, amountSpecified: -10e6, sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1}),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
             ""
         );
 
@@ -470,10 +348,7 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         BalanceDelta removeDelta = lpRouter.modifyLiquidity(
             twammPoolKey,
             ModifyLiquidityParams({
-                tickLower: -600,
-                tickUpper: 600,
-                liquidityDelta: -liquidityAmount,
-                salt: bytes32(0)
+                tickLower: -600, tickUpper: 600, liquidityDelta: -liquidityAmount, salt: bytes32(0)
             }),
             ""
         );
@@ -481,21 +356,13 @@ contract LiquidityDeploymentTest is RLDIntegrationBase {
         // After a zeroForOne swap, the LP has more token0 (from the swap input)
         // and less token1 (given to the swapper). But fees are collected in token0.
         // The total value should be >= what was deposited.
-        int256 net0 = int256(addDelta.amount0()) +
-            int256(removeDelta.amount0()); // fees earned
-        int256 net1 = int256(addDelta.amount1()) +
-            int256(removeDelta.amount1()); // may be slightly negative (IL)
+        int256 net0 = int256(addDelta.amount0()) + int256(removeDelta.amount0()); // fees earned
+        int256 net1 = int256(addDelta.amount1()) + int256(removeDelta.amount1()); // may be slightly negative (IL)
 
         // At minimum, token0 fees should be positive (0.3% of 10 ether swap)
         assertTrue(net0 >= 0, "LP must earn non-negative fees in token0");
 
-        console.log(
-            "[Phase 3] Fee earned token0:",
-            net0 >= 0 ? uint256(net0) : 0
-        );
-        console.log(
-            "[Phase 3] IL token1        :",
-            net1 < 0 ? uint256(-net1) : 0
-        );
+        console.log("[Phase 3] Fee earned token0:", net0 >= 0 ? uint256(net0) : 0);
+        console.log("[Phase 3] IL token1        :", net1 < 0 ? uint256(-net1) : 0);
     }
 }

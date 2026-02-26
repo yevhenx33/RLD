@@ -5,8 +5,8 @@ import {LiquidationTwammBase} from "../liquidation/LiquidationTwammBase.t.sol";
 import {IRLDCore, MarketId} from "../../../src/shared/interfaces/IRLDCore.sol";
 import {IPrimeBroker} from "../../../src/shared/interfaces/IPrimeBroker.sol";
 import {PrimeBroker} from "../../../src/rld/broker/PrimeBroker.sol";
-import {ITWAMM} from "../../../src/twamm/ITWAMM.sol";
-import {IJITTWAMM} from "../../../src/twamm/IJITTWAMM.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -160,7 +160,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
             ma.collateralToken;
@@ -169,9 +169,9 @@ contract BrokerPositionTracking is LiquidationTwammBase {
             : Currency.unwrap(marketTwammKey.currency1);
 
         ERC20(sellToken).approve(address(twammHook), 1_000e6);
-        (bytes32 orderId, IJITTWAMM.OrderKey memory orderKey) = twammHook
+        (bytes32 orderId, IJTM.OrderKey memory orderKey) = twammHook
             .submitOrder(
-                IJITTWAMM.SubmitOrderParams({
+                IJTM.SubmitOrderParams({
                     key: marketTwammKey,
                     zeroForOne: colIsC0,
                     duration: TWAMM_INTERVAL_LOCAL,
@@ -185,7 +185,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         broker.setActiveTwammOrder(
             IPrimeBroker.TwammOrderInfo({
                 key: marketTwammKey,
-                orderKey: ITWAMM.OrderKey({
+                orderKey: IJTM.OrderKey({
                     owner: orderKey.owner,
                     expiration: orderKey.expiration,
                     zeroForOne: orderKey.zeroForOne
@@ -208,7 +208,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         // Place order FROM the broker — owner = broker ✓
         _placeTwammOrder(broker, 10_000e6, true, TWAMM_INTERVAL_LOCAL);
@@ -231,7 +231,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         _placeTwammOrder(broker, 10_000e6, true, TWAMM_INTERVAL_LOCAL);
 
@@ -259,7 +259,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
         _placeTwammOrder(broker, 5_000e6, true, TWAMM_INTERVAL_LOCAL);
 
         // Then V4 LP (this warps to 1.7B internally)
@@ -292,7 +292,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         // Use broker.submitTwammOrder() (not _placeTwammOrder helper)
         bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
@@ -300,7 +300,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
 
         (bytes32 orderId, ) = broker.submitTwammOrder(
             address(twammHook),
-            ITWAMM.SubmitOrderParams({
+            IJTM.SubmitOrderParams({
                 key: marketTwammKey,
                 zeroForOne: colIsC0,
                 duration: TWAMM_INTERVAL_LOCAL,
@@ -326,7 +326,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
             ma.collateralToken;
@@ -343,7 +343,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
 
         broker.submitTwammOrder(
             address(twammHook),
-            ITWAMM.SubmitOrderParams({
+            IJTM.SubmitOrderParams({
                 key: marketTwammKey,
                 zeroForOne: colIsC0,
                 duration: TWAMM_INTERVAL_LOCAL,
@@ -372,7 +372,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
             ma.collateralToken;
@@ -380,7 +380,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         // Both tokens should have zero allowance to hook after submit
         broker.submitTwammOrder(
             address(twammHook),
-            ITWAMM.SubmitOrderParams({
+            IJTM.SubmitOrderParams({
                 key: marketTwammKey,
                 zeroForOne: colIsC0,
                 duration: TWAMM_INTERVAL_LOCAL,
@@ -410,7 +410,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
             ma.collateralToken;
@@ -422,7 +422,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
 
         broker.submitTwammOrder(
             address(twammHook),
-            ITWAMM.SubmitOrderParams({
+            IJTM.SubmitOrderParams({
                 key: marketTwammKey,
                 zeroForOne: colIsC0,
                 duration: TWAMM_INTERVAL_LOCAL,
@@ -464,14 +464,14 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
             ma.collateralToken;
 
         broker.submitTwammOrder(
             address(twammHook),
-            ITWAMM.SubmitOrderParams({
+            IJTM.SubmitOrderParams({
                 key: marketTwammKey,
                 zeroForOne: colIsC0,
                 duration: TWAMM_INTERVAL_LOCAL,
@@ -607,7 +607,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 nextInterval = ((block.timestamp / TWAMM_INTERVAL_LOCAL) + 1) *
             TWAMM_INTERVAL_LOCAL;
         vm.warp(nextInterval);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
         _placeTwammOrder(broker, 10_000e6, true, TWAMM_INTERVAL_LOCAL);
 
         uint256 navWithOrder = broker.getNetAccountValue();
@@ -620,11 +620,11 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         // The TWAMM module should return 0 for the cancelled order
         (
             PoolKey memory cancelKey,
-            ITWAMM.OrderKey memory cancelOrderKey,
+            IJTM.OrderKey memory cancelOrderKey,
 
         ) = broker.activeTwammOrder();
         vm.prank(address(broker));
-        ITWAMM(address(twammHook)).cancelOrder(cancelKey, cancelOrderKey);
+        IJTM(address(twammHook)).cancelOrder(cancelKey, cancelOrderKey);
 
         // NAV should reflect only cash + wRLP (order value = 0)
         uint256 navAfterCancel = broker.getNetAccountValue();

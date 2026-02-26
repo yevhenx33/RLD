@@ -308,8 +308,17 @@ contract BrokerInitACL is JITRLDIntegrationBase {
         uint256 nonce = broker.operatorNonces(executor);
 
         // Build the message hash (matching PrimeBroker.setOperatorWithSignature)
+        // Format: (operator, active, broker, nonce, caller, commitment, chainId)
         bytes32 structHash = keccak256(
-            abi.encode(executor, brokerAddr, nonce, executor)
+            abi.encode(
+                executor,
+                true,
+                brokerAddr,
+                nonce,
+                executor,
+                bytes32(0),
+                block.chainid
+            )
         );
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)
@@ -321,7 +330,13 @@ contract BrokerInitACL is JITRLDIntegrationBase {
 
         // Executor calls setOperatorWithSignature
         vm.prank(executor);
-        broker.setOperatorWithSignature(executor, true, signature, nonce);
+        broker.setOperatorWithSignature(
+            executor,
+            true,
+            signature,
+            nonce,
+            bytes32(0)
+        );
 
         assertTrue(
             broker.operators(executor),
@@ -335,7 +350,15 @@ contract BrokerInitACL is JITRLDIntegrationBase {
         uint256 nonce = broker.operatorNonces(executor);
 
         bytes32 structHash = keccak256(
-            abi.encode(executor, brokerAddr, nonce, executor)
+            abi.encode(
+                executor,
+                true,
+                brokerAddr,
+                nonce,
+                executor,
+                bytes32(0),
+                block.chainid
+            )
         );
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)
@@ -346,12 +369,24 @@ contract BrokerInitACL is JITRLDIntegrationBase {
 
         // First call succeeds
         vm.prank(executor);
-        broker.setOperatorWithSignature(executor, true, signature, nonce);
+        broker.setOperatorWithSignature(
+            executor,
+            true,
+            signature,
+            nonce,
+            bytes32(0)
+        );
 
         // Replay with same nonce — should fail
         vm.prank(executor);
         vm.expectRevert("Invalid nonce");
-        broker.setOperatorWithSignature(executor, true, signature, nonce);
+        broker.setOperatorWithSignature(
+            executor,
+            true,
+            signature,
+            nonce,
+            bytes32(0)
+        );
     }
 
     /// @notice Test #14: Forged signature reverts
@@ -360,7 +395,15 @@ contract BrokerInitACL is JITRLDIntegrationBase {
         uint256 nonce = broker.operatorNonces(executor);
 
         bytes32 structHash = keccak256(
-            abi.encode(executor, brokerAddr, nonce, executor)
+            abi.encode(
+                executor,
+                true,
+                brokerAddr,
+                nonce,
+                executor,
+                bytes32(0),
+                block.chainid
+            )
         );
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)
@@ -373,7 +416,13 @@ contract BrokerInitACL is JITRLDIntegrationBase {
 
         vm.prank(executor);
         vm.expectRevert("Invalid signature");
-        broker.setOperatorWithSignature(executor, true, badSig, nonce);
+        broker.setOperatorWithSignature(
+            executor,
+            true,
+            badSig,
+            nonce,
+            bytes32(0)
+        );
     }
 
     /// @notice Test #15: Signature for broker A rejected on broker B
@@ -391,7 +440,15 @@ contract BrokerInitACL is JITRLDIntegrationBase {
 
         // Sign for broker A
         bytes32 structHash = keccak256(
-            abi.encode(executor, brokerAddr, nonce, executor)
+            abi.encode(
+                executor,
+                true,
+                brokerAddr,
+                nonce,
+                executor,
+                bytes32(0),
+                block.chainid
+            )
         );
         bytes32 ethSignedHash = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)
@@ -402,7 +459,13 @@ contract BrokerInitACL is JITRLDIntegrationBase {
         // Try to use signature on broker B — should fail (broker address is part of hash)
         vm.prank(executor);
         vm.expectRevert("Invalid signature");
-        brokerB.setOperatorWithSignature(executor, true, sigForA, nonce);
+        brokerB.setOperatorWithSignature(
+            executor,
+            true,
+            sigForA,
+            nonce,
+            bytes32(0)
+        );
     }
 
     /// @notice Test #16: Nonce increments per caller independently
@@ -417,7 +480,15 @@ contract BrokerInitACL is JITRLDIntegrationBase {
         // Sign and submit for executor1
         uint256 nonce1 = 0;
         bytes32 structHash1 = keccak256(
-            abi.encode(executor1, brokerAddr, nonce1, executor1)
+            abi.encode(
+                executor1,
+                true,
+                brokerAddr,
+                nonce1,
+                executor1,
+                bytes32(0),
+                block.chainid
+            )
         );
         bytes32 ethSigned1 = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash1)
@@ -428,7 +499,8 @@ contract BrokerInitACL is JITRLDIntegrationBase {
             executor1,
             true,
             abi.encodePacked(r1, s1, v1),
-            nonce1
+            nonce1,
+            bytes32(0)
         );
 
         // executor1 nonce incremented, executor2 unchanged
@@ -437,7 +509,15 @@ contract BrokerInitACL is JITRLDIntegrationBase {
 
         // Now executor2 signs with nonce 0 — should work
         bytes32 structHash2 = keccak256(
-            abi.encode(executor2, brokerAddr, uint256(0), executor2)
+            abi.encode(
+                executor2,
+                true,
+                brokerAddr,
+                uint256(0),
+                executor2,
+                bytes32(0),
+                block.chainid
+            )
         );
         bytes32 ethSigned2 = keccak256(
             abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash2)
@@ -448,7 +528,8 @@ contract BrokerInitACL is JITRLDIntegrationBase {
             executor2,
             true,
             abi.encodePacked(r2, s2, v2),
-            0
+            0,
+            bytes32(0)
         );
 
         assertEq(broker.operatorNonces(executor2), 1, "e2 nonce should be 1");

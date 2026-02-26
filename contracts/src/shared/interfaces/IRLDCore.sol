@@ -27,6 +27,7 @@ interface IRLDCore {
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor; // e.g., 50% (5e17)
         uint32 fundingPeriod; // Configurable Funding Period (e.g. 30 days)
+        uint32 badDebtPeriod; // Period over which bad debt is socialized via NF (e.g. 7 days)
         uint128 debtCap; // Max TRUE debt in economic USD (type(uint128).max = unlimited)
         uint128 minLiquidation; // Minimum liquidation amount in collateral decimals
         bytes32 liquidationParams; // Packed params for the module
@@ -50,6 +51,7 @@ interface IRLDCore {
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor;
         uint32 fundingPeriod;
+        uint32 badDebtPeriod;
         uint128 debtCap;
         uint128 minLiquidation;
         bytes32 liquidationParams;
@@ -246,6 +248,7 @@ interface IRLDCore {
         uint64 maintenanceMargin,
         uint64 liquidationCloseFactor,
         uint32 fundingPeriod,
+        uint32 badDebtPeriod,
         uint128 debtCap,
         uint128 minLiquidation,
         bytes32 liquidationParams

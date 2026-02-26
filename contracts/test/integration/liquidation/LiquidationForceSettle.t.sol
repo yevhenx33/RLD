@@ -2,9 +2,10 @@
 pragma solidity ^0.8.26;
 
 import {LiquidationTwammBase} from "./LiquidationTwammBase.t.sol";
-import {IJITTWAMM} from "../../../src/twamm/IJITTWAMM.sol";
-import {ITWAMM} from "../../../src/twamm/ITWAMM.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
 import {IRLDCore, MarketId} from "../../../src/shared/interfaces/IRLDCore.sol";
+import {IPrimeBroker} from "../../../src/shared/interfaces/IPrimeBroker.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
@@ -19,7 +20,7 @@ import {PrimeBroker} from "../../../src/rld/broker/PrimeBroker.sol";
 import "forge-std/console.sol";
 
 /// @title Tier 7: ForceSettle Tests
-/// @dev Verifies JITTWAMM.forceSettle():
+/// @dev Verifies JTM.forceSettle():
 ///   - T24: ghost -> 0 + earningsFactor > 0 + buyOwed > 0  (pool HAS liquidity)
 ///   - T25: forceSettle reverts for non-verified brokers (access control)
 ///   - T26: forceSettle auto-called during liquidation (integration)
@@ -116,20 +117,8 @@ contract LiquidationForceSettle is LiquidationTwammBase {
     function _getCancelPreview(
         PrimeBroker broker
     ) internal view returns (uint256 buyOwed, uint256 sellRefund) {
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        bool zfo = colIsC0;
-
-        IJITTWAMM.OrderKey memory ok = IJITTWAMM.OrderKey({
-            owner: address(broker),
-            expiration: uint160(4 * TWAMM_INTERVAL),
-            zeroForOne: zfo
-        });
-
-        IJITTWAMM.Order memory order = twammHook.getOrder(marketTwammKey, ok);
-        if (order.sellRate == 0) return (0, 0);
-
-        return twammHook.getCancelOrderState(marketTwammKey, ok);
+        IPrimeBroker.BrokerState memory state = broker.getFullState();
+        return (state.twammBuyOwed, state.twammSellOwed);
     }
 
     // ================================================================
@@ -149,7 +138,7 @@ contract LiquidationForceSettle is LiquidationTwammBase {
 
         // Step 1: Warp 50% and accrue
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         // Step 2: Assert ghost > 0 before forceSettle
         (uint256 ghostPre, bool colIsC0) = _getGhost();
@@ -222,7 +211,7 @@ contract LiquidationForceSettle is LiquidationTwammBase {
 
         // Warp and accrue ghost
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         (uint256 ghost, bool colIsC0) = _getGhost();
         assertGt(ghost, 0, "T25: need ghost for test");
@@ -268,7 +257,7 @@ contract LiquidationForceSettle is LiquidationTwammBase {
 
         // Step 1: Warp 50% and accrue ghost
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         (uint256 ghostPre, ) = _getGhost();
         console.log("  Pre-liq ghost:", ghostPre / 1e6);

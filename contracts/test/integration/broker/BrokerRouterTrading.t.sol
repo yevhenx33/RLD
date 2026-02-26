@@ -13,13 +13,9 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {
-    LiquidityAmounts
-} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
-import {
-    IAllowanceTransfer
-} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
@@ -38,12 +34,7 @@ contract MockAavePool {
     }
 
     /// @dev supply(asset, amount, onBehalfOf, referralCode) — Aave V3 signature
-    function supply(
-        address asset,
-        uint256 amount,
-        address onBehalfOf,
-        uint16
-    ) external {
+    function supply(address asset, uint256 amount, address onBehalfOf, uint16) external {
         // Pull underlying from caller
         ERC20(asset).transferFrom(msg.sender, address(this), amount);
         // Mint aToken 1:1 to onBehalfOf
@@ -55,19 +46,12 @@ contract MockAavePool {
 contract MockWrappedToken is MockERC20 {
     address public underlying; // aToken
 
-    constructor(
-        string memory name_,
-        string memory symbol_,
-        address _underlying
-    ) MockERC20(name_, symbol_, 6) {
+    constructor(string memory name_, string memory symbol_, address _underlying) MockERC20(name_, symbol_, 6) {
         underlying = _underlying;
     }
 
     /// @dev ERC4626-style deposit: pull aToken, mint wrapped 1:1
-    function deposit(
-        uint256 assets,
-        address receiver
-    ) external returns (uint256) {
+    function deposit(uint256 assets, address receiver) external returns (uint256) {
         ERC20(underlying).transferFrom(msg.sender, address(this), assets);
         _mint(receiver, assets);
         return assets;
@@ -105,11 +89,7 @@ contract BrokerRouterTrading is LiquidationBase {
         // Deploy deposit route mock infrastructure
         underlying = new MockERC20("Mock USDC", "mUSDC", 6);
         aToken = new MockERC20("Mock aUSDC", "maUSDC", 6);
-        wrapped = new MockWrappedToken(
-            "Mock waUSDC",
-            "mwaUSDC",
-            address(aToken)
-        );
+        wrapped = new MockWrappedToken("Mock waUSDC", "mwaUSDC", address(aToken));
         aavePool = new MockAavePool(address(aToken));
 
         // Seed LP pool for swap tests — add deep liquidity
@@ -119,19 +99,12 @@ contract BrokerRouterTrading is LiquidationBase {
     /// @dev Seed lpPoolKey with real liquidity for V4 swap tests.
     ///      Uses a high overcollateralization ratio so the helper broker
     ///      stays solvent after withdrawing tokens for LP provision.
-    function _seedLPPoolLiquidity(
-        uint256 colAmount,
-        uint256 posAmount
-    ) internal {
+    function _seedLPPoolLiquidity(uint256 colAmount, uint256 posAmount) internal {
         // Mint wRLP: deposit 20x collateral so broker stays solvent after withdrawals
         uint256 depositAmount = posAmount * 20;
         PrimeBroker helper = _createBroker();
         collateralMock.transfer(address(helper), depositAmount);
-        helper.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(depositAmount),
-            int256(posAmount)
-        );
+        helper.modifyPosition(MarketId.unwrap(marketId), int256(depositAmount), int256(posAmount));
         // Withdraw position tokens (broker retains 20x collateral vs debt — very solvent)
         helper.withdrawPositionToken(address(this), posAmount);
         // Withdraw collateral for pool — leave enough to stay solvent
@@ -145,22 +118,14 @@ contract BrokerRouterTrading is LiquidationBase {
         }
 
         // Approve Permit2 for position manager
-        IAllowanceTransfer(PERMIT2_ADDRESS).approve(
-            ma.positionToken,
-            address(positionManager),
-            type(uint160).max,
-            type(uint48).max
-        );
-        IAllowanceTransfer(PERMIT2_ADDRESS).approve(
-            ma.collateralToken,
-            address(positionManager),
-            type(uint160).max,
-            type(uint48).max
-        );
+        IAllowanceTransfer(PERMIT2_ADDRESS)
+            .approve(ma.positionToken, address(positionManager), type(uint160).max, type(uint48).max);
+        IAllowanceTransfer(PERMIT2_ADDRESS)
+            .approve(ma.collateralToken, address(positionManager), type(uint160).max, type(uint48).max);
 
         // Provide LP at wide range
         vm.warp(1_700_000_000);
-        (, int24 tick, , ) = poolManager.getSlot0(lpPoolKey.toId());
+        (, int24 tick,,) = poolManager.getSlot0(lpPoolKey.toId());
         int24 sp = lpPoolKey.tickSpacing;
         int24 lo = (tick / sp) * sp - 6000;
         int24 hi = lo + 12000;
@@ -174,17 +139,10 @@ contract BrokerRouterTrading is LiquidationBase {
             a1 = posAmount;
         }
         uint128 liq = LiquidityAmounts.getLiquidityForAmounts(
-            TickMath.getSqrtPriceAtTick(tick),
-            TickMath.getSqrtPriceAtTick(lo),
-            TickMath.getSqrtPriceAtTick(hi),
-            a0,
-            a1
+            TickMath.getSqrtPriceAtTick(tick), TickMath.getSqrtPriceAtTick(lo), TickMath.getSqrtPriceAtTick(hi), a0, a1
         );
         require(liq > 0, "zero liq");
-        bytes memory acts = abi.encodePacked(
-            uint8(Actions.MINT_POSITION),
-            uint8(Actions.SETTLE_PAIR)
-        );
+        bytes memory acts = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
         bytes[] memory p = new bytes[](2);
         p[0] = abi.encode(
             lpPoolKey,
@@ -197,10 +155,7 @@ contract BrokerRouterTrading is LiquidationBase {
             bytes("")
         );
         p[1] = abi.encode(lpPoolKey.currency0, lpPoolKey.currency1);
-        positionManager.modifyLiquidities(
-            abi.encode(acts, p),
-            block.timestamp + 60
-        );
+        positionManager.modifyLiquidities(abi.encode(acts, p), block.timestamp + 60);
     }
 
     // ================================================================
@@ -270,23 +225,13 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 100_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(100_000e6)),
-            int256(uint256(10_000e6))
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(uint256(10_000e6)));
 
-        uint256 colBefore = ERC20(ma.collateralToken).balanceOf(
-            address(broker)
-        );
+        uint256 colBefore = ERC20(ma.collateralToken).balanceOf(address(broker));
         uint256 posBefore = ERC20(ma.positionToken).balanceOf(address(broker));
 
         // executeLong: swap 5_000 collateral → position tokens
-        uint256 amountOut = brokerRouter.executeLong(
-            address(broker),
-            5_000e6,
-            lpPoolKey
-        );
+        uint256 amountOut = brokerRouter.executeLong(address(broker), 5_000e6, lpPoolKey);
 
         uint256 colAfter = ERC20(ma.collateralToken).balanceOf(address(broker));
         uint256 posAfter = ERC20(ma.positionToken).balanceOf(address(broker));
@@ -295,11 +240,7 @@ contract BrokerRouterTrading is LiquidationBase {
         console.log("Long: posDelta:", (posAfter - posBefore) / 1e6);
         console.log("Long: amountOut:", amountOut / 1e6);
 
-        assertEq(
-            colBefore - colAfter,
-            5_000e6,
-            "Collateral should decrease by amountIn"
-        );
+        assertEq(colBefore - colAfter, 5_000e6, "Collateral should decrease by amountIn");
         assertTrue(posAfter > posBefore, "Position tokens should increase");
         assertTrue(amountOut > 0, "Should receive position tokens");
     }
@@ -318,21 +259,13 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 100_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(100_000e6)),
-            int256(uint256(10_000e6))
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(uint256(10_000e6)));
 
         brokerRouter.executeLong(address(broker), 5_000e6, lpPoolKey);
 
         // Router (brokerRouter) should hold ZERO of both tokens
-        uint256 routerCol = ERC20(ma.collateralToken).balanceOf(
-            address(brokerRouter)
-        );
-        uint256 routerPos = ERC20(ma.positionToken).balanceOf(
-            address(brokerRouter)
-        );
+        uint256 routerCol = ERC20(ma.collateralToken).balanceOf(address(brokerRouter));
+        uint256 routerPos = ERC20(ma.positionToken).balanceOf(address(brokerRouter));
         assertEq(routerCol, 0, "Router should hold zero collateral");
         assertEq(routerPos, 0, "Router should hold zero position tokens");
     }
@@ -342,65 +275,32 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 100_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(100_000e6)),
-            int256(uint256(10_000e6))
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(uint256(10_000e6)));
 
         // First do a long
-        uint256 wRLPReceived = brokerRouter.executeLong(
-            address(broker),
-            5_000e6,
-            lpPoolKey
-        );
+        uint256 wRLPReceived = brokerRouter.executeLong(address(broker), 5_000e6, lpPoolKey);
 
-        uint256 colBeforeClose = ERC20(ma.collateralToken).balanceOf(
-            address(broker)
-        );
-        uint256 posBeforeClose = ERC20(ma.positionToken).balanceOf(
-            address(broker)
-        );
+        uint256 colBeforeClose = ERC20(ma.collateralToken).balanceOf(address(broker));
+        uint256 posBeforeClose = ERC20(ma.positionToken).balanceOf(address(broker));
 
         // Close the long: sell wRLP back
-        uint256 colReturned = brokerRouter.closeLong(
-            address(broker),
-            wRLPReceived,
-            lpPoolKey
-        );
+        uint256 colReturned = brokerRouter.closeLong(address(broker), wRLPReceived, lpPoolKey);
 
-        uint256 colAfterClose = ERC20(ma.collateralToken).balanceOf(
-            address(broker)
-        );
-        uint256 posAfterClose = ERC20(ma.positionToken).balanceOf(
-            address(broker)
-        );
+        uint256 colAfterClose = ERC20(ma.collateralToken).balanceOf(address(broker));
+        uint256 posAfterClose = ERC20(ma.positionToken).balanceOf(address(broker));
 
         console.log("CloseLong: wRLP sold:", wRLPReceived / 1e6);
         console.log("CloseLong: col returned:", colReturned / 1e6);
 
-        assertTrue(
-            colAfterClose > colBeforeClose,
-            "Collateral should increase after close"
-        );
-        assertEq(
-            posBeforeClose - posAfterClose,
-            wRLPReceived,
-            "wRLP should decrease by amountIn"
-        );
+        assertTrue(colAfterClose > colBeforeClose, "Collateral should increase after close");
+        assertEq(posBeforeClose - posAfterClose, wRLPReceived, "wRLP should decrease by amountIn");
         assertTrue(colReturned > 0, "Should receive collateral back");
 
         // Router should hold zero
         assertEq(
-            ERC20(ma.collateralToken).balanceOf(address(brokerRouter)),
-            0,
-            "Router zero collateral after closeLong"
+            ERC20(ma.collateralToken).balanceOf(address(brokerRouter)), 0, "Router zero collateral after closeLong"
         );
-        assertEq(
-            ERC20(ma.positionToken).balanceOf(address(brokerRouter)),
-            0,
-            "Router zero wRLP after closeLong"
-        );
+        assertEq(ERC20(ma.positionToken).balanceOf(address(brokerRouter)), 0, "Router zero wRLP after closeLong");
     }
 
     // ================================================================
@@ -418,9 +318,7 @@ contract BrokerRouterTrading is LiquidationBase {
             int256(0) // no initial debt
         );
 
-        uint256 colBefore = ERC20(ma.collateralToken).balanceOf(
-            address(broker)
-        );
+        uint256 colBefore = ERC20(ma.collateralToken).balanceOf(address(broker));
 
         // Short: deposit 50k collateral, mint 5k debt, swap wRLP→col, re-deposit proceeds
         uint256 proceeds = brokerRouter.executeShort(
@@ -436,10 +334,7 @@ contract BrokerRouterTrading is LiquidationBase {
         console.log("Short: col before:", colBefore / 1e6);
         console.log("Short: col after:", colAfter / 1e6);
 
-        assertTrue(
-            proceeds > 0,
-            "Should receive collateral proceeds from selling wRLP"
-        );
+        assertTrue(proceeds > 0, "Should receive collateral proceeds from selling wRLP");
         // After short: broker has deposited collateral, got debt, swapped wRLP, and re-deposited
         // The collateral should have increased by proceeds vs the amount deposited
     }
@@ -449,19 +344,10 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 200_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(200_000e6)),
-            int256(0)
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(200_000e6)), int256(0));
 
         // After short, broker should remain solvent
-        brokerRouter.executeShort(
-            address(broker),
-            50_000e6,
-            5_000e6,
-            lpPoolKey
-        );
+        brokerRouter.executeShort(address(broker), 50_000e6, 5_000e6, lpPoolKey);
 
         bool solvent = core.isSolvent(marketId, address(broker));
         assertTrue(solvent, "Broker should be solvent after short");
@@ -472,37 +358,20 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 200_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(200_000e6)),
-            int256(0)
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(200_000e6)), int256(0));
 
         // Open short
-        brokerRouter.executeShort(
-            address(broker),
-            50_000e6,
-            5_000e6,
-            lpPoolKey
-        );
+        brokerRouter.executeShort(address(broker), 50_000e6, 5_000e6, lpPoolKey);
 
         // Check debt before close
-        uint128 debtBefore = core
-            .getPosition(marketId, address(broker))
-            .debtPrincipal;
+        uint128 debtBefore = core.getPosition(marketId, address(broker)).debtPrincipal;
         assertTrue(debtBefore > 0, "Should have debt after short");
 
         // Close short: spend a conservative amount to buy back wRLP and repay
         // Don't overspend — 30k col would buy ~6k wRLP but we only have 5k debt
-        uint256 debtRepaid = brokerRouter.closeShort(
-            address(broker),
-            15_000e6,
-            lpPoolKey
-        );
+        uint256 debtRepaid = brokerRouter.closeShort(address(broker), 15_000e6, lpPoolKey);
 
-        uint128 debtAfter = core
-            .getPosition(marketId, address(broker))
-            .debtPrincipal;
+        uint128 debtAfter = core.getPosition(marketId, address(broker)).debtPrincipal;
 
         console.log("CloseShort: debt before:", debtBefore / 1e6);
         console.log("CloseShort: debt after:", debtAfter / 1e6);
@@ -517,32 +386,17 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 200_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(200_000e6)),
-            int256(0)
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(200_000e6)), int256(0));
 
-        brokerRouter.executeShort(
-            address(broker),
-            50_000e6,
-            5_000e6,
-            lpPoolKey
-        );
+        brokerRouter.executeShort(address(broker), 50_000e6, 5_000e6, lpPoolKey);
 
         brokerRouter.closeShort(address(broker), 15_000e6, lpPoolKey);
 
         // Router should hold ZERO tokens
         assertEq(
-            ERC20(ma.collateralToken).balanceOf(address(brokerRouter)),
-            0,
-            "Router zero collateral after closeShort"
+            ERC20(ma.collateralToken).balanceOf(address(brokerRouter)), 0, "Router zero collateral after closeShort"
         );
-        assertEq(
-            ERC20(ma.positionToken).balanceOf(address(brokerRouter)),
-            0,
-            "Router zero wRLP after closeShort"
-        );
+        assertEq(ERC20(ma.positionToken).balanceOf(address(brokerRouter)), 0, "Router zero wRLP after closeShort");
     }
 
     // ================================================================
@@ -556,11 +410,7 @@ contract BrokerRouterTrading is LiquidationBase {
             BrokerRouter.SwapCallback({
                 sender: address(this),
                 key: lpPoolKey,
-                params: SwapParams({
-                    zeroForOne: true,
-                    amountSpecified: -1000,
-                    sqrtPriceLimitX96: 4295128740
-                })
+                params: SwapParams({zeroForOne: true, amountSpecified: -1000, sqrtPriceLimitX96: 4295128740})
             })
         );
 
@@ -574,63 +424,30 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 100_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(100_000e6)),
-            int256(uint256(10_000e6))
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(uint256(10_000e6)));
 
         // Track all balances before
-        uint256 brokerColBefore = ERC20(ma.collateralToken).balanceOf(
-            address(broker)
-        );
-        uint256 brokerPosBefore = ERC20(ma.positionToken).balanceOf(
-            address(broker)
-        );
+        uint256 brokerColBefore = ERC20(ma.collateralToken).balanceOf(address(broker));
+        uint256 brokerPosBefore = ERC20(ma.positionToken).balanceOf(address(broker));
 
         // Execute a swap in one direction (Long: collateral → position)
-        uint256 longOut = brokerRouter.executeLong(
-            address(broker),
-            2_000e6,
-            lpPoolKey
-        );
+        uint256 longOut = brokerRouter.executeLong(address(broker), 2_000e6, lpPoolKey);
 
         // Execute a swap in the other direction (CloseLong: position → collateral)
-        uint256 closeOut = brokerRouter.closeLong(
-            address(broker),
-            longOut,
-            lpPoolKey
-        );
+        uint256 closeOut = brokerRouter.closeLong(address(broker), longOut, lpPoolKey);
 
-        uint256 brokerColAfter = ERC20(ma.collateralToken).balanceOf(
-            address(broker)
-        );
-        uint256 brokerPosAfter = ERC20(ma.positionToken).balanceOf(
-            address(broker)
-        );
+        uint256 brokerColAfter = ERC20(ma.collateralToken).balanceOf(address(broker));
+        uint256 brokerPosAfter = ERC20(ma.positionToken).balanceOf(address(broker));
 
-        console.log(
-            "Roundtrip: col delta:",
-            (brokerColBefore - brokerColAfter) / 1e6
-        );
-        console.log(
-            "Roundtrip: pos delta:",
-            int256(brokerPosAfter) - int256(brokerPosBefore)
-        );
+        console.log("Roundtrip: col delta:", (brokerColBefore - brokerColAfter) / 1e6);
+        console.log("Roundtrip: pos delta:", int256(brokerPosAfter) - int256(brokerPosBefore));
         console.log("Roundtrip: long out:", longOut / 1e6);
         console.log("Roundtrip: close out:", closeOut / 1e6);
 
         // After roundtrip: collateral slightly less due to swap fees + slippage
-        assertTrue(
-            brokerColAfter <= brokerColBefore,
-            "Collateral should be <= initial (swap fees)"
-        );
+        assertTrue(brokerColAfter <= brokerColBefore, "Collateral should be <= initial (swap fees)");
         // Position tokens should be back to initial (within rounding)
-        assertEq(
-            brokerPosAfter,
-            brokerPosBefore,
-            "Position tokens should return to initial"
-        );
+        assertEq(brokerPosAfter, brokerPosBefore, "Position tokens should return to initial");
         // Both directions settled correctly
         assertTrue(longOut > 0, "Swap direction 1 settled");
         assertTrue(closeOut > 0, "Swap direction 2 settled");
@@ -645,11 +462,7 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 100_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(100_000e6)),
-            int256(uint256(10_000e6))
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(uint256(10_000e6)));
 
         // Create a pool key with wrong currencies (two random tokens)
         PoolKey memory badPoolKey = PoolKey({
@@ -669,54 +482,29 @@ contract BrokerRouterTrading is LiquidationBase {
         _routerSetup();
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 200_000e6);
-        broker.modifyPosition(
-            MarketId.unwrap(marketId),
-            int256(uint256(200_000e6)),
-            int256(0)
-        );
+        broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(200_000e6)), int256(0));
 
         // Open short: 5k debt
-        brokerRouter.executeShort(
-            address(broker),
-            50_000e6,
-            5_000e6,
-            lpPoolKey
-        );
+        brokerRouter.executeShort(address(broker), 50_000e6, 5_000e6, lpPoolKey);
 
-        uint128 debtBefore = core
-            .getPosition(marketId, address(broker))
-            .debtPrincipal;
+        uint128 debtBefore = core.getPosition(marketId, address(broker)).debtPrincipal;
         assertTrue(debtBefore > 0, "Should have debt");
 
         // Close short with 30k collateral — buys more wRLP than debt
         // Previously underflowed; now should be capped at debtBefore
-        uint256 debtRepaid = brokerRouter.closeShort(
-            address(broker),
-            30_000e6,
-            lpPoolKey
-        );
+        uint256 debtRepaid = brokerRouter.closeShort(address(broker), 30_000e6, lpPoolKey);
 
-        uint128 debtAfter = core
-            .getPosition(marketId, address(broker))
-            .debtPrincipal;
+        uint128 debtAfter = core.getPosition(marketId, address(broker)).debtPrincipal;
 
         console.log("Debt cap: debt before:", debtBefore);
         console.log("Debt cap: debt repaid:", debtRepaid);
         console.log("Debt cap: debt after:", debtAfter);
 
         // Debt should be fully repaid (capped at debtBefore)
-        assertEq(
-            debtRepaid,
-            debtBefore,
-            "Repaid should be capped at outstanding debt"
-        );
+        assertEq(debtRepaid, debtBefore, "Repaid should be capped at outstanding debt");
         assertEq(debtAfter, 0, "Debt should be fully repaid");
 
         // Excess wRLP should be returned to broker (not stuck in router)
-        assertEq(
-            ERC20(ma.positionToken).balanceOf(address(brokerRouter)),
-            0,
-            "Router should hold zero excess wRLP"
-        );
+        assertEq(ERC20(ma.positionToken).balanceOf(address(brokerRouter)), 0, "Router should hold zero excess wRLP");
     }
 }

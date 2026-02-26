@@ -2,8 +2,8 @@
 pragma solidity ^0.8.26;
 
 import {LiquidationTwammBase} from "./LiquidationTwammBase.t.sol";
-import {IJITTWAMM} from "../../../src/twamm/IJITTWAMM.sol";
-import {ITWAMM} from "../../../src/twamm/ITWAMM.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
+import {IJTM} from "../../../src/twamm/IJTM.sol";
 import {IPrimeBroker} from "../../../src/shared/interfaces/IPrimeBroker.sol";
 import {PrimeBroker} from "../../../src/rld/broker/PrimeBroker.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
@@ -12,7 +12,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import "forge-std/console.sol";
 
 /// @title Tier 5: Single-Asset TWAMM Liquidation Tests (with assertions)
-/// @dev Uses the PRODUCTION market pool (wRLP/ct + JITTWAMM hook).
+/// @dev Uses the PRODUCTION market pool (wRLP/ct + JTM hook).
 ///      Each test verifies pre/post state, TWAMM stream, cancel preview, and seize.
 contract LiquidationTwammSingle is LiquidationTwammBase {
     uint256 constant TWAMM_AMT = 200_000e6; // 200k USDC
@@ -98,7 +98,7 @@ contract LiquidationTwammSingle is LiquidationTwammBase {
 
         // ── Step 1: Warp 50% and accrue ──
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         // ── Step 2: Assert ghost balance -- accrued but unmatched ──
         (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
@@ -167,7 +167,7 @@ contract LiquidationTwammSingle is LiquidationTwammBase {
 
         // ── Step 1: Warp 50% and accrue ──
         vm.warp(block.timestamp + TWAMM_INTERVAL / 2);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         // ── Step 2: Assert ghost balance before clear ──
         (uint256 a0Pre, uint256 a1Pre, , ) = twammHook.getStreamState(
@@ -261,7 +261,7 @@ contract LiquidationTwammSingle is LiquidationTwammBase {
 
         // ── Step 1: Warp past expiration and execute ──
         vm.warp(block.timestamp + TWAMM_INTERVAL + 1);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         // ── Step 2: Ghost balance = 0 after expiry cleanup ──
         (uint256 a0, uint256 a1, , ) = twammHook.getStreamState(marketTwammKey);
@@ -332,7 +332,7 @@ contract LiquidationTwammSingle is LiquidationTwammBase {
         // ── Step 1: Warp to ~95% of duration ──
         uint256 warpDuration = (TWAMM_INTERVAL * 95) / 100; // 3420s of 3600s
         vm.warp(block.timestamp + warpDuration);
-        twammHook.executeJITTWAMMOrders(marketTwammKey);
+        twammHook.executeJTMOrders(marketTwammKey);
 
         // ── Step 2: Ghost balance ≈ 95% of input ──
         bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
@@ -410,39 +410,14 @@ contract LiquidationTwammSingle is LiquidationTwammBase {
 
     // ======================== HELPERS ========================
 
-    /// @dev Read cancel preview from TWAMM hook for the broker's active order.
+    /// @dev Read cancel preview from the broker's stored TWAMM order info.
+    ///      Uses broker.getFullState() which reads activeTwammOrder with the correct
+    ///      order key (including dynamically-set expiration).
     function _getCancelPreview(
         PrimeBroker broker
     ) internal view returns (uint256 buyOwed, uint256 sellRefund) {
-        bool colIsC0 = Currency.unwrap(marketTwammKey.currency0) ==
-            ma.collateralToken;
-        bool zfo = colIsC0; // order selling collateral
-
-        // Read expiration from TWAMM order state
-        IJITTWAMM.OrderKey memory ok = IJITTWAMM.OrderKey({
-            owner: address(broker),
-            // Reconstruct expiration: order placed at nextInterval, duration = TWAMM_INTERVAL
-            // nextInterval was the warp target during setup: ceiling of block.timestamp to interval
-            // For simplicity, use the stored order via getOrder to check if it exists
-            expiration: 0, // will be set below
-            zeroForOne: zfo
-        });
-
-        // Try known expiration values. The order was placed at some interval + TWAMM_INTERVAL.
-        // The base setUp warps to TWAMM_INTERVAL (3600), then _setupBrokerTwamm aligns to next.
-        // So placement time = 7200 (next interval after 3600 + setup time), exp = 7200 + 3600 = 10800
-        // BUT _fundClearer modifies time. Let's try common values.
-        // Actually the expiration is always 4 * TWAMM_INTERVAL = 14400 (from test logs).
-        ok.expiration = uint160(4 * TWAMM_INTERVAL);
-
-        IJITTWAMM.Order memory order = twammHook.getOrder(marketTwammKey, ok);
-
-        if (order.sellRate == 0) {
-            // Order expired or doesn't exist
-            return (0, 0);
-        }
-
-        return twammHook.getCancelOrderState(marketTwammKey, ok);
+        IPrimeBroker.BrokerState memory state = broker.getFullState();
+        return (state.twammBuyOwed, state.twammSellOwed);
     }
 
     /// @dev Assert cancel preview values with descriptive labels.

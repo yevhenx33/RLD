@@ -3,9 +3,12 @@ pragma solidity ^0.8.26;
 
 import {Script, console} from "forge-std/Script.sol";
 
-interface ITWAMM {
+interface IJTM {
     function increaseCardinality(bytes32 poolId, uint16 next) external returns (uint16);
-    function oracleStates(bytes32 poolId) external view returns (uint16 index, uint16 cardinality, uint16 cardinalityNext);
+    function oracleStates(bytes32 poolId)
+        external
+        view
+        returns (uint16 index, uint16 cardinality, uint16 cardinalityNext);
 }
 
 interface IPoolManager {
@@ -21,18 +24,22 @@ contract PrimeOracle is Script {
 
     function run() external {
         // Compute poolId = keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks))
-        bytes32 poolId = keccak256(abi.encode(
-            address(0x6c8d360090263de9fFdBc17Bccc6969D8a7F2379),
-            address(0x905Ad472d7eeB94ed1Fc29D8ff4B53FD4D5a5Eb4),
-            uint24(500),
-            int24(5),
-            address(TWAMM)
-        ));
+        bytes32 poolId = keccak256(
+            abi.encode(
+                address(0x6c8d360090263de9fFdBc17Bccc6969D8a7F2379),
+                address(0x905Ad472d7eeB94ed1Fc29D8ff4B53FD4D5a5Eb4),
+                uint24(500),
+                int24(5),
+                address(TWAMM)
+            )
+        );
         console.log("PoolId:");
         console.logBytes32(poolId);
 
-        uint16 idx; uint16 card; uint16 cardNext;
-        (idx, card, cardNext) = ITWAMM(TWAMM).oracleStates(poolId);
+        uint16 idx;
+        uint16 card;
+        uint16 cardNext;
+        (idx, card, cardNext) = IJTM(TWAMM).oracleStates(poolId);
         console.log("Oracle state - index:", idx, "cardinality:", card);
         console.log("cardinalityNext:", cardNext);
 
@@ -69,7 +76,7 @@ contract PrimeOracle is Script {
 
             // Write observation[0]:
             // Observation { uint32 blockTimestamp, int56 tickCumulative, bool initialized }
-            // Storage packing: blockTimestamp at byte offset 0 (4 bytes), 
+            // Storage packing: blockTimestamp at byte offset 0 (4 bytes),
             //                  tickCumulative at byte offset 4 (7 bytes),
             //                  initialized at byte offset 11 (1 byte)
             //
@@ -92,7 +99,7 @@ contract PrimeOracle is Script {
             console.log("Set oracle state: index=0, cardinality=1, cardinalityNext:", cardNext);
 
             // Verify
-            (idx, card, cardNext) = ITWAMM(TWAMM).oracleStates(poolId);
+            (idx, card, cardNext) = IJTM(TWAMM).oracleStates(poolId);
             console.log("Verified - index:", idx, "cardinality:", card);
             console.log("cardinalityNext:", cardNext);
         }

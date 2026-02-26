@@ -25,23 +25,18 @@ contract CheckPoolState is Script {
         IPoolManager pm = IPoolManager(POOL_MANAGER);
 
         IRLDCore.MarketAddresses memory addrs = core.getMarketAddresses(MarketId.wrap(MARKET_ID));
-        
+
         address tokenA = addrs.positionToken;
         address tokenB = addrs.collateralToken;
-        
+
         Currency currency0 = Currency.wrap(tokenA);
         Currency currency1 = Currency.wrap(tokenB);
         if (currency0 > currency1) {
             (currency0, currency1) = (currency1, currency0);
         }
 
-        PoolKey memory key = PoolKey({
-            currency0: currency0,
-            currency1: currency1,
-            fee: 500,
-            tickSpacing: 5,
-            hooks: IHooks(TWAMM_HOOK)
-        });
+        PoolKey memory key =
+            PoolKey({currency0: currency0, currency1: currency1, fee: 500, tickSpacing: 5, hooks: IHooks(TWAMM_HOOK)});
 
         (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) = pm.getSlot0(key.toId());
         uint128 liquidity = pm.getLiquidity(key.toId());
@@ -55,12 +50,12 @@ contract CheckPoolState is Script {
         console.log("Liquidity:", liquidity);
         console.log("Protocol Fee:", protocolFee);
         console.log("LP Fee:", lpFee);
-        
+
         uint256 priceX96 = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
         uint256 price = (priceX96 * 1e18) >> (96 * 2);
-        
+
         console.log("Price (Token1/Token0):", price);
-        
+
         if (Currency.unwrap(currency0) == tokenA) {
             console.log("Direction: Collateral per wRLP");
         } else {
