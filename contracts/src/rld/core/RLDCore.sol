@@ -253,9 +253,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         try IRLDCore(msg.sender).lockAcquired(data) returns (bytes memory res) {
             result = res;
         } catch (bytes memory reason) {
-            // Clear lock active flag before reverting
-            TransientStorage.tstore(LOCK_ACTIVE_KEY, 0);
             // Propagate revert reason from callback
+            // Note: transient storage auto-clears on revert, no manual cleanup needed
             assembly {
                 revert(add(reason, 32), mload(reason))
             }
@@ -267,7 +266,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         // 4. Clear lock active flag
         TransientStorage.tstore(LOCK_ACTIVE_KEY, 0);
 
-        // 4. Cleanup - Clear transient storage
+        // 5. Cleanup - Clear transient storage
         TransientStorage.tstore(LOCK_HOLDER_KEY, 0);
         TransientStorage.tstore(TOUCHED_COUNT_KEY, 0);
 
@@ -316,7 +315,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         // 2. Update Debt Principal
         if (deltaDebt != 0) {
-            uint256 newDebt = _applyDelta(pos.debtPrincipal, deltaDebt);
+            uint256 newDebt = _addSignedDelta(pos.debtPrincipal, deltaDebt);
             pos.debtPrincipal = uint128(newDebt);
         }
 
@@ -511,6 +510,15 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @dev Minimum chunk divisor: chunk floor = totalSupply / MIN_CHUNK_DIVISOR (0.0001%)
     uint256 constant MIN_CHUNK_DIVISOR = 1_000_000;
 
+    /// @dev Context struct for liquidation pipeline to avoid multiple oracle/NAV calls (H-1/H-2/H-3 fix)
+    struct LiquidationCtx {
+        uint256 indexPrice;
+        uint256 totalAssets;
+        uint256 normFactor;
+        uint256 principalToCover;
+        uint256 seizeAmount;
+    }
+
     /// @notice Applies pending funding rate to update the normalization factor.
     /// @dev Called lazily on first interaction per block.
     /// @dev Normalization factor compounds over time to track accumulated interest.
@@ -585,7 +593,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param start The starting value
     /// @param delta The change to apply (can be negative)
     /// @return The new value after applying delta
-    function _applyDelta(
+    function _addSignedDelta(
         uint128 start,
         int256 delta
     ) internal pure returns (uint256) {
@@ -634,36 +642,48 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         _validateLiquidationChecks(id, user, config);
         _validateLiquidationAmount(debtToCover, config);
 
-        // 2. Snapshot principal BEFORE optimistic reduction
-        // (needed for correct health score in seize calculation)
+        // 2. Cache indexPrice + NAV once (H-1/H-2/H-3 fix: prevents
+        //    divergent values from multiple oracle/NAV calls)
+        LiquidationCtx memory ctx;
+        MarketAddresses storage addresses = marketAddresses[id];
+        ctx.indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
+            addresses.underlyingPool,
+            addresses.underlyingToken
+        );
+        try IPrimeBroker(user).getNetAccountValue() returns (uint256 v) {
+            ctx.totalAssets = v;
+        } catch {
+            ctx.totalAssets = 0; // Reverted broker = treat as underwater
+        }
+
+        // 3. Snapshot principal BEFORE optimistic reduction
         uint256 principalSnapshot = uint256(positions[id][user].debtPrincipal);
 
-        // 3. Debt Calculations & Updates (optimistic reduction)
-        (uint256 principalToCover, uint256 normFactor) = _updateLiquidationDebt(
+        // 4. Debt Calculations & Updates (optimistic reduction)
+        (ctx.principalToCover, ctx.normFactor) = _updateLiquidationDebt(
             id,
             user,
             debtToCover,
-            config
-        );
-
-        // 4. Seize Calculation via Oracle & Module
-        uint256 seizeAmount = _calculateLiquidationSeize(
-            id,
-            user,
-            debtToCover,
-            normFactor,
             config,
-            principalSnapshot
+            ctx
         );
 
-        // 5. Execution & Settlement (with negative equity protection)
+        // 5. Seize Calculation via Oracle & Module
+        ctx.seizeAmount = _calculateLiquidationSeize(
+            id,
+            user,
+            debtToCover,
+            config,
+            principalSnapshot,
+            ctx
+        );
+
+        // 6. Execution & Settlement (with negative equity protection)
         _settleLiquidation(
             id,
             user,
-            seizeAmount,
-            principalToCover,
+            ctx,
             debtToCover,
-            normFactor,
             minCollateralOut
         );
     }
@@ -703,14 +723,14 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         MarketId id,
         address user,
         uint256 debtToCover,
-        MarketConfig memory config
+        MarketConfig memory config,
+        LiquidationCtx memory ctx
     ) internal returns (uint256 principalToCover, uint256 normFactor) {
         // Cache storage
         MarketState storage state = marketStates[id];
         normFactor = state.normalizationFactor;
         Position storage pos = positions[id][user];
         uint128 principal = pos.debtPrincipal;
-        MarketAddresses storage addresses = marketAddresses[id];
 
         // Calculate true debt
         uint256 trueDebt = uint256(principal).mulWad(normFactor);
@@ -718,19 +738,10 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         // Dynamic close factor (Aave-style):
         // If position is underwater (assets < debt), allow 100% liquidation
         // Otherwise, enforce the configured close factor (e.g. 50%)
-        uint256 totalAssets;
-        try IPrimeBroker(user).getNetAccountValue() returns (uint256 v) {
-            totalAssets = v;
-        } catch {
-            totalAssets = 0; // Reverted broker = treat as underwater
-        }
-        uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
-            addresses.underlyingPool,
-            addresses.underlyingToken
-        );
-        uint256 debtValue = trueDebt.mulWad(indexPrice);
+        // Uses cached indexPrice and totalAssets from ctx (H-1/H-2/H-3 fix)
+        uint256 debtValue = trueDebt.mulWad(ctx.indexPrice);
 
-        if (totalAssets >= debtValue) {
+        if (ctx.totalAssets >= debtValue) {
             // Not underwater — enforce close factor
             if (
                 debtToCover >
@@ -752,16 +763,14 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         MarketId id,
         address user,
         uint256 debtToCover,
-        uint256 normFactor,
         MarketConfig memory config,
-        uint256 principalSnapshot
+        uint256 principalSnapshot,
+        LiquidationCtx memory ctx
     ) internal view returns (uint256 seizeAmount) {
         MarketAddresses storage addresses = marketAddresses[id];
 
-        uint256 indexPrice = IRLDOracle(addresses.rateOracle).getIndexPrice(
-            addresses.underlyingPool,
-            addresses.underlyingToken
-        );
+        // Use cached indexPrice from ctx (H-1 fix: single oracle call)
+        uint256 indexPrice = ctx.indexPrice;
 
         uint256 spotPrice = addresses.spotOracle != address(0)
             ? ISpotOracle(addresses.spotOracle).getSpotPrice(
@@ -780,7 +789,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             .PriceData({
                 indexPrice: debtPrice,
                 spotPrice: collateralPrice,
-                normalizationFactor: normFactor
+                normalizationFactor: ctx.normFactor
             });
 
         // Use pre-reduction principal for correct health score calculation.
@@ -802,14 +811,15 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     function _settleLiquidation(
         MarketId id,
         address user,
-        uint256 seizeAmount,
-        uint256 principalToCover,
+        LiquidationCtx memory ctx,
         uint256 debtToCover,
-        uint256 normFactor,
         uint256 minCollateralOut
     ) internal {
         // NEGATIVE EQUITY PROTECTION: Cap seize at available collateral
         uint256 availableCollateral = IPrimeBroker(user).getNetAccountValue();
+        uint256 seizeAmount = ctx.seizeAmount;
+        uint256 principalToCover = ctx.principalToCover;
+        uint256 normFactor = ctx.normFactor;
         uint256 actualSeizeAmount = seizeAmount;
         uint256 actualPrincipalToCover = principalToCover;
         Position storage pos = positions[id][user];
@@ -977,7 +987,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     function getMarketConfig(
         MarketId id
     ) external view returns (MarketConfig memory) {
-        return _getEffectiveConfig(id);
+        return _peekEffectiveConfig(id);
     }
 
     /// @notice Returns a user's position in a market.
@@ -1145,19 +1155,18 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
     /// @notice Gets the effective market config (auto-applies pending updates).
     /// @dev This is the source of truth for all protocol operations.
-    /// @dev If a pending update exists and timelock has expired, returns the new config.
+    /// @dev Returns effective config, auto-applying expired timelocked updates (M-1 fix: write-through).
+    /// @dev When timelock expires, writes to storage and clears pending — subsequent reads use storage directly.
     /// @param id The market ID
     /// @return The effective market configuration
     function _getEffectiveConfig(
         MarketId id
-    ) internal view returns (MarketConfig memory) {
+    ) internal returns (MarketConfig memory) {
         PendingRiskUpdate storage pending = pendingRiskUpdates[id];
 
-        // Auto-apply if timelock expired
         if (pending.pending && block.timestamp >= pending.executeAt) {
-            MarketConfig memory config = marketConfigs[id];
-
-            // Apply pending changes
+            // Timelock expired — write-through to storage (M-1 fix)
+            MarketConfig storage config = marketConfigs[id];
             config.minColRatio = pending.minColRatio;
             config.maintenanceMargin = pending.maintenanceMargin;
             config.liquidationCloseFactor = pending.liquidationCloseFactor;
@@ -1166,11 +1175,34 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             config.debtCap = pending.debtCap;
             config.minLiquidation = pending.minLiquidation;
             config.liquidationParams = pending.liquidationParams;
-
+            // Clear pending update
+            delete pendingRiskUpdates[id];
+            emit RiskUpdateApplied(id);
             return config;
         }
 
-        // Return current config if no pending update or timelock not expired
+        return marketConfigs[id];
+    }
+
+    /// @dev View-safe version that reads effective config without writing to storage.
+    function _peekEffectiveConfig(
+        MarketId id
+    ) internal view returns (MarketConfig memory) {
+        PendingRiskUpdate storage pending = pendingRiskUpdates[id];
+
+        if (pending.pending && block.timestamp >= pending.executeAt) {
+            MarketConfig memory config = marketConfigs[id];
+            config.minColRatio = pending.minColRatio;
+            config.maintenanceMargin = pending.maintenanceMargin;
+            config.liquidationCloseFactor = pending.liquidationCloseFactor;
+            config.fundingPeriod = pending.fundingPeriod;
+            config.badDebtPeriod = pending.badDebtPeriod;
+            config.debtCap = pending.debtCap;
+            config.minLiquidation = pending.minLiquidation;
+            config.liquidationParams = pending.liquidationParams;
+            return config;
+        }
+
         return marketConfigs[id];
     }
 }
