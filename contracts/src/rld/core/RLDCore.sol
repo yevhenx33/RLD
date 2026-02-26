@@ -397,7 +397,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint256 count = TransientStorage.tload(TOUCHED_COUNT_KEY);
         for (uint256 i = 0; i < count; i++) {
             (MarketId id, address user) = _getTouchedPosition(i);
-            MarketConfig memory config = _getEffectiveConfig(id);
+            MarketConfig memory config = _peekEffectiveConfig(id);
 
             // Retrieve action type to determine which ratio to use
             bytes32 actionKey = keccak256(abi.encode(id, user, ACTION_SALT));
@@ -453,7 +453,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         MarketAddresses storage addresses = marketAddresses[id];
         MarketState memory state = marketStates[id];
-        MarketConfig memory config = _getEffectiveConfig(id);
+        MarketConfig memory config = _peekEffectiveConfig(id);
 
         // 1. Verify Broker Status (Strict)
         // Only verified brokers can have positions - prevents arbitrary contracts
@@ -655,7 +655,6 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         } catch {
             ctx.totalAssets = 0; // Reverted broker = treat as underwater
         }
-
         // 3. Snapshot principal BEFORE optimistic reduction
         uint256 principalSnapshot = uint256(positions[id][user].debtPrincipal);
 
@@ -679,13 +678,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         );
 
         // 6. Execution & Settlement (with negative equity protection)
-        _settleLiquidation(
-            id,
-            user,
-            ctx,
-            debtToCover,
-            minCollateralOut
-        );
+        _settleLiquidation(id, user, ctx, debtToCover, minCollateralOut);
     }
 
     /* ============================================================================================ */
@@ -900,7 +893,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         MarketId id,
         address user
     ) external view override returns (bool) {
-        MarketConfig memory config = _getEffectiveConfig(id);
+        MarketConfig memory config = _peekEffectiveConfig(id);
         return _isSolvent(id, user, uint256(config.maintenanceMargin));
     }
 
@@ -920,7 +913,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         MarketAddresses storage addresses = marketAddresses[id];
         MarketState memory state = marketStates[id];
-        MarketConfig memory config = _getEffectiveConfig(id);
+        MarketConfig memory config = _peekEffectiveConfig(id);
 
         // Simulate funding: call the funding model (it's a view/pure function)
         (uint256 simNormFactor, ) = IFundingModel(addresses.fundingModel)

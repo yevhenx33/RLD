@@ -124,7 +124,7 @@ Marked for removal in the source code itself.
 
 - [ ] Liquidation close factor safety (50% always safe?)
 - [ ] Token ordering in all V4 interactions
-- [ ] `seize()` completeness (TWAMM + LP + collateral)
+- [ ] `seize()` completeness (JTM + LP + collateral)
 - [ ] Funding rate extremes (1000%, -100%)
 - [ ] Oracle staleness / zero price
 - [ ] Permit2 cross-chain replay

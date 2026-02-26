@@ -40,7 +40,7 @@ graph TD
     end
 
     subgraph Hooks["Hook Layer"]
-        TWAMM["TWAMM Hook"]
+        JTM["JTM Hook"]
     end
 
     subgraph Modules["Singleton Modules"]
@@ -49,7 +49,7 @@ graph TD
         V4ORC["UniswapV4SingletonOracle"]
         AAVEORC["RLDAaveOracle"]
         V4BM["UniswapV4BrokerModule"]
-        TWAMMBM["TwammBrokerModule"]
+        JTMBM["JTMBrokerModule"]
     end
 
     subgraph PerMarket["Per-Market Deployments"]
@@ -64,7 +64,7 @@ graph TD
     end
 
     EOA -->|"owns (onlyOwner)"| FACTORY
-    EOA -->|"owns (onlyOwner)"| TWAMM
+    EOA -->|"owns (onlyOwner)"| JTM
     FACTORY -->|"initializeCore() (one-time)"| CORE
     FACTORY -->|"createMarket() → Core.createMarket()"| CORE
     FACTORY -->|"deploys per market"| PT
@@ -73,18 +73,18 @@ graph TD
     FACTORY -->|"initializes"| V4POOL
 
     CORE -->|"owns (onlyOwner on PT)"| PT
-    CORE -.->|"reads state"| TWAMM
+    CORE -.->|"reads state"| JTM
     CORE -.->|"reads"| AAVEORC
     CORE -.->|"reads"| V4ORC
     CORE -.->|"calls"| FUNDING
     CORE -.->|"calls"| LIQ
 
-    TWAMM -->|"hooks into"| PM
-    TWAMM -.->|"reads via rldCore"| CORE
+    JTM -->|"hooks into"| PM
+    JTM -.->|"reads via rldCore"| CORE
 
     BV -.->|"delegates verify()"| PBF
     V4POOL -->|"registered in"| PM
-    V4ORC -.->|"TWAP from"| TWAMM
+    V4ORC -.->|"TWAP from"| JTM
     AAVEORC -.->|"borrow rate from"| AAVE
 
     PT -.->|"decimals from"| aUSDC
@@ -102,11 +102,11 @@ The execution script (`DeployRLDProtocol.s.sol`) operates in a rigid, phased seq
 The deployer EOA deploys foundational dependencies that do not rely on Core logic:
 
 1. **`MinimalMetadataRenderer`**: Satisfies the Factory's non-zero interface check.
-2. **`UniswapV4BrokerModule`** & **`TwammBrokerModule`**: Stateless modules mapping position valuation configurations.
+2. **`UniswapV4BrokerModule`** & **`JTMBrokerModule`**: Stateless modules mapping position valuation configurations.
 
 ### Phase 0.5: Hook Mining
 
-The Uniswap V4 TWAMM hook requires specific leading bytes in its address (flags).
+The Uniswap V4 JTM hook requires specific leading bytes in its address (flags).
 
 1. The script establishes desired flags: `BEFORE_INITIALIZE`, `BEFORE_ADD_LIQUIDITY`, `BEFORE_REMOVE_LIQUIDITY`, `BEFORE_SWAP`, `AFTER_SWAP`.
 2. It uses `HookMiner.find()` against a deterministic `CREATE2` deployer.
@@ -142,7 +142,7 @@ Template contracts cloned by the Factory:
 Because `Factory` creates markets on `Core`, and `Core` delegates market configuration to `Factory`, they cyclicly depend on each other.
 
 1. Deployer calls `Factory.initializeCore(coreAddress)`.
-2. Deployer calls `TWAMM.setRldCore(coreAddress)`.
+2. Deployer calls `JTM.setRldCore(coreAddress)`.
 
 _(See the "Security & Access Control Audit" section below on how this two-step initialization is cryptographically secured against front-running.)_
 
@@ -173,7 +173,7 @@ At market genesis, the newly allocated V4 Pool must begin tracking prices native
 5. **Inversion**: If the new PositionToken (`wRLP`) represents `token1` in the V4 pair, mathematically invert the price.
 6. **SqrtPrice Extraction**: Execute `sqrt(Price) × 2^96 / 1e9` to arrive at exactly the `sqrtPriceX96` expected by the V4 `PoolManager`.
 7. **Initialization**: Invoke `PM.initialize(key, derivedSqrtPrice)`.
-8. **TWAMM Bootstrapping**: Set the immutable boundary guards on the TWAMM by deriving `minSqrt` and `maxSqrt`. Invoke `increaseCardinality` targeting `type(uint16).max` to completely maximize TWAP capacity immediately from block 0.
+8. **JTM Bootstrapping**: Set the immutable boundary guards on the JTM by deriving `minSqrt` and `maxSqrt`. Invoke `increaseCardinality` targeting `type(uint16).max` to completely maximize TWAP capacity immediately from block 0.
 9. **Singleton Registration**: Attach the new pair configuration to the `UniswapV4SingletonOracle`.
 
 ---
@@ -193,7 +193,7 @@ A line-by-line CTF-style assessment of protocol vulnerabilities proves the robus
 | **RLDCore**            | `createMarket()`    | `onlyFactory`             | Factory only            | ✅ (tested via Factory chain)                      |
 | **PositionToken**      | `mint()` / `burn()` | `onlyOwner`               | RLDCore                 | ✅ `test_positionToken_cannotMintAsNonOwner`       |
 |                        | `setMarketId()`     | `onlyOwner` + one-time    | RLDCore, once           | ✅ `test_positionToken_marketIdCannotBeSetTwice`   |
-| **TWAMM**              | `setRldCore()`      | `onlyOwner` + one-time    | Deployer, once          | ✅ (setUp chain)                                   |
+| **JTM**              | `setRldCore()`      | `onlyOwner` + one-time    | Deployer, once          | ✅ (setUp chain)                                   |
 |                        | `setPriceBounds()`  | `bounds.max == 0`         | One-time per pool       | ✅ `test_v4Pool_twammBoundsCannotBeOverwritten`    |
 | **PrimeBrokerFactory** | `createBroker()`    | **None (permissionless)** | Anyone                  | ⬜ Future: broker tests                            |
 | **BrokerVerifier**     | `verify()`          | Delegates to `FACTORY`    | Immutable reference     | ✅ `test_brokerVerifier_linkedToFactory`           |
@@ -202,14 +202,14 @@ A line-by-line CTF-style assessment of protocol vulnerabilities proves the robus
 
 #### 1. Front-Running the Two-Step Initialization
 
-**Context:** `Factory` and `TWAMM` need linking to `Core` after `Core` is deployed.
+**Context:** `Factory` and `JTM` need linking to `Core` after `Core` is deployed.
 **Security:**
 
 - `RLDMarketFactory.initializeCore(core)` enforces `require(msg.sender == DEPLOYER)`. `DEPLOYER` is saved as the EOA running the script during Phase 3. Even if transactions are orphaned across blocks, no MEV blocker can hijack the `Factory`.
-- `TWAMM.setRldCore(core)` is restricted by `onlyOwner` (the deployer).
+- `JTM.setRldCore(core)` is restricted by `onlyOwner` (the deployer).
 - Both checks include `!= address(0)` and "Already Initialized" boolean flags, effectively making them one-way ratchets.
 
-### 2. TWAMM Hook Address Spoofing
+### 2. JTM Hook Address Spoofing
 
 **Context:** Attackers pre-computing the `HookMiner` salt to steal hook deployment strings.
 **Security:** The constructor arguments encoded in the CREATE2 footprint include the `deployer` EOA address as the `initialOwner`. The deterministic hash relies on this exact address string, guaranteeing uniqueness to the real deployer and breaking the address spoofing attack completely.

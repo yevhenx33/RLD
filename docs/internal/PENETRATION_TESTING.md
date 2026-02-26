@@ -10,9 +10,9 @@ Step-by-step attack surface analysis for untested contracts. Liquidation/seize p
 | [`BrokerRouter.sol`](file:///home/ubuntu/RLD/contracts/src/periphery/BrokerRouter.sol)                            | 551   | 🟠 High             |
 | [`BrokerExecutor.sol`](file:///home/ubuntu/RLD/contracts/src/periphery/BrokerExecutor.sol)                        | 114   | 🟡 Medium           |
 | [`LeverageShortExecutor.sol`](file:///home/ubuntu/RLD/contracts/src/periphery/LeverageShortExecutor.sol)          | 162   | 🟡 Medium           |
-| [`JitTwammBrokerModule.sol`](file:///home/ubuntu/RLD/contracts/src/rld/modules/broker/JitTwammBrokerModule.sol)   | 372   | 🟡 Medium           |
+| [`JTMBrokerModule.sol`](file:///home/ubuntu/RLD/contracts/src/rld/modules/broker/JTMBrokerModule.sol)   | 372   | 🟡 Medium           |
 | [`UniswapV4BrokerModule.sol`](file:///home/ubuntu/RLD/contracts/src/rld/modules/broker/UniswapV4BrokerModule.sol) | 131   | 🟢 Low              |
-| [`TwammBrokerModule.sol`](file:///home/ubuntu/RLD/contracts/src/rld/modules/broker/TwammBrokerModule.sol)         | 165   | 🟢 Low (deprecated) |
+| [`JTMBrokerModule.sol (archived)`](file:///home/ubuntu/RLD/archive/JTMBrokerModule.sol)         | 165   | 🟢 Low (deprecated) |
 
 ---
 
@@ -96,7 +96,7 @@ Step-by-step attack surface analysis for untested contracts. Liquidation/seize p
 
 | #   | Test                                                  | Attack Vector                                                           | Severity    |
 | --- | ----------------------------------------------------- | ----------------------------------------------------------------------- | ----------- |
-| 35  | Cannot track a TWAMM order owned by someone else      | Attacker sets `activeTwammOrder` to another user's order to inflate NAV | 🔴 Critical |
+| 35  | Cannot track a JTM order owned by someone else      | Attacker sets `activeJtmOrder` to another user's order to inflate NAV | 🔴 Critical |
 | 36  | Ownership check: `orderKey.owner == address(this)`    | Verify broker is actual order owner                                     | 🔴 Critical |
 | 37  | Post-update solvency check                            | Switching orders triggers solvency verification                         | 🟠 High     |
 | 38  | `clearActiveV4Position()` + `clearActiveTwammOrder()` | Clearing tracked positions + solvency check                             | 🟡 Medium   |
@@ -105,22 +105,22 @@ Step-by-step attack surface analysis for untested contracts. Liquidation/seize p
 
 | #   | Test                                                       | Attack Vector                                                      | Severity    |
 | --- | ---------------------------------------------------------- | ------------------------------------------------------------------ | ----------- |
-| 39  | `submitTwammOrder()` — happy path with auto-tracking       | Order submitted, `activeTwammOrder` set, solvency checked          | 🟠 High     |
+| 39  | `submitTwammOrder()` — happy path with auto-tracking       | Order submitted, `activeJtmOrder` set, solvency checked          | 🟠 High     |
 | 40  | `submitTwammOrder()` — JIT approval and revoke             | Sell token approval granted to hook, then revoked after submission | 🟠 High     |
 | 41  | `submitTwammOrder()` — no lingering allowances             | After submission, hook should have zero allowance                  | 🔴 Critical |
 | 42  | `cancelTwammOrder()` — returns proceeds + refund to broker | Both buy and sell tokens returned                                  | 🟠 High     |
-| 43  | `cancelTwammOrder()` — clears `activeTwammOrder`           | Tracking state reset after cancel                                  | 🟡 Medium   |
+| 43  | `cancelTwammOrder()` — clears `activeJtmOrder`           | Tracking state reset after cancel                                  | 🟡 Medium   |
 | 44  | `cancelTwammOrder()` — reverts with "No active order"      | Cancel with no tracked order                                       | 🟡 Medium   |
 
 ### 3.4 `getNetAccountValue()` correctness
 
 | #   | Test                                                | Attack Vector                                 | Severity    |
 | --- | --------------------------------------------------- | --------------------------------------------- | ----------- |
-| 45  | NAV = cash + wRLP value + V4 LP value + TWAMM value | All four components sum correctly             | 🔴 Critical |
+| 45  | NAV = cash + wRLP value + V4 LP value + JTM value | All four components sum correctly             | 🔴 Critical |
 | 46  | NAV with zero debt, zero assets = 0                 | Empty broker returns 0                        | 🟢 Low      |
 | 47  | NAV counts wRLP at index price (not 1:1)            | wRLP balance × Aave index price               | 🟠 High     |
 | 48  | NAV ignores V4 LP if ownership check fails          | LP NFT transferred away → value drops to 0    | 🔴 Critical |
-| 49  | NAV ignores TWAMM if ownership check fails          | Order cancelled externally → value drops to 0 | 🔴 Critical |
+| 49  | NAV ignores JTM if ownership check fails          | Order cancelled externally → value drops to 0 | 🔴 Critical |
 
 ---
 
@@ -196,7 +196,7 @@ Step-by-step attack surface analysis for untested contracts. Liquidation/seize p
 
 ## Phase 7: Valuation Modules — NAV Manipulation
 
-### 7.1 JitTwammBrokerModule (ghost-aware)
+### 7.1 JTMBrokerModule (ghost-aware)
 
 | #   | Test                                                                      | Attack Vector                                                | Severity  |
 | --- | ------------------------------------------------------------------------- | ------------------------------------------------------------ | --------- |
@@ -257,6 +257,6 @@ Phase 8                         (Cross-contract: integration attacks)
 
 ### Already Covered (Not Re-Tested)
 
-- `seize()` cascade: cash → TWAMM cancel → V4 LP unwind → transfer to liquidator
+- `seize()` cascade: cash → JTM cancel → V4 LP unwind → transfer to liquidator
 - `forceSettle()` integration
 - All liquidation permutations (11 test files in `test/integration/liquidation/`)

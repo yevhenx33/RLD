@@ -1,9 +1,9 @@
-# JITTWAMM Hook: Implementation Reference
+# JTM Hook: Implementation Reference
 
-This document provides an exhaustive reference for the JITTWAMM (JIT Time-Weighted Average Market Maker) hook implementation — the core execution engine for streaming TWAP orders in the RLD Protocol. It covers architecture, the 3-layer matching engine, state management, order lifecycle, dust donation, access control, test coverage, and known limitations.
+This document provides an exhaustive reference for the JTM (JIT Time-Weighted Average Market Maker) hook implementation — the core execution engine for streaming TWAP orders in the RLD Protocol. It covers architecture, the 3-layer matching engine, state management, order lifecycle, dust donation, access control, test coverage, and known limitations.
 
 > [!NOTE]
-> For deployment procedures and price pipeline initialization, see [DEPLOYMENT.md](./DEPLOYMENT.md) and [TWAMM_INITIALIZATION.md](./TWAMM_INITIALIZATION.md).
+> For deployment procedures and price pipeline initialization, see [DEPLOYMENT.md](./DEPLOYMENT.md) and [JTM_INITIALIZATION.md](./JTM_INITIALIZATION.md).
 
 ## Table of Contents
 
@@ -27,18 +27,18 @@ This document provides an exhaustive reference for the JITTWAMM (JIT Time-Weight
 
 ## Architecture Overview
 
-JITTWAMM is a **complete redesign** of the Paradigm TWAMM model. Instead of simulating a virtual AMM curve and executing via `PoolManager.swap()`, this hook operates as a **JIT Limit Order Maker** with a 3-layer matching engine that eliminates swap costs entirely for streamed orders.
+JTM is a **complete redesign** of the Paradigm JTM model. Instead of simulating a virtual AMM curve and executing via `PoolManager.swap()`, this hook operates as a **JIT Limit Order Maker** with a 3-layer matching engine that eliminates swap costs entirely for streamed orders.
 
 ```mermaid
 graph TD
     subgraph Users["Users"]
-        TRADER["TWAMM Trader<br>(submitOrder / cancelOrder)"]
+        TRADER["JTM Trader<br>(submitOrder / cancelOrder)"]
         ARB["Arbitrageur<br>(clear)"]
         LP["Liquidity Provider<br>(addLiquidity / removeLiquidity)"]
         TAKER["External Swapper<br>(swap via V4)"]
     end
 
-    subgraph Hook["JITTWAMM Hook Contract"]
+    subgraph Hook["JTM Hook Contract"]
         L1["Layer 1: Internal Netting<br>Opposing streams matched at TWAP"]
         L2["Layer 2: JIT Fill<br>Ghost balances fill swaps at TWAP"]
         L3["Layer 3: Dutch Auction<br>Time-decaying discount for arbs"]
@@ -75,19 +75,19 @@ graph TD
 ### Inheritance Chain
 
 ```
-JITTWAMM
+JTM
 ├── BaseHook (v4-periphery)     — V4 hook callback routing
 ├── Owned (solmate)              — Single-owner access control
 ├── ReentrancyGuard (OpenZeppelin) — Reentrancy protection
-└── IJITTWAMM                    — Public interface
+└── IJTM                    — Public interface
 ```
 
 ### Contract Files
 
 | File                                                                                             | Lines | Purpose                                               |
 | ------------------------------------------------------------------------------------------------ | ----- | ----------------------------------------------------- |
-| [`JITTWAMM.sol`](file:///home/ubuntu/RLD/contracts/src/twamm/JITTWAMM.sol)                       | 1,205 | Core implementation                                   |
-| [`IJITTWAMM.sol`](file:///home/ubuntu/RLD/contracts/src/twamm/IJITTWAMM.sol)                     | 221   | Public interface (errors, structs, events, functions) |
+| [`JTM.sol`](file:///home/ubuntu/RLD/contracts/src/twamm/JTM.sol)                       | 1,205 | Core implementation                                   |
+| [`IJTM.sol`](file:///home/ubuntu/RLD/contracts/src/twamm/IJTM.sol)                     | 221   | Public interface (errors, structs, events, functions) |
 | [`TransferHelper.sol`](file:///home/ubuntu/RLD/contracts/src/twamm/libraries/TransferHelper.sol) | —     | Safe ERC20 transfer wrappers                          |
 | [`TwapOracle.sol`](file:///home/ubuntu/RLD/contracts/src/twamm/libraries/TwapOracle.sol)         | —     | TWAP observation ring buffer                          |
 
@@ -111,7 +111,7 @@ The core innovation: three independent layers that execute sequentially on every
 // → Remaining: accrued0 = 2,000, accrued1 = 0
 ```
 
-**Cost to TWAMM traders**: Zero. No swap fees, no price impact.
+**Cost to JTM traders**: Zero. No swap fees, no price impact.
 
 ### Layer 2: JIT Fill (Free, earns spread)
 
@@ -120,9 +120,9 @@ The core innovation: three independent layers that execute sequentially on every
 **What**: If a taker wants to buy token X and the hook has accrued token X (ghost balance), the hook fills the swap directly at TWAP price. The hook:
 
 1. Gives accrued tokens to the PoolManager (output for the taker)
-2. Takes input tokens from the PoolManager (earnings for TWAMM streamers)
+2. Takes input tokens from the PoolManager (earnings for JTM streamers)
 
-**Cost to TWAMM traders**: Zero. Effectively a free limit order fill at TWAP.
+**Cost to JTM traders**: Zero. Effectively a free limit order fill at TWAP.
 
 **Cost to takers**: Same as a regular swap — they pay the pool's fee tier. The difference is execution happens at TWAP rather than the AMM curve.
 
@@ -139,7 +139,7 @@ discountBps = min(
 )
 ```
 
-**Cost to TWAMM traders**: The discount amount. On mainnet with 12s blocks and typical settings, this is ~5 bps per second × 12s = ~60 bps (0.6%) per block gap.
+**Cost to JTM traders**: The discount amount. On mainnet with 12s blocks and typical settings, this is ~5 bps per second × 12s = ~60 bps (0.6%) per block gap.
 
 ---
 
@@ -225,7 +225,7 @@ graph TD
 ```mermaid
 sequenceDiagram
     participant User
-    participant Hook as JITTWAMM
+    participant Hook as JTM
     participant V4 as PoolManager
 
     Note over User,V4: === SUBMIT ===
@@ -333,7 +333,7 @@ These tokens cannot be claimed by any trader (the stream has no active orders), 
 
 ### The Problem: Stranded Dust
 
-When a TWAMM stream expires, `_accrueAndNet()` crosses the epoch boundary and sets `sellRateCurrent = 0`. If there are still accrued tokens (from the final block of accrual), `clear()` reverts with `NoActiveStream` because `_recordEarnings` would divide by zero. These tokens would be permanently stranded.
+When a JTM stream expires, `_accrueAndNet()` crosses the epoch boundary and sets `sellRateCurrent = 0`. If there are still accrued tokens (from the final block of accrual), `clear()` reverts with `NoActiveStream` because `_recordEarnings` would divide by zero. These tokens would be permanently stranded.
 
 ### The Solution
 
@@ -362,7 +362,7 @@ Flushed on every `_beforeSwap`, `_beforeAddLiquidity`, and `_beforeRemoveLiquidi
 
 ## TWAP Oracle Integration
 
-JITTWAMM maintains its own TWAP oracle (independent of V4's built-in oracle) using the `TwapOracle` library:
+JTM maintains its own TWAP oracle (independent of V4's built-in oracle) using the `TwapOracle` library:
 
 - **Observation ring buffer**: Written on every `_updateOracle(key)` call
 - **Cardinality**: Grows dynamically via `increaseCardinality()`, initialized to 10 at pool creation, expanded to `type(uint16).max` at market genesis
@@ -425,7 +425,7 @@ afterDonate:          false
 
 | Contract     | Function                  | Guard                                  | Who Can Call                    | Notes                                               |
 | ------------ | ------------------------- | -------------------------------------- | ------------------------------- | --------------------------------------------------- |
-| **JITTWAMM** | `setRldCore()`            | `onlyOwner` + one-time                 | Deployer EOA                    | `rldCore` must be `address(0)`                      |
+| **JTM** | `setRldCore()`            | `onlyOwner` + one-time                 | Deployer EOA                    | `rldCore` must be `address(0)`                      |
 |              | `setAuthorizedFactory()`  | `onlyOwner` + one-time                 | Deployer EOA                    | `authorizedFactory` must be `address(0)`            |
 |              | `setDiscountRate()`       | `onlyOwner`                            | Deployer EOA                    | Governance tunable                                  |
 |              | `setMaxDiscount()`        | `onlyOwner`                            | Deployer EOA                    | Governance tunable                                  |
@@ -439,7 +439,7 @@ afterDonate:          false
 |              | `sync()`                  | None                                   | Anyone                          | Permissionless (updates earnings)                   |
 |              | `claimTokens()`           | `msg.sender` scoped                    | Token owner                     | Only claims own `tokensOwed`                        |
 |              | `clear()`                 | `nonReentrant`                         | Anyone                          | Permissionless (MEV-protected via `minDiscountBps`) |
-|              | `executeJITTWAMMOrders()` | None                                   | Anyone                          | Permissionless accrual trigger                      |
+|              | `executeJTMOrders()` | None                                   | Anyone                          | Permissionless accrual trigger                      |
 |              | `syncAndClaimTokens()`    | None                                   | Anyone                          | Convenience function                                |
 
 ### Security Mitigations
@@ -495,7 +495,7 @@ afterDonate:          false
 
 ## Test Coverage
 
-The JITTWAMM test suite contains **116 tests across 16 groups** in [`JitTwammParanoid.t.sol`](file:///home/ubuntu/RLD/contracts/test/integration/JitTwammParanoid.t.sol), running against a full V4 integration environment.
+The JTM test suite contains **116 tests across 16 groups** in [`JTMParanoid.t.sol`](file:///home/ubuntu/RLD/contracts/test/integration/JTMParanoid.t.sol), running against a full V4 integration environment.
 
 ### Test Group Summary
 
@@ -524,7 +524,7 @@ The JITTWAMM test suite contains **116 tests across 16 groups** in [`JitTwammPar
 | ------------------- | ----- | ---------------------------------------------------------------------- |
 | **Admin**           | 8     | All setter functions, owner checks, revert conditions                  |
 | **Adversarial**     | 5     | Cancel+resubmit, empty execution, late joiner, very large/small orders |
-| **Ported**          | 5     | Regression tests from the original Paradigm TWAMM                      |
+| **Ported**          | 5     | Regression tests from the original Paradigm JTM                      |
 | **Gap Convergence** | 1     | Imbalanced flow clearance via auction                                  |
 | **SyncAndClaim**    | 2     | Combined sync+claim, double-subtract regression                        |
 
@@ -534,7 +534,7 @@ The `test_FullCycle_NoFundsLost_AllParticipantsWhole` test enforces these invari
 
 | ID        | Invariant                                        | Assertion                                    |
 | --------- | ------------------------------------------------ | -------------------------------------------- |
-| **INV-1** | Both TWAMM traders earn their expected buy token | `earnings > 0` for each                      |
+| **INV-1** | Both JTM traders earn their expected buy token | `earnings > 0` for each                      |
 | **INV-2** | Both traders sold their full order amount        | `loss == orderAmount`                        |
 | **INV-3** | LP recovers ≥ 99.5% of deposit                   | `lpRecovery >= deposit × 99.5%`              |
 | **INV-4** | Hook residual fully accounted by `collectedDust` | `unaccounted < 10 wei`                       |
@@ -564,7 +564,7 @@ All assertion tolerances have been hardened from the initial implementation:
 
 **Severity**: Low (measurable, bounded)
 
-When two opposing TWAMM streams have different sizes (e.g., 10:1 ratio), L1 netting credits earnings at TWAP price, but L3 clearing provides backing at a discounted price. The result: the hook holds slightly fewer tokens than the total recorded earnings.
+When two opposing JTM streams have different sizes (e.g., 10:1 ratio), L1 netting credits earnings at TWAP price, but L3 clearing provides backing at a discounted price. The result: the hook holds slightly fewer tokens than the total recorded earnings.
 
 **Measured gap**: ~999,999 tokens on a 36,000e6 order (0.003%).
 
@@ -584,7 +584,7 @@ Each expired order orphans at most `sellRate × blockTime` tokens (one block of 
 
 **Severity**: Architectural
 
-JITTWAMM cannot call V4's `donate()` because `BEFORE_DONATE_FLAG` is not set in the hook address. Changing this would require re-mining the hook address via CREATE2.
+JTM cannot call V4's `donate()` because `BEFORE_DONATE_FLAG` is not set in the hook address. Changing this would require re-mining the hook address via CREATE2.
 
 **Mitigation**: `collectedDust` accumulates dust; owner redistributes manually via `claimDust()`.
 
@@ -621,7 +621,7 @@ Test environment uses high seed liquidity (100e12) which minimizes price impact.
 | `discountRateBpsPerSecond` | 5 bps/s  | 0–∞            | Speed of L3 discount growth          |
 | `maxDiscountBps`           | 500 (5%) | 0–10000        | Cap on L3 discount                   |
 | `twapWindow`               | 30s      | 1–3600         | TWAP observation lookback            |
-| `tradingFee`               | 0 bps    | 0–10000        | Fee applied to TWAMM earnings        |
+| `tradingFee`               | 0 bps    | 0–10000        | Fee applied to JTM earnings        |
 | `protocolFee`              | 0 bps    | 0–tradingFee/2 | Protocol fee (subset of trading fee) |
 
 ### One-Time Initialization

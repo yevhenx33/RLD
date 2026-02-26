@@ -278,7 +278,7 @@ Every constructor parameter validated against zero-address / invalid value:
 | ------------------------------------------- | -------------------------------------------------- |
 | `test_constructor_revertsOnZeroFactory`     | `"Invalid factory"`                                |
 | `test_constructor_revertsOnZeroPoolManager` | `"Invalid poolManager"`                            |
-| `test_constructor_allowsZeroTwamm`          | Zero TWAMM allowed (testing flexibility)           |
+| `test_constructor_allowsZeroJtm`          | Zero JTM allowed (testing flexibility)           |
 | `test_constructor_storesImmutables`         | `factory`, `poolManager`, `twamm` stored correctly |
 
 #### Group 2: `createMarket` Access Control (4 tests)

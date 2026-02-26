@@ -1,10 +1,10 @@
-# TWAMM Hook: Initialization & Price Pipeline
+# JTM Hook: Initialization & Price Pipeline
 
-This document covers the full lifecycle of the TWAMM hook from deployment through V4 pool initialization, explaining how the oracle index price is converted to a valid sqrtPriceX96 and how the mark oracle reads it back, with references to the integration test suite.
+This document covers the full lifecycle of the JTM hook from deployment through V4 pool initialization, explaining how the oracle index price is converted to a valid sqrtPriceX96 and how the mark oracle reads it back, with references to the integration test suite.
 
 ## Table of Contents
 
-1. [TWAMM Hook Architecture](#twamm-hook-architecture)
+1. [JTM Hook Architecture](#twamm-hook-architecture)
 2. [Deployment: HookMiner & CREATE2](#deployment-hookminer--create2)
 3. [Cross-Linking: setRldCore](#cross-linking-setrldcore)
 4. [V4 Pool Initialization Pipeline](#v4-pool-initialization-pipeline)
@@ -15,9 +15,9 @@ This document covers the full lifecycle of the TWAMM hook from deployment throug
 
 ---
 
-## TWAMM Hook Architecture
+## JTM Hook Architecture
 
-The TWAMM hook is a Uniswap V4 hook contract that:
+The JTM hook is a Uniswap V4 hook contract that:
 
 - Intercepts every swap and liquidity operation on the RLD pool
 - Executes outstanding long-term swap orders (TWAP orders) as part of each interaction
@@ -31,7 +31,7 @@ graph TD
         PM_INIT["PoolManager.initialize()"]
     end
 
-    subgraph RLDHook["TWAMM Hook (bit-flagged address)"]
+    subgraph RLDHook["JTM Hook (bit-flagged address)"]
         BEF_INIT["beforeInitialize()"]
         BEF_SWAP["beforeSwap()"]
         AFT_SWAP["afterSwap()"]
@@ -66,15 +66,15 @@ graph TD
 
 ## Deployment: HookMiner & CREATE2
 
-V4 hooks must reside at addresses whose leading bytes encode the set of callbacks they implement. The required flags for the RLD TWAMM hook are:
+V4 hooks must reside at addresses whose leading bytes encode the set of callbacks they implement. The required flags for the RLD JTM hook are:
 
 | Flag                           | Bit    | Purpose                                        |
 | ------------------------------ | ------ | ---------------------------------------------- |
 | `BEFORE_INITIALIZE_FLAG`       | 0x2000 | Set price bounds on pool creation              |
-| `BEFORE_ADD_LIQUIDITY_FLAG`    | 0x0800 | Execute pending TWAMM orders before LP change  |
-| `BEFORE_REMOVE_LIQUIDITY_FLAG` | 0x0400 | Execute pending TWAMM orders before LP removal |
-| `BEFORE_SWAP_FLAG`             | 0x0200 | Execute pending TWAMM orders before each swap  |
-| `AFTER_SWAP_FLAG`              | 0x0100 | Record swap for TWAMM accounting               |
+| `BEFORE_ADD_LIQUIDITY_FLAG`    | 0x0800 | Execute pending JTM orders before LP change  |
+| `BEFORE_REMOVE_LIQUIDITY_FLAG` | 0x0400 | Execute pending JTM orders before LP removal |
+| `BEFORE_SWAP_FLAG`             | 0x0200 | Execute pending JTM orders before each swap  |
+| `AFTER_SWAP_FLAG`              | 0x0100 | Record swap for JTM accounting               |
 
 **`HookMiner.find()`** iterates salts until `CREATE2(salt, creationCode, constructorArgs)` produces the flagged address. The `deployer` EOA address is baked into `constructorArgs` as `initialOwner`, guaranteeing uniqueness per deployer and preventing address-spoofing attacks.
 
@@ -83,27 +83,27 @@ V4 hooks must reside at addresses whose leading bytes encode the set of callback
 (address hookAddress, bytes32 salt) = HookMiner.find(
     address(this),  // deployer — breaks CREATE2 determinism for attackers
     flags,
-    type(TWAMM).creationCode,
-    abi.encode(poolManager, TWAMM_EXPIRATION_INTERVAL, deployer, address(0))
+    type(JTM).creationCode,
+    abi.encode(poolManager, JTM_EXPIRATION_INTERVAL, deployer, address(0))
 );
-twammHook = new TWAMM{salt: salt}(poolManager, TWAMM_EXPIRATION_INTERVAL, deployer, address(0));
-require(address(twammHook) == hookAddress, "Hook address mismatch");
+jtmHook = new JTM{salt: salt}(poolManager, JTM_EXPIRATION_INTERVAL, deployer, address(0));
+require(address(jtmHook) == hookAddress, "Hook address mismatch");
 ```
 
 > [!IMPORTANT]
-> The TWAMM hook is deployed with `rldCore = address(0)`. The core address is wired in a separate step (Phase 5 of the deploy script) via `twammHook.setRldCore(address(core))`. The hook must not attempt to call core before this step.
+> The JTM hook is deployed with `rldCore = address(0)`. The core address is wired in a separate step (Phase 5 of the deploy script) via `jtmHook.setRldCore(address(core))`. The hook must not attempt to call core before this step.
 
 ---
 
 ## Cross-Linking: setRldCore
 
-Because `RLDCore` depends on `RLDMarketFactory` (which wraps the TWAMM hook address) and the TWAMM hook needs to call back into `RLDCore`, there is a deliberate two-step initialization:
+Because `RLDCore` depends on `RLDMarketFactory` (which wraps the JTM hook address) and the JTM hook needs to call back into `RLDCore`, there is a deliberate two-step initialization:
 
 ```
-Phase 3: factory = new RLDMarketFactory(..., address(twammHook), ...)
-Phase 4: core   = new RLDCore(address(factory), poolManager, address(twammHook))
+Phase 3: factory = new RLDMarketFactory(..., address(jtmHook), ...)
+Phase 4: core   = new RLDCore(address(factory), poolManager, address(jtmHook))
 Phase 5: factory.initializeCore(address(core))   ← one-time, deployer-only
-          twammHook.setRldCore(address(core))     ← one-time, owner-only
+          jtmHook.setRldCore(address(core))     ← one-time, owner-only
 ```
 
 Both calls include guard conditions: `onlyOwner` / `msg.sender == DEPLOYER`, `!= address(0)`, and "already initialized" boolean flags, making them one-time ratchets that cannot be re-executed or front-run.
@@ -124,7 +124,7 @@ At market genesis, the factory initializes the V4 pool at a price derived from t
    - If CT (6-dec) is token0, PT (18-dec) is token1: `rawPrice = indexPrice / 10^12`
 5. **sqrtPriceX96**: `sqrtPriceX96 = √(rawPrice × 2^192 / 1e18)` — computed via Babylonian sqrt
 6. **Pool initialization**: `poolManager.initialize(poolKey, sqrtPriceX96)`
-7. **TWAMM bootstrapping**: Set `minSqrtPrice` / `maxSqrtPrice` bounds; call `increaseCardinality(type(uint16).max)` to maximize TWAP observation capacity immediately
+7. **JTM bootstrapping**: Set `minSqrtPrice` / `maxSqrtPrice` bounds; call `increaseCardinality(type(uint16).max)` to maximize TWAP observation capacity immediately
 8. **Oracle registration**: `v4Oracle.registerPool(positionToken, poolKey, twammAddr, oraclePeriod)`
 
 ---
@@ -214,7 +214,7 @@ The oracle correctly handles both token orderings by checking `baseToken == toke
 
 The integration tests use a production-like base (`RLDIntegrationBase.t.sol`) that deploys the full real protocol stack with:
 
-- Real `TWAMM` hook (HookMiner + CREATE2)
+- Real `JTM` hook (HookMiner + CREATE2)
 - Real `UniswapV4SingletonOracle`
 - `ConfigurableOracle` for settable index prices
 - Mock PT/CT tokens (PT = 18-dec, CT = 6-dec)
@@ -225,7 +225,7 @@ The integration tests use a production-like base (`RLDIntegrationBase.t.sol`) th
 | --------------------------------------------------------- | -------------------------------------------------------------------------- |
 | `test_Phase0a_PoolInitialized_AtSqrtPrice_1_1`            | Pool starts at `SQRT_PRICE_1_1`; tick = 0                                  |
 | `test_Phase0a_TokenOrdering_Currency0_LessThan_Currency1` | V4 invariant: `currency0.address < currency1.address`                      |
-| `test_Phase0a_PoolKey_HasTwammHook`                       | Pool key references the bit-flagged TWAMM hook; correct fee/tickSpacing    |
+| `test_Phase0a_PoolKey_HasJTMHook`                       | Pool key references the bit-flagged JTM hook; correct fee/tickSpacing    |
 | `test_Phase0a_UnInitializedPool_HasZeroSqrtPrice`         | Fresh pool with same tokens but different fee has `sqrtPrice = 0`          |
 | `test_Phase0a_RLDMarket_Created_WithCorrectPool`          | `MarketId` is non-zero; `positionToken` and `collateralToken` are deployed |
 

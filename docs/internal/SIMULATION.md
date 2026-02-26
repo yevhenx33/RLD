@@ -48,7 +48,7 @@ The simulation uses environment variables stored in `/home/ubuntu/RLD/.env`. Key
 | `MARKET_ID`  | Active market identifier                           |
 | `USER_A_KEY` | LP Provider private key                            |
 | `USER_B_KEY` | Long trader private key                            |
-| `USER_C_KEY` | TWAMM user private key                             |
+| `USER_C_KEY` | JTM user private key                             |
 | `MM_KEY`     | Market maker bot private key                       |
 | `CHAOS_KEY`  | Chaos trader private key                           |
 
@@ -146,7 +146,7 @@ scripts/infra/start_anvil.sh   # Start Anvil fork at block 21698573
 ### Phase 2: Deploy Protocol & Market
 
 ```bash
-scripts/infra/deploy_protocol.sh   # Deploy RLDCore, Factory, TWAMM Hook
+scripts/infra/deploy_protocol.sh   # Deploy RLDCore, Factory, JTM Hook
 scripts/infra/deploy_market.sh     # Deploy waUSDC, wRLP, Broker Factory
 ```
 
@@ -155,7 +155,7 @@ scripts/infra/deploy_market.sh     # Deploy waUSDC, wRLP, Broker Factory
 |----------|-------------|
 | `RLDCore` | Core lending/borrowing engine |
 | `RLDMarketFactory` | Factory for creating markets |
-| `TWAMMHook` | Time-weighted AMM hook for V4 |
+| `JTMHook` | Time-weighted AMM hook for V4 |
 | `waUSDC` | Wrapped Aave USDC |
 | `wRLP` | Wrapped RLD Position token |
 | `BrokerFactory` | Factory for user brokers |
@@ -186,7 +186,7 @@ Five user types are initialized:
 | ------------------------ | ----------------- | ---------- | -------------------------- |
 | **LP Provider** (User A) | `lp_provider.sh`  | $100M      | Provides V4 liquidity      |
 | **Long Trader** (User B) | `long_user.sh`    | $100K      | Opens long position        |
-| **TWAMM User** (User C)  | `twamm_user.sh`   | $100K      | Creates 1-hour TWAMM order |
+| **JTM User** (User C)  | `twamm_user.sh`   | $100K      | Creates 1-hour JTM order |
 | **MM Bot**               | `mm_bot.sh`       | $10M       | Market making bot          |
 | **Chaos Trader**         | `chaos_trader.sh` | $10M       | Random trading bot         |
 

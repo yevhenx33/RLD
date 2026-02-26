@@ -47,7 +47,7 @@ graph TD
     end
 
     subgraph Valuation["Valuation Modules"]
-        TWAMM_MOD["JitTwammBrokerModule"]
+        JTM_MOD["JTMBrokerModule"]
         V4_MOD["UniswapV4BrokerModule"]
     end
 
@@ -55,7 +55,7 @@ graph TD
         PM["V4 PoolManager"]
         POSM["V4 PositionManager"]
         ORACLE["RLDAaveOracle"]
-        TWAMM_HOOK["JITTWAMM Hook"]
+        JTM_HOOK["JTM Hook"]
     end
 
     EOA -->|"owns (NFT)"| FACTORY
@@ -76,9 +76,9 @@ graph TD
     CORE -->|"solvency check"| PB
     CORE -->|"liquidation"| PB_SEIZE
 
-    CORE -.->|"getValue()"| TWAMM_MOD
+    CORE -.->|"getValue()"| JTM_MOD
     CORE -.->|"getValue()"| V4_MOD
-    TWAMM_MOD -.->|"read state"| TWAMM_HOOK
+    JTM_MOD -.->|"read state"| JTM_HOOK
     V4_MOD -.->|"read positions"| POSM
     V4_MOD -.->|"getIndexPrice()"| ORACLE
 ```
@@ -96,7 +96,7 @@ The central account contract for each user. Deployed as an EIP-1167 minimal prox
 | **Deployment** | Factory clone via `CREATE2`                                           |
 | **Ownership**  | NFT-based (`ownerOf(tokenId)`)                                        |
 | **Operators**  | Up to `MAX_OPERATORS` addresses with delegated access                 |
-| **State**      | Collateral balance, debt principal, active TWAMM order, LP positions  |
+| **State**      | Collateral balance, debt principal, active JTM order, LP positions  |
 | **Solvency**   | Checked by `RLDCore.lockAndCallback()` on every position modification |
 | **Reentrancy** | All mutating functions are `nonReentrant` (shared lock)               |
 
@@ -134,9 +134,9 @@ Purpose-built atomic leveraged short: deposit → mint → swap → re-deposit �
 | **V4 Integration** | Direct `poolManager.unlock()` for wRLP → waUSDC swap                            |
 | **Math**           | `calculateOptimalDebt(collateral, LTV%, wRLPPrice)`                             |
 
-### JitTwammBrokerModule (`src/rld/modules/broker/JitTwammBrokerModule.sol`)
+### JTMBrokerModule (`src/rld/modules/broker/JTMBrokerModule.sol`)
 
-Stateless valuation module for JITTWAMM orders.
+Stateless valuation module for JTM orders.
 
 | Aspect                | Detail                                                                           |
 | --------------------- | -------------------------------------------------------------------------------- |
@@ -152,7 +152,7 @@ Stateless valuation module for Uniswap V4 LP positions.
 | Aspect            | Detail                                                               |
 | ----------------- | -------------------------------------------------------------------- |
 | **Decomposition** | `getAmountsForLiquidity(sqrtPrice, tickLower, tickUpper, liquidity)` |
-| **Pricing**       | Same as TWAMM module: collateral 1:1, position at index price        |
+| **Pricing**       | Same as JTM module: collateral 1:1, position at index price        |
 | **Edge Cases**    | Zero liquidity → 0, out-of-range → single-token value                |
 
 ---
@@ -179,7 +179,7 @@ Stateless valuation module for Uniswap V4 LP positions.
 | **BrokerExecutor**        | `execute()`                  | `nonReentrant + sig`            | Anyone (with sig)    | ✅ Phase 5 |
 | **LeverageShortExecutor** | `executeLeverageShort()`     | `nonReentrant + sig`            | Anyone (with sig)    | ✅ Phase 6 |
 |                           | `unlockCallback()`           | `msg.sender == PM`              | PoolManager          | ✅ Phase 6 |
-| **JitTwammBrokerModule**  | `getValue()`                 | `view` (stateless)              | Anyone               | ✅ Phase 7 |
+| **JTMBrokerModule**  | `getValue()`                 | `view` (stateless)              | Anyone               | ✅ Phase 7 |
 | **UniswapV4BrokerModule** | `getValue()`                 | `view` (stateless)              | Anyone               | ✅ Phase 7 |
 
 ### Red-Team Security Properties
@@ -189,7 +189,7 @@ Stateless valuation module for Uniswap V4 LP positions.
 3. **TWAP Resistance** — Solvency uses oracle TWAP, not spot price. Single-block flash loan manipulation has no effect on solvency checks. Verified Phase 8.
 4. **Re-initialization Protection** — `PrimeBroker.initialize()` uses a `!initialized` flag. No actor (including the factory) can re-initialize an existing broker. Verified Phase 8.
 5. **Multi-Broker Isolation** — Two brokers in the same market have completely independent state. Broker A's operations never affect Broker B's debt, collateral, or solvency. Verified Phase 8.
-6. **Ghost Never Inflates NAV** — The TWAMM module's discount formula ensures ghost is always valued at or below face value. Verified Phase 7.
+6. **Ghost Never Inflates NAV** — The JTM module's discount formula ensures ghost is always valued at or below face value. Verified Phase 7.
 
 ---
 
@@ -275,9 +275,9 @@ End-to-end leveraged short with V4 swaps:
 
 ### Phase 7 — Valuation Modules (10 tests)
 
-JitTwammBrokerModule and UniswapV4BrokerModule:
+JTMBrokerModule and UniswapV4BrokerModule:
 
-- **TWAMM three-term valuation**: sellRefund + buyOwed + ghost tracked through order lifecycle
+- **JTM three-term valuation**: sellRefund + buyOwed + ghost tracked through order lifecycle
 - **Ghost pro-rata**: 3× sell rate produces ~3× attributed ghost value
 - **Ghost discount**: time since clear grows discount; NAV never exceeds face value
 - **Expired order**: returns 0
@@ -324,9 +324,9 @@ Integration attack vectors:
 
 2. **NFT Ownership Model**: Each PrimeBroker is an EIP-1167 clone identified by an NFT. The factory contract IS the ERC-721 token — `ownerOf(uint256(uint160(brokerAddress)))` resolves the owner. This allows seamless transfer of broker ownership.
 
-3. **Stateless Valuation Modules**: Both `JitTwammBrokerModule` and `UniswapV4BrokerModule` are pure read-only contracts with zero storage. They cannot modify order or pool state, eliminating an entire class of manipulation vectors.
+3. **Stateless Valuation Modules**: Both `JTMBrokerModule` and `UniswapV4BrokerModule` are pure read-only contracts with zero storage. They cannot modify order or pool state, eliminating an entire class of manipulation vectors.
 
-4. **Three-Term TWAMM Valuation**: Without ghost attribution (Term 3), uncleared tokens in the TWAMM hook are invisible to solvency checks, causing false liquidation triggers. The pro-rata ghost attribution with Dutch auction discount provides a conservative lower bound.
+4. **Three-Term JTM Valuation**: Without ghost attribution (Term 3), uncleared tokens in the JTM hook are invisible to solvency checks, causing false liquidation triggers. The pro-rata ghost attribution with Dutch auction discount provides a conservative lower bound.
 
 5. **Pool Key Validation**: Added as a penetration testing fix. Since V4 swap routing is caller-specified (`PoolKey` parameter), malicious callers could theoretically swap against a rogue pool. `_validatePoolKey()` ensures the pool's currencies match the broker's token pair.
 
@@ -334,7 +334,7 @@ Integration attack vectors:
 
 ## Known Limitations
 
-1. **Single Active TWAMM Order**: V1 supports only one JITTWAMM order per broker (`activeTwammOrder`).
+1. **Single Active JTM Order**: V1 supports only one JTM order per broker (`activeJtmOrder`).
 2. **Ghost Pro-Rata Approximation**: Exact within an epoch but approximate across epoch boundaries where orders were added/removed.
 3. **Swap Slippage**: `calculateOptimalDebt()` does not account for swap fees or slippage, meaning actual leverage may be slightly below target.
 4. **Caller-Supplied Tokens in LSE**: `LeverageShortExecutor` accepts `collateralToken` and `positionToken` as parameters rather than reading from the broker (unlike `BrokerRouter`).

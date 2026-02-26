@@ -80,7 +80,7 @@ cd /home/ubuntu/RLD
 | Step | Action              | Details                                                 |
 | ---- | ------------------- | ------------------------------------------------------- |
 | 1    | Acquire aUSDC       | Impersonate USDC whale → supply to Aave → receive aUSDC |
-| 2    | Prime TWAMM         | Advance time 2 hours for oracle                         |
+| 2    | Prime JTM         | Advance time 2 hours for oracle                         |
 | 3    | Create Broker       | Call `PrimeBrokerFactory.createBroker()`                |
 | 4    | Transfer Collateral | Send aUSDC to broker                                    |
 | 5    | Mint Debt           | Call `broker.modifyPosition(0, wRLPAmount)`             |
@@ -134,7 +134,7 @@ cd ..
 | ----- | ------------------ | ----------------------------------- |
 | 1/10  | Acquire aUSDC      | Whale → Aave supply → 10M aUSDC     |
 | 2/10  | Wrap aUSDC         | aUSDC → waUSDC (non-rebasing)       |
-| 3/10  | Prime TWAMM        | Advance time 2 hours                |
+| 3/10  | Prime JTM        | Advance time 2 hours                |
 | 4/10  | Create Broker      | New broker for waUSDC market        |
 | 5/10  | Deposit Collateral | Transfer waUSDC to broker           |
 | 6/10  | Mint wRLP          | 500k wRLP debt                      |
