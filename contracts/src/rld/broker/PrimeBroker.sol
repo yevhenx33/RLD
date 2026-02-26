@@ -13,7 +13,7 @@ import {
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {ITWAMM} from "../../twamm/ITWAMM.sol";
+import {IJTM} from "../../twamm/IJTM.sol";
 import {IJITTWAMM} from "../../twamm/IJITTWAMM.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../../shared/interfaces/ISpotOracle.sol";
@@ -628,7 +628,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
 
     function _cancelTwammOrder() internal {
         // Cancel order - tokens return to this contract (msg.sender)
-        ITWAMM(address(activeTwammOrder.key.hooks)).cancelOrder(
+        IJTM(address(activeTwammOrder.key.hooks)).cancelOrder(
             activeTwammOrder.key,
             activeTwammOrder.orderKey
         );
@@ -761,7 +761,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         if (info.orderId != bytes32(0)) {
             // The TWAMM hook is at info.key.hooks (NOT TWAMM_MODULE)
             address twammHook = address(info.key.hooks);
-            ITWAMM.Order memory order = ITWAMM(twammHook).getOrder(
+            IJTM.Order memory order = IJTM(twammHook).getOrder(
                 info.key,
                 info.orderKey
             );
@@ -832,13 +832,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @return orderKey The order key for tracking and claiming
     function submitTwammOrder(
         address twammHook,
-        ITWAMM.SubmitOrderParams calldata params
+        IJTM.SubmitOrderParams calldata params
     )
         external
         onlyAuthorized
         nonReentrant
         whenNotFrozen
-        returns (bytes32 orderId, ITWAMM.OrderKey memory orderKey)
+        returns (bytes32 orderId, IJTM.OrderKey memory orderKey)
     {
         // Determine which token is being sold
         address sellToken = params.zeroForOne
@@ -849,7 +849,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         ERC20(sellToken).approve(twammHook, params.amountIn);
 
         // Step 2: Submit order - this broker becomes the owner
-        (orderId, orderKey) = ITWAMM(twammHook).submitOrder(params);
+        (orderId, orderKey) = IJTM(twammHook).submitOrder(params);
 
         // Step 3: Revoke approval (cleanup)
         ERC20(sellToken).approve(twammHook, 0);
@@ -882,7 +882,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         require(activeTwammOrder.orderId != bytes32(0), "No active order");
 
         // Cancel and receive tokens
-        (buyTokensOut, sellTokensRefund) = ITWAMM(
+        (buyTokensOut, sellTokensRefund) = IJTM(
             address(activeTwammOrder.key.hooks)
         ).cancelOrder(activeTwammOrder.key, activeTwammOrder.orderKey);
 
@@ -1296,7 +1296,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             activeTwammOrder.orderKey.owner == address(this)
         ) {
             address twammHook = address(activeTwammOrder.key.hooks);
-            (uint256 buyTokensOwed, uint256 sellTokensRefund) = ITWAMM(
+            (uint256 buyTokensOwed, uint256 sellTokensRefund) = IJTM(
                 twammHook
             ).getCancelOrderState(
                     activeTwammOrder.key,

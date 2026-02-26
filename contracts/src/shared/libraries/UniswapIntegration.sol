@@ -9,7 +9,7 @@ import {PoolId} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
-import {ITWAMM} from "../../twamm/ITWAMM.sol";
+import {IJTM} from "../../twamm/IJTM.sol";
 
 /// @notice Library for interacting with Uniswap V4.
 library UniswapIntegration {
@@ -36,7 +36,7 @@ library UniswapIntegration {
         secondsAgos[1] = 0;
 
         // Use standard observe from the Oracle/Hook
-        int56[] memory tickCumulatives = ITWAMM(oracle).observe(
+        int56[] memory tickCumulatives = IJTM(oracle).observe(
             PoolId.wrap(poolId), 
             secondsAgos
         );

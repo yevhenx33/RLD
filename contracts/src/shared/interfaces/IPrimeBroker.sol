@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {ITWAMM} from "../../twamm/ITWAMM.sol";
+import {IJTM} from "../../twamm/IJTM.sol";
 
 /// @title Prime Broker Interface
 /// @notice Interface for the "Smart Margin Account" that holds assets.
@@ -12,7 +12,7 @@ import {ITWAMM} from "../../twamm/ITWAMM.sol";
 interface IPrimeBroker {
     struct TwammOrderInfo {
         PoolKey key;
-        ITWAMM.OrderKey orderKey;
+        IJTM.OrderKey orderKey;
         bytes32 orderId;
     }
 
@@ -130,8 +130,8 @@ interface IPrimeBroker {
     /// @return orderKey The order key for tracking and claiming.
     function submitTwammOrder(
         address twammHook,
-        ITWAMM.SubmitOrderParams calldata params
-    ) external returns (bytes32 orderId, ITWAMM.OrderKey memory orderKey);
+        IJTM.SubmitOrderParams calldata params
+    ) external returns (bytes32 orderId, IJTM.OrderKey memory orderKey);
 
     /// @notice Cancels the active TWAMM order and claims proceeds.
     /// @return buyTokensOut Amount of buy tokens received.

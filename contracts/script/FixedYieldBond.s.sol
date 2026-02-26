@@ -7,7 +7,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPrimeBroker} from "../src/shared/interfaces/IPrimeBroker.sol";
-import {ITWAMM} from "../src/twamm/ITWAMM.sol";
+import {IJTM} from "../src/twamm/IJTM.sol";
 
 /// @title FixedYieldBond
 /// @notice Creates a synthetic fixed-yield bond by:
@@ -180,7 +180,7 @@ contract FixedYieldBond is Script {
                 hooks: IHooks(twammHook)
             });
 
-            ITWAMM.SubmitOrderParams memory orderParams = ITWAMM
+            IJTM.SubmitOrderParams memory orderParams = IJTM
                 .SubmitOrderParams({
                     key: poolKey,
                     zeroForOne: zeroForOne,
