@@ -261,7 +261,12 @@ interface IRLDCore {
     /// @notice Updates the Uniswap V4 pool fee (immediate, no timelock)
     /// @param id The market ID
     /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
-    function updatePoolFee(MarketId id, uint24 newFee) external;
+    /// @param tickSpacing The pool's tick spacing (must match the deployed pool)
+    function updatePoolFee(
+        MarketId id,
+        uint24 newFee,
+        int24 tickSpacing
+    ) external;
 
     /// @notice Gets the pending risk update for a market
     /// @param id The market ID

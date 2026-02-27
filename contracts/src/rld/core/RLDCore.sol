@@ -1116,9 +1116,11 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @dev Requires pool to support dynamic fees and TWAMM to be configured.
     /// @param id The market ID
     /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
+    /// @param tickSpacing The pool's tick spacing (must match the deployed pool)
     function updatePoolFee(
         MarketId id,
-        uint24 newFee
+        uint24 newFee,
+        int24 tickSpacing
     ) external onlyCurator(id) nonReentrant {
         if (!marketExists[id]) revert InvalidMarket();
         if (twamm == address(0)) revert InvalidParam("TWAMM not configured");
@@ -1136,13 +1138,12 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             (token0, token1) = (token1, token0);
         }
 
-        // Note: We use fundingPeriod/60 as tick spacing approximation
-        // Real implementation should store tickSpacing in MarketAddresses
+        // I-4 FIX: tickSpacing is now a parameter instead of hardcoded
         PoolKey memory key = PoolKey({
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
             fee: newFee,
-            tickSpacing: 60, // Default tick spacing
+            tickSpacing: tickSpacing,
             hooks: IHooks(twamm)
         });
 

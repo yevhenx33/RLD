@@ -138,7 +138,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @notice The RLDCore singleton contract
     /// @dev Set in initialize(), NOT in constructor (clones don't inherit immutables correctly)
     /// Used for: solvency checks, position modifications, lock pattern
-    /// ARCHITECTURE FIX: Changed from immutable to storage to support EIP-1167 clone pattern
+    /// ARCHITECTURE FIX: Changed from immutable to storage to support EIP-1167 clone pattern.
+    /// I-5 NOTE: Uses UPPER_CASE naming convention despite being a storage variable because
+    /// it is effectively immutable after initialize() (set once, never changed).
     address public CORE;
 
     /// @notice The module for valuing V4 LP positions
@@ -241,6 +243,18 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @notice Whether this broker is frozen (bond mode)
     /// @dev When frozen, all state-changing operations are blocked except seize() and unlock
     bool public frozen;
+
+    /* ============================================================================================ */
+    /*                                          EVENTS                                             */
+    /* ============================================================================================ */
+
+    /// @notice Emitted when a broker is initialized (I-6 fix)
+    event BrokerInitialized(
+        address indexed broker,
+        address indexed core,
+        MarketId marketId,
+        address factory
+    );
 
     /* ============================================================================================ */
     /*                                         MODIFIERS                                           */
@@ -382,6 +396,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         }
 
         initialized = true;
+
+        emit BrokerInitialized(address(this), _core, _marketId, _factory);
     }
 
     /* ============================================================================================ */
@@ -426,7 +442,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     ///
     /// @return totalValue The total value of all assets in collateral token terms
     function getNetAccountValue()
-        external
+        public
         view
         override
         returns (uint256 totalValue)
@@ -525,7 +541,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         uint256 value,
         uint256 principalToCover,
         address recipient
-    ) external override onlyCore returns (SeizeOutput memory output) {
+    )
+        external
+        override
+        onlyCore
+        nonReentrant
+        returns (SeizeOutput memory output)
+    {
         // PHASE 1: UNLOCK LIQUIDITY
         _unlockLiquidity(value);
 
@@ -572,10 +594,17 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
                 ? principalToCover
                 : wRlpBal;
 
-            uint256 price = ISpotOracle(rateOracle).getSpotPrice(
+            // H-1 FIX: Use min(spotPrice, indexPrice) for conservative wRLP valuation.
+            // Prevents oracle manipulation where spot < index lets seize undervalue wRLP.
+            uint256 spotPrice = ISpotOracle(rateOracle).getSpotPrice(
                 positionToken,
                 collateralToken
             );
+            uint256 indexPrice = IRLDOracle(rateOracle).getIndexPrice(
+                underlyingPool,
+                underlyingToken
+            );
+            uint256 price = spotPrice < indexPrice ? spotPrice : indexPrice;
             uint256 takeVal = takeAmt.mulWadDown(price);
             if (takeVal > remaining) takeVal = remaining;
 
@@ -1377,7 +1406,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         }
 
         // NAV (total assets)
-        state.netAccountValue = this.getNetAccountValue();
+        state.netAccountValue = getNetAccountValue();
 
         // Health factor and solvency
         if (state.debtValue > 0) {
