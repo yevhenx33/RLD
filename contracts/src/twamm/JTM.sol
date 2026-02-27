@@ -2,28 +2,28 @@
 pragma solidity ^0.8.26;
 
 import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
-import {IHooks, Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
-import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
-import {SafeCast} from "@uniswap/v4-core/src/libraries/SafeCast.sol";
+import {IHooks, Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
 import {
     IERC20Minimal
-} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
-import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
-import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
-import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
-import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
+} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {
     BeforeSwapDelta,
     BeforeSwapDeltaLibrary,
     toBeforeSwapDelta
-} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+} from "v4-core/src/types/BeforeSwapDelta.sol";
 import {
     ModifyLiquidityParams,
     SwapParams
-} from "@uniswap/v4-core/src/types/PoolOperation.sol";
-import {FixedPoint96} from "@uniswap/v4-core/src/libraries/FixedPoint96.sol";
+} from "v4-core/src/types/PoolOperation.sol";
+import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {
     ReentrancyGuard
@@ -33,7 +33,7 @@ import {Owned} from "solmate/src/auth/Owned.sol";
 import {IJTM} from "./IJTM.sol";
 import {TransferHelper} from "./libraries/TransferHelper.sol";
 import {TwapOracle} from "./libraries/TwapOracle.sol";
-import {CurrencySettler} from "@uniswap/v4-core/test/utils/CurrencySettler.sol";
+import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
 import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
 import {IBrokerVerifier} from "../shared/interfaces/IBrokerVerifier.sol";
 
