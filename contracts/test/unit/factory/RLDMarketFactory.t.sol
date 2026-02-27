@@ -335,7 +335,11 @@ contract RLDMarketFactoryTest is Test {
             C.FUNDING_PERIOD,
             "fundingPeriod mismatch"
         );
-        assertEq(config.debtCap, 0, "debtCap should be 0 (unlimited)");
+        assertEq(
+            config.debtCap,
+            type(uint128).max,
+            "debtCap should be max (unlimited)"
+        );
 
         // ── Verify MarketState (initialization) ──
         IRLDCore.MarketState memory state = core.getMarketState(marketId);
@@ -1532,7 +1536,11 @@ contract RLDMarketFactoryTest is Test {
 
         // Config — FIN-01 fix
         IRLDCore.MarketConfig memory config = core.getMarketConfig(marketId);
-        assertEq(config.debtCap, 0, "INV: debtCap must be 0");
+        assertEq(
+            config.debtCap,
+            type(uint128).max,
+            "INV: debtCap must be max (unlimited)"
+        );
         assertTrue(config.brokerVerifier != address(0), "INV: verifier set");
 
         // Addresses

@@ -388,6 +388,7 @@ contract RLDMarketFactory is ReentrancyGuard {
         require(params.liquidationModule != address(0), "Invalid LiqModule");
         //require(params.spotOracle != address(0), "Invalid SpotOracle");
         require(params.rateOracle != address(0), "Invalid RateOracle");
+        require(params.curator != address(0), "Invalid Curator");
 
         // Risk Parameter Logic Checks
         require(params.minColRatio > 1e18, "MinCol < 100%");
@@ -404,7 +405,7 @@ contract RLDMarketFactory is ReentrancyGuard {
 
         // V4 Configuration Checks
         require(params.tickSpacing > 0, "Invalid TickSpacing");
-        require(params.oraclePeriod > 0, "Invalid OraclePeriod");
+        require(params.oraclePeriod >= 60, "OraclePeriod < 1 min");
     }
 
     /**
