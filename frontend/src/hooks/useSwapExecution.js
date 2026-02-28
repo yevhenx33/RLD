@@ -507,10 +507,14 @@ export function useSwapExecution(
         }
       } catch (e) {
         console.error("Open short failed:", e);
-        const msg =
-          e.code === "ACTION_REJECTED"
-            ? "Transaction rejected"
-            : e.shortMessage || e.message || "Short failed";
+        let msg = "Short failed";
+        if (e.code === "ACTION_REJECTED") {
+          msg = "Transaction rejected";
+        } else {
+          // Try to extract on-chain revert reason
+          const reason = e.reason || e.revert?.name || e.shortMessage || e.message;
+          msg = reason || msg;
+        }
         setError(msg);
         setStep("");
         try {

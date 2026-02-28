@@ -1,14 +1,21 @@
-import React, { useState, useRef } from "react";
+import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useWallet } from "../context/WalletContext";
+import { useFaucet } from "../hooks/useFaucet";
+import { useSimulation } from "../hooks/useSimulation";
 import WalletModal from "./WalletModal";
-import { Menu, X } from "lucide-react";
+import { Menu, X, Droplets, Loader2 } from "lucide-react";
 
 export default function Header({ isCapped, ratesLoaded }) {
   const { account, connectWallet, disconnect } = useWallet();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
+
+  // Faucet integration
+  const { marketInfo } = useSimulation();
+  const waUsdcAddr = marketInfo?.collateral?.address;
+  const { requestFaucet, loading: faucetLoading } = useFaucet(account, waUsdcAddr);
 
   const handleWalletClick = () => {
     if (account) {
@@ -136,6 +143,22 @@ export default function Header({ isCapped, ratesLoaded }) {
                 {isCapped ? "WARN: LIMIT_ACTIVE" : "NET: STABLE"}
               </span>
             </div>
+
+            {/* REQUEST FUNDS (only when connected) */}
+            {account && (
+              <button
+                onClick={() => requestFaucet(account)}
+                disabled={faucetLoading}
+                className="hidden md:flex items-center gap-2 border border-cyan-500/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all px-3 py-2 text-xs font-bold uppercase tracking-widest text-cyan-400 disabled:opacity-50 disabled:cursor-wait"
+              >
+                {faucetLoading ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Droplets size={12} />
+                )}
+                {faucetLoading ? "Funding..." : "Faucet"}
+              </button>
+            )}
 
             {/* WALLET BUTTON */}
             <button

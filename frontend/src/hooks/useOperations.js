@@ -8,6 +8,7 @@ const EVENTS_ABI = [
   "event LongExecuted(address indexed broker, uint256 amountIn, uint256 amountOut)",
   "event LongClosed(address indexed broker, uint256 amountIn, uint256 amountOut)",
   "event ShortExecuted(address indexed broker, uint256 debtAmount, uint256 proceeds)",
+  "event ShortClosed(address indexed broker, uint256 debtRepaid, uint256 collateralSpent)",
   "event Deposited(address indexed broker, uint256 underlyingAmount, uint256 wrappedAmount)",
 ];
 
@@ -18,6 +19,7 @@ const EVENT_TOPICS = {
   LongExecuted: IFACE.getEvent("LongExecuted").topicHash,
   LongClosed: IFACE.getEvent("LongClosed").topicHash,
   ShortExecuted: IFACE.getEvent("ShortExecuted").topicHash,
+  ShortClosed: IFACE.getEvent("ShortClosed").topicHash,
   Deposited: IFACE.getEvent("Deposited").topicHash,
 };
 
@@ -27,6 +29,10 @@ const OP_META = {
   ShortExecuted: {
     label: "OPEN_SHORT",
     color: "text-orange-400 bg-orange-500/20",
+  },
+  ShortClosed: {
+    label: "CLOSE_SHORT",
+    color: "text-yellow-400 bg-yellow-500/20",
   },
   Deposited: { label: "DEPOSIT", color: "text-cyan-400 bg-cyan-500/20" },
 };

@@ -135,16 +135,24 @@ export function useSimulation({ pollInterval = 2000 } = {}) {
   // ── Derived: chart data ─────────────────────────────────────
   const chartData = useMemo(() => {
     if (!chartRaw?.data?.length) return [];
-    return chartRaw.data.map((d) => ({
-      timestamp: d.timestamp,
-      blockNumber: d.block_number,
-      indexPrice: d.index_price,
-      markPrice: d.mark_price || null,
-      normalizationFactor: d.normalization_factor,
-      totalDebt: d.total_debt,
-      tick: d.tick,
-      liquidity: d.liquidity,
-    }));
+    return chartRaw.data.map((d, i, arr) => {
+      // Derive synthetic volume from price movement × liquidity
+      const prevPrice = i < arr.length - 1 ? arr[i + 1].index_price : d.index_price;
+      const priceDelta = Math.abs(d.index_price - prevPrice);
+      const jitter = ((i * 7919 + (d.timestamp || 0)) % 1000) / 1000; // deterministic pseudo-random
+      const vol = priceDelta * (d.liquidity || 1e12) * 0.001 + jitter * 1e6;
+      return {
+        timestamp: d.timestamp,
+        blockNumber: d.block_number,
+        indexPrice: d.index_price,
+        markPrice: d.mark_price || null,
+        normalizationFactor: d.normalization_factor,
+        totalDebt: d.total_debt,
+        tick: d.tick,
+        liquidity: d.liquidity,
+        volume: vol,
+      };
+    });
   }, [chartRaw]);
 
   // ── Derived: funding from NF change ─────────────────────────
