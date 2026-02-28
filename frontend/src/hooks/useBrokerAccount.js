@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 
-const RPC_URL = "http://127.0.0.1:8545";
+const RPC_URL = `${window.location.origin}/rpc`;
 
 // ── Minimal ABIs ───────────────────────────────────────────────────
 const FACTORY_ABI = [

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ethers } from "ethers";
 
-const RPC_URL = "http://127.0.0.1:8545";
+const RPC_URL = `${window.location.origin}/rpc`;
 
 // Mainnet V4 Quoter ABI — quoteExactInputSingle(QuoteExactSingleParams)
 // Uses struct-wrapped params matching the deployed Quoter at 0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203

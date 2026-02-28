@@ -336,6 +336,8 @@ while true; do
         EXIT_CODE=$(docker inspect --format '{{.State.ExitCode}}' docker-deployer-1 2>/dev/null || echo "?")
         if [ "$EXIT_CODE" = "0" ]; then
             ok "Deployer completed successfully (took ${ELAPSED}s)"
+            # Re-enforce chain ID (deployer's forge scripts may reset to fork's mainnet chain 1)
+            cast rpc anvil_setChainId 31337 --rpc-url "$ANVIL_RPC" > /dev/null 2>&1
             break
         else
             fail "Deployer exited with code $EXIT_CODE after ${ELAPSED}s"

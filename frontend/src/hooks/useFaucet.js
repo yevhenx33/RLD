@@ -19,7 +19,7 @@ const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
 const AUSDC = "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c";
 const AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
 const USDC_WHALE = "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341";
-const RPC_URL = "http://127.0.0.1:8545";
+const RPC_URL = `${window.location.origin}/rpc`;
 
 // Amount to fund: 100k USDC (6 decimals)
 const FUND_AMOUNT = 100_000n * 1_000_000n; // 100,000 USDC in wei

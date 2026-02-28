@@ -234,7 +234,7 @@ export default function SimulationTerminal() {
     if (!brokerAddress || !enrichedMarketInfo?.position_token?.address) return;
     const fetchWrlp = async () => {
       try {
-        const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
+        const provider = new ethers.JsonRpcProvider(`${window.location.origin}/rpc`);
         const token = new ethers.Contract(
           enrichedMarketInfo.position_token.address,
           ["function balanceOf(address) view returns (uint256)"],
@@ -738,7 +738,9 @@ export default function SimulationTerminal() {
                       ? () => setShowSwapConfirm(true)
                       : () => setShowSwapConfirm(true),
                 disabled:
-                  swapExecuting ||
+                  !account || !hasBroker
+                    ? false
+                    : swapExecuting ||
                   (tradeSide === "LONG" &&
                     tradeAction === "OPEN" &&
                     (!collateral || quoteLoading)) ||

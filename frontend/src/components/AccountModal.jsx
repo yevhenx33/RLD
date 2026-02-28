@@ -42,7 +42,7 @@ export default function AccountModal({
   const {
     requestFaucet,
     loading: faucetLoading,
-    error: _faucetError,
+    error: faucetError,
     waUsdcBalance,
   } = useFaucet(account, waUsdcAddr);
 
@@ -348,8 +348,8 @@ export default function AccountModal({
         {/* Footer Status */}
         <div className="px-6 pb-5">
           <div className="flex items-center gap-2 text-[10px] font-mono pt-2 border-t border-white/5">
-            {error ? (
-              <span className="text-red-400">ERROR: {error}</span>
+            {error || faucetError ? (
+              <span className="text-red-400">ERROR: {error || faucetError}</span>
             ) : statusText ? (
               <span className="text-cyan-400/60">{statusText}</span>
             ) : (

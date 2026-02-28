@@ -5,6 +5,16 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   envDir: '../',
+  server: {
+    host: '0.0.0.0',
+    proxy: {
+      '/rpc': {
+        target: 'http://127.0.0.1:8545',
+        changeOrigin: true,
+        rewrite: () => '',  // Strip /rpc path — Anvil expects POST to /
+      },
+    },
+  },
   build: {
     rollupOptions: {
       output: {

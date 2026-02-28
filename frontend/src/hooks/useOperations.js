@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 
-const RPC_URL = "http://127.0.0.1:8545";
+const RPC_URL = `${window.location.origin}/rpc`;
 
 // BrokerRouter event ABIs
 const EVENTS_ABI = [

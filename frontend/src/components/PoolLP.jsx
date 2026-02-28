@@ -22,7 +22,7 @@ import ClaimFeesModal from "./ClaimFeesModal";
 import WithdrawModal from "./WithdrawModal";
 import AddLiquidityModal from "./AddLiquidityModal";
 
-const RPC_URL = "http://127.0.0.1:8545";
+const RPC_URL = `${window.location.origin}/rpc`;
 const ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 
 // ── Mock Liquidity Distribution Generator ─────────────────────

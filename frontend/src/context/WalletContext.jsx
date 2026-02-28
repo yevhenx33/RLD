@@ -168,7 +168,7 @@ export function WalletProvider({ children }) {
               {
                 chainId: ANVIL_CHAIN_ID_HEX,
                 chainName: "Anvil Localhost",
-                rpcUrls: ["http://127.0.0.1:8545"],
+                rpcUrls: [`${window.location.origin}/rpc`],
                 nativeCurrency: {
                   name: "ETH",
                   symbol: "ETH",

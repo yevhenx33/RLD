@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
 
-const RPC_URL = "http://127.0.0.1:8545";
+const RPC_URL = `${window.location.origin}/rpc`;
 const ANVIL_CHAIN_ID = 31337;
 
 // BrokerRouter ABI (executeLong + closeLong)
