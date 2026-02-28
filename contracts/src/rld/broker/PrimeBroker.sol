@@ -13,6 +13,7 @@ import {
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IJTM} from "../../twamm/IJTM.sol";
 
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -34,6 +35,16 @@ import {
 /// @dev Minimal ERC721 interface for ownership checks
 interface IERC721 {
     function ownerOf(uint256 tokenId) external view returns (address);
+}
+
+/// @dev Minimal Permit2 interface for token approvals
+interface IPermit2 {
+    function approve(
+        address token,
+        address spender,
+        uint160 amount,
+        uint48 expiration
+    ) external;
 }
 
 /// @title Prime Broker V1 - Smart Margin Account
@@ -156,6 +167,10 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev The Uniswap V4 contract that mints LP position NFTs
     address public immutable POSM;
 
+    /// @notice Canonical Permit2 contract for token approvals
+    address public constant PERMIT2 =
+        0x000000000022D473030F116dDEE9F6B43aC78BA3;
+
     /* ============================================================================================ */
     /*                                      STORAGE VARIABLES                                       */
     /* ============================================================================================ */
@@ -195,6 +210,10 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @notice Price oracle for index and spot prices
     /// @dev Implements both IRLDOracle and ISpotOracle interfaces
     address public rateOracle;
+
+    /// @notice TWAMM hook address — used to build PoolKey for V4 LP operations
+    /// @dev Cached during initialize() for gas savings
+    address public hookAddress;
 
     /* ─────────────────────────────────────────────────────────────────────────────────────────── */
     /*                              TRACKED POSITIONS (V1: ONE EACH)                               */
@@ -394,6 +413,23 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             operatorList.push(_initialOperators[i]);
             emit OperatorUpdated(_initialOperators[i], true);
         }
+
+        // Pre-approve tokens → Permit2 → PositionManager for LP operations
+        // This enables modifyPoolLiquidity() without JIT approvals
+        ERC20(collateralToken).approve(PERMIT2, type(uint256).max);
+        ERC20(positionToken).approve(PERMIT2, type(uint256).max);
+        IPermit2(PERMIT2).approve(
+            collateralToken,
+            POSM,
+            type(uint160).max,
+            type(uint48).max
+        );
+        IPermit2(PERMIT2).approve(
+            positionToken,
+            POSM,
+            type(uint160).max,
+            type(uint48).max
+        );
 
         initialized = true;
 
@@ -677,7 +713,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         uint256 totalValue = IValuationModule(V4_MODULE).getValue(valData);
         if (totalValue == 0) return;
 
-        // 2. Calculate amount to remove
+        // 2. Calculate proportional liquidity to remove
         uint128 totalLiquidity = IPositionManager(POSM).getPositionLiquidity(
             activeTokenId
         );
@@ -690,34 +726,68 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         }
         if (liquidityToRemove == 0) return;
 
-        // 3. Execute Unwind (Decrease -> TakePair)
-        bytes memory actions = abi.encodePacked(uint8(0x01), uint8(0x11));
+        bool fullRemoval = liquidityToRemove >= totalLiquidity;
 
-        bytes[] memory params = new bytes[](2);
-        params[0] = abi.encode(
-            activeTokenId,
-            liquidityToRemove,
-            uint128(0),
-            uint128(0),
-            bytes("")
-        );
+        // 3. Use shared helper
+        _decreaseV4Liquidity(activeTokenId, liquidityToRemove, fullRemoval);
 
-        (PoolKey memory poolKey, ) = IPositionManager(POSM)
-            .getPoolAndPositionInfo(activeTokenId);
-        params[1] = abi.encode(
-            poolKey.currency0,
-            poolKey.currency1,
-            address(this)
-        );
-
-        IPositionManager(POSM).modifyLiquidities(
-            abi.encode(actions, params),
-            block.timestamp + 60
-        );
-
-        // 4. Update State
-        if (liquidityToRemove == totalLiquidity) {
+        // 4. Update tracking
+        if (fullRemoval) {
             activeTokenId = 0;
+        }
+    }
+
+    /// @dev Shared helper for removing V4 LP liquidity.
+    ///      Reused by: _unwindV4Position (seize/liquidation), removePoolLiquidity (user-facing)
+    ///
+    /// @param tokenId  The V4 LP position NFT ID
+    /// @param liquidity Amount of liquidity to remove
+    /// @param burn     If true, burns the position NFT after removing all liquidity
+    function _decreaseV4Liquidity(
+        uint256 tokenId,
+        uint128 liquidity,
+        bool burn
+    ) internal {
+        (PoolKey memory pk, ) = IPositionManager(POSM).getPoolAndPositionInfo(
+            tokenId
+        );
+
+        if (burn) {
+            // BURN_POSITION handles decreasing to 0 internally, then burns NFT
+            bytes memory actions = abi.encodePacked(
+                uint8(0x03), // BURN_POSITION (handles decrease + burn)
+                uint8(0x11) // TAKE_PAIR
+            );
+
+            bytes[] memory params = new bytes[](2);
+            params[0] = abi.encode(tokenId, uint128(0), uint128(0), bytes(""));
+            params[1] = abi.encode(pk.currency0, pk.currency1, address(this));
+
+            IPositionManager(POSM).modifyLiquidities(
+                abi.encode(actions, params),
+                block.timestamp + 60
+            );
+        } else {
+            // DECREASE_LIQUIDITY + TAKE_PAIR (keep position)
+            bytes memory actions = abi.encodePacked(
+                uint8(0x01), // DECREASE_LIQUIDITY
+                uint8(0x11) // TAKE_PAIR
+            );
+
+            bytes[] memory params = new bytes[](2);
+            params[0] = abi.encode(
+                tokenId,
+                liquidity,
+                uint128(0),
+                uint128(0),
+                bytes("")
+            );
+            params[1] = abi.encode(pk.currency0, pk.currency1, address(this));
+
+            IPositionManager(POSM).modifyLiquidities(
+                abi.encode(actions, params),
+                block.timestamp + 60
+            );
         }
     }
 
@@ -819,6 +889,150 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             IRLDCore(CORE).isSolvent(marketId, address(this)),
             "Insolvent after update"
         );
+    }
+
+    /// @notice Adds liquidity to the V4 pool, minting a new LP position NFT
+    /// @dev Tokens are pulled from this broker via Permit2 (pre-approved in initialize()).
+    ///      The LP NFT is minted to this broker.
+    ///      Auto-tracks the position for solvency if no position is currently tracked.
+    ///
+    /// @param twammHook The TWAMM hook address (used to build PoolKey)
+    /// @param tickLower Lower tick bound (must be aligned to tick spacing = 5)
+    /// @param tickUpper Upper tick bound (must be aligned to tick spacing = 5)
+    /// @param liquidity Amount of liquidity to add
+    /// @param amount0Max Maximum amount of currency0 (slippage protection)
+    /// @param amount1Max Maximum amount of currency1 (slippage protection)
+    /// @return tokenId The newly minted V4 LP position NFT ID
+    function addPoolLiquidity(
+        address twammHook,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 liquidity,
+        uint128 amount0Max,
+        uint128 amount1Max
+    )
+        external
+        onlyAuthorized
+        nonReentrant
+        whenNotFrozen
+        returns (uint256 tokenId)
+    {
+        require(liquidity > 0, "Zero liquidity");
+
+        PoolKey memory poolKey = _getPoolKey(twammHook);
+
+        // Actions: MINT_POSITION (0x02) + CLOSE_CURRENCY (0x12) × 2
+        bytes memory actions = abi.encodePacked(
+            uint8(0x02), // MINT_POSITION
+            uint8(0x12), // CLOSE_CURRENCY
+            uint8(0x12) // CLOSE_CURRENCY
+        );
+
+        bytes[] memory params = new bytes[](3);
+        params[0] = abi.encode(
+            poolKey,
+            tickLower,
+            tickUpper,
+            liquidity,
+            amount0Max,
+            amount1Max,
+            address(this), // recipient = this broker
+            bytes("") // no hook data
+        );
+        params[1] = abi.encode(poolKey.currency0);
+        params[2] = abi.encode(poolKey.currency1);
+
+        IPositionManager(POSM).modifyLiquidities(
+            abi.encode(actions, params),
+            block.timestamp + 60
+        );
+
+        // Auto-track first position; subsequent positions require setActiveV4Position()
+        tokenId = IPositionManager(POSM).nextTokenId() - 1;
+        if (activeTokenId == 0) {
+            activeTokenId = tokenId;
+        }
+
+        // Cache hook address for future reference
+        if (hookAddress == address(0)) {
+            hookAddress = twammHook;
+        }
+
+        // SECURITY: Solvency check after adding LP
+        require(
+            IRLDCore(CORE).isSolvent(marketId, address(this)),
+            "Insolvent after LP add"
+        );
+    }
+
+    /// @notice Removes liquidity from a specific V4 LP position
+    /// @dev Tokens are returned to this broker.
+    ///      If all liquidity is removed, the position NFT is burned.
+    ///      If the removed position was the tracked position, tracking is cleared.
+    ///
+    /// @param tokenId   The V4 LP position NFT ID to remove liquidity from
+    /// @param liquidity Amount of liquidity to remove (capped to current if exceeds)
+    /// @return amount0  Amount of currency0 received (approximate)
+    /// @return amount1  Amount of currency1 received (approximate)
+    function removePoolLiquidity(
+        uint256 tokenId,
+        uint128 liquidity
+    )
+        external
+        onlyAuthorized
+        nonReentrant
+        whenNotFrozen
+        returns (uint256 amount0, uint256 amount1)
+    {
+        require(liquidity > 0, "Zero liquidity");
+        require(
+            IERC721(POSM).ownerOf(tokenId) == address(this),
+            "Not position owner"
+        );
+
+        // Check current liquidity to determine if full removal
+        uint128 currentLiquidity = IPositionManager(POSM).getPositionLiquidity(
+            tokenId
+        );
+        require(currentLiquidity > 0, "Empty position");
+
+        bool fullRemoval = liquidity >= currentLiquidity;
+        uint128 actualLiquidity = fullRemoval ? currentLiquidity : liquidity;
+
+        // Use shared helper (also used by seize/_unwindV4Position)
+        _decreaseV4Liquidity(tokenId, actualLiquidity, fullRemoval);
+
+        // Clear tracking if this was the tracked position and fully removed
+        if (fullRemoval && tokenId == activeTokenId) {
+            activeTokenId = 0;
+        }
+
+        // SECURITY: Solvency check after removing LP
+        require(
+            IRLDCore(CORE).isSolvent(marketId, address(this)),
+            "Insolvent after LP remove"
+        );
+    }
+
+    /// @dev Builds a PoolKey from cached token addresses and the provided hook
+    /// @param twammHook The TWAMM hook address
+    /// @return The constructed PoolKey with sorted currencies
+    function _getPoolKey(
+        address twammHook
+    ) internal view returns (PoolKey memory) {
+        // V4 requires currency0 < currency1
+        (address c0, address c1) = positionToken < collateralToken
+            ? (positionToken, collateralToken)
+            : (collateralToken, positionToken);
+
+        return
+            PoolKey({
+                currency0: Currency.wrap(c0),
+                currency1: Currency.wrap(c1),
+                fee: 500,
+                tickSpacing: 5,
+                hooks: IHooks(twammHook)
+            });
     }
 
     /// @notice Sets which TWAMM order is tracked for solvency calculations
