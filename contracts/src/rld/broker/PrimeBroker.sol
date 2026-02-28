@@ -1417,6 +1417,11 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             revert("Not authorized");
         }
 
+        _updateOperator(operator, active);
+    }
+
+    /// @dev Shared helper for adding/removing operators with event emission
+    function _updateOperator(address operator, bool active) internal {
         if (active) {
             require(!operators[operator], "Already operator");
             require(operatorList.length < MAX_OPERATORS, "Max operators");
@@ -1425,7 +1430,6 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         } else {
             require(operators[operator], "Not operator");
             operators[operator] = false;
-            // Swap-and-pop removal from operatorList
             for (uint256 i = 0; i < operatorList.length; i++) {
                 if (operatorList[i] == operator) {
                     operatorList[i] = operatorList[operatorList.length - 1];
@@ -1497,23 +1501,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         address signer = ECDSA.recover(ethSignedHash, signature);
         require(signer == owner, "Invalid signature");
 
-        if (active) {
-            require(!operators[operator], "Already operator");
-            require(operatorList.length < MAX_OPERATORS, "Max operators");
-            operators[operator] = true;
-            operatorList.push(operator);
-        } else {
-            require(operators[operator], "Not operator");
-            operators[operator] = false;
-            for (uint256 i = 0; i < operatorList.length; i++) {
-                if (operatorList[i] == operator) {
-                    operatorList[i] = operatorList[operatorList.length - 1];
-                    operatorList.pop();
-                    break;
-                }
-            }
-        }
-        emit OperatorUpdated(operator, active);
+        _updateOperator(operator, active);
     }
 
     /* ============================================================================================ */
