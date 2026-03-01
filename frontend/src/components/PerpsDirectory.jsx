@@ -1,108 +1,10 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { TrendingUp, ChevronDown, ChevronUp, ArrowUpDown } from "lucide-react";
-
-// ── Mock perps market data ────────────────────────────────────
-const MARKETS = [
-  {
-    address: "0xa1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
-    pair: "ETH / USD",
-    base: "USDC",
-    price: 3_842.50,
-    change24h: 2.34,
-    fundingRate: 0.0045,
-    openInterest: 45_600_000,
-    volume24h: 128_500_000,
-    liquidity: 62_300_000,
-    protocol: "AAVE",
-  },
-  {
-    address: "0xb2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1",
-    pair: "BTC / USD",
-    base: "USDC",
-    price: 105_230.00,
-    change24h: 1.87,
-    fundingRate: 0.0032,
-    openInterest: 89_200_000,
-    volume24h: 312_000_000,
-    liquidity: 124_500_000,
-    protocol: "AAVE",
-  },
-  {
-    address: "0xc3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
-    pair: "SOL / USD",
-    base: "USDT",
-    price: 198.45,
-    change24h: -3.12,
-    fundingRate: -0.0028,
-    openInterest: 12_800_000,
-    volume24h: 67_300_000,
-    liquidity: 18_400_000,
-    protocol: "Morpho",
-  },
-  {
-    address: "0xd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3",
-    pair: "ARB / USD",
-    base: "USDC",
-    price: 1.24,
-    change24h: -1.45,
-    fundingRate: -0.0015,
-    openInterest: 3_200_000,
-    volume24h: 18_500_000,
-    liquidity: 5_600_000,
-    protocol: "Morpho",
-  },
-  {
-    address: "0xe5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4",
-    pair: "LINK / USD",
-    base: "USDT",
-    price: 18.92,
-    change24h: 4.56,
-    fundingRate: 0.0058,
-    openInterest: 5_400_000,
-    volume24h: 28_900_000,
-    liquidity: 8_200_000,
-    protocol: "AAVE",
-  },
-  {
-    address: "0xf6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5",
-    pair: "AVAX / USD",
-    base: "USDC",
-    price: 42.18,
-    change24h: 0.82,
-    fundingRate: 0.0012,
-    openInterest: 4_100_000,
-    volume24h: 22_400_000,
-    liquidity: 6_800_000,
-    protocol: "Compound",
-  },
-  {
-    address: "0xa7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6",
-    pair: "DOGE / USD",
-    base: "USDT",
-    price: 0.3842,
-    change24h: -0.54,
-    fundingRate: -0.0008,
-    openInterest: 2_800_000,
-    volume24h: 15_200_000,
-    liquidity: 4_100_000,
-    protocol: "Morpho",
-  },
-  {
-    address: "0xb8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7",
-    pair: "OP / USD",
-    base: "USDC",
-    price: 2.85,
-    change24h: 5.23,
-    fundingRate: 0.0072,
-    openInterest: 3_600_000,
-    volume24h: 19_800_000,
-    liquidity: 5_200_000,
-    protocol: "Compound",
-  },
-];
+import { TrendingUp, ChevronDown, ChevronUp, ArrowUpDown, Loader2 } from "lucide-react";
+import { useSimulation } from "../hooks/useSimulation";
 
 const formatUSD = (val) => {
+  if (val == null || isNaN(val)) return "—";
   if (val >= 1e9) return `$${(val / 1e9).toFixed(2)}B`;
   if (val >= 1e6) return `$${(val / 1e6).toFixed(2)}M`;
   if (val >= 1e3) return `$${(val / 1e3).toFixed(0)}K`;
@@ -110,6 +12,7 @@ const formatUSD = (val) => {
 };
 
 const formatPrice = (val) => {
+  if (val == null || isNaN(val)) return "—";
   if (val >= 1000) return `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (val >= 1) return `$${val.toFixed(2)}`;
   return `$${val.toFixed(4)}`;
@@ -119,6 +22,47 @@ export default function PerpsDirectory() {
   const navigate = useNavigate();
   const [sortKey, setSortKey] = useState("volume24h");
   const [sortDir, setSortDir] = useState("desc");
+
+  // ── Live simulation data ─────────────────────────────────────
+  const {
+    connected,
+    loading,
+    market,
+    pool,
+    volumeData,
+    protocolStats,
+    marketInfo,
+    oracleChange24h,
+  } = useSimulation({ pollInterval: 5000 });
+
+  // ── Build markets array from real data ───────────────────────
+  const markets = useMemo(() => {
+    if (!market || !pool || !marketInfo) return [];
+
+    const posSymbol = marketInfo.position_token?.symbol || "wRLP";
+    const colSymbol = marketInfo.collateral?.symbol || "USDC";
+
+    // Liquidity in USD: pool.liquidity is raw Uni V3 liquidity units
+    // Approximate via protocolStats or use pool liquidity as-is
+    const liquidityUsd = pool.liquidity
+      ? (pool.liquidity / 1e12) * (pool.markPrice || market.indexPrice)
+      : 0;
+
+    return [
+      {
+        address: marketInfo.infrastructure?.twamm_hook || "0x0",
+        pair: `${posSymbol} / USD`,
+        base: colSymbol,
+        price: market.indexPrice || 0,
+        markPrice: pool.markPrice || 0,
+        change24h: oracleChange24h ?? 0,
+        openInterest: protocolStats?.totalDebtUsd || 0,
+        volume24h: volumeData?.volume_24h_usd || 0,
+        liquidity: liquidityUsd,
+        protocol: "RLD",
+      },
+    ];
+  }, [market, pool, marketInfo, volumeData, protocolStats, oracleChange24h]);
 
   const toggleSort = (key) => {
     if (sortKey === key) {
@@ -137,15 +81,20 @@ export default function PerpsDirectory() {
   };
 
   const sortedMarkets = useMemo(() => {
-    const markets = [...MARKETS];
-    markets.sort((a, b) => {
+    const copy = [...markets];
+    copy.sort((a, b) => {
       const av = a[sortKey];
       const bv = b[sortKey];
       if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
       return sortDir === "asc" ? av - bv : bv - av;
     });
-    return markets;
-  }, [sortKey, sortDir]);
+    return copy;
+  }, [markets, sortKey, sortDir]);
+
+  // ── Aggregated header metrics ────────────────────────────────
+  const totalOI = markets.reduce((s, m) => s + m.openInterest, 0);
+  const totalVolume = markets.reduce((s, m) => s + m.volume24h, 0);
+  const totalLiquidity = markets.reduce((s, m) => s + m.liquidity, 0);
 
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
@@ -162,7 +111,7 @@ export default function PerpsDirectory() {
               </h1>
             </div>
             <p className="text-sm text-gray-500 tracking-widest uppercase">
-              {MARKETS.length} active markets · RLD Protocol
+              {markets.length} active market{markets.length !== 1 ? "s" : ""} · RLD Protocol
             </p>
           </div>
 
@@ -174,7 +123,7 @@ export default function PerpsDirectory() {
                 Open Interest
               </div>
               <div className="text-2xl font-light tracking-tight text-cyan-400">
-                {formatUSD(MARKETS.reduce((s, m) => s + m.openInterest, 0))}
+                {loading ? <Loader2 size={20} className="animate-spin" /> : formatUSD(totalOI)}
               </div>
             </div>
 
@@ -184,7 +133,7 @@ export default function PerpsDirectory() {
                 Volume 24H
               </div>
               <div className="text-2xl font-light tracking-tight text-white">
-                {formatUSD(MARKETS.reduce((s, m) => s + m.volume24h, 0))}
+                {loading ? <Loader2 size={20} className="animate-spin" /> : formatUSD(totalVolume)}
               </div>
             </div>
 
@@ -194,7 +143,7 @@ export default function PerpsDirectory() {
                 Pool Liquidity
               </div>
               <div className="text-2xl font-light tracking-tight text-white">
-                {formatUSD(MARKETS.reduce((s, m) => s + m.liquidity, 0))}
+                {loading ? <Loader2 size={20} className="animate-spin" /> : formatUSD(totalLiquidity)}
               </div>
             </div>
           </div>
@@ -229,6 +178,20 @@ export default function PerpsDirectory() {
               Pool Liquidity <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="liquidity" /></span>
             </button>
           </div>
+
+          {/* Loading state */}
+          {loading && markets.length === 0 && (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 size={24} className="animate-spin text-gray-600" />
+            </div>
+          )}
+
+          {/* Disconnected state */}
+          {!loading && !connected && markets.length === 0 && (
+            <div className="flex items-center justify-center py-20 text-gray-600 text-sm uppercase tracking-widest">
+              Simulation disconnected
+            </div>
+          )}
 
           {/* Table Rows */}
           {sortedMarkets.map((market) => (
