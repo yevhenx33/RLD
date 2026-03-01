@@ -155,6 +155,13 @@ def init_comprehensive_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_to ON transactions(to_address)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_method ON transactions(method_id)")
     
+    # Migrations: add columns to existing tables (safe to re-run)
+    for col in ["token0_balance TEXT", "token1_balance TEXT"]:
+        try:
+            cursor.execute(f"ALTER TABLE pool_state ADD COLUMN {col}")
+        except Exception:
+            pass  # column already exists
+    
     conn.commit()
     conn.close()
     logger.info(f"✅ Comprehensive DB initialized at {COMPREHENSIVE_DB_PATH}")
