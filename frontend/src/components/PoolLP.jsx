@@ -16,74 +16,22 @@ import { useSimulation } from "../hooks/useSimulation";
 import { useWallet } from "../context/WalletContext";
 import { useBrokerAccount } from "../hooks/useBrokerAccount";
 import { usePoolLiquidity, liquidityToAmounts } from "../hooks/usePoolLiquidity";
+import { useToast } from "../hooks/useToast";
+import { useChartControls } from "../hooks/useChartControls";
 import TradingTerminal, { InputGroup, SummaryRow } from "./TradingTerminal";
 import StatItem from "./StatItem";
 import RLDPerformanceChart from "./RLDChart";
+import ChartControlBar from "./ChartControlBar";
 import ClaimFeesModal from "./ClaimFeesModal";
 import WithdrawModal from "./WithdrawModal";
 import AddLiquidityModal from "./AddLiquidityModal";
+import { ToastContainer } from "./Toast";
 
 const RPC_URL = `${window.location.origin}/rpc`;
 const ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 
-// ── Mock Liquidity Distribution Generator ─────────────────────
-// Simulates a realistic concentrated liquidity profile:
-// base full-range liquidity + two concentrated humps near the current price.
-function generateMockLiquidityBins(currentPrice, numBins = 80) {
-  if (!currentPrice || currentPrice <= 0) return [];
 
-  const spread = currentPrice * 0.15; // ±15% around current price
-  const minP = currentPrice - spread;
-  const maxP = currentPrice + spread;
-  const binWidth = (maxP - minP) / numBins;
-
-  const BASE_LIQ = 8_000_000_000_000; // flat full-range base
-  const bins = [];
-
-  for (let i = 0; i < numBins; i++) {
-    const priceMid = minP + (i + 0.5) * binWidth;
-
-    // Concentrated hump #1: tight around current price
-    const dist1 = Math.abs(priceMid - currentPrice) / (spread * 0.25);
-    const hump1 = Math.exp(-(dist1 * dist1) / 2) * 18_000_000_000_000;
-
-    // Concentrated hump #2: slightly below current price (asymmetric)
-    const hump2Center = currentPrice - spread * 0.2;
-    const dist2 = Math.abs(priceMid - hump2Center) / (spread * 0.15);
-    const hump2 = Math.exp(-(dist2 * dist2) / 2) * 6_000_000_000_000;
-
-    // Small noise for realism
-    const noise = (Math.random() - 0.5) * BASE_LIQ * 0.08;
-
-    bins.push({
-      price: priceMid.toFixed(3),
-      priceFrom: minP + i * binWidth,
-      priceTo: minP + (i + 1) * binWidth,
-      liquidity: Math.max(0, Math.round(BASE_LIQ + hump1 + hump2 + noise)),
-    });
-  }
-  return bins;
-}
-
-
-function catmullRomToBezier(points, tension = 0.5) {
-  if (points.length < 2) return "";
-  const d = [`M ${points[0].x},${points[0].y}`];
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[Math.max(0, i - 1)];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[Math.min(points.length - 1, i + 2)];
-    const cp1x = p1.x + (p2.x - p0.x) / (6 * tension);
-    const cp1y = p1.y + (p2.y - p0.y) / (6 * tension);
-    const cp2x = p2.x - (p3.x - p1.x) / (6 * tension);
-    const cp2y = p2.y - (p3.y - p1.y) / (6 * tension);
-    d.push(`C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`);
-  }
-  return d.join(" ");
-}
-
-// ── Combo: Dotted Bars + Mountain Fill ────────────────────────
+// ── Combo: Uniswap-style Dual-Color Mountain Chart ────────────────────────
 function ComboChart({ bins, currentPrice }) {
   const containerRef = React.useRef(null);
   const [dims, setDims] = React.useState({ width: 0, height: 0 });
@@ -108,50 +56,89 @@ function ComboChart({ bins, currentPrice }) {
     );
   }
 
-  // Subtract the floor so the chart shows the concentrated delta above baseline
-  const minLiq = Math.min(...bins.map((b) => b.liquidity));
-  const deltas = bins.map((b) => b.liquidity - minLiq);
-  const maxDelta = Math.max(...deltas);
-  const currentBinIdx = bins.findIndex(
-    (b) => currentPrice >= b.priceFrom && currentPrice < b.priceTo,
-  );
+  // Use combined token amounts for Y-axis height (like Uniswap)
+  const getDepth = (b) => (b.amount0 ?? 0) + (b.amount1 ?? 0);
+  const maxDepth = Math.max(...bins.map(getDepth), 0.01);
 
-  // Layout — match the bar chart spacing
-  const MARGIN = { top: 10, right: 8, bottom: 24, left: 0 };
-  const Y_AXIS_W = 48;
-  const plotW = dims.width - MARGIN.left - MARGIN.right - Y_AXIS_W;
+  // Layout
+  const MARGIN = { top: 16, right: 12, bottom: 30, left: 56 };
+  const plotW = dims.width - MARGIN.left - MARGIN.right;
   const plotH = dims.height - MARGIN.top - MARGIN.bottom;
-  const binH = plotH / bins.length;
+  const barW = plotW / bins.length;
 
-  const priceToY = (idx) => MARGIN.top + idx * binH + binH / 2;
-  const liqToX = (delta) => MARGIN.left + (maxDelta > 0 ? (delta / maxDelta) * plotW * 0.75 : 0);
+  const xOf = (idx) => MARGIN.left + idx * barW + barW / 2;
+  const yOf = (depth) => MARGIN.top + plotH - (maxDepth > 0 ? (depth / maxDepth) * plotH * 0.8 : 0);
 
-  // Build smooth spline points
-  const curvePoints = bins.map((b, i) => ({
-    x: liqToX(deltas[i]),
-    y: priceToY(i),
-  }));
-  const smoothOutline = catmullRomToBezier(curvePoints);
+  // Current price X (interpolated)
+  let curPriceX = null;
+  let curBinIdx = -1;
+  if (currentPrice && bins.length > 0) {
+    const minP = bins[0].priceFrom;
+    const maxP = bins[bins.length - 1].priceTo;
+    if (currentPrice >= minP && currentPrice <= maxP) {
+      curPriceX = MARGIN.left + ((currentPrice - minP) / (maxP - minP)) * plotW;
+      curBinIdx = bins.findIndex(b => currentPrice >= b.priceFrom && currentPrice < b.priceTo);
+    }
+  }
 
-  // Closed area path: left wall → smooth curve → left wall
-  const smoothFill = `M ${MARGIN.left},${priceToY(0)} ` +
-    `L ${curvePoints[0].x},${curvePoints[0].y} ` +
-    smoothOutline.slice(smoothOutline.indexOf("C")) +
-    ` L ${MARGIN.left},${priceToY(bins.length - 1)} Z`;
+  // Build path points
+  const points = bins.map((b, i) => ({ x: xOf(i), y: yOf(getDepth(b)) }));
 
-  // Determine which dotted bars to draw (every bin at density 1)
-  const drawEvery = 1;
+  // Linear path — liquidity charts should show clean transitions, not smooth splines
+  const baseline = MARGIN.top + plotH;
+  const buildPath = (pts) => {
+    if (pts.length < 2) return "";
+    return pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x},${p.y}`).join(" ");
+  };
+
+  const curvePath = buildPath(points);
+
+  // Closed area path for fills
+  const areaPath = `M ${points[0].x},${baseline} L ${points[0].x},${points[0].y} ` +
+    curvePath.slice(curvePath.indexOf("L")) +
+    ` L ${points[points.length - 1].x},${baseline} Z`;
+
+  // Format token amounts for Y-axis / tooltips
+  const fmtAmt = (v) => {
+    if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+    if (v >= 1) return v.toFixed(1);
+    if (v >= 0.01) return v.toFixed(2);
+    return v.toFixed(4);
+  };
 
   return (
     <div ref={containerRef} className="w-full h-full relative font-mono" onMouseLeave={() => setHoveredIdx(null)}>
       {dims.width > 0 && plotH > 0 && (
         <svg width={dims.width} height={dims.height}>
           <defs>
-            <linearGradient id="combo-fill" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stopColor="#7c3aed" stopOpacity={0.05} />
-              <stop offset="100%" stopColor="#7c3aed" stopOpacity={0.3} />
+            {/* Left fill (token1-heavy, below current price) */}
+            <linearGradient id="liq-fill-left" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#ec4899" stopOpacity={0.5} />
+              <stop offset="100%" stopColor="#ec4899" stopOpacity={0.05} />
             </linearGradient>
-            <filter id="combo-glow">
+            {/* Right fill (token0-heavy, above current price) */}
+            <linearGradient id="liq-fill-right" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.5} />
+              <stop offset="100%" stopColor="#22d3ee" stopOpacity={0.05} />
+            </linearGradient>
+            {/* Clip to plot area (prevents below-baseline rendering) */}
+            <clipPath id="clip-plot">
+              <rect x={MARGIN.left} y={MARGIN.top} width={plotW} height={plotH} />
+            </clipPath>
+            {/* Clip paths for dual-color split at current price */}
+            {curPriceX != null && (
+              <>
+                <clipPath id="clip-left">
+                  <rect x={0} y={0} width={curPriceX} height={dims.height} />
+                </clipPath>
+                <clipPath id="clip-right">
+                  <rect x={curPriceX} y={0} width={dims.width - curPriceX} height={dims.height} />
+                </clipPath>
+              </>
+            )}
+            <filter id="area-glow">
               <feGaussianBlur stdDeviation="2" result="blur" />
               <feMerge>
                 <feMergeNode in="blur" />
@@ -160,166 +147,123 @@ function ComboChart({ bins, currentPrice }) {
             </filter>
           </defs>
 
-          {/* Vertical grid lines */}
-          {[0.25, 0.5, 0.75, 1].map((frac) => (
+          {/* Horizontal grid lines */}
+          {[0.25, 0.5, 0.75].map((frac) => (
             <line
               key={frac}
-              x1={MARGIN.left + frac * plotW}
-              y1={MARGIN.top}
-              x2={MARGIN.left + frac * plotW}
-              y2={MARGIN.top + plotH}
-              stroke="#27272a"
+              x1={MARGIN.left}
+              y1={MARGIN.top + plotH * (1 - frac)}
+              x2={MARGIN.left + plotW}
+              y2={MARGIN.top + plotH * (1 - frac)}
+              stroke="#1e1e24"
               strokeDasharray="3 3"
             />
           ))}
 
-          {/* Smooth mountain area fill */}
-          <path d={smoothFill} fill="url(#combo-fill)" />
+          {/* Mountain area — dual color split (clipped to plot area) */}
+          <g clipPath="url(#clip-plot)">
+          {curPriceX != null ? (
+            <>
+              <path d={areaPath} fill="url(#liq-fill-left)" clipPath="url(#clip-left)" />
+              <path d={areaPath} fill="url(#liq-fill-right)" clipPath="url(#clip-right)" />
+              {/* Outline — left side pink, right side cyan */}
+              <path d={curvePath} fill="none" stroke="#ec4899" strokeWidth={1.5} strokeOpacity={0.7} clipPath="url(#clip-left)" />
+              <path d={curvePath} fill="none" stroke="#22d3ee" strokeWidth={1.5} strokeOpacity={0.7} clipPath="url(#clip-right)" />
+            </>
+          ) : (
+            <>
+              <path d={areaPath} fill="url(#liq-fill-right)" />
+              <path d={curvePath} fill="none" stroke="#22d3ee" strokeWidth={1.5} strokeOpacity={0.7} />
+            </>
+          )}
+          </g>
 
-          {/* Smooth mountain outline */}
-          <path
-            d={smoothOutline}
-            fill="none"
-            stroke="#7c3aed"
-            strokeWidth={1.5}
-            strokeOpacity={0.6}
-          />
+          {/* Hovered bar highlight */}
+          {hoveredIdx !== null && (
+            <rect
+              x={MARGIN.left + hoveredIdx * barW}
+              y={yOf(getDepth(bins[hoveredIdx]))}
+              width={barW}
+              height={baseline - yOf(getDepth(bins[hoveredIdx]))}
+              fill={hoveredIdx <= curBinIdx ? "#ec4899" : "#22d3ee"}
+              opacity={0.15}
+            />
+          )}
 
-          {/* Dotted horizontal bars — every bin */}
-          {bins.map((bin, i) => {
-            const isCurrent = i === currentBinIdx;
-            const isHovered = i === hoveredIdx;
-            if (!isCurrent && !isHovered && i % drawEvery !== 0) return null;
-            const y = priceToY(i);
-            const endX = liqToX(deltas[i]);
-
-            return (
-              <g key={i}>
-                <line
-                  x1={MARGIN.left}
-                  y1={y}
-                  x2={endX}
-                  y2={y}
-                  stroke={isCurrent ? "#22d3ee" : isHovered ? "#c4b5fd" : "#a78bfa"}
-                  strokeWidth={isCurrent ? 2 : isHovered ? 1.5 : 0.5}
-                  strokeDasharray={isCurrent ? "6 3" : isHovered ? "4 2" : "2 3"}
-                  strokeOpacity={isCurrent ? 1 : isHovered ? 0.8 : 0.35}
-                  filter={isCurrent ? "url(#combo-glow)" : undefined}
-                />
-                {(isCurrent || isHovered) && (
-                  <circle
-                    cx={endX}
-                    cy={y}
-                    r={isCurrent ? 3 : 2}
-                    fill={isCurrent ? "#22d3ee" : "#c4b5fd"}
-                  />
-                )}
-              </g>
-            );
-          })}
-
-          {/* Invisible hover rects for each bin */}
+          {/* Invisible hover rects */}
           {bins.map((_, i) => (
             <rect
-              key={`hover-${i}`}
-              x={0}
-              y={MARGIN.top + i * binH}
-              width={dims.width}
-              height={binH}
+              key={`h-${i}`}
+              x={MARGIN.left + i * barW}
+              y={MARGIN.top}
+              width={barW}
+              height={plotH}
               fill="transparent"
               onMouseEnter={() => setHoveredIdx(i)}
               onMouseLeave={() => setHoveredIdx(null)}
             />
           ))}
 
-          {/* Current price dashed line across full width */}
-          {currentBinIdx >= 0 && (
-            <line
-              x1={MARGIN.left}
-              y1={priceToY(currentBinIdx)}
-              x2={MARGIN.left + plotW}
-              y2={priceToY(currentBinIdx)}
-              stroke="#22d3ee"
-              strokeWidth={1}
-              strokeDasharray="4 4"
-              strokeOpacity={0.6}
-            />
+          {/* Current price vertical line */}
+          {curPriceX != null && (
+            <>
+              <line
+                x1={curPriceX} y1={MARGIN.top}
+                x2={curPriceX} y2={baseline}
+                stroke="#ffffff" strokeWidth={1} strokeDasharray="4 3" strokeOpacity={0.5}
+              />
+              <text x={curPriceX} y={MARGIN.top - 3} textAnchor="middle" fill="#e4e4e7" fontSize={12} fontFamily="inherit">
+                {currentPrice.toFixed(2)}
+              </text>
+            </>
           )}
 
-          {/* Y-axis labels (price, right side) */}
-          {bins.map((bin, i) => {
-            if (i % Math.max(1, Math.floor(bins.length / 10)) !== 0 && i !== currentBinIdx) return null;
-            return (
-              <text
-                key={i}
-                x={MARGIN.left + plotW + 6}
-                y={priceToY(i) + 3}
-                fill={i === currentBinIdx ? "#22d3ee" : "#71717a"}
-                fontSize={11}
-                fontFamily="monospace"
-              >
-                ${Number(bin.price).toFixed(2)}
-              </text>
-            );
-          })}
-
-          {/* X-axis labels (match bar chart format) */}
-          {[0, 0.25, 0.5, 0.75, 1].map((frac) => {
-            const val = frac * maxDelta;
-            const t = val / 1e12;
-            let label = "";
-            if (t >= 1) label = `$${t.toFixed(0)}T`;
-            else if (val >= 1e9) label = `$${(val / 1e9).toFixed(0)}B`;
-            else if (val >= 1e6) label = `$${(val / 1e6).toFixed(0)}M`;
-            return (
-              <text
-                key={frac}
-                x={MARGIN.left + frac * plotW}
-                y={MARGIN.top + plotH + 16}
-                textAnchor="middle"
-                fill="#71717a"
-                fontSize={11}
-                fontFamily="monospace"
-              >
-                {label}
-              </text>
-            );
-          })}
-
           {/* Bottom axis line */}
-          <line
-            x1={MARGIN.left}
-            y1={MARGIN.top + plotH}
-            x2={MARGIN.left + plotW}
-            y2={MARGIN.top + plotH}
-            stroke="#27272a"
-          />
+          <line x1={MARGIN.left} y1={baseline} x2={MARGIN.left + plotW} y2={baseline} stroke="#3f3f46" />
+
+          {/* X-axis labels (prices) */}
+          {bins.map((bin, i) => {
+            if (i % Math.max(1, Math.floor(bins.length / 6)) !== 0) return null;
+            return (
+              <text key={i} x={xOf(i)} y={baseline + 16} textAnchor="middle" fill="#71717a" fontSize={11} fontFamily="inherit">
+                {Number(bin.price).toFixed(1)}
+              </text>
+            );
+          })}
+
+          {/* Y-axis labels (token amounts) */}
+          {[0.25, 0.5, 0.75, 1].map((frac) => (
+            <text key={frac} x={MARGIN.left - 6} y={MARGIN.top + plotH * (1 - frac) + 4} textAnchor="end" fill="#71717a" fontSize={11} fontFamily="inherit">
+              {fmtAmt(maxDepth * frac)}
+            </text>
+          ))}
         </svg>
       )}
 
       {/* Tooltip */}
       {hoveredIdx !== null && dims.width > 0 && (() => {
         const bin = bins[hoveredIdx];
-        const y = priceToY(hoveredIdx);
-        const x = liqToX(deltas[hoveredIdx]);
-        const liqVal = bin.liquidity / 1e6;
-        const liqStr = liqVal >= 1000 ? `$${(liqVal / 1000).toFixed(1)}B` : `$${liqVal.toFixed(1)}M`;
-        const above = y > dims.height / 2;
+        const x = xOf(hoveredIdx);
+        const tipY = yOf(getDepth(bin));
+        const a0 = bin.amount0 ?? 0;
+        const a1 = bin.amount1 ?? 0;
         return (
           <div
-            className="absolute pointer-events-none bg-zinc-950/95 border border-zinc-800 px-3 py-2 text-xs font-mono shadow-xl"
-            style={{
-              left: Math.min(x + 8, dims.width - 160),
-              top: above ? y - 58 : y + 8,
-            }}
+            className="absolute pointer-events-none bg-[#0a0a0a]/95 border border-zinc-800 px-3 py-2 text-xs font-mono shadow-xl z-10 rounded"
+            style={{ left: Math.min(Math.max(x - 80, 4), dims.width - 180), top: Math.max(tipY - 70, 4) }}
           >
-            <div className="text-zinc-400 mb-1">
-              ${Number(bin.priceFrom).toFixed(2)} &ndash; ${Number(bin.priceTo).toFixed(2)}
+            <div className="text-zinc-400 mb-1.5">
+              {Number(bin.priceFrom).toFixed(2)} &ndash; {Number(bin.priceTo).toFixed(2)}
+            </div>
+            <div className="flex items-center gap-2 mb-0.5">
+              <span className="w-2 h-2 rounded-full bg-pink-500 inline-block" />
+              <span className="text-zinc-400">Token 0:</span>
+              <span className="text-white">{fmtAmt(a0)}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-violet-500 inline-block" />
-              <span className="text-zinc-300">Liquidity:</span>
-              <span className="text-white font-semibold">{liqStr}</span>
+              <span className="w-2 h-2 rounded-full bg-cyan-400 inline-block" />
+              <span className="text-zinc-400">Token 1:</span>
+              <span className="text-white">{fmtAmt(a1)}</span>
             </div>
           </div>
         );
@@ -334,9 +278,31 @@ function ComboChart({ bins, currentPrice }) {
 export default function PoolLP() {
   // ── Wallet & broker ─────────────────────────────────────────
   const { account } = useWallet();
+  const { toasts, addToast, removeToast } = useToast();
+
+  // ── Chart controls (resolution + time range) ───────────────
+  const chartControls = useChartControls({
+    defaultRange: "1W",
+    defaultDays: 7,
+    defaultResolution: "1H",
+  });
+  const { appliedStart, appliedEnd, resolution } = chartControls;
+
+  // Convert date strings to unix timestamps for the API
+  const chartStartTime = appliedStart
+    ? Math.floor(new Date(appliedStart).getTime() / 1000)
+    : null;
+  const chartEndTime = appliedEnd
+    ? Math.floor(new Date(appliedEnd + "T23:59:59Z").getTime() / 1000)
+    : null;
 
   // ── Simulation data ─────────────────────────────────────────
-  const sim = useSimulation({ pollInterval: 2000 });
+  const sim = useSimulation({
+    pollInterval: 2000,
+    chartResolution: resolution,
+    chartStartTime,
+    chartEndTime,
+  });
   const {
     connected,
     loading,
@@ -346,6 +312,7 @@ export default function PoolLP() {
     funding,
     fundingFromNF: _fundingFromNF,
     volumeData,
+    volumeHistory,
     protocolStats,
     marketInfo,
     chartData,
@@ -362,6 +329,7 @@ export default function PoolLP() {
     executeAddLiquidity,
     executeRemoveLiquidity,
     activePosition,
+    allPositions,
     refreshPosition,
     executing: lpExecuting,
     executionStep: lpStep,
@@ -369,27 +337,79 @@ export default function PoolLP() {
     clearError: clearLpError,
   } = usePoolLiquidity(brokerAddress, marketInfo);
 
-  // ── Mock liquidity depth distribution ───────────────────────
-  const liquidityBins = useMemo(
-    () => generateMockLiquidityBins(pool?.markPrice || 0, 40),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pool?.markPrice ? Math.round(pool.markPrice * 10) / 10 : 0],
-  );
+  // ── Pool-wide liquidity distribution (single API call, server-cached) ──
+  const [liquidityBins, setLiquidityBins] = useState([]);
+  const [liqDistPrice, setLiqDistPrice] = useState(null);
+
+  // Local fallback: build bins from allPositions when API is unavailable
+  const buildLocalBins = React.useCallback((positions, price) => {
+    if (!positions?.length || !price) return [];
+    const NUM_BINS = 60;
+    // ±100% price range: half to double the current price
+    const minP = price * 0.5, maxP = price * 2.0;
+    const binW = (maxP - minP) / NUM_BINS;
+    return Array.from({ length: NUM_BINS }, (_, i) => {
+      const priceFrom = minP + i * binW;
+      const priceTo = minP + (i + 1) * binW;
+      let liq = 0;
+      for (const p of positions) {
+        const tl = Math.min(p.tickLower ?? 0, p.tickUpper ?? 0);
+        const tu = Math.max(p.tickLower ?? 0, p.tickUpper ?? 0);
+        const pL = Math.pow(1.0001, tl);
+        const pH = Math.pow(1.0001, tu);
+        if (pH > priceFrom && pL < priceTo) liq += Number(p.liquidity || 0);
+      }
+      // Token amounts (Uni V3 math) → divide by 1e6 for 6-decimal tokens
+      const sa = Math.sqrt(priceFrom), sb = Math.sqrt(priceTo);
+      const sp = Math.max(sa, Math.min(Math.sqrt(price), sb));
+      const a0 = sp < sb ? liq * (1 / sp - 1 / sb) / 1e6 : 0;
+      const a1 = sp > sa ? liq * (sp - sa) / 1e6 : 0;
+      return { price: ((priceFrom + priceTo) / 2).toFixed(3), priceFrom, priceTo, liquidity: liq, amount0: Math.max(0, a0), amount1: Math.max(0, a1) };
+    });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchDistribution() {
+      try {
+        const res = await fetch("/api/liquidity-distribution?num_bins=60");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!cancelled && data.bins?.length) {
+          setLiquidityBins(data.bins);
+          if (data.currentPrice) setLiqDistPrice(data.currentPrice);
+          return;
+        }
+      } catch (err) {
+        console.warn("[LP] API unavailable, using local fallback:", err.message);
+      }
+      // Fallback: build from local positions
+      if (!cancelled && allPositions?.length) {
+        const price = pool?.markPrice || 1;
+        setLiquidityBins(buildLocalBins(allPositions, price));
+      }
+    }
+    fetchDistribution();
+    return () => { cancelled = true; };
+  }, [allPositions, pool?.markPrice, buildLocalBins]);
 
   // ── Local UI state ──────────────────────────────────────────
   const [activeTab, setActiveTab] = useState("ADD");
   const [token0Amount, setToken0Amount] = useState("");
   const [token1Amount, setToken1Amount] = useState("");
   const [lastEdited, setLastEdited] = useState(null); // 'token0' | 'token1'
-  const [minPrice, setMinPrice] = useState("0.95");
-  const [maxPrice, setMaxPrice] = useState("1.05");
+  const [minPrice, setMinPrice] = useState("1");
+  const [maxPrice, setMaxPrice] = useState("10");
   const [removePercent, setRemovePercent] = useState(100);
   const [selectedPosition, _setSelectedPosition] = useState(null);
+  const [removePage, setRemovePage] = useState(0);
+  const POSITIONS_PER_PAGE = 4;
   const [actionDropdown, setActionDropdown] = useState(null);
   const [claimPosition, setClaimPosition] = useState(null);
   const [withdrawPosition, setWithdrawPosition] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [chartView, setChartView] = useState("PRICE");
+  const [chartDropdown, setChartDropdown] = useState(null); // 'resolution' | 'timeframe' | null
 
   // ── Account selector (wallet vs broker) ─────────────────────
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
@@ -597,7 +617,7 @@ export default function PoolLP() {
       VOLUME: {
         label: "Volume",
         areas: [
-          { key: "volume", name: "Volume", color: "#22c55e" },
+          { key: "volume", name: "Volume", color: "#22c55e", format: "dollar" },
         ],
       },
     }),
@@ -606,31 +626,34 @@ export default function PoolLP() {
 
   const activeChartConfig = CHART_VIEWS[chartView];
 
-  // ── Derive user positions from active on-chain position ─────
+  // ── Derive user positions from ALL on-chain positions ─────────
   const userPositions = useMemo(() => {
-    if (!activePosition || activePosition.tokenId === 0n) return [];
+    if (!allPositions || allPositions.length === 0) return [];
 
-    const { tickLower, tickUpper, liquidity, tokenId } = activePosition;
+    const mapped = allPositions.map((pos) => {
+      const { tickLower, tickUpper, liquidity, tokenId, isActive, entryPrice: onChainEntryPrice } = pos;
 
-    // Convert ticks back to prices for display
-    const priceLower = Math.pow(1.0001, tickLower);
-    const priceUpper = Math.pow(1.0001, tickUpper);
+      // Convert ticks back to prices for display
+      const priceLower = Math.pow(1.0001, tickLower);
+      const priceUpper = Math.pow(1.0001, tickUpper);
+      // Use on-chain entry price (pool price at mint block), fall back to current price
+      const entryPrice = onChainEntryPrice ?? currentPrice ?? (priceLower + priceUpper) / 2;
 
-    // Compute token amounts from position liquidity + tick range + current price
-    const currentTick = currentPrice
-      ? Math.log(currentPrice) / Math.log(1.0001)
-      : 0;
-    const amounts = liquidityToAmounts(liquidity, tickLower, tickUpper, currentTick);
+      // Compute token amounts from position liquidity + tick range + current price
+      const currentTick = currentPrice
+        ? Math.log(currentPrice) / Math.log(1.0001)
+        : 0;
+      const amounts = liquidityToAmounts(liquidity, tickLower, tickUpper, currentTick);
 
-    // Is the current price within this position's range?
-    const inRange = currentTick >= tickLower && currentTick < tickUpper;
+      // Is the current price within this position's range?
+      const inRange = currentTick >= tickLower && currentTick < tickUpper;
 
-    return [
-      {
+      return {
         id: Number(tokenId),
         tokenId,
         priceLower,
         priceUpper,
+        entryPrice,
         liquidity: Number(liquidity),
         liquidityFormatted: Number(liquidity).toLocaleString(),
         token0Amount: amounts.amount0.toLocaleString(undefined, { maximumFractionDigits: 2 }),
@@ -639,10 +662,14 @@ export default function PoolLP() {
         feesEarned0: "0",
         feesEarned1: "0",
         inRange,
+        isActive,
         apr: poolData?.apr?.toFixed(1) || "—",
-      },
-    ];
-  }, [activePosition, currentPrice, poolData]);
+      };
+    });
+
+    // Active position always first
+    return mapped.sort((a, b) => (b.isActive ? 1 : 0) - (a.isActive ? 1 : 0));
+  }, [allPositions, currentPrice, poolData]);
 
   // ── Error / Loading states ──────────────────────────────────
   if (error && !connected) {
@@ -795,10 +822,95 @@ export default function PoolLP() {
 
             {/* 2. CHART */}
             <div className="relative flex-1 min-h-[350px] md:min-h-[400px] border border-white/10">
-              {/* Chart Header — series legend left, view tabs right */}
-              <div className="flex items-center justify-between px-5 py-3 border-b border-white/10 bg-[#0a0a0a]">
-                {/* LEFT: Series legend */}
-                <div className="flex items-center gap-5">
+              {/* Row 1: View switcher | Resolution | Timeframe — divided cells */}
+              <div className="flex items-stretch border-b border-white/10">
+                {/* View switcher */}
+                <div className="flex items-center gap-1 px-4 py-2 border-r border-white/10">
+                  {Object.entries(CHART_VIEWS).map(([key, view]) => (
+                    <button
+                      key={key}
+                      onClick={() => setChartView(key)}
+                      className={`px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
+                        chartView === key
+                          ? "text-white bg-white/10"
+                          : "text-gray-600 hover:text-gray-400"
+                      }`}
+                    >
+                      {view.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Resolution dropdown */}
+                <div className="relative flex items-center px-4 py-2 border-r border-white/10">
+                  <button
+                    onClick={() => setChartDropdown(chartDropdown === 'resolution' ? null : 'resolution')}
+                    className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-widest text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    Resolution: <span className="text-white">{resolution}</span>
+                    <ChevronDown size={10} className={`transition-transform ${chartDropdown === 'resolution' ? 'rotate-180' : ''}`} />
+                  </button>
+                  {chartDropdown === 'resolution' && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setChartDropdown(null)} />
+                      <div className="absolute left-0 top-full mt-0 z-50 bg-[#0a0a0a] border border-white/10">
+                        {["1H", "4H", "1D", "1W"].map((res) => (
+                          <button
+                            key={res}
+                            onClick={() => { chartControls.setResolution(res); setChartDropdown(null); }}
+                            className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
+                              resolution === res
+                                ? "text-white bg-white/10"
+                                : "text-gray-600 hover:text-gray-400"
+                            }`}
+                          >
+                            {res}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Timeframe dropdown */}
+                <div className="relative flex items-center px-4 py-2 border-r border-white/10">
+                  <button
+                    onClick={() => setChartDropdown(chartDropdown === 'timeframe' ? null : 'timeframe')}
+                    className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-widest text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    Timeframe: <span className="text-white">{chartControls.activeRange}</span>
+                    <ChevronDown size={10} className={`transition-transform ${chartDropdown === 'timeframe' ? 'rotate-180' : ''}`} />
+                  </button>
+                  {chartDropdown === 'timeframe' && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setChartDropdown(null)} />
+                      <div className="absolute left-0 top-full mt-0 z-50 bg-[#0a0a0a] border border-white/10">
+                        {[
+                          { l: "1D", d: 1 },
+                          { l: "1W", d: 7 },
+                          { l: "1M", d: 30 },
+                          { l: "3M", d: 90 },
+                          { l: "ALL", d: 9999 },
+                        ].map((btn) => (
+                          <button
+                            key={btn.l}
+                            onClick={() => { chartControls.handleQuickRange(btn.d, btn.l); setChartDropdown(null); }}
+                            className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
+                              chartControls.activeRange === btn.l
+                                ? "text-white bg-white/10"
+                                : "text-gray-600 hover:text-gray-400"
+                            }`}
+                          >
+                            {btn.l}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Series legend */}
+                <div className="flex items-center gap-5 px-4 py-2 ml-auto">
                   {activeChartConfig.areas.map((s) => (
                     <div
                       key={s.key}
@@ -814,23 +926,6 @@ export default function PoolLP() {
                     </div>
                   ))}
                 </div>
-
-                {/* RIGHT: View switcher */}
-                <div className="flex items-center gap-1">
-                  {Object.entries(CHART_VIEWS).map(([key, view]) => (
-                    <button
-                      key={key}
-                      onClick={() => setChartView(key)}
-                      className={`px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
-                        chartView === key
-                          ? "text-white bg-white/10"
-                          : "text-gray-600 hover:text-gray-400"
-                      }`}
-                    >
-                      {view.label}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* Chart body */}
@@ -838,8 +933,20 @@ export default function PoolLP() {
                 {chartView === "LIQUIDITY" ? (
                   <ComboChart
                     bins={liquidityBins}
-                    currentPrice={poolData?.markPrice || 0}
+                    currentPrice={poolData?.markPrice || liqDistPrice || 0}
                   />
+                ) : chartView === "VOLUME" ? (
+                  volumeHistory.length === 0 ? (
+                    <div className="h-full flex items-center justify-center">
+                      <Loader2 className="animate-spin text-gray-700" />
+                    </div>
+                  ) : (
+                    <RLDPerformanceChart
+                      data={volumeHistory}
+                      areas={activeChartConfig.areas}
+                      resolution="1H"
+                    />
+                  )
                 ) : chartData.length === 0 ? (
                   <div className="h-full flex items-center justify-center">
                     <Loader2 className="animate-spin text-gray-700" />
@@ -848,7 +955,7 @@ export default function PoolLP() {
                   <RLDPerformanceChart
                     data={chartData}
                     areas={activeChartConfig.areas}
-                    resolution="1D"
+                    resolution={resolution}
                   />
                 )}
               </div>
@@ -921,22 +1028,25 @@ export default function PoolLP() {
               },
             ]}
             actionButton={{
-              label: activeTab === "ADD" ? "Add Liquidity" : "Remove Liquidity",
+              label: lpExecuting
+                ? (lpStep || "Processing...")
+                : activeTab === "ADD" ? "Add Liquidity" : "Remove Liquidity",
               onClick: () => {
+                if (lpExecuting) return;
                 if (activeTab === "ADD") {
                   setShowAddModal(true);
                 } else if (activeTab === "REMOVE" && selectedPosition) {
                   setWithdrawPosition(selectedPosition);
                 }
               },
-              disabled: activeTab === "REMOVE" && !selectedPosition,
+              disabled: lpExecuting || (activeTab === "REMOVE" && !selectedPosition),
               variant: activeTab === "ADD" ? "cyan" : "pink",
             }}
             footer={null}
           >
             {/* === ADD LIQUIDITY === */}
             {activeTab === "ADD" && (
-              <>
+              <div className="space-y-4">
                 {/* Price Range */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -944,14 +1054,21 @@ export default function PoolLP() {
                       Price Range
                     </span>
                     <button
-                      onClick={() => { setMinPrice("0.0001"); setMaxPrice("100"); }}
+                      onClick={() => {
+                        const ts = poolData?.tickSpacing || 5;
+                        const padTicks = 10 * ts;
+                        const minP = Math.pow(1.0001, -92100 + padTicks);
+                        const maxP = Math.pow(1.0001, 46050 - padTicks);
+                        setMinPrice(minP.toFixed(6));
+                        setMaxPrice(maxP.toFixed(2));
+                      }}
                       className="text-sm text-cyan-500 uppercase tracking-widest hover:text-cyan-400 transition-colors"
                     >
                       Full Range
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="border border-white/10 bg-[#060606] p-3">
+                    <div className="border border-white/10 bg-[#080808] p-3">
                       <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">
                         Min Price
                       </div>
@@ -966,7 +1083,7 @@ export default function PoolLP() {
                         {poolData.token1.symbol} per {poolData.token0.symbol}
                       </div>
                     </div>
-                    <div className="border border-white/10 bg-[#060606] p-3">
+                    <div className="border border-white/10 bg-[#080808] p-3">
                       <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">
                         Max Price
                       </div>
@@ -1003,7 +1120,7 @@ export default function PoolLP() {
                 />
 
                 {/* Summary */}
-                <div className="space-y-2 pt-2 border-t border-white/10">
+                <div className="space-y-2">
                   <SummaryRow label="Pool" value={poolData.pair} />
                   <SummaryRow label="Fee Tier" value={poolData.feeTier} />
                   <SummaryRow
@@ -1012,11 +1129,11 @@ export default function PoolLP() {
                   />
                   <SummaryRow
                     label="Est. APR"
-                    value={`${poolData.apr.toFixed(1)}%`}
+                    value={`${poolData.apr.toFixed(2)}%`}
                     valueColor="text-green-400"
                   />
                 </div>
-              </>
+              </div>
             )}
 
             {/* === REMOVE LIQUIDITY === */}
@@ -1027,29 +1144,129 @@ export default function PoolLP() {
                     <span className="text-sm uppercase tracking-widest font-bold text-gray-500">
                       Select Position
                     </span>
+                    {userPositions.length > 0 && (
+                      <span className="text-sm text-gray-600 font-mono">
+                        {userPositions.length} position{userPositions.length !== 1 ? "s" : ""}
+                      </span>
+                    )}
                   </div>
 
-                  {/* Empty state — V4 position queries require a new hook */}
+                  {/* Empty state — context aware */}
                   {userPositions.length === 0 && (
-                    <div className="border border-white/10 bg-[#060606] p-6 text-center">
+                    <div className="border border-white/10 bg-[#080808] p-6 text-center">
                       <Layers size={24} className="mx-auto text-gray-700 mb-3" />
-                      <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">
-                        No Positions Found
+                      {!account ? (
+                        <>
+                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">
+                            Wallet Not Connected
+                          </div>
+                          <div className="text-sm text-gray-700">
+                            Connect your wallet to view and manage LP positions
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">
+                            No Positions Found
+                          </div>
+                          <div className="text-sm text-gray-700">
+                            You have no active LP positions — add liquidity to get started
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Position cards — show only selected when one is picked, paginated otherwise */}
+                  {(selectedPosition
+                    ? userPositions.filter((p) => p.id === selectedPosition.id)
+                    : userPositions.slice(removePage * POSITIONS_PER_PAGE, (removePage + 1) * POSITIONS_PER_PAGE)
+                  ).map((pos) => (
+                    <button
+                      key={pos.id}
+                      onClick={() => _setSelectedPosition(
+                        selectedPosition?.id === pos.id ? null : pos
+                      )}
+                      className={`w-full text-left border p-3 transition-all ${
+                        selectedPosition?.id === pos.id
+                          ? "border-pink-500/50 bg-pink-500/[0.06]"
+                          : "border-white/10 bg-[#080808] hover:border-white/20"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm font-mono ${
+                            selectedPosition?.id === pos.id ? "text-pink-400" : "text-white"
+                          }`}>
+                            #{pos.id}
+                          </span>
+                          {pos.isActive && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 uppercase tracking-widest">
+                              Collateral
+                            </span>
+                          )}
+                        </div>
+                        <span className={`text-[10px] px-1.5 py-0.5 uppercase tracking-widest ${
+                          pos.inRange
+                            ? "bg-green-500/20 text-green-400 border border-green-500/30"
+                            : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
+                        }`}>
+                          {pos.inRange ? "In Range" : "Out of Range"}
+                        </span>
                       </div>
-                      <div className="text-sm text-gray-700">
-                        LP position queries from V4 PositionManager coming soon
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div>
+                          <div className="text-gray-600 text-[10px] uppercase tracking-widest">Range</div>
+                          <div className="font-mono text-gray-300">
+                            {pos.priceLower?.toFixed(2)} – {pos.priceUpper?.toFixed(2)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-600 text-[10px] uppercase tracking-widest">Entry</div>
+                          <div className="font-mono text-gray-300">
+                            {pos.entryPrice?.toFixed(4)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-600 text-[10px] uppercase tracking-widest">Value</div>
+                          <div className="font-mono text-gray-300">
+                            ${pos.value?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                          </div>
+                        </div>
                       </div>
+                    </button>
+                  ))}
+                  {/* Pagination — only when not selecting and more than one page */}
+                  {!selectedPosition && userPositions.length > POSITIONS_PER_PAGE && (
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        onClick={() => setRemovePage((p) => Math.max(0, p - 1))}
+                        disabled={removePage === 0}
+                        className="text-sm font-mono text-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      >
+                        ← Prev
+                      </button>
+                      <span className="text-sm text-gray-600 font-mono">
+                        {removePage + 1} / {Math.ceil(userPositions.length / POSITIONS_PER_PAGE)}
+                      </span>
+                      <button
+                        onClick={() => setRemovePage((p) => Math.min(Math.ceil(userPositions.length / POSITIONS_PER_PAGE) - 1, p + 1))}
+                        disabled={removePage >= Math.ceil(userPositions.length / POSITIONS_PER_PAGE) - 1}
+                        className="text-sm font-mono text-gray-500 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Next →
+                      </button>
                     </div>
                   )}
                 </div>
 
-                {/* Remove controls (only shown when a position is selected) */}
+                {/* Remove controls (only when a position is selected) */}
                 {selectedPosition && (
                   <>
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-sm uppercase tracking-widest font-bold text-gray-500">
-                          Amount
+                          Amount to Remove
                         </span>
                         <span className="text-xl font-mono text-white">
                           {removePercent}%
@@ -1081,6 +1298,40 @@ export default function PoolLP() {
                         ))}
                       </div>
                     </div>
+
+                    {/* Removal summary */}
+                    <div className="space-y-2 pt-2 border-t border-white/10">
+                      <SummaryRow
+                        label="Position"
+                        value={`#${selectedPosition.id}`}
+                      />
+                      <SummaryRow
+                        label="Removing"
+                        value={`${removePercent}% of liquidity`}
+                        valueColor="text-pink-400"
+                      />
+                      <SummaryRow
+                        label={`Est. ${poolData.token0.symbol}`}
+                        value={(() => {
+                          const raw = parseFloat(selectedPosition.token0Amount?.replace(/,/g, '') || 0);
+                          return (raw * removePercent / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+                        })()}
+                      />
+                      <SummaryRow
+                        label={`Est. ${poolData.token1.symbol}`}
+                        value={(() => {
+                          const raw = parseFloat(selectedPosition.token1Amount?.replace(/,/g, '') || 0);
+                          return (raw * removePercent / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+                        })()}
+                      />
+                    </div>
+
+                    {/* Error display */}
+                    {lpError && (
+                      <div className="border border-pink-500/30 bg-pink-500/10 px-3 py-2 text-sm text-pink-400 font-mono">
+                        {lpError}
+                      </div>
+                    )}
                   </>
                 )}
               </>
@@ -1091,7 +1342,7 @@ export default function PoolLP() {
         {/* 3. POSITIONS TABLE */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           <div className="xl:col-span-9 border border-white/10">
-              <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <h3 className="text-sm font-bold uppercase tracking-widest">
                     Your Positions
@@ -1099,77 +1350,102 @@ export default function PoolLP() {
                 </div>
                 <div className="text-sm text-gray-500 uppercase tracking-widest flex items-center gap-2">
                   <Activity size={12} />
-                  {userPositions.length > 0 ? "ACTIVE" : "NONE"}
+                  {userPositions.length > 0 ? "UNISWAP V4" : "NONE"}
                 </div>
               </div>
 
-              {/* Empty state */}
+              {/* Empty state — context aware */}
               {userPositions.length === 0 && (
                 <div className="px-6 py-12 text-center">
                   <Layers size={32} className="mx-auto text-gray-700 mb-4" />
-                  <div className="text-sm text-gray-500 uppercase tracking-widest mb-2">
-                    No LP Positions
-                  </div>
-                  <div className="text-sm text-gray-700 max-w-sm mx-auto">
-                    V4 PositionManager integration coming soon. Add liquidity using the panel on the right.
-                  </div>
+                  {!account ? (
+                    <>
+                      <div className="text-sm text-gray-500 uppercase tracking-widest mb-2">
+                        Wallet Not Connected
+                      </div>
+                      <div className="text-sm text-gray-700 max-w-sm mx-auto">
+                        Connect your wallet to view your LP positions
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-sm text-gray-500 uppercase tracking-widest mb-2">
+                        No LP Positions
+                      </div>
+                      <div className="text-sm text-gray-700 max-w-sm mx-auto">
+                        You don&apos;t have any active positions yet. Use the panel above to add liquidity.
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
               {/* Table Header — shown when positions exist */}
               {userPositions.length > 0 && (
                 <>
-                  <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 text-center">
-                    <div className="col-span-1 text-left">#</div>
-                    <div className="col-span-2 text-left">Range</div>
-                    <div className="col-span-2">Value</div>
-                    <div className="col-span-2">Token 0</div>
-                    <div className="col-span-2">Token 1</div>
-                    <div className="col-span-2">Fees Earned</div>
-                    <div className="col-span-1">Action</div>
+                  <div className="hidden md:grid grid-cols-14 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 text-center" style={{ gridTemplateColumns: '3fr 2fr 2fr 2fr 3fr 3fr 2fr 1fr' }}>
+                    <div className="text-left">#</div>
+                    <div>Range</div>
+                    <div>Entry Price</div>
+                    <div>Value</div>
+                    <div>Token 0</div>
+                    <div>Token 1</div>
+                    <div>Status</div>
+                    <div>Action</div>
                   </div>
 
                   {userPositions.map((pos) => (
                     <div key={pos.id}>
                       <div
-                        className="grid grid-cols-1 md:grid-cols-12 gap-4 px-6 py-4 hover:bg-white/[0.02] transition-colors border-b border-white/5 last:border-b-0 items-center text-center"
+                        className={`grid gap-4 px-6 py-4 transition-colors border-b border-white/5 last:border-b-0 items-center text-center ${
+                          pos.isActive
+                            ? "bg-cyan-500/[0.06] hover:bg-cyan-500/[0.1] border-l-2 border-l-cyan-500"
+                            : "hover:bg-white/[0.02]"
+                        }`}
+                        style={{ gridTemplateColumns: '3fr 2fr 2fr 2fr 3fr 3fr 2fr 1fr' }}
                       >
-                        <div className="col-span-1 text-sm text-gray-500 font-mono text-left">
+                        <div className={`text-sm font-mono text-left ${pos.isActive ? "text-cyan-400" : "text-gray-500"}`}>
                           {pos.id}
                         </div>
-                        <div className="col-span-2 text-left">
-                          <div className="text-sm font-mono text-white">
-                            {pos.priceLower?.toFixed(4)} –{" "}
-                            {pos.priceUpper?.toFixed(4)}
+                        <div>
+                          <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
+                            {pos.priceLower?.toFixed(2)} – {pos.priceUpper?.toFixed(2)}
                           </div>
                         </div>
-                        <div className="col-span-2 text-sm font-mono text-white">
+                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
+                          {pos.entryPrice?.toFixed(2)}
+                        </div>
+                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
                           ${pos.value?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                         </div>
-                        <div className="col-span-2 text-sm font-mono text-white">
+                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
                           {pos.token0Amount}{" "}
-                          <span className="text-gray-500 text-sm">
+                          <span className={pos.isActive ? "text-cyan-500/60 text-sm" : "text-gray-500 text-sm"}>
                             {poolData.token0.symbol}
                           </span>
                         </div>
-                        <div className="col-span-2 text-sm font-mono text-white">
+                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
                           {pos.token1Amount}{" "}
-                          <span className="text-gray-500 text-sm">
+                          <span className={pos.isActive ? "text-cyan-500/60 text-sm" : "text-gray-500 text-sm"}>
                             {poolData.token1.symbol}
                           </span>
                         </div>
-                        <div className="col-span-2 text-sm font-mono">
-                          <span className="text-green-400">
-                            +${pos.feesEarned}
-                          </span>
+                        <div className="text-sm font-mono">
+                          {pos.isActive ? (
+                            <span className="text-[10px] px-2 py-0.5 bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 uppercase tracking-widest">
+                              Collateral
+                            </span>
+                          ) : (
+                            <span className="text-gray-600">—</span>
+                          )}
                         </div>
-                        <div className="col-span-1 relative flex justify-center">
+                        <div className="relative flex justify-center">
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               setActionDropdown(actionDropdown === pos.id ? null : pos.id);
                             }}
-                            className="p-1.5 text-gray-600 hover:text-white hover:bg-white/5 transition-colors"
+                            className={`p-1.5 hover:bg-white/5 transition-colors ${pos.isActive ? "text-cyan-500 hover:text-cyan-300" : "text-gray-600 hover:text-white"}`}
                           >
                             <ChevronDown size={16} className={`transition-transform ${actionDropdown === pos.id ? 'rotate-180' : ''}`} />
                           </button>
@@ -1233,8 +1509,15 @@ export default function PoolLP() {
             withdrawPosition.tokenId,
             percent,
             () => {
+              const posId = withdrawPosition.id;
               setWithdrawPosition(null);
+              _setSelectedPosition(null);
               fetchBalances();
+              addToast({
+                type: "success",
+                title: "Liquidity Removed",
+                message: `Removed ${percent}% from position #${posId}`,
+              });
             },
           );
         }}
@@ -1265,6 +1548,7 @@ export default function PoolLP() {
             () => {
               setShowAddModal(false);
               fetchBalances();
+              addToast({ type: "success", title: "Liquidity Added", message: `Added LP in range $${minPrice} – $${maxPrice}` });
             },
           );
         }}
@@ -1279,6 +1563,8 @@ export default function PoolLP() {
         executionStep={lpStep}
         executionError={lpError}
       />
+
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </div>
   );
 }

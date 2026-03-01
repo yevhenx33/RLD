@@ -46,6 +46,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount GraphQL endpoint
+try:
+    from strawberry.fastapi import GraphQLRouter
+    from api.graphql_schema import schema as gql_schema
+    graphql_app = GraphQLRouter(gql_schema)
+    app.include_router(graphql_app, prefix="/graphql")
+except ImportError:
+    pass  # strawberry not installed — GraphQL disabled
+
 
 # ═══════════════════════════════════════════════════════════
 # Response Models
@@ -311,39 +320,129 @@ async def get_broker_history_endpoint(
 
 @app.get("/api/chart/price")
 async def get_price_chart(
-    from_block: Optional[int] = Query(None, description="Start block"),
-    to_block: Optional[int] = Query(None, description="End block"),
-    limit: int = Query(500, le=2000, description="Max data points")
+    resolution: str = Query("1H", description="Resolution: 1H, 4H, 1D, 1W"),
+    start_time: Optional[int] = Query(None, description="Start timestamp (unix)"),
+    end_time: Optional[int] = Query(None, description="End timestamp (unix)"),
+    limit: int = Query(500, le=1000, description="Max data points"),
 ):
-    """Get price data formatted for charting (index vs mark price)."""
+    """
+    Get price data formatted for charting, aggregated by resolution bucket.
+    Returns OHLC-style data points bucketed by the requested resolution.
+    """
     try:
-        market_states = get_block_states(None, from_block, to_block, limit)
-        pool_states = get_pool_states(None, from_block, to_block, limit)
+        # Resolution → bucket size in seconds
+        BUCKET_MAP = {"1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
+        bucket_sec = BUCKET_MAP.get(resolution.upper(), 3600)
 
-        pool_by_block = {p['block_number']: p for p in pool_states}
+        db_path = os.environ.get("DB_PATH", "data/comprehensive_state.db")
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        # ── Bucketed market state (NF, debt, index price) ──────────
+        ms_query = '''
+            SELECT
+                (block_timestamp / ?) * ? as bucket_ts,
+                MIN(block_number) as first_block,
+                MAX(block_number) as last_block,
+                -- Index price OHLC
+                (SELECT CAST(index_price AS INTEGER) FROM block_state b2
+                 WHERE b2.block_number = MIN(block_state.block_number)) as index_open,
+                (SELECT CAST(index_price AS INTEGER) FROM block_state b2
+                 WHERE b2.block_number = MAX(block_state.block_number)) as index_close,
+                MAX(CAST(index_price AS INTEGER)) as index_high,
+                MIN(CAST(index_price AS INTEGER)) as index_low,
+                -- Last values in bucket
+                (SELECT CAST(normalization_factor AS INTEGER) FROM block_state b2
+                 WHERE b2.block_number = MAX(block_state.block_number)) as nf_close,
+                (SELECT CAST(total_debt AS INTEGER) FROM block_state b2
+                 WHERE b2.block_number = MAX(block_state.block_number)) as debt_close,
+                COUNT(*) as sample_count
+            FROM block_state
+            WHERE 1=1
+        '''
+        params = [bucket_sec, bucket_sec]
+
+        if start_time:
+            ms_query += ' AND block_timestamp >= ?'
+            params.append(start_time)
+        if end_time:
+            ms_query += ' AND block_timestamp <= ?'
+            params.append(end_time)
+
+        ms_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT ?'
+        params.append(limit)
+
+        c.execute(ms_query, params)
+        ms_rows = c.fetchall()
+
+        # ── Bucketed pool state (mark price, tick, liquidity) ──────
+        ps_query = '''
+            SELECT
+                (block_timestamp / ?) * ? as bucket_ts,
+                -- Mark price OHLC
+                (SELECT mark_price FROM pool_state p2
+                 WHERE p2.block_number = MIN(pool_state.block_number)) as mark_open,
+                (SELECT mark_price FROM pool_state p2
+                 WHERE p2.block_number = MAX(pool_state.block_number)) as mark_close,
+                MAX(mark_price) as mark_high,
+                MIN(mark_price) as mark_low,
+                -- Last values
+                (SELECT tick FROM pool_state p2
+                 WHERE p2.block_number = MAX(pool_state.block_number)) as tick_close,
+                (SELECT liquidity FROM pool_state p2
+                 WHERE p2.block_number = MAX(pool_state.block_number)) as liq_close
+            FROM pool_state
+            WHERE 1=1
+        '''
+        ps_params = [bucket_sec, bucket_sec]
+
+        if start_time:
+            ps_query += ' AND block_timestamp >= ?'
+            ps_params.append(start_time)
+        if end_time:
+            ps_query += ' AND block_timestamp <= ?'
+            ps_params.append(end_time)
+
+        ps_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT ?'
+        ps_params.append(limit)
+
+        c.execute(ps_query, ps_params)
+        pool_map = {row['bucket_ts']: dict(row) for row in c.fetchall()}
+
+        conn.close()
+
+        # ── Merge into chart data ──────────────────────────────────
         chart_data = []
-
-        for ms in market_states:
-            block = ms['block_number']
-            data_point = {
-                'block_number': block,
-                'timestamp': ms.get('block_timestamp', 0),
-                'index_price': ms.get('index_price', 0) / 1e18,
-                'normalization_factor': ms.get('normalization_factor', 0) / 1e18,
-                'total_debt': ms.get('total_debt', 0) / 1e6
+        for row in reversed(ms_rows):  # Reverse to chronological order
+            ts = row['bucket_ts']
+            point = {
+                'timestamp': ts,
+                'block_number': row['last_block'],
+                'index_price': (row['index_close'] or 0) / 1e18,
+                'index_high': (row['index_high'] or 0) / 1e18,
+                'index_low': (row['index_low'] or 0) / 1e18,
+                'normalization_factor': (row['nf_close'] or 0) / 1e18,
+                'total_debt': (row['debt_close'] or 0) / 1e6,
+                'samples': row['sample_count'],
             }
-            if block in pool_by_block:
-                ps = pool_by_block[block]
-                data_point['mark_price'] = ps.get('mark_price', 0)
-                data_point['tick'] = ps.get('tick', 0)
-                data_point['liquidity'] = ps.get('liquidity', 0)
-            chart_data.append(data_point)
+            if ts in pool_map:
+                ps = pool_map[ts]
+                point['mark_price'] = ps.get('mark_close') or 0
+                point['mark_high'] = ps.get('mark_high') or 0
+                point['mark_low'] = ps.get('mark_low') or 0
+                point['tick'] = ps.get('tick_close') or 0
+                point['liquidity'] = ps.get('liq_close') or 0
+
+            chart_data.append(point)
 
         return {
             'data': chart_data,
             'count': len(chart_data),
+            'resolution': resolution.upper(),
+            'bucket_seconds': bucket_sec,
             'from_block': chart_data[0]['block_number'] if chart_data else None,
-            'to_block': chart_data[-1]['block_number'] if chart_data else None
+            'to_block': chart_data[-1]['block_number'] if chart_data else None,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -395,6 +494,286 @@ async def get_volume(
             "volume_formatted": formatted,
             "hours": hours,
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/volume-history")
+async def get_volume_history(
+    hours: int = Query(168, ge=1, le=720, description="Hours lookback"),
+    bucket: int = Query(1, ge=1, le=24, description="Bucket size in hours"),
+):
+    """
+    Hourly (or multi-hour) volume bars from Swap events.
+    Returns array of {timestamp, volume_usd, swap_count} buckets.
+    """
+    try:
+        db_path = os.environ.get("DB_PATH", "data/comprehensive_state.db")
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+
+        # Get time range
+        c.execute("SELECT MAX(timestamp) FROM events WHERE event_name='Swap'")
+        max_ts = c.fetchone()[0]
+        if not max_ts:
+            return {"bars": [], "bucket_hours": bucket}
+
+        bucket_sec = bucket * 3600
+        cutoff = max_ts - (hours * 3600)
+
+        c.execute('''
+            SELECT (timestamp / ?) * ? as bucket_ts,
+                   COUNT(*),
+                   SUM(ABS(CAST(json_extract(data, '$.amount0') AS INTEGER))),
+                   SUM(ABS(CAST(json_extract(data, '$.amount1') AS INTEGER)))
+            FROM events
+            WHERE event_name='Swap' AND timestamp >= ?
+            GROUP BY bucket_ts
+            ORDER BY bucket_ts
+        ''', (bucket_sec, bucket_sec, cutoff))
+
+        bars = []
+        for row in c.fetchall():
+            ts, count, vol0_raw, vol1_raw = row
+            # Use the larger of the two amounts (both are 6-decimal tokens)
+            vol_usd = max(vol0_raw or 0, vol1_raw or 0) / 1e6
+            bars.append({
+                "timestamp": ts,
+                "volume_usd": round(vol_usd, 2),
+                "swap_count": count,
+            })
+        conn.close()
+
+        return {"bars": bars, "bucket_hours": bucket, "total_bars": len(bars)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ═══════════════════════════════════════════════════════════
+# Pool-Wide Liquidity Distribution (cached, production-grade)
+# ═══════════════════════════════════════════════════════════
+
+import math
+import time as _time
+import threading
+
+_liq_cache = {"bins": None, "ts": 0, "lock": threading.Lock()}
+_LIQ_CACHE_TTL = 12  # seconds (≈ 1 block)
+
+
+def _tick_to_price(tick: int) -> float:
+    return math.pow(1.0001, tick)
+
+
+def _liquidity_to_amounts(liquidity: int, tick_lower: int, tick_upper: int, current_tick: int):
+    """Convert concentrated liquidity to token amounts (Uni V3/V4 math)."""
+    sa = math.sqrt(_tick_to_price(tick_lower))
+    sb = math.sqrt(_tick_to_price(tick_upper))
+    sp = math.sqrt(_tick_to_price(current_tick))
+    sp = max(sa, min(sp, sb))  # clamp
+
+    amount0 = liquidity * (1.0 / sp - 1.0 / sb) if sp < sb else 0
+    amount1 = liquidity * (sp - sa) if sp > sa else 0
+    return max(0, amount0), max(0, amount1)
+
+
+def _build_distribution(positions, current_price, current_tick, num_bins=60, token0_decimals=6, token1_decimals=6):
+    """Aggregate positions into price bins with token amounts."""
+    if not positions or not current_price or current_price <= 0:
+        return []
+
+    # ±100% price range: half to double the current price
+    min_price = current_price * 0.5
+    max_price = current_price * 2.0
+    bin_width = (max_price - min_price) / num_bins
+
+    bins = []
+    for i in range(num_bins):
+        price_from = min_price + i * bin_width
+        price_to = min_price + (i + 1) * bin_width
+        total_liq = 0
+
+        for p in positions:
+            tl = min(p["tick_lower"], p["tick_upper"])
+            tu = max(p["tick_lower"], p["tick_upper"])
+            p_low = _tick_to_price(tl)
+            p_high = _tick_to_price(tu)
+            if p_high > price_from and p_low < price_to:
+                total_liq += int(p["liquidity"])
+
+        # Convert aggregated liquidity to token amounts for this bin
+        bin_tick_lo = int(math.log(price_from) / math.log(1.0001)) if price_from > 0 else -887272
+        bin_tick_hi = int(math.log(price_to) / math.log(1.0001)) if price_to > 0 else 887272
+        a0, a1 = _liquidity_to_amounts(total_liq, bin_tick_lo, bin_tick_hi, current_tick)
+
+        # Convert from raw units to human-readable using token decimals
+        a0_human = a0 / (10 ** token0_decimals)
+        a1_human = a1 / (10 ** token1_decimals)
+
+        bins.append({
+            "price": round((price_from + price_to) / 2, 6),
+            "priceFrom": round(price_from, 6),
+            "priceTo": round(price_to, 6),
+            "liquidity": str(total_liq),
+            "amount0": round(a0_human, 2),
+            "amount1": round(a1_human, 2),
+        })
+    return bins
+
+
+def _rpc_scan_positions(request):
+    """Fallback: scan POSM directly via RPC when DB is empty.
+    Filters positions by PoolId to only include the RLD pool.
+    """
+    from web3 import Web3
+
+    market_config = getattr(request.app.state, "market_config", None)
+    rpc_url = (market_config or {}).get("rpc_url", os.environ.get("RPC_URL", "http://localhost:8545"))
+    posm_addr = (market_config or {}).get("v4_position_manager", os.environ.get("V4_POSITION_MANAGER", ""))
+    if not posm_addr:
+        return []
+
+    w3 = Web3(Web3.HTTPProvider(rpc_url))
+
+    # Compute expected PoolId from deployment config
+    # PoolId = keccak256(abi.encode(currency0, currency1, fee, tickSpacing, hooks))
+    token0 = (market_config or {}).get("token0", "")
+    token1 = (market_config or {}).get("token1", "")
+    hook = (market_config or {}).get("twamm_hook", "")
+    expected_pid_25 = None
+    if token0 and token1 and hook:
+        try:
+            t0 = bytes.fromhex(Web3.to_checksum_address(token0)[2:])
+            t1 = bytes.fromhex(Web3.to_checksum_address(token1)[2:])
+            hk = bytes.fromhex(Web3.to_checksum_address(hook)[2:])
+            # Solidity abi.encode: each field padded to 32 bytes
+            encoded = b'\x00' * 12 + t0
+            encoded += b'\x00' * 12 + t1
+            encoded += (500).to_bytes(32, 'big')        # uint24 fee
+            encoded += (5).to_bytes(32, 'big')           # int24 tickSpacing (positive)
+            encoded += b'\x00' * 12 + hk
+            pool_id = w3.keccak(encoded)
+            expected_pid_25 = pool_id[:25]  # positionInfo stores first 25 bytes
+        except Exception:
+            pass
+
+    POSM_ABI_JSON = [
+        {"type": "function", "name": "nextTokenId", "inputs": [], "outputs": [{"type": "uint256"}], "stateMutability": "view"},
+        {"type": "function", "name": "getPositionLiquidity", "inputs": [{"type": "uint256", "name": "tokenId"}], "outputs": [{"type": "uint128"}], "stateMutability": "view"},
+        {"type": "function", "name": "positionInfo", "inputs": [{"type": "uint256", "name": "tokenId"}], "outputs": [{"type": "bytes32"}], "stateMutability": "view"},
+    ]
+    posm = w3.eth.contract(address=Web3.to_checksum_address(posm_addr), abi=POSM_ABI_JSON)
+    next_id = posm.functions.nextTokenId().call()
+
+    positions = []
+    for token_id in range(1, next_id):
+        try:
+            info = posm.functions.positionInfo(token_id).call()
+
+            # Filter by PoolId (first 25 bytes of positionInfo)
+            if expected_pid_25 and info[:25] != expected_pid_25:
+                continue
+
+            liq = posm.functions.getPositionLiquidity(token_id).call()
+            if liq == 0:
+                continue
+
+            # positionInfo layout: poolId(25) | tickLower(3) | tickUpper(3) | hasSubscriber(1)
+            tick_lower_raw = int.from_bytes(info[25:28], "big")
+            tick_upper_raw = int.from_bytes(info[28:31], "big")
+            tick_lower = tick_lower_raw if tick_lower_raw < 0x800000 else tick_lower_raw - 0x1000000
+            tick_upper = tick_upper_raw if tick_upper_raw < 0x800000 else tick_upper_raw - 0x1000000
+            positions.append({
+                "token_id": token_id,
+                "liquidity": liq,
+                "tick_lower": tick_lower,
+                "tick_upper": tick_upper,
+            })
+        except Exception:
+            continue
+    return positions
+
+
+@app.get("/api/liquidity-distribution")
+async def get_liquidity_distribution(
+    request: Request,
+    num_bins: int = Query(60, ge=10, le=200),
+):
+    """
+    Pool-wide liquidity distribution — production endpoint with caching.
+
+    Reads from lp_positions DB table (populated by indexer).
+    Falls back to direct POSM RPC scan if DB is empty.
+    Result is cached for ~12s (1 block).
+    """
+    now = _time.time()
+
+    # Check cache
+    with _liq_cache["lock"]:
+        if _liq_cache["bins"] is not None and (now - _liq_cache["ts"]) < _LIQ_CACHE_TTL:
+            return {
+                "bins": _liq_cache["bins"]["bins"],
+                "currentPrice": _liq_cache["bins"]["currentPrice"],
+                "totalPositions": _liq_cache["bins"]["totalPositions"],
+                "cached": True,
+                "cacheAge": round(now - _liq_cache["ts"], 1),
+            }
+
+    try:
+        # Get current price + tick from latest pool state
+        current_price = None
+        current_tick = 0
+        try:
+            summary = get_latest_summary()
+            ps_list = summary.get("pool_states", [])
+            if ps_list:
+                current_price = ps_list[0].get("mark_price", None)
+                current_tick = ps_list[0].get("tick", 0)
+        except Exception:
+            pass
+
+        # Primary: read from DB
+        positions = []
+        try:
+            from db.comprehensive import get_all_latest_lp_positions
+            rows = get_all_latest_lp_positions()
+            positions = [
+                {
+                    "token_id": r.get("token_id", 0),
+                    "liquidity": int(r.get("liquidity", 0)),
+                    "tick_lower": r.get("tick_lower", 0),
+                    "tick_upper": r.get("tick_upper", 0),
+                }
+                for r in rows
+                if int(r.get("liquidity", 0)) > 0
+            ]
+        except Exception:
+            pass
+
+        # Fallback: RPC scan if DB is empty
+        if not positions:
+            positions = _rpc_scan_positions(request)
+
+        if not positions:
+            return {"bins": [], "currentPrice": current_price, "totalPositions": 0, "cached": False, "cacheAge": 0}
+
+        # Compute current_tick from price if not available
+        if current_tick == 0 and current_price and current_price > 0:
+            current_tick = int(math.log(current_price) / math.log(1.0001))
+
+        bins = _build_distribution(positions, current_price, current_tick, num_bins)
+
+        # Update cache
+        result = {
+            "bins": bins,
+            "currentPrice": current_price,
+            "totalPositions": len(positions),
+        }
+        with _liq_cache["lock"]:
+            _liq_cache["bins"] = result
+            _liq_cache["ts"] = now
+
+        return {**result, "cached": False, "cacheAge": 0}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -7,12 +7,30 @@ const BROKER_LABELS = ["User A", "MM Daemon", "Chaos Trader"];
 
 const fetcher = (url) => fetch(url).then((r) => r.json());
 
+// Shallow-compare JSON arrays to skip SWR re-renders when data is identical
+const compareChartData = (a, b) => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const ad = a?.data, bd = b?.data;
+  if (!ad || !bd || ad.length !== bd.length) return false;
+  // Compare first and last timestamps — if unchanged, data is the same
+  if (ad.length === 0) return true;
+  return ad[0].timestamp === bd[0].timestamp &&
+    ad[ad.length - 1].timestamp === bd[bd.length - 1].timestamp &&
+    ad.length === bd.length;
+};
+
 /**
  * Hook that connects to the simulation indexer API.
  * Provides live market state, pool state, broker positions,
  * chart data and recent events.
  */
-export function useSimulation({ pollInterval = 2000 } = {}) {
+export function useSimulation({
+  pollInterval = 2000,
+  chartResolution = "1H",
+  chartStartTime = null,
+  chartEndTime = null,
+} = {}) {
   const [connected, setConnected] = useState(false);
   const prevBlock = useRef(null);
 
@@ -29,13 +47,22 @@ export function useSimulation({ pollInterval = 2000 } = {}) {
     onError: () => setConnected(false),
   });
 
-  // ── Chart data (price history) ──────────────────────────────
+  // ── Chart data (price history — resolution-bucketed) ────────
+  const chartUrl = useMemo(() => {
+    let url = `${SIM_API}/api/chart/price?resolution=${chartResolution}&limit=1000`;
+    if (chartStartTime) url += `&start_time=${chartStartTime}`;
+    if (chartEndTime) url += `&end_time=${chartEndTime}`;
+    return url;
+  }, [chartResolution, chartStartTime, chartEndTime]);
+
   const { data: chartRaw, error: chartError } = useSWR(
-    `${SIM_API}/api/chart/price?limit=2000`,
+    chartUrl,
     fetcher,
     {
-      refreshInterval: pollInterval * 5,
+      refreshInterval: 30000, // 30s — chart data changes slowly
       revalidateOnFocus: false,
+      compare: compareChartData,
+      keepPreviousData: false, // allow GC of old data
     },
   );
 
@@ -51,6 +78,13 @@ export function useSimulation({ pollInterval = 2000 } = {}) {
     refreshInterval: pollInterval * 10,
     revalidateOnFocus: false,
   });
+
+  // ── Volume history (bar chart data) ─────────────────────────
+  const { data: volumeHistoryRaw } = useSWR(
+    `${SIM_API}/api/volume-history?hours=168&bucket=1`,
+    fetcher,
+    { refreshInterval: pollInterval * 10, revalidateOnFocus: false },
+  );
 
   // ── On-chain market info (token names, risk params) ────────
   const { data: marketInfo } = useSWR(`${SIM_API}/api/market-info`, fetcher, {
@@ -135,12 +169,22 @@ export function useSimulation({ pollInterval = 2000 } = {}) {
   // ── Derived: chart data ─────────────────────────────────────
   const chartData = useMemo(() => {
     if (!chartRaw?.data?.length) return [];
-    return chartRaw.data.map((d, i, arr) => {
-      // Derive synthetic volume from price movement × liquidity
-      const prevPrice = i < arr.length - 1 ? arr[i + 1].index_price : d.index_price;
-      const priceDelta = Math.abs(d.index_price - prevPrice);
-      const jitter = ((i * 7919 + (d.timestamp || 0)) % 1000) / 1000; // deterministic pseudo-random
-      const vol = priceDelta * (d.liquidity || 1e12) * 0.001 + jitter * 1e6;
+
+    // Build a volume lookup from real volume history bars
+    const volBars = volumeHistoryRaw?.bars || [];
+    const volMap = new Map();
+    for (const bar of volBars) {
+      volMap.set(bar.timestamp, bar.volume_usd);
+    }
+
+    // Bucket size in seconds (default 1 hour)
+    const bucketSec = (volumeHistoryRaw?.bucket_hours || 1) * 3600;
+
+    return chartRaw.data.map((d) => {
+      // Find volume for this data point's time bucket
+      const bucketTs = Math.floor((d.timestamp || 0) / bucketSec) * bucketSec;
+      const vol = volMap.get(bucketTs) || 0;
+
       return {
         timestamp: d.timestamp,
         blockNumber: d.block_number,
@@ -153,7 +197,7 @@ export function useSimulation({ pollInterval = 2000 } = {}) {
         volume: vol,
       };
     });
-  }, [chartRaw]);
+  }, [chartRaw, volumeHistoryRaw]);
 
   // ── Derived: funding from NF change ─────────────────────────
   // Per the whitepaper: NF(t+Δt) = NF(t) · (1 - F·Δt)
@@ -245,6 +289,11 @@ export function useSimulation({ pollInterval = 2000 } = {}) {
     marketInfo,
     brokers,
     chartData,
+    volumeHistory: (volumeHistoryRaw?.bars || []).map((b) => ({
+      timestamp: b.timestamp,
+      volume: b.volume_usd,
+      swapCount: b.swap_count,
+    })),
     events,
     blockChanged,
 
