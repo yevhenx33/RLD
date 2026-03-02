@@ -1,6 +1,9 @@
 import React, { useState } from "react";
 import { ethers } from "ethers";
 import { InputGroup, SummaryRow } from "./TradingTerminal";
+import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { useTwammOrder } from "../hooks/useTwammOrder";
+import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
 
 
 // PrimeBroker ABI subset for mint
@@ -44,9 +47,8 @@ function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account
     try {
       setExecuting(true);
 
-      // 1. Get MetaMask signer
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
+      // Get MetaMask signer (handles Anvil chainId sync)
+      const signer = await getAnvilSigner();
 
       // 2. Connect to broker
       const broker = new ethers.Contract(brokerAddress, PRIME_BROKER_ABI, signer);
@@ -90,9 +92,11 @@ function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account
         || "Unknown error";
       addToast({ type: "error", title: "Mint Failed", message: reason });
     } finally {
+      await restoreAnvilChainId();
       setExecuting(false);
     }
   };
+
 
   const canMint = mintAmount && Number(mintAmount) > 0 && account && brokerAddress && marketId;
 
@@ -146,14 +150,70 @@ function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account
 }
 
 /* ── TWAP Form ────────────────────────────────────────────────── */
-function TwapForm() {
+
+const DURATION_PRESETS = [
+  { label: "1H", hours: 1 },
+  { label: "6H", hours: 6 },
+  { label: "12H", hours: 12 },
+  { label: "24H", hours: 24 },
+  { label: "7D", hours: 168 },
+];
+
+function TwapForm({ brokerAddress, marketInfo, account, addToast }) {
   const [amount, setAmount] = useState("");
-  const [duration, setDuration] = useState("");
+  const [durationHours, setDurationHours] = useState("");
   const [direction, setDirection] = useState("BUY");
 
-  const ratePerBlock =
-    amount && duration ? (Number(amount) / (Number(duration) * 7200)).toFixed(6) : "—";
-  const totalBlocks = duration ? (Number(duration) * 7200).toLocaleString() : "—";
+  const infrastructure = marketInfo?.infrastructure;
+  const collateralAddr = marketInfo?.collateral?.address;
+  const positionAddr = marketInfo?.position_token?.address;
+
+  const {
+    submitOrder,
+    executing,
+    error: twammError,
+    step: twammStep,
+  } = useTwammOrder(
+    account,
+    brokerAddress,
+    infrastructure,
+    collateralAddr,
+    positionAddr,
+  );
+
+  // BUY wRLP = sell waUSDC → zeroForOne matches ZERO_FOR_ONE_LONG
+  // SELL wRLP = sell wRLP → zeroForOne is opposite
+  const zeroForOne = direction === "BUY" ? ZERO_FOR_ONE_LONG : !ZERO_FOR_ONE_LONG;
+
+  const durationNum = Number(durationHours) || 0;
+  const amountNum = Number(amount) || 0;
+  // Option E (deferred start): duration = exactly durationNum hours
+  const durationSec = durationNum * 3600;
+  const sellRate =
+    amountNum > 0 && durationSec > 0
+      ? (amountNum / durationSec).toFixed(8)
+      : "—";
+
+  const canSubmit =
+    amountNum > 0 &&
+    durationNum >= 1 &&
+    Number.isInteger(durationNum) &&
+    account &&
+    brokerAddress &&
+    infrastructure?.twamm_hook;
+
+  const handleSubmit = () => {
+    submitOrder(amountNum, durationNum, zeroForOne, () => {
+      setAmount("");
+      setDurationHours("");
+      addToast({
+        type: "success",
+        title: "TWAMM Order Submitted",
+        message: `${direction} ${amount} over ${durationNum}h`,
+        duration: 5000,
+      });
+    });
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -178,39 +238,83 @@ function TwapForm() {
 
       <InputGroup
         label="Amount"
-        subLabel="wRLP"
+        subLabel={direction === "BUY" ? "waUSDC to sell" : "wRLP to sell"}
         value={amount}
         onChange={setAmount}
-        suffix="wRLP"
+        suffix={direction === "BUY" ? "waUSDC" : "wRLP"}
         placeholder="0.00"
       />
-      <InputGroup
-        label="Duration"
-        subLabel="days"
-        value={duration}
-        onChange={setDuration}
-        suffix="DAYS"
-        placeholder="7"
-      />
 
-      <div className="border-t border-white/10 pt-3 space-y-2">
-        <SummaryRow label="Rate / Block" value={ratePerBlock} />
-        <SummaryRow label="Total Blocks" value={totalBlocks} />
-        <SummaryRow label="Est. Impact" value="< 0.01%" valueColor="text-green-400" />
+      {/* Duration presets */}
+      <div className="space-y-2">
+        <div className="text-sm uppercase tracking-widest font-bold text-gray-500">
+          Duration
+        </div>
+        <div className="flex gap-1">
+          {DURATION_PRESETS.map((p) => (
+            <button
+              key={p.label}
+              onClick={() => setDurationHours(String(p.hours))}
+              className={`flex-1 py-1.5 text-xs font-bold tracking-widest uppercase border transition-colors ${
+                Number(durationHours) === p.hours
+                  ? "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
+                  : "border-white/10 text-gray-500 hover:text-gray-300 hover:border-white/20"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        <InputGroup
+          label=""
+          value={durationHours}
+          onChange={(v) => setDurationHours(v)}
+          suffix="HOURS"
+          placeholder="Custom hours"
+        />
       </div>
 
+      <div className="border-t border-white/10 pt-3 space-y-2">
+        <SummaryRow label="Sell Rate" value={sellRate !== "—" ? `${sellRate} /sec` : "—"} />
+        <SummaryRow
+          label="Total Duration"
+          value={
+            durationNum > 0
+              ? durationNum >= 24
+                ? `${(durationNum / 24).toFixed(1)} days`
+                : `${durationNum}h`
+              : "—"
+          }
+        />
+        <SummaryRow
+          label="Direction"
+          value={direction === "BUY" ? "waUSDC → wRLP" : "wRLP → waUSDC"}
+          valueColor={direction === "BUY" ? "text-cyan-400" : "text-pink-400"}
+        />
+      </div>
+
+      {/* Execution feedback */}
+      {twammStep && (
+        <div className="text-xs text-gray-400 font-mono animate-pulse">
+          {twammStep}
+        </div>
+      )}
+      {twammError && (
+        <div className="text-xs text-red-400 font-mono truncate">
+          {twammError}
+        </div>
+      )}
+
       <button
-        onClick={() =>
-          console.log("[TWAP]", { direction, amount, duration })
-        }
-        disabled={!amount || !duration}
+        onClick={handleSubmit}
+        disabled={!canSubmit || executing}
         className={`w-full py-3 text-sm font-bold tracking-[0.2em] uppercase transition-all ${
           direction === "BUY"
             ? "bg-cyan-500 text-black hover:bg-cyan-400"
             : "bg-pink-500 text-black hover:bg-pink-400"
-        } ${!amount || !duration ? "opacity-50 cursor-not-allowed" : ""}`}
+        } ${!canSubmit || executing ? "opacity-50 cursor-not-allowed" : ""}`}
       >
-        Place {direction} TWAP
+        {executing ? twammStep || "Processing..." : `Place ${direction} TWAP`}
       </button>
     </div>
   );
@@ -381,10 +485,10 @@ function BatchForm() {
 }
 
 /* ── ActionForm Router ────────────────────────────────────────── */
-export default function ActionForm({ type, brokerBalance, currentRate, brokerAddress, marketId, account, addToast }) {
+export default function ActionForm({ type, brokerBalance, currentRate, brokerAddress, marketId, account, addToast, marketInfo }) {
   const forms = {
     mint: <MintForm brokerBalance={brokerBalance} currentRate={currentRate} brokerAddress={brokerAddress} marketId={marketId} account={account} addToast={addToast} />,
-    twap: <TwapForm />,
+    twap: <TwapForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} />,
     lp: <LpForm />,
     loop: <LoopForm />,
     batch: <BatchForm />,
