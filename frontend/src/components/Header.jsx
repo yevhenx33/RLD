@@ -56,54 +56,6 @@ export default function Header({ isCapped, ratesLoaded }) {
 
               <div className="relative group">
                 <Link
-                  to="/landing/a"
-                  className={`transition-colors px-2 tracking-widest flex items-center gap-1 ${location.pathname.startsWith("/landing") ? "text-cyan-400 cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
-                >
-                  Landing
-                  <svg
-                    width="8"
-                    height="5"
-                    viewBox="0 0 8 5"
-                    fill="none"
-                    className="opacity-50 mt-px"
-                  >
-                    <path
-                      d="M1 1L4 4L7 1"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="square"
-                    />
-                  </svg>
-                </Link>
-                {/* Hover dropdown */}
-                <div className="absolute top-full left-0 pt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
-                  <div className="border border-white/10 bg-[#0a0a0a] min-w-[180px] shadow-2xl">
-                    <Link
-                      to="/landing/a"
-                      className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
-                    >
-                      A: Terminal
-                    </Link>
-                    <Link
-                      to="/landing/b"
-                      className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
-                    >
-                      B: Interactive
-                    </Link>
-                    <Link
-                      to="/landing/c"
-                      className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors"
-                    >
-                      C: Modular
-                    </Link>
-                  </div>
-                </div>
-              </div>
-
-              <span className="text-white/10">|</span>
-
-              <div className="relative group">
-                <Link
                   to="/markets"
                   className={`transition-colors px-2 tracking-widest flex items-center gap-1 ${location.pathname.startsWith("/markets") ? "text-cyan-400 cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
                 >
@@ -173,15 +125,6 @@ export default function Header({ isCapped, ratesLoaded }) {
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/explore" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 EXPLORE
-              </Link>
-
-              <span className="text-white/10">|</span>
-
-              <Link
-                to="/app"
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/app" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
-              >
-                OLD
               </Link>
             </div>
           </div>

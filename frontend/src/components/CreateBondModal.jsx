@@ -15,6 +15,8 @@ export default function CreateBondModal({
   maturityDays,
   maturityDate,
   entryRate,
+  hedgeSize = 0,
+  initialLTV = 0,
   executing,
   executionStep,
   executionError,
@@ -40,6 +42,15 @@ export default function CreateBondModal({
     {
       label: "Maturity_Date",
       value: maturityDate,
+    },
+    {
+      label: "Hedge_Size",
+      value: `${formatNum(hedgeSize, 2)} wRLP`,
+      color: "text-yellow-400",
+    },
+    {
+      label: "Initial_LTV",
+      value: `${formatNum(initialLTV, 1)}%`,
     },
     {
       label: "Est._Yield",

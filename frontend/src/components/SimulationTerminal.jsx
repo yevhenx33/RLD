@@ -206,6 +206,8 @@ export default function SimulationTerminal() {
   const { orders: twammOrders, refresh: refreshTwamm } = useTwammPositions(
     brokerAddress,
     marketInfo,
+    30000,
+    market?.indexPrice,
   );
 
   // TWAMM order actions (cancel)

@@ -859,6 +859,8 @@ async def get_market_info(request: Request):
 
         # RLD-deployed infrastructure — from deployment.json (via market_config)
         broker_router = market_config.get("broker_router", os.environ.get("BROKER_ROUTER", ""))
+        broker_executor = market_config.get("broker_executor", os.environ.get("BROKER_EXECUTOR", ""))
+        bond_factory = market_config.get("bond_factory", os.environ.get("BOND_FACTORY", ""))
         twamm_hook = market_config.get("twamm_hook", os.environ.get("TWAMM_HOOK", ""))
 
         # Official Uniswap V4 mainnet addresses (always available on mainnet fork)
@@ -878,7 +880,9 @@ async def get_market_info(request: Request):
             "infrastructure": {
                 # RLD-specific
                 "broker_router": broker_router,
+                "broker_executor": broker_executor,
                 "twamm_hook": twamm_hook,
+                "bond_factory": bond_factory,
                 "pool_fee": 500,
                 "tick_spacing": 5,
                 # Uniswap V4 official

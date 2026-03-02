@@ -70,6 +70,7 @@ export function useTwammPositions(
   brokerAddress,
   marketInfo,
   pollInterval = 30000,
+  oraclePrice,
 ) {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -188,17 +189,8 @@ export function useTwammPositions(
         // No active order or function doesn't exist
       }
 
-      // 4. Fetch current mark price for token value conversion
-      let markPrice = 1; // fallback: 1:1
-      try {
-        const priceRes = await fetch(`${window.location.origin}/api/market-info`);
-        if (priceRes.ok) {
-          const priceData = await priceRes.json();
-          markPrice = parseFloat(priceData.mark_price || priceData.index_price || "1");
-        }
-      } catch {
-        console.warn("[TWAMM] Failed to fetch mark price");
-      }
+      // 4. Use oracle price for wRLP → USD conversion
+      const markPrice = oraclePrice > 0 ? oraclePrice : 1;
 
       // 5. For each order, fetch current state
       const poolKey = buildPoolKey(
@@ -342,7 +334,7 @@ export function useTwammPositions(
         setLoading(false);
       }
     }
-  }, [brokerAddress, hookAddr, collateralAddr, positionAddr, marketInfo]);
+  }, [brokerAddress, hookAddr, collateralAddr, positionAddr, marketInfo, oraclePrice]);
 
   useEffect(() => {
     mountedRef.current = true;

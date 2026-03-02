@@ -68,6 +68,7 @@ if os.path.exists(config_file):
         "swap_router": "SWAP_ROUTER",
         "broker_factory": "BROKER_FACTORY",
         "broker_router": "BROKER_ROUTER",
+        "broker_executor": "BROKER_EXECUTOR",
         "v4_quoter": "V4_QUOTER",
         "v4_position_manager": "V4_POSITION_MANAGER",
         "v4_position_descriptor": "V4_POSITION_DESCRIPTOR",
@@ -208,7 +209,7 @@ def main():
     # Attach config to app for /health and /config endpoints
     # Augment with infrastructure addresses loaded from deployment.json
     infra_keys = (
-        "broker_router", "v4_quoter", "broker_factory", "swap_router",
+        "broker_router", "broker_executor", "bond_factory", "v4_quoter", "broker_factory", "swap_router",
         "v4_position_manager", "v4_position_descriptor", "v4_state_view",
         "universal_router", "permit2",
     )

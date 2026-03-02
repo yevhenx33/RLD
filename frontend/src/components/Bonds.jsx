@@ -1,13 +1,22 @@
-import React, { useState } from "react";
-import { Shield, Terminal, AlertTriangle, ChevronDown } from "lucide-react";
+import React, { useState, useEffect, useMemo } from "react";
+import { ethers } from "ethers";
+import { RPC_URL } from "../utils/anvil";
+import { Shield, Terminal, AlertTriangle, ChevronDown, Wallet } from "lucide-react";
 import { useWallet } from "../context/WalletContext";
 import Header from "./Header";
 import { formatNum } from "../utils/helpers";
+import { calcHedgeSize, calcInitialLTV } from "../utils/hedgeCalc";
+import { useToast } from "../hooks/useToast";
+import { ToastContainer } from "./Toast";
 
 // Hooks
 import { useMarketData } from "../hooks/useMarketData";
 import { useTradeLogic } from "../hooks/useTradeLogic";
+import { useSimulation } from "../hooks/useSimulation";
 import { useWealthProjection } from "../hooks/useWealthProjection";
+
+import { useBondExecution } from "../hooks/useBondExecution";
+import { useBondPositions } from "../hooks/useBondPositions";
 
 // Components
 import MetricsGrid from "./MetricsGrid";
@@ -17,15 +26,9 @@ import CloseBondModal from "./CloseBondModal";
 import BondBrandingPanel from "./BondBrandingPanel";
 import WealthProjectionChart from "./WealthProjectionChart";
 import SettingsButton from "./SettingsButton";
+import AccountModal from "./AccountModal";
 
-// ── Mock User Bonds ────────────────────────────────────────────
-const USER_BONDS = [
-  { id: 42, principal: 25000, fixedRate: 8.40, maturityDays: 180, elapsed: 127, maturityDate: "2026-08-19" },
-  { id: 43, principal: 10000, fixedRate: 7.85, maturityDays: 90, elapsed: 61, maturityDate: "2026-04-15" },
-  { id: 44, principal: 50000, fixedRate: 9.12, maturityDays: 365, elapsed: 45, maturityDate: "2027-01-30" },
-  { id: 45, principal: 5000, fixedRate: 6.90, maturityDays: 30, elapsed: 28, maturityDate: "2026-03-15" },
-  { id: 46, principal: 100000, fixedRate: 8.75, maturityDays: 270, elapsed: 12, maturityDate: "2026-11-10" },
-];
+
 
 export default function BondsPage() {
   const [showBondModal, setShowBondModal] = useState(false);
@@ -33,6 +36,7 @@ export default function BondsPage() {
   const [selectedBond, setSelectedBond] = useState(null);
   const [actionDropdown, setActionDropdown] = useState(null);
   const { account, connectWallet, usdcBalance } = useWallet();
+  const { toasts, addToast, removeToast } = useToast();
   const {
     rates,
     error,
@@ -41,19 +45,68 @@ export default function BondsPage() {
     latest,
     isCappedRaw: _isCappedRaw,
   } = useMarketData();
+
+  // Live simulation data for stats panel + infrastructure addresses
+  const { poolTVL, protocolStats, marketInfo } = useSimulation({ pollInterval: 5000 });
+  const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
+
+  // Wallet balance (bonds pull from wallet, not broker)
+  const [walletBalance, setWalletBalance] = useState(null);
+  useEffect(() => {
+    if (!account || !marketInfo?.collateral?.address) return;
+    const fetchBal = async () => {
+      try {
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const token = new ethers.Contract(
+          marketInfo.collateral.address,
+          ["function balanceOf(address) view returns (uint256)"],
+          provider,
+        );
+        const bal = await token.balanceOf(account);
+        setWalletBalance(Number(ethers.formatUnits(bal, 6)));
+      } catch {}
+    };
+    fetchBal();
+    const id = setInterval(fetchBal, 10000);
+    return () => clearInterval(id);
+  }, [account, marketInfo?.collateral?.address]);
+
+
+  // Bond execution hook (atomic via BrokerExecutor)
+  const {
+    createBond,
+    closeBond,
+    executing: bondExecuting,
+    error: bondError,
+    step: bondStep,
+  } = useBondExecution(
+    account,
+    marketInfo?.infrastructure,
+    marketInfo?.collateral?.address,
+    marketInfo?.position_token?.address,
+  );
   const tradeLogic = useTradeLogic(latest.apy);
+
+  // Real on-chain bond positions (all bond broker NFTs owned by account)
+  const { bonds: userBonds, refresh: refreshBonds } = useBondPositions(
+    account,
+    latest?.apy,
+  );
+
   const {
     activeProduct,
     activeTab,
     notional,
+    maturityHours,
     maturityDays,
-    maturityDate,
+    epochs,
   } = tradeLogic.state;
   const {
     setActiveTab,
     setNotional,
+    handleHoursChange,
     handleDaysChange,
-    handleDateChange,
+    handleEndDateChange,
   } = tradeLogic.actions;
 
   const projectionData = useWealthProjection(
@@ -61,6 +114,13 @@ export default function BondsPage() {
     latest.apy,
     tradeLogic.state.maturityDays,
   );
+
+  // Hedge size computation (recalculates on every input change)
+  const hedgeInfo = useMemo(() => {
+    const hedge = calcHedgeSize(notional, latest.apy, maturityHours);
+    const ltv = calcInitialLTV(notional, hedge);
+    return { hedge, ltv };
+  }, [notional, latest.apy, maturityHours]);
 
   if (error)
     return (
@@ -91,6 +151,8 @@ export default function BondsPage() {
                 <MetricsGrid
                   latest={latest}
                   dailyChange={dailyChange}
+                  openInterest={openInterest}
+                  liquidity={poolTVL || 0}
                 />
               </div>
 
@@ -114,9 +176,6 @@ export default function BondsPage() {
             account={account}
             connectWallet={connectWallet}
             title={activeProduct}
-            subTitle={
-              activeProduct === "FIXED_YIELD" ? "SHORT RLP" : "LONG RLP"
-            }
             Icon={Terminal}
             tabs={[
               {
@@ -133,13 +192,19 @@ export default function BondsPage() {
               },
             ]}
             actionButton={{
-              label: activeTab === "OPEN" ? "Create Bond" : "Close Bond",
-              onClick: activeTab === "OPEN"
-                ? () => setShowBondModal(true)
-                : () => {
-                    if (selectedBond) setShowCloseModal(true);
-                  },
-              disabled: activeTab === "CLOSE" && !selectedBond,
+              label: !account
+                ? "Connect Wallet"
+                : bondExecuting
+                  ? bondStep || "Processing..."
+                  : activeTab === "OPEN" ? "Create Bond" : "Close Bond",
+              onClick: !account
+                ? connectWallet
+                : activeTab === "OPEN"
+                  ? () => setShowBondModal(true)
+                  : () => {
+                      if (selectedBond) setShowCloseModal(true);
+                    },
+              disabled: bondExecuting || (activeTab === "CLOSE" && !selectedBond),
               variant: activeProduct === "FIXED_BORROW" ? "pink" : activeTab === "CLOSE" ? "pink" : "cyan",
             }}
           >
@@ -148,7 +213,7 @@ export default function BondsPage() {
               <>
                 <InputGroup
                   label="Notional_Amount"
-                  subLabel={`Bal: ${account ? parseFloat(usdcBalance).toFixed(2) : "--"} USDC`}
+                  subLabel={`Bal: ${walletBalance !== null ? walletBalance.toFixed(2) : "0.00"} waUSDC`}
                   value={notional}
                   onChange={(v) => setNotional(Number(v))}
                   suffix="USDC"
@@ -157,7 +222,7 @@ export default function BondsPage() {
                 <div className="space-y-3">
                   <div className="flex justify-between items-end">
                     <span className="text-sm text-gray-500 uppercase tracking-widest font-bold">
-                      Maturity_Date
+                      Duration
                     </span>
                     <span
                       className={`text-sm font-mono font-bold ${
@@ -166,17 +231,27 @@ export default function BondsPage() {
                           : "text-cyan-400"
                       }`}
                     >
-                      {maturityDays} Days
+                      {maturityHours < 24
+                        ? `${maturityHours}H`
+                        : maturityHours % 24 === 0
+                          ? `${Math.floor(maturityHours / 24)}D`
+                          : `${Math.floor(maturityHours / 24)}D ${maturityHours % 24}H`}
                     </span>
                   </div>
 
-                  <div className="relative group">
+                  <div
+                    className="relative group cursor-pointer"
+                    onClick={() => document.getElementById("bond-maturity-picker")?.showPicker?.()}
+                  >
                     <div className="flex items-center gap-2 border-b border-white/20 pb-1">
                       <input
-                        type="date"
-                        value={maturityDate}
-                        onChange={(e) => handleDateChange(e.target.value)}
-                        className="bg-transparent text-sm font-mono text-white focus:outline-none w-full uppercase [&::-webkit-calendar-picker-indicator]:brightness-0 [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-80"
+                        id="bond-maturity-picker"
+                        type="datetime-local"
+                        step="3600"
+                        value={epochs.endDateTimeLocal}
+                        onChange={(e) => handleEndDateChange(e.target.value)}
+                        className="bg-transparent text-sm font-mono text-white focus:outline-none w-full uppercase pointer-events-none [&::-webkit-calendar-picker-indicator]:brightness-0 [&::-webkit-calendar-picker-indicator]:invert [&::-webkit-calendar-picker-indicator]:opacity-80"
+                        style={{ colorScheme: "dark" }}
                       />
                     </div>
                   </div>
@@ -185,16 +260,44 @@ export default function BondsPage() {
                     <input
                       type="range"
                       min="1"
-                      max="365"
+                      max="8760"
                       step="1"
-                      value={maturityDays}
-                      onChange={(e) => handleDaysChange(Number(e.target.value))}
+                      value={maturityHours}
+                      onChange={(e) => handleHoursChange(Number(e.target.value))}
                       className="w-full h-0.5 bg-white/10 rounded-none appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none hover:[&::-webkit-slider-thumb]:scale-125 transition-all"
                     />
                     <div className="flex justify-between text-sm text-gray-400 font-bold font-mono mt-1">
-                      <span>1D</span>
+                      <span>1H</span>
                       <span>1Y</span>
                     </div>
+                  </div>
+
+                  {/* Duration Presets */}
+                  <div className="flex items-center gap-1.5 pt-1">
+                    {[
+                      { label: "1H", hours: 1 },
+                      { label: "1D", hours: 24 },
+                      { label: "1M", hours: 30 * 24 },
+                      { label: "3M", hours: 90 * 24 },
+                      { label: "1Y", hours: 365 * 24 },
+                    ].map((preset) => {
+                      const isActive = maturityHours === preset.hours;
+                      return (
+                        <button
+                          key={preset.label}
+                          onClick={() => handleHoursChange(preset.hours)}
+                          className={`flex-1 py-1.5 text-sm font-bold font-mono transition-all border ${
+                            isActive
+                              ? activeProduct === "FIXED_BORROW"
+                                ? "border-pink-500/50 bg-pink-500/10 text-pink-400"
+                                : "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
+                              : "border-white/10 bg-transparent text-gray-500 hover:border-white/20 hover:text-white"
+                          }`}
+                        >
+                          {preset.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -203,6 +306,19 @@ export default function BondsPage() {
                     label="Entry_Rate"
                     value={`${formatNum(latest.apy)}%`}
                   />
+                  <SummaryRow
+                    label="Hedge_Size"
+                    value={`${hedgeInfo.hedge.toFixed(2)} wRLP`}
+                  />
+                  <SummaryRow
+                    label="Initial_LTV"
+                    value={`${hedgeInfo.ltv.toFixed(1)}%`}
+                  />
+                  {bondError && (
+                    <div className="text-xs text-red-400 font-mono mt-2 break-all">
+                      {bondError}
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -227,7 +343,7 @@ export default function BondsPage() {
 
                   {/* Selected: collapsed view */}
                   {selectedBond && (() => {
-                    const bond = USER_BONDS.find(b => b.id === selectedBond);
+                    const bond = userBonds.find(b => b.id === selectedBond);
                     if (!bond) return null;
                     const accrued = bond.principal * (bond.fixedRate / 100) * (bond.elapsed / 365);
                     return (
@@ -291,7 +407,7 @@ export default function BondsPage() {
                   {/* Not selected: paginated list */}
                   {!selectedBond && (
                     <>
-                      {USER_BONDS.map((bond) => {
+                      {userBonds.map((bond) => {
                         const accrued = bond.principal * (bond.fixedRate / 100) * (bond.elapsed / 365);
                         const remaining = bond.maturityDays - bond.elapsed;
                         return (
@@ -333,7 +449,7 @@ export default function BondsPage() {
                 Your Bonds
               </h3>
               <span className="text-sm text-gray-600 font-mono">
-                {USER_BONDS.length}
+                {userBonds.length}
               </span>
             </div>
             <div className="text-sm text-gray-500 uppercase tracking-widest flex items-center gap-2">
@@ -356,7 +472,7 @@ export default function BondsPage() {
           </div>
 
           {/* Table Rows */}
-          {USER_BONDS.map((bond) => {
+          {userBonds.map((bond) => {
             const accrued = bond.principal * (bond.fixedRate / 100) * (bond.elapsed / 365);
             const value = bond.principal + accrued;
             const remaining = bond.maturityDays - bond.elapsed;
@@ -442,11 +558,22 @@ export default function BondsPage() {
         onClose={() => setShowBondModal(false)}
         onConfirm={() => {
           setShowBondModal(false);
+          createBond(notional, maturityHours, latest.apy, (receipt) => {
+            console.log("[Bond] Created:", receipt.hash, "Broker:", receipt.brokerAddress);
+            addToast({
+              type: "success",
+              title: "Bond Created",
+              message: `$${notional.toLocaleString()} bond minted — tx ${receipt.hash.slice(0, 10)}…`,
+            });
+            refreshBonds();
+          });
         }}
         notional={notional}
         maturityDays={maturityDays}
-        maturityDate={maturityDate}
+        maturityDate={epochs.endDisplay}
         entryRate={latest.apy}
+        hedgeSize={hedgeInfo.hedge}
+        initialLTV={hedgeInfo.ltv}
       />
 
       {/* Close Bond Confirmation Modal */}
@@ -457,8 +584,12 @@ export default function BondsPage() {
           setShowCloseModal(false);
           setSelectedBond(null);
         }}
-        bond={selectedBond ? USER_BONDS.find(b => b.id === selectedBond) : null}
+        bond={selectedBond ? userBonds.find(b => b.id === selectedBond) : null}
       />
+
+
+      {/* Toast notifications */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </div>
   );
 }
