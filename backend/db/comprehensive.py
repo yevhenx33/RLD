@@ -154,6 +154,29 @@ def init_comprehensive_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_from ON transactions(from_address)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_to ON transactions(to_address)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_tx_method ON transactions(method_id)")
+
+    # Bond positions (BondMinted / BondClosed lifecycle)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS bonds (
+            broker_address TEXT PRIMARY KEY,
+            owner TEXT NOT NULL,
+            bond_factory TEXT,
+            notional TEXT,
+            hedge TEXT,
+            duration INTEGER,
+            created_block INTEGER,
+            created_timestamp INTEGER,
+            created_tx TEXT,
+            closed_block INTEGER,
+            closed_timestamp INTEGER,
+            closed_tx TEXT,
+            collateral_returned TEXT,
+            position_returned TEXT,
+            status TEXT DEFAULT 'active'
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bonds_owner ON bonds(owner)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_bonds_status ON bonds(status)")
     
     # Migrations: add columns to existing tables (safe to re-run)
     for col in ["token0_balance TEXT", "token1_balance TEXT"]:
@@ -558,6 +581,93 @@ def get_all_latest_lp_positions() -> List[Dict]:
             d['liquidity'] = int(d.get('liquidity') or 0)
             results.append(d)
         return results
+
+
+# ============================================
+# Bond Position Operations
+# ============================================
+
+def insert_bond(broker_address: str, owner: str, bond_factory: str,
+                notional: str, hedge: str, duration: int,
+                created_block: int, created_timestamp: int, created_tx: str):
+    """Insert a new bond from a BondMinted event."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO bonds (
+                broker_address, owner, bond_factory, notional, hedge, duration,
+                created_block, created_timestamp, created_tx, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        """, (
+            broker_address.lower(), owner.lower(), bond_factory.lower(),
+            str(notional), str(hedge), duration,
+            created_block, created_timestamp, created_tx
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_bond_closed(broker_address: str, closed_block: int,
+                       closed_timestamp: int, closed_tx: str,
+                       collateral_returned: str = '0',
+                       position_returned: str = '0'):
+    """Mark a bond as closed from a BondClosed event."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE bonds SET
+                status = 'closed',
+                closed_block = ?,
+                closed_timestamp = ?,
+                closed_tx = ?,
+                collateral_returned = ?,
+                position_returned = ?
+            WHERE broker_address = ?
+        """, (
+            closed_block, closed_timestamp, closed_tx,
+            str(collateral_returned), str(position_returned),
+            broker_address.lower()
+        ))
+        conn.commit()
+
+
+def get_bonds_by_owner(owner: str, status: str = None) -> List[Dict]:
+    """Get all bonds for an owner, optionally filtered by status."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        query = "SELECT * FROM bonds WHERE owner = ?"
+        params = [owner.lower()]
+        if status and status != 'all':
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_block DESC"
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_bond(broker_address: str) -> Optional[Dict]:
+    """Get a single bond by its broker address."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM bonds WHERE broker_address = ?",
+                       (broker_address.lower(),))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_all_bonds(status: str = None, limit: int = 100) -> List[Dict]:
+    """Get all bonds, optionally filtered by status."""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        query = "SELECT * FROM bonds WHERE 1=1"
+        params = []
+        if status and status != 'all':
+            query += " AND status = ?"
+            params.append(status)
+        query += " ORDER BY created_block DESC LIMIT ?"
+        params.append(limit)
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
 
 
 # ============================================

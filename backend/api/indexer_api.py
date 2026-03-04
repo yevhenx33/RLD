@@ -318,6 +318,39 @@ async def get_broker_history_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/bonds")
+async def get_bonds_endpoint(
+    owner: Optional[str] = Query(None, description="Filter by owner address"),
+    status: str = Query("all", description="Filter: active, closed, all"),
+    limit: int = Query(100, le=500, description="Max results"),
+):
+    """Get indexed bond positions from BondMinted/BondClosed events."""
+    try:
+        from db.comprehensive import get_bonds_by_owner, get_all_bonds
+        if owner:
+            bonds = get_bonds_by_owner(owner, status if status != "all" else None)
+        else:
+            bonds = get_all_bonds(status if status != "all" else None, limit)
+        return {"bonds": bonds, "count": len(bonds)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bonds/{broker_address}")
+async def get_bond_detail(broker_address: str):
+    """Get a single bond's indexed data by its broker address."""
+    try:
+        from db.comprehensive import get_bond
+        bond = get_bond(broker_address)
+        if not bond:
+            raise HTTPException(status_code=404, detail="Bond not found")
+        return bond
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/chart/price")
 async def get_price_chart(
     resolution: str = Query("1H", description="Resolution: 1H, 4H, 1D, 1W"),

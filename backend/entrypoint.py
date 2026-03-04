@@ -69,6 +69,7 @@ if os.path.exists(config_file):
         "broker_factory": "BROKER_FACTORY",
         "broker_router": "BROKER_ROUTER",
         "broker_executor": "BROKER_EXECUTOR",
+        "bond_factory": "BOND_FACTORY",
         "v4_quoter": "V4_QUOTER",
         "v4_position_manager": "V4_POSITION_MANAGER",
         "v4_position_descriptor": "V4_POSITION_DESCRIPTOR",

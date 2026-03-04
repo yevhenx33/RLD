@@ -322,6 +322,14 @@ class ComprehensiveIndexer:
             abi=ERC20_ABI
         )
         
+        # BondFactory for bond event tracking
+        bond_factory_addr = os.getenv("BOND_FACTORY", "")
+        if bond_factory_addr:
+            self.bond_factory_addr = Web3.to_checksum_address(bond_factory_addr)
+            logger.info(f"   BondFactory: {self.bond_factory_addr}")
+        else:
+            self.bond_factory_addr = None
+
         # Initialize database
         init_comprehensive_db()
         
@@ -773,6 +781,12 @@ class ComprehensiveIndexer:
             Web3.keccak(text="ModifyOrder(bytes32,address,uint256,uint256,bool,uint256)").hex(): "ModifyOrder",
             Web3.keccak(text="ClaimEarnings(bytes32,address,uint256,uint256,bool,uint256)").hex(): "ClaimEarnings",
             
+            # BondFactory Events
+            Web3.keccak(text="BondMinted(address,address,uint256,uint256,uint256)").hex(): "BondMinted",
+            Web3.keccak(text="BondClosed(address,address,uint256,uint256)").hex(): "BondClosed",
+            Web3.keccak(text="BondReturned(address,address)").hex(): "BondReturned",
+            Web3.keccak(text="BondClaimed(address,address)").hex(): "BondClaimed",
+
             # Universal Router Events (just track the execute)
             Web3.keccak(text="UniversalRouterExecute()").hex(): "UniversalRouterExecute",
         }
@@ -798,6 +812,10 @@ class ComprehensiveIndexer:
                     contract_addresses.append(twamm_hook.lower())
         except:
             pass
+        
+        # Add BondFactory to monitored addresses
+        if self.bond_factory_addr:
+            contract_addresses.append(self.bond_factory_addr.lower())
         
         # Get ALL logs for all tracked contracts
         try:
@@ -967,6 +985,35 @@ class ComprehensiveIndexer:
                 sender = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
                 return {'pool_id': pool_id, 'sender': sender, 'raw': data[:100] if data else ''}
             
+            elif event_name == "BondMinted":
+                # BondMinted(address indexed user, address indexed broker, uint256 notional, uint256 hedge, uint256 duration)
+                user = '0x' + topics[1].hex()[-40:] if len(topics) > 1 else None
+                broker = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                notional = str(int(data[0:64], 16)) if len(data) >= 64 else '0'
+                hedge = str(int(data[64:128], 16)) if len(data) >= 128 else '0'
+                duration = int(data[128:192], 16) if len(data) >= 192 else 0
+                return {
+                    'user': user, 'broker': broker,
+                    'notional': notional, 'hedge': hedge, 'duration': duration
+                }
+            
+            elif event_name == "BondClosed":
+                # BondClosed(address indexed user, address indexed broker, uint256 collateralReturned, uint256 positionReturned)
+                user = '0x' + topics[1].hex()[-40:] if len(topics) > 1 else None
+                broker = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                col_returned = str(int(data[0:64], 16)) if len(data) >= 64 else '0'
+                pos_returned = str(int(data[64:128], 16)) if len(data) >= 128 else '0'
+                return {
+                    'user': user, 'broker': broker,
+                    'collateralReturned': col_returned, 'positionReturned': pos_returned
+                }
+            
+            elif event_name in ("BondReturned", "BondClaimed"):
+                # BondReturned/BondClaimed(address indexed user, address indexed broker)
+                user = '0x' + topics[1].hex()[-40:] if len(topics) > 1 else None
+                broker = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                return {'user': user, 'broker': broker}
+
             else:
                 # Generic parsing for unknown events
                 return {
@@ -1104,6 +1151,49 @@ class ComprehensiveIndexer:
         snapshot['events'] = events
         if events:
             logger.info(f"   📝 Events: {len(events)} event(s)")
+        
+        # 3a. Process bond events (BondMinted / BondClosed)
+        from db.comprehensive import insert_bond, update_bond_closed
+        bond_events = [e for e in events if e['event_name'] in ('BondMinted', 'BondClosed', 'BondReturned', 'BondClaimed')]
+        for be in bond_events:
+            bd = be.get('data', {})
+            try:
+                if be['event_name'] == 'BondMinted':
+                    insert_bond(
+                        broker_address=bd['broker'],
+                        owner=bd['user'],
+                        bond_factory=self.bond_factory_addr or '',
+                        notional=bd.get('notional', '0'),
+                        hedge=bd.get('hedge', '0'),
+                        duration=bd.get('duration', 0),
+                        created_block=block_number,
+                        created_timestamp=block_timestamp,
+                        created_tx=be['tx_hash'],
+                    )
+                    # Auto-track the new bond's broker
+                    if bd['broker'].lower() not in [b.lower() for b in self.tracked_brokers]:
+                        self.tracked_brokers.append(bd['broker'])
+                    logger.info(f"   🔗 Bond minted: broker={bd['broker'][:10]}... owner={bd['user'][:10]}...")
+                elif be['event_name'] == 'BondClosed':
+                    update_bond_closed(
+                        broker_address=bd['broker'],
+                        closed_block=block_number,
+                        closed_timestamp=block_timestamp,
+                        closed_tx=be['tx_hash'],
+                        collateral_returned=bd.get('collateralReturned', '0'),
+                        position_returned=bd.get('positionReturned', '0'),
+                    )
+                    logger.info(f"   🔓 Bond closed: broker={bd['broker'][:10]}...")
+                elif be['event_name'] in ('BondReturned', 'BondClaimed'):
+                    update_bond_closed(
+                        broker_address=bd['broker'],
+                        closed_block=block_number,
+                        closed_timestamp=block_timestamp,
+                        closed_tx=be['tx_hash'],
+                    )
+                    logger.info(f"   🔓 Bond {be['event_name'].lower()}: broker={bd['broker'][:10]}...")
+            except Exception as ex:
+                logger.warning(f"   ⚠️  Failed to process bond event: {ex}")
         
         # 3b. Override pool state from Swap events (most accurate source)
         # Swap events contain the post-swap sqrtPriceX96, tick, and liquidity
