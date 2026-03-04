@@ -221,6 +221,9 @@ contract BondFactory is ReentrancyGuard {
         );
         uint128 debtPrincipal = pos.debtPrincipal;
 
+        // Grant Router operator access for closeShort/closeLong calls
+        pb.setOperator(ROUTER, true);
+
         if (debtPrincipal > 0) {
             address positionToken = pb.positionToken();
             uint256 wrlpBalance = ERC20(positionToken).balanceOf(broker);
@@ -231,9 +234,6 @@ contract BondFactory is ReentrancyGuard {
                 uint256 waUSDCBal = ERC20(collToken).balanceOf(broker);
 
                 if (waUSDCBal > 0) {
-                    // Router needs operator access to call back into broker
-                    pb.setOperator(ROUTER, true);
-
                     (bool ok, ) = ROUTER.call(
                         abi.encodeWithSignature(
                             "closeShort(address,uint256,(address,address,uint24,int24,address))",
@@ -243,7 +243,6 @@ contract BondFactory is ReentrancyGuard {
                         )
                     );
                     if (!ok) {
-                        // Try with half the amount as fallback
                         (ok, ) = ROUTER.call(
                             abi.encodeWithSignature(
                                 "closeShort(address,uint256,(address,address,uint24,int24,address))",
@@ -253,18 +252,14 @@ contract BondFactory is ReentrancyGuard {
                             )
                         );
                     }
-
-                    // Revoke operator access
-                    pb.setOperator(ROUTER, false);
                 }
             }
 
-            // Re-fetch debt and balance (closeShort may have partially repaid)
+            // Re-fetch debt and balance after closeShort
             pos = IRLDCore(coreAddr).getPosition(mktId, broker);
             debtPrincipal = pos.debtPrincipal;
 
-            // ── 5. Repay remaining debt ─────────────────────────────────
-            // Cap to available wRLP to avoid underflow
+            // ── 5. Repay remaining debt (capped to available wRLP) ──────
             if (debtPrincipal > 0) {
                 address posToken2 = pb.positionToken();
                 uint256 availableWRLP = ERC20(posToken2).balanceOf(broker);
@@ -282,24 +277,38 @@ contract BondFactory is ReentrancyGuard {
             }
         }
 
-        // ── 6. Withdraw all remaining tokens to user ────────────────────
-        address collateralToken = pb.collateralToken();
-        address positionToken = pb.positionToken();
+        // ── 6. Convert any leftover wRLP → waUSDC ───────────────────────
+        {
+            address positionToken = pb.positionToken();
+            uint256 leftoverWRLP = ERC20(positionToken).balanceOf(broker);
+            if (leftoverWRLP > 0) {
+                // closeLong swaps wRLP → waUSDC, proceeds stay in broker
+                ROUTER.call(
+                    abi.encodeWithSignature(
+                        "closeLong(address,uint256,(address,address,uint24,int24,address))",
+                        broker,
+                        leftoverWRLP,
+                        poolKey
+                    )
+                );
+            }
+        }
 
+        // Revoke Router operator access
+        pb.setOperator(ROUTER, false);
+
+        // ── 7. Withdraw waUSDC to user ──────────────────────────────────
+        address collateralToken = pb.collateralToken();
         uint256 collBal = ERC20(collateralToken).balanceOf(broker);
-        uint256 posBal = ERC20(positionToken).balanceOf(broker);
 
         if (collBal > 0) {
             pb.withdrawCollateral(msg.sender, collBal);
         }
-        if (posBal > 0) {
-            pb.withdrawPositionToken(msg.sender, posBal);
-        }
 
-        // ── 7. Transfer NFT back to user ────────────────────────────────
+        // ── 8. Transfer NFT back to user ────────────────────────────────
         BROKER_FACTORY.transferFrom(address(this), msg.sender, tokenId);
 
-        emit BondClosed(msg.sender, broker, collBal, posBal);
+        emit BondClosed(msg.sender, broker, collBal, 0);
     }
 
     /* =========================== INTERNAL ================================= */
