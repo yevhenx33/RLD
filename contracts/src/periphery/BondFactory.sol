@@ -12,6 +12,34 @@ import {IJTM} from "../twamm/IJTM.sol";
 import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 
+/// @dev Minimal interface for WrappedAToken (waUSDC, waUSDT, etc.)
+interface IWrappedAToken {
+    function aToken() external view returns (address);
+    function wrap(uint256 aTokenAmount) external returns (uint256 shares);
+    function unwrap(uint256 shares) external returns (uint256 aTokenAmount);
+}
+
+/// @dev Minimal interface for Aave aTokens
+interface IAToken {
+    function UNDERLYING_ASSET_ADDRESS() external view returns (address);
+    function POOL() external view returns (address);
+}
+
+/// @dev Minimal interface for Aave V3 Pool
+interface IAavePool {
+    function supply(
+        address asset,
+        uint256 amount,
+        address onBehalfOf,
+        uint16 referralCode
+    ) external;
+    function withdraw(
+        address asset,
+        uint256 amount,
+        address to
+    ) external returns (uint256);
+}
+
 /// @title  BondFactory — Single-TX Bond Minting & Closing
 /// @author RLD Protocol
 /// @notice Creates and closes frozen, isolated bonds in one transaction.
@@ -114,23 +142,33 @@ contract BondFactory is ReentrancyGuard {
     /// @param duration       TWAMM order duration in seconds
     /// @param poolKey        The Uniswap V4 pool key (wRLP/waUSDC)
     /// @return broker        The deployed broker address (also the NFT token)
+    /// @param useUnderlying If true, pull underlying (e.g. USDC) from user and
+    ///                     auto-wrap to collateral (e.g. waUSDC). If false, pull
+    ///                     collateral directly.
     function mintBond(
         uint256 notional,
         uint256 hedgeAmount,
         uint256 duration,
-        PoolKey calldata poolKey
+        PoolKey calldata poolKey,
+        bool useUnderlying
     ) external nonReentrant returns (address broker) {
         require(notional > 0, "Zero notional");
         require(duration > 0, "Zero duration");
 
         // ── 1. Create fresh broker ──────────────────────────────────────
-        // NFT is minted to address(this), making us the owner.
         bytes32 salt = keccak256(abi.encodePacked(msg.sender, nonce++));
         broker = BROKER_FACTORY.createBroker(salt);
 
-        // ── 2. Pull waUSDC from user → broker ──────────────────────────
+        // ── 2. Fund broker with collateral ──────────────────────────────
         uint256 total = notional + hedgeAmount;
-        IERC20(COLLATERAL).transferFrom(msg.sender, broker, total);
+
+        if (useUnderlying) {
+            // Pull underlying (USDC) → wrap → send waUSDC to broker
+            _wrapAndSend(total, broker);
+        } else {
+            // Pull waUSDC directly from user → broker
+            IERC20(COLLATERAL).transferFrom(msg.sender, broker, total);
+        }
 
         // ── 3. Execute short ────────────────────────────────────────────
         (bool ok, bytes memory ret) = ROUTER.call(
@@ -177,11 +215,14 @@ contract BondFactory is ReentrancyGuard {
     ///   6. Withdraw remaining tokens to user
     ///   7. Transfer NFT back to user
     ///
-    /// @param broker   The bond's PrimeBroker address
-    /// @param poolKey  The Uniswap V4 pool key (needed for potential closeShort)
+    /// @param broker         The bond's PrimeBroker address
+    /// @param poolKey        The Uniswap V4 pool key (needed for potential closeShort)
+    /// @param useUnderlying  If true, unwrap collateral to underlying (e.g. USDC)
+    ///                       before returning to user
     function closeBond(
         address broker,
-        PoolKey calldata poolKey
+        PoolKey calldata poolKey,
+        bool useUnderlying
     ) external nonReentrant {
         PrimeBroker pb = PrimeBroker(payable(broker));
         uint256 tokenId = uint256(uint160(broker));
@@ -297,12 +338,19 @@ contract BondFactory is ReentrancyGuard {
         // Revoke Router operator access
         pb.setOperator(ROUTER, false);
 
-        // ── 7. Withdraw waUSDC to user ──────────────────────────────────
+        // ── 7. Withdraw collateral ───────────────────────────────────────
         address collateralToken = pb.collateralToken();
         uint256 collBal = ERC20(collateralToken).balanceOf(broker);
 
         if (collBal > 0) {
-            pb.withdrawCollateral(msg.sender, collBal);
+            if (useUnderlying) {
+                // Withdraw waUSDC to this contract, then unwrap → USDC to user
+                pb.withdrawCollateral(address(this), collBal);
+                _unwrapAndSend(collBal, msg.sender);
+            } else {
+                // Withdraw waUSDC directly to user
+                pb.withdrawCollateral(msg.sender, collBal);
+            }
         }
 
         // ── 8. Transfer NFT back to user ────────────────────────────────
@@ -312,6 +360,48 @@ contract BondFactory is ReentrancyGuard {
     }
 
     /* =========================== INTERNAL ================================= */
+
+    /// @dev Pull underlying from user → Aave supply → wrap to collateral → send to recipient
+    ///      Derives aToken/underlying/pool from the WrappedAToken contract (market-agnostic)
+    function _wrapAndSend(uint256 amount, address recipient) internal {
+        IWrappedAToken wrapper = IWrappedAToken(COLLATERAL);
+        address aTokenAddr = wrapper.aToken();
+        IAToken aToken = IAToken(aTokenAddr);
+        address underlying = aToken.UNDERLYING_ASSET_ADDRESS();
+        address pool = aToken.POOL();
+
+        // 1. Pull underlying (e.g. USDC) from user
+        IERC20(underlying).transferFrom(msg.sender, address(this), amount);
+
+        // 2. Supply to Aave → this contract receives aTokens
+        IERC20(underlying).approve(pool, amount);
+        IAavePool(pool).supply(underlying, amount, address(this), 0);
+
+        // 3. Wrap aToken → collateral token (e.g. aUSDC → waUSDC)
+        uint256 aBalance = ERC20(aTokenAddr).balanceOf(address(this));
+        IERC20(aTokenAddr).approve(COLLATERAL, aBalance);
+        uint256 shares = wrapper.wrap(aBalance);
+
+        // 4. Send wrapped tokens to recipient
+        IERC20(COLLATERAL).transfer(recipient, shares);
+    }
+
+    /// @dev Unwrap collateral → withdraw from Aave → send underlying to recipient
+    ///      Assumes this contract already holds the collateral tokens
+    function _unwrapAndSend(uint256 collAmount, address recipient) internal {
+        IWrappedAToken wrapper = IWrappedAToken(COLLATERAL);
+        address aTokenAddr = wrapper.aToken();
+        IAToken aToken = IAToken(aTokenAddr);
+        address underlying = aToken.UNDERLYING_ASSET_ADDRESS();
+        address pool = aToken.POOL();
+
+        // 1. Unwrap collateral → this contract receives aTokens
+        uint256 aAmount = wrapper.unwrap(collAmount);
+
+        // 2. Withdraw from Aave → underlying (e.g. USDC) sent to recipient
+        IERC20(aTokenAddr).approve(pool, aAmount);
+        IAavePool(pool).withdraw(underlying, aAmount, recipient);
+    }
 
     /// @dev Extract revert reason from failed low-level call
     function _getRevertMsg(

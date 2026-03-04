@@ -35,6 +35,7 @@ export default function BondsPage() {
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [selectedBond, setSelectedBond] = useState(null);
   const [actionDropdown, setActionDropdown] = useState(null);
+  const [selectedToken, setSelectedToken] = useState("USDC"); // "USDC" or "waUSDC"
   const { account, connectWallet, usdcBalance } = useWallet();
   const { toasts, addToast, removeToast } = useToast();
   const {
@@ -50,20 +51,32 @@ export default function BondsPage() {
   const { poolTVL, protocolStats, marketInfo } = useSimulation({ pollInterval: 5000 });
   const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
 
-  // Wallet balance (bonds pull from wallet, not broker)
+  // Wallet balance — track both USDC and waUSDC
   const [walletBalance, setWalletBalance] = useState(null);
+  const [usdcWalletBalance, setUsdcWalletBalance] = useState(null);
   useEffect(() => {
     if (!account || !marketInfo?.collateral?.address) return;
     const fetchBal = async () => {
       try {
         const provider = new ethers.JsonRpcProvider(RPC_URL);
-        const token = new ethers.Contract(
-          marketInfo.collateral.address,
-          ["function balanceOf(address) view returns (uint256)"],
-          provider,
-        );
-        const bal = await token.balanceOf(account);
-        setWalletBalance(Number(ethers.formatUnits(bal, 6)));
+        const balABI = ["function balanceOf(address) view returns (uint256)"];
+        // waUSDC balance
+        const waToken = new ethers.Contract(marketInfo.collateral.address, balABI, provider);
+        const waBal = await waToken.balanceOf(account);
+        setWalletBalance(Number(ethers.formatUnits(waBal, 6)));
+
+        // Derive USDC address and fetch balance
+        try {
+          const wrapABI = ["function aToken() view returns (address)"];
+          const aTokenABI = ["function UNDERLYING_ASSET_ADDRESS() view returns (address)"];
+          const wrapper = new ethers.Contract(marketInfo.collateral.address, wrapABI, provider);
+          const aTokenAddr = await wrapper.aToken();
+          const aToken = new ethers.Contract(aTokenAddr, aTokenABI, provider);
+          const usdcAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
+          const usdcToken = new ethers.Contract(usdcAddr, balABI, provider);
+          const uBal = await usdcToken.balanceOf(account);
+          setUsdcWalletBalance(Number(ethers.formatUnits(uBal, 6)));
+        } catch {}
       } catch {}
     };
     fetchBal();
@@ -213,10 +226,25 @@ export default function BondsPage() {
               <>
                 <InputGroup
                   label="Notional_Amount"
-                  subLabel={`Bal: ${walletBalance !== null ? walletBalance.toFixed(2) : "0.00"} waUSDC`}
+                  subLabel={`Bal: ${selectedToken === "USDC"
+                    ? (usdcWalletBalance !== null ? usdcWalletBalance.toFixed(2) : "0.00")
+                    : (walletBalance !== null ? walletBalance.toFixed(2) : "0.00")
+                  } ${selectedToken}`}
                   value={notional}
                   onChange={(v) => setNotional(Number(v))}
-                  suffix="USDC"
+                  suffix={
+                    <button
+                      type="button"
+                      onClick={() => setSelectedToken(selectedToken === "USDC" ? "waUSDC" : "USDC")}
+                      className="flex items-center gap-1 text-xs font-bold tracking-wider uppercase hover:text-cyan-400 transition-colors cursor-pointer"
+                      title={`Switch to ${selectedToken === "USDC" ? "waUSDC" : "USDC"}`}
+                    >
+                      {selectedToken}
+                      <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor">
+                        <path d="M0 0l5 6 5-6z" />
+                      </svg>
+                    </button>
+                  }
                 />
 
                 <div className="space-y-3">
@@ -566,7 +594,7 @@ export default function BondsPage() {
               message: `$${notional.toLocaleString()} bond minted — tx ${receipt.hash.slice(0, 10)}…`,
             });
             refreshBonds();
-          });
+          }, { useUnderlying: selectedToken === "USDC" });
         }}
         notional={notional}
         maturityDays={maturityDays}
@@ -592,7 +620,7 @@ export default function BondsPage() {
               message: `Bond #${String(bond.id).padStart(4, "0")} closed — funds returned to wallet`,
             });
             refreshBonds();
-          });
+          }, { useUnderlying: selectedToken === "USDC" });
         }}
         bond={selectedBond ? userBonds.find(b => b.id === selectedBond) : null}
         executing={bondExecuting}

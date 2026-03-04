@@ -5,10 +5,18 @@ import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 // ── ABI fragments ─────────────────────────────────────────────────
 
 const BOND_FACTORY_ABI = [
-  "function mintBond(uint256 notional, uint256 hedgeAmount, uint256 duration, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey) returns (address broker)",
-  "function closeBond(address broker, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey)",
+  "function mintBond(uint256 notional, uint256 hedgeAmount, uint256 duration, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying) returns (address broker)",
+  "function closeBond(address broker, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying)",
   "event BondMinted(address indexed user, address indexed broker, uint256 notional, uint256 hedge, uint256 duration)",
   "event BondClosed(address indexed user, address indexed broker, uint256 collateralReturned, uint256 positionReturned)",
+];
+
+const WRAPPED_ATOKEN_ABI = [
+  "function aToken() view returns (address)",
+];
+
+const ATOKEN_ABI = [
+  "function UNDERLYING_ASSET_ADDRESS() view returns (address)",
 ];
 
 const ERC20_ABI = [
@@ -59,7 +67,7 @@ export function useBondExecution(
    * @param {Function} onSuccess    Called with { receipt, brokerAddress }
    */
   const createBond = useCallback(
-    async (notionalUSD, durationHours, ratePercent, onSuccess) => {
+    async (notionalUSD, durationHours, ratePercent, onSuccess, { useUnderlying = true } = {}) => {
       if (
         !account ||
         !collateralAddr ||
@@ -111,19 +119,37 @@ export function useBondExecution(
 
         console.log("[Bond] Notional:", notionalUSD, "Hedge:", hedgeUSD.toFixed(6));
 
+        // ── Determine which token to approve ─────────────────────
+        let approveTokenAddr = collateralAddr; // default: waUSDC
+        let approveLabel = "waUSDC";
+
+        if (useUnderlying) {
+          // Derive USDC address from WrappedAToken chain
+          try {
+            const wrapper = new ethers.Contract(collateralAddr, WRAPPED_ATOKEN_ABI, signer);
+            const aTokenAddr = await wrapper.aToken();
+            const aToken = new ethers.Contract(aTokenAddr, ATOKEN_ABI, signer);
+            approveTokenAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
+            approveLabel = "USDC";
+            console.log("[Bond] Using underlying:", approveTokenAddr);
+          } catch (e) {
+            console.warn("[Bond] Failed to derive underlying, falling back to waUSDC", e);
+          }
+        }
+
         // ── Ensure approval ─────────────────────────────────────
         setStep("Checking approval...");
-        const collateral = new ethers.Contract(collateralAddr, ERC20_ABI, signer);
-        const allowance = await collateral.allowance(account, bondFactoryAddr);
+        const tokenToApprove = new ethers.Contract(approveTokenAddr, ERC20_ABI, signer);
+        const allowance = await tokenToApprove.allowance(account, bondFactoryAddr);
 
         if (allowance < totalWei) {
-          setStep("Approve waUSDC for BondFactory...");
-          const approveTx = await collateral.approve(
+          setStep(`Approve ${approveLabel} for BondFactory...`);
+          const approveTx = await tokenToApprove.approve(
             bondFactoryAddr,
             ethers.MaxUint256,
           );
           await approveTx.wait();
-          console.log("[Bond] Approved BondFactory");
+          console.log(`[Bond] Approved BondFactory for ${approveLabel}`);
         }
 
         // ── Mint bond (single TX) ───────────────────────────────
@@ -154,6 +180,7 @@ export function useBondExecution(
             poolKey.tickSpacing,
             poolKey.hooks,
           ],
+          useUnderlying,
           { gasLimit: 10_000_000 },
         );
         setTxHash(tx.hash);
@@ -240,7 +267,7 @@ export function useBondExecution(
    * @param {Function} onSuccess      Called with { brokerAddress } on completion
    */
   const closeBond = useCallback(
-    async (brokerAddress, onSuccess) => {
+    async (brokerAddress, onSuccess, { useUnderlying = true } = {}) => {
       if (!account || !brokerAddress) {
         setError("Missing parameters");
         return;
@@ -296,7 +323,7 @@ export function useBondExecution(
           signer,
         );
 
-        const tx = await bondFactory.closeBond(brokerAddress, poolKeyArr, {
+        const tx = await bondFactory.closeBond(brokerAddress, poolKeyArr, useUnderlying, {
           gasLimit: 10_000_000,
         });
         setTxHash(tx.hash);
