@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { ethers } from "ethers";
 import { RPC_URL } from "../utils/anvil";
 import { Shield, Terminal, AlertTriangle, ChevronDown, Wallet } from "lucide-react";
@@ -36,6 +36,8 @@ export default function BondsPage() {
   const [selectedBond, setSelectedBond] = useState(null);
   const [actionDropdown, setActionDropdown] = useState(null);
   const [selectedToken, setSelectedToken] = useState("USDC"); // "USDC" or "waUSDC"
+  const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false);
+  const tokenDropdownRef = useRef(null);
   const { account, connectWallet, usdcBalance } = useWallet();
   const { toasts, addToast, removeToast } = useToast();
   const {
@@ -83,6 +85,17 @@ export default function BondsPage() {
     const id = setInterval(fetchBal, 10000);
     return () => clearInterval(id);
   }, [account, marketInfo?.collateral?.address]);
+
+  // Close token dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (tokenDropdownRef.current && !tokenDropdownRef.current.contains(e.target)) {
+        setTokenDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
 
   // Bond execution hook (atomic via BrokerExecutor)
@@ -224,6 +237,59 @@ export default function BondsPage() {
             {/* Wraps the specific content for Bonds */}
             {activeTab === "OPEN" && (
               <>
+                {/* PAY_WITH token selector */}
+                <div className="flex items-center justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
+                  <span>Pay_With</span>
+                  <div className="relative" ref={tokenDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setTokenDropdownOpen(!tokenDropdownOpen)}
+                      className={`
+                        h-[28px] border border-white/10 bg-[#0a0a0a] flex items-center justify-between px-2 gap-2
+                        text-sm font-mono text-white focus:outline-none uppercase tracking-widest
+                        hover:border-white/30 transition-colors
+                        ${tokenDropdownOpen ? "border-white/30" : ""}
+                      `}
+                    >
+                      <span>{selectedToken}</span>
+                      <ChevronDown
+                        size={12}
+                        className={`transition-transform duration-200 flex-shrink-0 ${tokenDropdownOpen ? "rotate-180" : ""}`}
+                      />
+                    </button>
+                    {tokenDropdownOpen && (
+                      <div className="absolute top-full right-0 mt-1 bg-[#0a0a0a] border border-white/10 z-50 flex flex-col shadow-xl whitespace-nowrap">
+                        {[
+                          { value: "USDC", label: "USDC" },
+                          { value: "waUSDC", label: "waUSDC" },
+                        ].map((opt) => {
+                          const isSelected = selectedToken === opt.value;
+                          return (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => {
+                                setSelectedToken(opt.value);
+                                setTokenDropdownOpen(false);
+                              }}
+                              className={`
+                                w-full flex items-center px-3 py-2 text-sm text-left uppercase tracking-widest transition-colors
+                                ${
+                                  isSelected
+                                    ? "bg-cyan-500/10 text-cyan-400"
+                                    : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
+                                }
+                              `}
+                            >
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <InputGroup
                   label="Notional_Amount"
                   subLabel={`Bal: ${selectedToken === "USDC"
@@ -232,19 +298,7 @@ export default function BondsPage() {
                   } ${selectedToken}`}
                   value={notional}
                   onChange={(v) => setNotional(Number(v))}
-                  suffix={
-                    <button
-                      type="button"
-                      onClick={() => setSelectedToken(selectedToken === "USDC" ? "waUSDC" : "USDC")}
-                      className="flex items-center gap-1 text-xs font-bold tracking-wider uppercase hover:text-cyan-400 transition-colors cursor-pointer"
-                      title={`Switch to ${selectedToken === "USDC" ? "waUSDC" : "USDC"}`}
-                    >
-                      {selectedToken}
-                      <svg width="10" height="6" viewBox="0 0 10 6" fill="currentColor">
-                        <path d="M0 0l5 6 5-6z" />
-                      </svg>
-                    </button>
-                  }
+                  suffix={selectedToken}
                 />
 
                 <div className="space-y-3">
