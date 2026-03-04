@@ -230,10 +230,11 @@ contract BondFactory is ReentrancyGuard {
                 address collToken = pb.collateralToken();
                 uint256 waUSDCBal = ERC20(collToken).balanceOf(broker);
 
-                // Use available waUSDC to buy wRLP (BrokerRouter handles the swap)
-                // Router checks onlyBrokerAuthorized: msg.sender == NFT owner ✓
                 if (waUSDCBal > 0) {
-                    (bool ok, bytes memory ret) = ROUTER.call(
+                    // Router needs operator access to call back into broker
+                    pb.setOperator(ROUTER, true);
+
+                    (bool ok, ) = ROUTER.call(
                         abi.encodeWithSignature(
                             "closeShort(address,uint256,(address,address,uint24,int24,address))",
                             broker,
@@ -241,10 +242,9 @@ contract BondFactory is ReentrancyGuard {
                             poolKey
                         )
                     );
-                    // Allow failure (partial fill is fine; debt repay below will cap)
                     if (!ok) {
                         // Try with half the amount as fallback
-                        (ok, ret) = ROUTER.call(
+                        (ok, ) = ROUTER.call(
                             abi.encodeWithSignature(
                                 "closeShort(address,uint256,(address,address,uint24,int24,address))",
                                 broker,
@@ -253,20 +253,32 @@ contract BondFactory is ReentrancyGuard {
                             )
                         );
                     }
+
+                    // Revoke operator access
+                    pb.setOperator(ROUTER, false);
                 }
             }
 
-            // Re-fetch debt (closeShort may have partially repaid)
+            // Re-fetch debt and balance (closeShort may have partially repaid)
             pos = IRLDCore(coreAddr).getPosition(mktId, broker);
             debtPrincipal = pos.debtPrincipal;
 
             // ── 5. Repay remaining debt ─────────────────────────────────
+            // Cap to available wRLP to avoid underflow
             if (debtPrincipal > 0) {
-                pb.modifyPosition(
-                    rawMarketId,
-                    int256(0),
-                    -int256(uint256(debtPrincipal))
-                );
+                address posToken2 = pb.positionToken();
+                uint256 availableWRLP = ERC20(posToken2).balanceOf(broker);
+                uint256 repayAmount = availableWRLP < debtPrincipal
+                    ? availableWRLP
+                    : debtPrincipal;
+
+                if (repayAmount > 0) {
+                    pb.modifyPosition(
+                        rawMarketId,
+                        int256(0),
+                        -int256(repayAmount)
+                    );
+                }
             }
         }
 
