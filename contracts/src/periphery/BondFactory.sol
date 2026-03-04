@@ -9,10 +9,12 @@ import {PrimeBrokerFactory} from "../rld/core/PrimeBrokerFactory.sol";
 import {IERC20} from "../shared/interfaces/IERC20.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IJTM} from "../twamm/IJTM.sol";
+import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
 
-/// @title  BondFactory — Single-TX Bond Minting
+/// @title  BondFactory — Single-TX Bond Minting & Closing
 /// @author RLD Protocol
-/// @notice Creates frozen, isolated bonds in one transaction.
+/// @notice Creates and closes frozen, isolated bonds in one transaction.
 ///
 /// @dev ## Architecture
 ///
@@ -22,16 +24,20 @@ import {IJTM} from "../twamm/IJTM.sol";
 ///     3. Frozen state (no further mutations)
 ///     4. An ERC721 NFT representing ownership
 ///
-///   BondFactory temporarily owns the NFT during minting, which gives it
-///   unrestricted access (owner passes all access checks). At the end of
-///   mintBond(), the NFT is transferred to the user.
+///   BondFactory temporarily owns the NFT during minting/closing, which gives
+///   it unrestricted access (owner passes all access checks).
 ///
 /// @dev ## User Flow
 ///
+///   ### Create:
 ///   1. One-time: `waUSDC.approve(bondFactory, type(uint256).max)`
 ///   2. Per bond: `bondFactory.mintBond(notional, hedge, duration, poolKey)`
 ///
-///   Total: 1 wallet popup per bond (after initial approval).
+///   ### Close:
+///   1. One-time: `BROKER_FACTORY.approve(bondFactory, tokenId)`
+///   2. Per bond: `bondFactory.closeBond(broker, poolKey)`
+///
+///   Total: 1 wallet popup per action (after initial approvals).
 ///
 contract BondFactory is ReentrancyGuard {
     /* ============================= IMMUTABLES ============================= */
@@ -56,17 +62,20 @@ contract BondFactory is ReentrancyGuard {
     /* =============================== EVENTS =============================== */
 
     /// @notice Emitted when a new bond is minted
-    /// @param user      The bond owner (receives the NFT)
-    /// @param broker    The new PrimeBroker clone address
-    /// @param notional  Collateral deposited (waUSDC, 6 decimals)
-    /// @param hedge     Amount allocated to TWAMM buy-back
-    /// @param duration  TWAMM order duration in seconds
     event BondMinted(
         address indexed user,
         address indexed broker,
         uint256 notional,
         uint256 hedge,
         uint256 duration
+    );
+
+    /// @notice Emitted when a bond is closed
+    event BondClosed(
+        address indexed user,
+        address indexed broker,
+        uint256 collateralReturned,
+        uint256 positionReturned
     );
 
     /* ============================ CONSTRUCTOR ============================= */
@@ -88,7 +97,7 @@ contract BondFactory is ReentrancyGuard {
         COLLATERAL = collateral_;
     }
 
-    /* =========================== CORE FUNCTION ============================ */
+    /* =========================== MINT BOND ================================ */
 
     /// @notice Mint a bond in a single transaction.
     ///
@@ -124,10 +133,6 @@ contract BondFactory is ReentrancyGuard {
         IERC20(COLLATERAL).transferFrom(msg.sender, broker, total);
 
         // ── 3. Execute short ────────────────────────────────────────────
-        // BrokerRouter.executeShort checks onlyBrokerAuthorized(broker):
-        //   msg.sender == NFT owner ✓ (we own the NFT)
-        // This deposits `notional` as collateral, mints `hedgeAmount` wRLP
-        // as debt, spot-swaps wRLP → waUSDC, and returns proceeds to broker.
         (bool ok, bytes memory ret) = ROUTER.call(
             abi.encodeWithSignature(
                 "executeShort(address,uint256,uint256,(address,address,uint24,int24,address))",
@@ -140,9 +145,6 @@ contract BondFactory is ReentrancyGuard {
         require(ok, _getRevertMsg(ret));
 
         // ── 4. Submit TWAMM buy-back order ──────────────────────────────
-        // PrimeBroker.submitTwammOrder checks onlyAuthorized:
-        //   msg.sender == NFT owner ✓
-        // Sells waUSDC (currency1) → buys wRLP (currency0) to hedge.
         PrimeBroker pb = PrimeBroker(payable(broker));
         IJTM.SubmitOrderParams memory params = IJTM.SubmitOrderParams({
             key: poolKey,
@@ -153,15 +155,139 @@ contract BondFactory is ReentrancyGuard {
         pb.submitTwammOrder(TWAMM_HOOK, params);
 
         // ── 5. Freeze broker ────────────────────────────────────────────
-        // Locks all state mutations. TWAMM continues at hook level.
         pb.freeze();
 
         // ── 6. Transfer NFT to user ─────────────────────────────────────
-        // Factory.transferFrom calls revokeAllOperators (no-op since frozen).
         uint256 tokenId = uint256(uint160(broker));
         BROKER_FACTORY.transferFrom(address(this), msg.sender, tokenId);
 
         emit BondMinted(msg.sender, broker, notional, hedgeAmount, duration);
+    }
+
+    /* =========================== CLOSE BOND ============================== */
+
+    /// @notice Close a bond in a single transaction.
+    ///
+    /// @dev Flow:
+    ///   1. Pull NFT from user (user must approve this contract first)
+    ///   2. Unfreeze broker (we are now NFT owner → onlyOwner passes)
+    ///   3. Handle TWAMM: claim expired order or cancel active order
+    ///   4. If wRLP < debt: buy shortfall via BrokerRouter.closeShort()
+    ///   5. Repay all debt via modifyPosition
+    ///   6. Withdraw remaining tokens to user
+    ///   7. Transfer NFT back to user
+    ///
+    /// @param broker   The bond's PrimeBroker address
+    /// @param poolKey  The Uniswap V4 pool key (needed for potential closeShort)
+    function closeBond(
+        address broker,
+        PoolKey calldata poolKey
+    ) external nonReentrant {
+        PrimeBroker pb = PrimeBroker(payable(broker));
+        uint256 tokenId = uint256(uint160(broker));
+
+        // ── 1. Pull NFT from user → this contract ──────────────────────
+        BROKER_FACTORY.transferFrom(msg.sender, address(this), tokenId);
+
+        // ── 2. Unfreeze ─────────────────────────────────────────────────
+        if (pb.frozen()) {
+            pb.unfreeze();
+        }
+
+        // ── 3. Handle TWAMM order ───────────────────────────────────────
+        (, , bytes32 orderId) = pb.activeTwammOrder();
+        if (orderId != bytes32(0)) {
+            // Read order expiration
+            (, IJTM.OrderKey memory orderKey, ) = pb.activeTwammOrder();
+            uint256 expiration = uint256(orderKey.expiration);
+
+            if (block.timestamp >= expiration) {
+                // Expired → claim tokens (no whenNotFrozen needed)
+                pb.claimExpiredTwammOrder();
+            } else {
+                // Active → cancel (returns earned + refund)
+                pb.cancelTwammOrder();
+            }
+        }
+
+        // ── 4. Check wRLP balance vs debt ───────────────────────────────
+        address coreAddr = pb.CORE();
+        MarketId mktId = pb.marketId();
+        bytes32 rawMarketId = MarketId.unwrap(mktId);
+
+        IRLDCore.Position memory pos = IRLDCore(coreAddr).getPosition(
+            mktId,
+            broker
+        );
+        uint128 debtPrincipal = pos.debtPrincipal;
+
+        if (debtPrincipal > 0) {
+            address positionToken = pb.positionToken();
+            uint256 wrlpBalance = ERC20(positionToken).balanceOf(broker);
+
+            // If wRLP insufficient, buy the shortfall via BrokerRouter
+            if (wrlpBalance < debtPrincipal) {
+                address collToken = pb.collateralToken();
+                uint256 waUSDCBal = ERC20(collToken).balanceOf(broker);
+
+                // Use available waUSDC to buy wRLP (BrokerRouter handles the swap)
+                // Router checks onlyBrokerAuthorized: msg.sender == NFT owner ✓
+                if (waUSDCBal > 0) {
+                    (bool ok, bytes memory ret) = ROUTER.call(
+                        abi.encodeWithSignature(
+                            "closeShort(address,uint256,(address,address,uint24,int24,address))",
+                            broker,
+                            waUSDCBal,
+                            poolKey
+                        )
+                    );
+                    // Allow failure (partial fill is fine; debt repay below will cap)
+                    if (!ok) {
+                        // Try with half the amount as fallback
+                        (ok, ret) = ROUTER.call(
+                            abi.encodeWithSignature(
+                                "closeShort(address,uint256,(address,address,uint24,int24,address))",
+                                broker,
+                                waUSDCBal / 2,
+                                poolKey
+                            )
+                        );
+                    }
+                }
+            }
+
+            // Re-fetch debt (closeShort may have partially repaid)
+            pos = IRLDCore(coreAddr).getPosition(mktId, broker);
+            debtPrincipal = pos.debtPrincipal;
+
+            // ── 5. Repay remaining debt ─────────────────────────────────
+            if (debtPrincipal > 0) {
+                pb.modifyPosition(
+                    rawMarketId,
+                    int256(0),
+                    -int256(uint256(debtPrincipal))
+                );
+            }
+        }
+
+        // ── 6. Withdraw all remaining tokens to user ────────────────────
+        address collateralToken = pb.collateralToken();
+        address positionToken = pb.positionToken();
+
+        uint256 collBal = ERC20(collateralToken).balanceOf(broker);
+        uint256 posBal = ERC20(positionToken).balanceOf(broker);
+
+        if (collBal > 0) {
+            pb.withdrawCollateral(msg.sender, collBal);
+        }
+        if (posBal > 0) {
+            pb.withdrawPositionToken(msg.sender, posBal);
+        }
+
+        // ── 7. Transfer NFT back to user ────────────────────────────────
+        BROKER_FACTORY.transferFrom(address(this), msg.sender, tokenId);
+
+        emit BondClosed(msg.sender, broker, collBal, posBal);
     }
 
     /* =========================== INTERNAL ================================= */
