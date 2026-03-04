@@ -67,7 +67,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         );
 
         // Attempt to track a position the broker doesn't own → revert
-        vm.expectRevert("Not position owner");
+        vm.expectRevert("!owner");
         broker.setActiveV4Position(tokenId);
     }
 
@@ -107,7 +107,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         assertTrue(broker.activeTokenId() != 0, "Should have active LP");
 
         // Clearing position → solvency checked (should pass if broker is well-collateralized)
-        broker.clearActiveV4Position();
+        broker.setActiveV4Position(0);
         assertEq(broker.activeTokenId(), 0, "Position cleared");
     }
 
@@ -134,12 +134,8 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         PrimeBroker broker = _createBroker();
 
         vm.prank(attacker);
-        vm.expectRevert("Not Authorized");
+        vm.expectRevert(PrimeBroker.NotAuthorized.selector);
         broker.setActiveV4Position(0);
-
-        vm.prank(attacker);
-        vm.expectRevert("Not Authorized");
-        broker.clearActiveV4Position();
     }
 
     // ================================================================
@@ -181,7 +177,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
 
         // Try to register this order on the broker
         // orderKey.owner = test contract, NOT broker → should revert
-        vm.expectRevert("Not order owner");
+        vm.expectRevert("!owner");
         broker.setActiveTwammOrder(
             IPrimeBroker.TwammOrderInfo({
                 key: marketTwammKey,
@@ -239,7 +235,17 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         assertTrue(orderId1 != bytes32(0), "Should have active order");
 
         // Clear tracking — solvency is checked, should pass w/ enough collateral
-        broker.clearActiveTwammOrder();
+        broker.setActiveTwammOrder(
+            IPrimeBroker.TwammOrderInfo({
+                key: marketTwammKey,
+                orderKey: IJTM.OrderKey({
+                    owner: address(0),
+                    expiration: 0,
+                    zeroForOne: false
+                }),
+                orderId: bytes32(0)
+            })
+        );
 
         (, , bytes32 orderId2) = broker.activeTwammOrder();
         assertEq(orderId2, bytes32(0), "Order tracking cleared");
@@ -267,8 +273,18 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         assertTrue(broker.activeTokenId() != 0, "Should track V4 LP");
 
         // Clear both
-        broker.clearActiveV4Position();
-        broker.clearActiveTwammOrder();
+        broker.setActiveV4Position(0);
+        broker.setActiveTwammOrder(
+            IPrimeBroker.TwammOrderInfo({
+                key: marketTwammKey,
+                orderKey: IJTM.OrderKey({
+                    owner: address(0),
+                    expiration: 0,
+                    zeroForOne: false
+                }),
+                orderId: bytes32(0)
+            })
+        );
 
         assertEq(broker.activeTokenId(), 0, "V4 position cleared");
         (, , bytes32 clearedOrderId) = broker.activeTwammOrder();
@@ -492,7 +508,7 @@ contract BrokerPositionTracking is LiquidationTwammBase {
     function test_cancel_twamm_no_active_reverts() public {
         PrimeBroker broker = _createBroker();
 
-        vm.expectRevert("No active order");
+        vm.expectRevert("!order");
         broker.cancelTwammOrder();
     }
 

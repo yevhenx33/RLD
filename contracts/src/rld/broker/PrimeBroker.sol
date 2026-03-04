@@ -276,20 +276,32 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     );
 
     /* ============================================================================================ */
+    /*                                       CUSTOM ERRORS                                         */
+    /* ============================================================================================ */
+
+    error Insolvent();
+    error NotAuthorized();
+    error NotOwner();
+    error NotCore();
+    error NotFactory();
+    error BrokerFrozen_();
+    error InvalidToken();
+
+    /* ============================================================================================ */
     /*                                         MODIFIERS                                           */
     /* ============================================================================================ */
 
     /// @dev Restricts function to RLDCore only
     /// Used for: seize() during liquidation
     modifier onlyCore() {
-        require(msg.sender == CORE, "Not Core");
+        if (msg.sender != CORE) revert NotCore();
         _;
     }
 
     /// @dev Restricts function to the PrimeBrokerFactory that deployed this broker
     /// Used for: revokeAllOperators() during NFT ownership transfer
     modifier onlyFactory() {
-        require(msg.sender == factory, "Not Factory");
+        if (msg.sender != factory) revert NotFactory();
         _;
     }
 
@@ -299,11 +311,10 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// Ownership is dynamic - the "owner" is whoever currently holds the NFT:
     ///   owner = factory.ownerOf(uint256(uint160(address(this))))
     modifier onlyOwner() {
-        require(
-            IERC721(factory).ownerOf(uint256(uint160(address(this)))) ==
-                msg.sender,
-            "Not Owner"
-        );
+        if (
+            IERC721(factory).ownerOf(uint256(uint160(address(this)))) !=
+            msg.sender
+        ) revert NotOwner();
         _;
     }
 
@@ -317,7 +328,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         address owner = IERC721(factory).ownerOf(
             uint256(uint160(address(this)))
         );
-        require(msg.sender == owner || operators[msg.sender], "Not Authorized");
+        if (msg.sender != owner && !operators[msg.sender])
+            revert NotAuthorized();
         _;
     }
 
@@ -325,7 +337,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// Frozen brokers block ALL state-changing operations to protect bond integrity.
     /// Only seize() (liquidation), view functions, and unfreeze() bypass this.
     modifier whenNotFrozen() {
-        require(!frozen, "Broker frozen");
+        if (frozen) revert BrokerFrozen_();
         _;
     }
 
@@ -698,12 +710,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         {} catch {} // Best-effort: don't block liquidation
     }
 
-    function _cancelTwammOrder() internal {
-        // Cancel order - tokens return to this contract (msg.sender)
-        IJTM(address(activeTwammOrder.key.hooks)).cancelOrder(
-            activeTwammOrder.key,
-            activeTwammOrder.orderKey
-        );
+    function _cancelTwammOrder()
+        internal
+        returns (uint256 buyTokensOut, uint256 sellTokensRefund)
+    {
+        (buyTokensOut, sellTokensRefund) = IJTM(
+            address(activeTwammOrder.key.hooks)
+        ).cancelOrder(activeTwammOrder.key, activeTwammOrder.orderKey);
         delete activeTwammOrder;
     }
 
@@ -795,44 +808,12 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Uses DECREASE_LIQUIDITY with 0 liquidity + TAKE_PAIR to collect fees.
     /// @dev Only callable by authorized operators (owner or approved operator).
     function collectV4Fees() external onlyAuthorized {
-        require(activeTokenId != 0, "No active LP position");
+        require(activeTokenId != 0, "!lp");
         require(
             IERC721(POSM).ownerOf(activeTokenId) == address(this),
-            "Not position owner"
+            "!owner"
         );
-
-        // Build DECREASE_LIQUIDITY(0) + TAKE_PAIR to collect fees
-        bytes memory actions = abi.encodePacked(
-            uint8(0x01), // DECREASE_LIQUIDITY
-            uint8(0x11) // TAKE_PAIR
-        );
-
-        bytes[] memory actionParams = new bytes[](2);
-        // DECREASE_LIQUIDITY: tokenId, 0 liquidity, 0 min0, 0 min1, bytes32(0) hookData
-        actionParams[0] = abi.encode(
-            activeTokenId,
-            uint128(0),
-            uint128(0),
-            uint128(0),
-            bytes32(0)
-        );
-        // TAKE_PAIR: currency0, currency1, recipient
-        PoolKey memory key;
-        {
-            (key, ) = IPositionManager(POSM).getPoolAndPositionInfo(
-                activeTokenId
-            );
-        }
-        actionParams[1] = abi.encode(
-            Currency.unwrap(key.currency0),
-            Currency.unwrap(key.currency1),
-            address(this)
-        );
-
-        IPositionManager(POSM).modifyLiquidities(
-            abi.encode(actions, actionParams),
-            block.timestamp + 60
-        );
+        _decreaseV4Liquidity(activeTokenId, 0, false);
     }
 
     /* ============================================================================================ */
@@ -878,17 +859,14 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             // SECURITY: Verify this broker actually owns the position
             require(
                 IERC721(POSM).ownerOf(newTokenId) == address(this),
-                "Not position owner"
+                "!owner"
             );
         }
 
         activeTokenId = newTokenId;
 
         // SECURITY: Prevent gaming by switching to smaller positions
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after update"
-        );
+        _checkSolvency();
     }
 
     /// @notice Adds liquidity to the V4 pool, minting a new LP position NFT
@@ -917,7 +895,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 tokenId)
     {
-        require(liquidity > 0, "Zero liquidity");
+        require(liquidity > 0, "!0");
 
         PoolKey memory poolKey = _getPoolKey(twammHook);
 
@@ -959,10 +937,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         }
 
         // SECURITY: Solvency check after adding LP
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after LP add"
-        );
+        _checkSolvency();
     }
 
     /// @notice Removes liquidity from a specific V4 LP position
@@ -984,17 +959,14 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 amount0, uint256 amount1)
     {
-        require(liquidity > 0, "Zero liquidity");
-        require(
-            IERC721(POSM).ownerOf(tokenId) == address(this),
-            "Not position owner"
-        );
+        require(liquidity > 0, "!0");
+        require(IERC721(POSM).ownerOf(tokenId) == address(this), "!owner");
 
         // Check current liquidity to determine if full removal
         uint128 currentLiquidity = IPositionManager(POSM).getPositionLiquidity(
             tokenId
         );
-        require(currentLiquidity > 0, "Empty position");
+        require(currentLiquidity > 0, "!0");
 
         bool fullRemoval = liquidity >= currentLiquidity;
         uint128 actualLiquidity = fullRemoval ? currentLiquidity : liquidity;
@@ -1008,10 +980,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         }
 
         // SECURITY: Solvency check after removing LP
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after LP remove"
-        );
+        _checkSolvency();
     }
 
     /// @dev Builds a PoolKey from cached token addresses and the provided hook
@@ -1061,17 +1030,14 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             );
 
             // SECURITY: Verify order exists and is owned by this broker
-            require(order.sellRate > 0, "Order not found or empty");
-            require(info.orderKey.owner == address(this), "Not order owner");
+            require(order.sellRate > 0, "!order");
+            require(info.orderKey.owner == address(this), "!owner");
         }
 
         activeTwammOrder = info;
 
         // SECURITY: Prevent gaming by switching to smaller orders
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after update"
-        );
+        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "!solv");
     }
 
     /// @notice Clears the tracked V4 LP position
@@ -1084,25 +1050,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
     {
         activeTokenId = 0;
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after clear"
-        );
-    }
-
-    /// @notice Clears the tracked TWAMM order
-    /// @dev Convenience function for after an order is fully executed or cancelled
-    function clearActiveTwammOrder()
-        external
-        onlyAuthorized
-        nonReentrant
-        whenNotFrozen
-    {
-        delete activeTwammOrder;
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after clear"
-        );
+        _checkSolvency();
     }
 
     /// @notice Submits a TWAMM order and automatically registers it for solvency tracking
@@ -1156,10 +1104,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         });
 
         // Step 5: Verify solvency
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after order"
-        );
+        _checkSolvency();
     }
 
     /// @notice Cancels the active TWAMM order and claims proceeds
@@ -1173,21 +1118,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 buyTokensOut, uint256 sellTokensRefund)
     {
-        require(activeTwammOrder.orderId != bytes32(0), "No active order");
-
-        // Cancel and receive tokens
-        (buyTokensOut, sellTokensRefund) = IJTM(
-            address(activeTwammOrder.key.hooks)
-        ).cancelOrder(activeTwammOrder.key, activeTwammOrder.orderKey);
-
-        // Clear tracking
-        delete activeTwammOrder;
-
-        // Verify solvency
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after cancel"
-        );
+        require(activeTwammOrder.orderId != bytes32(0), "!order");
+        (buyTokensOut, sellTokensRefund) = _cancelTwammOrder();
+        _checkSolvency();
     }
 
     /// @notice Claims tokens from an expired TWAMM order
@@ -1202,7 +1135,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         nonReentrant
         returns (uint256 claimed0, uint256 claimed1)
     {
-        require(activeTwammOrder.orderId != bytes32(0), "No active order");
+        require(activeTwammOrder.orderId != bytes32(0), "!order");
 
         // syncAndClaimTokens: syncs earnings, auto-deletes expired orders,
         // and transfers both token0 and token1 owed to this broker
@@ -1236,7 +1169,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         nonReentrant
         returns (uint256 claimed0, uint256 claimed1)
     {
-        require(orderKey.owner == address(this), "Not owner");
+        require(orderKey.owner == address(this), "!owner");
 
         (claimed0, claimed1) = IJTM(twammHook).syncAndClaimTokens(
             IJTM.SyncParams({key: key, orderKey: orderKey})
@@ -1300,7 +1233,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @return Empty bytes (required by interface)
     function lockAcquired(bytes calldata data) external returns (bytes memory) {
         // SECURITY: Only Core can trigger this callback
-        require(msg.sender == CORE, "Not Core");
+        require(msg.sender == CORE, "!core");
 
         (MarketId id, int256 deltaCollateral, int256 deltaDebt) = abi.decode(
             data,
@@ -1308,10 +1241,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         );
 
         // SECURITY: Double-check market ID
-        require(
-            MarketId.unwrap(id) == MarketId.unwrap(marketId),
-            "Wrong Market"
-        );
+        require(MarketId.unwrap(id) == MarketId.unwrap(marketId), "!mkt");
 
         // Execute the position modification in Core
         IRLDCore(CORE).modifyPosition(id, deltaCollateral, deltaDebt);
@@ -1338,10 +1268,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         uint256 amount
     ) external onlyAuthorized nonReentrant whenNotFrozen {
         ERC20(collateralToken).safeTransfer(recipient, amount);
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after withdrawal"
-        );
+        _checkSolvency();
     }
 
     /// @notice Withdraws position token (wRLP) to a specified recipient
@@ -1353,10 +1280,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         uint256 amount
     ) external onlyAuthorized nonReentrant whenNotFrozen {
         ERC20(positionToken).safeTransfer(recipient, amount);
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after withdrawal"
-        );
+        _checkSolvency();
     }
 
     /// @notice Withdraws underlying token to a specified recipient
@@ -1368,10 +1292,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         uint256 amount
     ) external onlyAuthorized nonReentrant whenNotFrozen {
         ERC20(underlyingToken).safeTransfer(recipient, amount);
-        require(
-            IRLDCore(CORE).isSolvent(marketId, address(this)),
-            "Insolvent after withdrawal"
-        );
+        _checkSolvency();
     }
 
     /* ============================================================================================ */
@@ -1431,6 +1352,21 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         return ISpotOracle(rateOracle).getSpotPrice(quote, base);
     }
 
+    /// @dev Shared solvency check — reverts with Insolvent() if broker is underwater
+    function _checkSolvency() internal view {
+        if (!IRLDCore(CORE).isSolvent(marketId, address(this)))
+            revert Insolvent();
+    }
+
+    /// @dev Shared operator mass-revocation — revokes all operators and clears the list
+    function _revokeAll() internal {
+        for (uint256 i = 0; i < operatorList.length; i++) {
+            operators[operatorList[i]] = false;
+            emit OperatorUpdated(operatorList[i], false);
+        }
+        delete operatorList;
+    }
+
     /* ============================================================================================ */
     /*                                   OPERATOR MANAGEMENT                                       */
     /* ============================================================================================ */
@@ -1476,12 +1412,12 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Shared helper for adding/removing operators with event emission
     function _updateOperator(address operator, bool active) internal {
         if (active) {
-            require(!operators[operator], "Already operator");
-            require(operatorList.length < MAX_OPERATORS, "Max operators");
+            require(!operators[operator], "!dup");
+            require(operatorList.length < MAX_OPERATORS, "!max");
             operators[operator] = true;
             operatorList.push(operator);
         } else {
-            require(operators[operator], "Not operator");
+            require(operators[operator], "!op");
             operators[operator] = false;
             for (uint256 i = 0; i < operatorList.length; i++) {
                 if (operatorList[i] == operator) {
@@ -1498,11 +1434,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev H-3 FIX: Prevents previous owner's operators from retaining access after
     ///      ownership transfer. Bounded by MAX_OPERATORS (8) for gas predictability.
     function revokeAllOperators() external onlyFactory {
-        for (uint256 i = 0; i < operatorList.length; i++) {
-            operators[operatorList[i]] = false;
-            emit OperatorUpdated(operatorList[i], false);
-        }
-        delete operatorList;
+        _revokeAll();
     }
 
     /// @notice Set operator via signature from the NFT owner
@@ -1530,7 +1462,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         );
 
         // Verify nonce
-        require(nonce == operatorNonces[msg.sender], "Invalid nonce");
+        require(nonce == operatorNonces[msg.sender], "!nonce");
         operatorNonces[msg.sender]++;
 
         // Build signed message hash
@@ -1552,7 +1484,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
 
         // Verify signature is from owner
         address signer = ECDSA.recover(ethSignedHash, signature);
-        require(signer == owner, "Invalid signature");
+        require(signer == owner, "!sig");
 
         _updateOperator(operator, active);
     }
@@ -1575,17 +1507,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// 4. TWAMM unwind continues at hook level (not affected by freeze)
     /// 5. At maturity, new owner calls unfreeze() and withdraws
     function freeze() external onlyOwner nonReentrant {
-        require(!frozen, "Already frozen");
-
+        require(!frozen, "!freeze");
         frozen = true;
-
-        // Mass-revoke all operators (bounded by MAX_OPERATORS = 8)
-        for (uint256 i = 0; i < operatorList.length; i++) {
-            operators[operatorList[i]] = false;
-            emit OperatorUpdated(operatorList[i], false);
-        }
-        delete operatorList;
-
+        _revokeAll();
         emit BrokerFrozen(msg.sender);
     }
 
@@ -1593,7 +1517,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Only owner (current NFT holder) can unfreeze
     /// After unfreezing, owner must call setOperator() to re-add operators
     function unfreeze() external onlyOwner nonReentrant {
-        require(frozen, "Not frozen");
+        require(frozen, "!freeze");
         frozen = false;
         emit BrokerUnfrozen(msg.sender);
     }
