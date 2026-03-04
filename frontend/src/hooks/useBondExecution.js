@@ -24,10 +24,7 @@ const ERC20_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
 ];
 
-const ERC721_ABI = [
-  "function setApprovalForAll(address operator, bool approved)",
-  "function isApprovedForAll(address owner, address operator) view returns (bool)",
-];
+
 
 // ── Hook ──────────────────────────────────────────────────────────
 
@@ -289,23 +286,8 @@ export function useBondExecution(
 
       try {
         const signer = await getAnvilSigner();
-        const tokenId = BigInt(brokerAddress); // tokenId = uint256(uint160(broker))
 
-        // ── 1. Ensure blanket NFT approval (one-time) ──────────────
-        setStep("Checking NFT approval...");
-        const nftContract = new ethers.Contract(brokerFactoryAddr, ERC721_ABI, signer);
-        const isApproved = await nftContract.isApprovedForAll(account, bondFactoryAddr);
-
-        if (!isApproved) {
-          setStep("Approving BondFactory for all bonds (one-time)...");
-          const approveTx = await nftContract.setApprovalForAll(bondFactoryAddr, true, {
-            gasLimit: 200_000,
-          });
-          await approveTx.wait();
-          console.log("[CloseBond] BondFactory approved for all NFTs");
-        }
-
-        // ── 2. Build pool key ─────────────────────────────────────
+        // ── 1. Build pool key ─────────────────────────────────────
         const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();
         const poolKeyArr = [
           sorted ? positionAddr : collateralAddr,
@@ -315,7 +297,7 @@ export function useBondExecution(
           infrastructure.twamm_hook,
         ];
 
-        // ── 3. Close bond (single TX) ─────────────────────────────
+        // ── 2. Close bond (single TX, no approval needed) ──────────
         setStep("Closing bond...");
         const bondFactory = new ethers.Contract(
           bondFactoryAddr,

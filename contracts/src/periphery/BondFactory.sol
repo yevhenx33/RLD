@@ -58,14 +58,17 @@ interface IAavePool {
 /// @dev ## User Flow
 ///
 ///   ### Create:
-///   1. One-time: `waUSDC.approve(bondFactory, type(uint256).max)`
-///   2. Per bond: `bondFactory.mintBond(notional, hedge, duration, poolKey)`
+///   1. One-time: `USDC.approve(bondFactory, type(uint256).max)` (or waUSDC)
+///   2. Per bond: `bondFactory.mintBond(notional, hedge, duration, poolKey, useUnderlying)`
 ///
 ///   ### Close:
-///   1. One-time: `BROKER_FACTORY.approve(bondFactory, tokenId)`
-///   2. Per bond: `bondFactory.closeBond(broker, poolKey)`
+///   1. `bondFactory.closeBond(broker, poolKey, useUnderlying)` — no approvals needed
 ///
-///   Total: 1 wallet popup per action (after initial approvals).
+///   ### Optional NFT custody:
+///   - `claimBond(broker)` — transfer NFT to your wallet
+///   - `returnBond(broker)` — return NFT to BondFactory custody
+///
+///   Total: 1 wallet popup per action. Zero approvals for close.
 ///
 contract BondFactory is ReentrancyGuard {
     /* ============================= IMMUTABLES ============================= */
@@ -87,6 +90,10 @@ contract BondFactory is ReentrancyGuard {
     /// @notice Monotonic nonce for deterministic salt generation
     uint256 public nonce;
 
+    /// @notice Tracks bond ownership when NFT is custodied by BondFactory
+    /// @dev broker address → user address. Zero when NFT has been claimed.
+    mapping(address => address) public bondOwner;
+
     /* =============================== EVENTS =============================== */
 
     /// @notice Emitted when a new bond is minted
@@ -105,6 +112,12 @@ contract BondFactory is ReentrancyGuard {
         uint256 collateralReturned,
         uint256 positionReturned
     );
+
+    /// @notice Emitted when user claims NFT to their wallet
+    event BondClaimed(address indexed user, address indexed broker);
+
+    /// @notice Emitted when user returns NFT to BondFactory custody
+    event BondReturned(address indexed user, address indexed broker);
 
     /* ============================ CONSTRUCTOR ============================= */
 
@@ -195,9 +208,8 @@ contract BondFactory is ReentrancyGuard {
         // ── 5. Freeze broker ────────────────────────────────────────────
         pb.freeze();
 
-        // ── 6. Transfer NFT to user ─────────────────────────────────────
-        uint256 tokenId = uint256(uint160(broker));
-        BROKER_FACTORY.transferFrom(address(this), msg.sender, tokenId);
+        // ── 6. Track ownership (NFT stays on BondFactory) ────────────────
+        bondOwner[broker] = msg.sender;
 
         emit BondMinted(msg.sender, broker, notional, hedgeAmount, duration);
     }
@@ -206,14 +218,9 @@ contract BondFactory is ReentrancyGuard {
 
     /// @notice Close a bond in a single transaction.
     ///
-    /// @dev Flow:
-    ///   1. Pull NFT from user (user must approve this contract first)
-    ///   2. Unfreeze broker (we are now NFT owner → onlyOwner passes)
-    ///   3. Handle TWAMM: claim expired order or cancel active order
-    ///   4. If wRLP < debt: buy shortfall via BrokerRouter.closeShort()
-    ///   5. Repay all debt via modifyPosition
-    ///   6. Withdraw remaining tokens to user
-    ///   7. Transfer NFT back to user
+    /// @dev Supports two ownership modes:
+    ///   - Custodied (default): NFT on BondFactory, verified via bondOwner mapping
+    ///   - Claimed: NFT on user, pulled via transferFrom (requires approval)
     ///
     /// @param broker         The bond's PrimeBroker address
     /// @param poolKey        The Uniswap V4 pool key (needed for potential closeShort)
@@ -227,8 +234,14 @@ contract BondFactory is ReentrancyGuard {
         PrimeBroker pb = PrimeBroker(payable(broker));
         uint256 tokenId = uint256(uint160(broker));
 
-        // ── 1. Pull NFT from user → this contract ──────────────────────
-        BROKER_FACTORY.transferFrom(msg.sender, address(this), tokenId);
+        // ── 1. Verify ownership ─────────────────────────────────────────
+        if (bondOwner[broker] == msg.sender) {
+            // Custodied: BondFactory already owns NFT, clear mapping
+            delete bondOwner[broker];
+        } else {
+            // Claimed: pull NFT from user (requires prior approval)
+            BROKER_FACTORY.transferFrom(msg.sender, address(this), tokenId);
+        }
 
         // ── 2. Unfreeze ─────────────────────────────────────────────────
         if (pb.frozen()) {
@@ -353,10 +366,30 @@ contract BondFactory is ReentrancyGuard {
             }
         }
 
-        // ── 8. Transfer NFT back to user ────────────────────────────────
-        BROKER_FACTORY.transferFrom(address(this), msg.sender, tokenId);
-
         emit BondClosed(msg.sender, broker, collBal, 0);
+    }
+
+    /* ========================= CLAIM / RETURN ============================= */
+
+    /// @notice Claim bond NFT to your wallet (for trading/transfer)
+    /// @dev Moves NFT from BondFactory to caller. Clears bondOwner mapping.
+    ///      After claiming, closeBond requires NFT approval.
+    function claimBond(address broker) external {
+        require(bondOwner[broker] == msg.sender, "Not bond owner");
+        delete bondOwner[broker];
+        uint256 tokenId = uint256(uint160(broker));
+        BROKER_FACTORY.transferFrom(address(this), msg.sender, tokenId);
+        emit BondClaimed(msg.sender, broker);
+    }
+
+    /// @notice Return a claimed bond NFT back to BondFactory custody
+    /// @dev Moves NFT from caller to BondFactory. Restores bondOwner mapping.
+    ///      After returning, closeBond no longer requires approval.
+    function returnBond(address broker) external {
+        uint256 tokenId = uint256(uint160(broker));
+        BROKER_FACTORY.transferFrom(msg.sender, address(this), tokenId);
+        bondOwner[broker] = msg.sender;
+        emit BondReturned(msg.sender, broker);
     }
 
     /* =========================== INTERNAL ================================= */
