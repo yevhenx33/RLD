@@ -397,17 +397,24 @@ export default function PoolLP() {
   useEffect(() => {
     let cancelled = false;
     async function fetchDistribution() {
-      try {
-        const res = await fetch("/api/liquidity-distribution?num_bins=60");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!cancelled && data.bins?.length) {
-          setLiquidityBins(data.bins);
-          if (data.currentPrice) setLiqDistPrice(data.currentPrice);
-          return;
+      // Retry up to 3 times with 2s delays (handles indexer startup timing)
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const res = await fetch("/api/liquidity-distribution?num_bins=60");
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (!cancelled && data.bins?.length) {
+            setLiquidityBins(data.bins);
+            if (data.currentPrice) setLiqDistPrice(data.currentPrice);
+            return; // Success — done
+          }
+        } catch (err) {
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 2000)); // Wait 2s before retry
+            continue;
+          }
+          console.warn("[LP] API unavailable after retries, using local fallback:", err.message);
         }
-      } catch (err) {
-        console.warn("[LP] API unavailable, using local fallback:", err.message);
       }
       // Fallback: build from local positions
       if (!cancelled && allPositions?.length) {
