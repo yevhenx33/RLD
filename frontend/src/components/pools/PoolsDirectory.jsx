@@ -26,7 +26,7 @@ export default function PoolsDirectory() {
   const [sortDir, setSortDir] = useState("desc");
 
   const sim = useSimulation({ pollInterval: 5000 });
-  const { connected, loading, market, pool, poolTVL, volumeData, marketInfo, protocolStats } = sim;
+  const { connected, loading, market, pool, poolTVL, volumeData, marketInfo } = sim;
 
   // ── Build live pool row from simulation data ────────────────
   const pools = useMemo(() => {
@@ -68,7 +68,7 @@ export default function PoolsDirectory() {
         swapCount,
       },
     ];
-  }, [market, pool, volumeData, marketInfo, protocolStats]);
+  }, [market, pool, volumeData, marketInfo, poolTVL]);
 
   // ── Sort ─────────────────────────────────────────────────────
   const toggleSort = (key) => {
@@ -80,7 +80,7 @@ export default function PoolsDirectory() {
     }
   };
 
-  const SortIcon = ({ col }) => {
+  const getSortIcon = (col) => {
     if (sortKey !== col)
       return <ArrowUpDown size={10} className="opacity-30" />;
     return sortDir === "desc" ? (
@@ -176,7 +176,7 @@ export default function PoolsDirectory() {
               onClick={() => toggleSort("pair")}
               className="col-span-3 relative flex items-center gap-1.5 text-left hover:text-white transition-colors"
             >
-              Pool <SortIcon col="pair" />
+              Pool {getSortIcon("pair")}
             </button>
             <button
               onClick={() => toggleSort("tvl")}
@@ -184,7 +184,7 @@ export default function PoolsDirectory() {
             >
               TVL{" "}
               <span className="absolute ml-1 top-1/2 -translate-y-1/2">
-                <SortIcon col="tvl" />
+                {getSortIcon("tvl")}
               </span>
             </button>
             <button
@@ -193,7 +193,7 @@ export default function PoolsDirectory() {
             >
               Volume 24H{" "}
               <span className="absolute ml-1 top-1/2 -translate-y-1/2">
-                <SortIcon col="volume24h" />
+                {getSortIcon("volume24h")}
               </span>
             </button>
             <button
@@ -202,7 +202,7 @@ export default function PoolsDirectory() {
             >
               Fees 24H{" "}
               <span className="absolute ml-1 top-1/2 -translate-y-1/2">
-                <SortIcon col="fees24h" />
+                {getSortIcon("fees24h")}
               </span>
             </button>
             <button
@@ -211,7 +211,7 @@ export default function PoolsDirectory() {
             >
               APR 7D{" "}
               <span className="absolute ml-1 top-1/2 -translate-y-1/2">
-                <SortIcon col="apr7d" />
+                {getSortIcon("apr7d")}
               </span>
             </button>
             <button
@@ -220,7 +220,7 @@ export default function PoolsDirectory() {
             >
               APR 30D{" "}
               <span className="absolute ml-1 top-1/2 -translate-y-1/2">
-                <SortIcon col="apr30d" />
+                {getSortIcon("apr30d")}
               </span>
             </button>
           </div>

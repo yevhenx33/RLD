@@ -38,7 +38,7 @@ export default function BondsPage() {
   const [selectedToken, setSelectedToken] = useState("waUSDC"); // "USDC" or "waUSDC"
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false);
   const tokenDropdownRef = useRef(null);
-  const { account, connectWallet, usdcBalance } = useWallet();
+  const { account, connectWallet, usdcBalance: _usdcBalance } = useWallet();
   const { toasts, addToast, removeToast } = useToast();
   const {
     rates,
@@ -78,8 +78,8 @@ export default function BondsPage() {
           const usdcToken = new ethers.Contract(usdcAddr, balABI, provider);
           const uBal = await usdcToken.balanceOf(account);
           setUsdcWalletBalance(Number(ethers.formatUnits(uBal, 6)));
-        } catch {}
-      } catch {}
+        } catch { /* ignore USDC balance fetch errors */ }
+      } catch { /* ignore balance fetch errors */ }
     };
     fetchBal();
     const id = setInterval(fetchBal, 10000);
@@ -133,7 +133,7 @@ export default function BondsPage() {
     setActiveTab,
     setNotional,
     handleHoursChange,
-    handleDaysChange,
+    handleDaysChange: _handleDaysChange,
     handleEndDateChange,
   } = tradeLogic.actions;
 

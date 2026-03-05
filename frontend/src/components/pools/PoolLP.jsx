@@ -334,7 +334,7 @@ export default function PoolLP() {
     fundingFromNF: _fundingFromNF,
     volumeData,
     volumeHistory,
-    protocolStats,
+    protocolStats: _protocolStats,
     marketInfo,
     chartData,
   } = sim;
@@ -615,7 +615,7 @@ export default function PoolLP() {
         decimals: 6,
       },
     };
-  }, [pool, market, marketInfo, funding, volumeData, protocolStats, poolTVL]);
+  }, [pool, market, marketInfo, funding, volumeData, poolTVL]);
 
   // ── Chart configuration ─────────────────────────────────────
   const CHART_VIEWS = useMemo(

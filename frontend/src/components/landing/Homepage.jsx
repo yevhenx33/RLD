@@ -33,7 +33,7 @@ function calculateCorrelation(x, y) {
   return den === 0 ? 0 : num / den;
 }
 
-const slides = [
+const _slides = [
   {
     index: "01",
     label: "PROBLEM",
@@ -128,7 +128,7 @@ const slides = [
   },
 ];
 
-const accentMap = {
+const _accentMap = {
   red: { text: "text-red-400", border: "border-red-500/40", dot: "bg-red-500" },
   cyan: {
     text: "text-cyan-400",

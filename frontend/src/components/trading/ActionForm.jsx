@@ -402,7 +402,7 @@ function computeTokenSplit(deposit, minP, maxP, currentP, depositMode) {
     return { waUSDC: waUSDC_for_LP, wRLP: wRLP_needed, swapAmount: waUSDC_to_swap };
   } else {
     // Deposit D wRLP total
-    const depositUSD = deposit * currentP;
+    const _depositUSD = deposit * currentP;
     const wRLP_for_LP = deposit * (value0 / totalValue);
     const wRLP_to_swap = deposit - wRLP_for_LP;
     const waUSDC_needed = wRLP_to_swap * currentP;
@@ -415,7 +415,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
   const [maxPrice, setMaxPrice] = useState("");
   const [depositAmount, setDepositAmount] = useState("");
   const [depositMode, setDepositMode] = useState("USDC"); // "USDC" or "wRLP"
-  const [removePercent, setRemovePercent] = useState(100);
+  const [_removePercent, _setRemovePercent] = useState(100);
   const [lpExecuting, setLpExecuting] = useState(false);
   const [lpStep, setLpStep] = useState("");
   const [lpError, setLpError] = useState(null);
@@ -438,7 +438,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
 
   const {
     executeAddLiquidity,
-    executeRemoveLiquidity,
+    executeRemoveLiquidity: _executeRemoveLiquidity,
     activePosition,
     refreshPosition,
     executing: removeExecuting,
@@ -449,10 +449,10 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
   const token0IsPosition = positionToken && collateralToken
     ? positionToken.address.toLowerCase() < collateralToken.address.toLowerCase()
     : true;
-  const token0 = token0IsPosition
+  const _token0 = token0IsPosition
     ? { symbol: "wRLP", decimals: 6 }
     : { symbol: "waUSDC", decimals: 6 };
-  const token1 = token0IsPosition
+  const _token1 = token0IsPosition
     ? { symbol: "waUSDC", decimals: 6 }
     : { symbol: "wRLP", decimals: 6 };
 
@@ -481,7 +481,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
     (split.wRLP > 0 || split.waUSDC > 0);
 
   // Computed active position token amounts
-  const activeAmounts = useMemo(() => {
+  const _activeAmounts = useMemo(() => {
     if (!activePosition || !price) return null;
     const currentTick = Math.log(price) / Math.log(1.0001);
     return liquidityToAmounts(
@@ -614,7 +614,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       await restoreAnvilChainId();
       setLpExecuting(false);
     }
-  }, [canAdd, infrastructure, brokerAddress, collateralToken, positionToken, minPrice, maxPrice, split, price, token0IsPosition, depositMode, addToast, refreshPosition]);
+  }, [canAdd, infrastructure, brokerAddress, collateralToken, positionToken, minPrice, maxPrice, split, price, token0IsPosition, depositMode, addToast, refreshPosition, onStateChange]);
 
   return (
     <div className="flex flex-col gap-4">

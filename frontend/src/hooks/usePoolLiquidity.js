@@ -229,7 +229,6 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
       const posm = new ethers.Contract(posmAddr, POSM_ABI, provider);
 
       // Build poolId for slot0 lookups
-      let poolId = null;
       if (stateViewAddr && twammHook && positionToken && collateralToken) {
         const [c0, c1] = positionToken.toLowerCase() < collateralToken.toLowerCase()
           ? [positionToken, collateralToken]

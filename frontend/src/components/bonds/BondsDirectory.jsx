@@ -47,7 +47,7 @@ export default function BondsDirectory() {
     connected,
     loading,
     market,
-    pool,
+    pool: _pool,
     poolTVL,
     protocolStats,
     marketInfo,
@@ -93,7 +93,7 @@ export default function BondsDirectory() {
         rangeMax,
       },
     ];
-  }, [market, pool, poolTVL, protocolStats, marketInfo, chartData]);
+  }, [market, poolTVL, protocolStats, marketInfo, chartData]);
 
   const toggleSort = (key) => {
     if (sortKey === key) {
