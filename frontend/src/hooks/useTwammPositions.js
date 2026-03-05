@@ -14,7 +14,10 @@ const JTM_VIEW_ABI = [
 ];
 
 const BROKER_ACTIVE_ORDER_ABI = [
-  "function activeTwammOrder() view returns (address, uint160, bytes32)",
+  // Solidity auto-getter flattens TwammOrderInfo { PoolKey key; OrderKey orderKey; bytes32 orderId }
+  // PoolKey = (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)
+  // OrderKey = (address owner, uint160 expiration, bool zeroForOne)
+  "function activeTwammOrder() view returns (address, address, uint24, int24, address, address, uint160, bool, bytes32)",
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -151,7 +154,7 @@ export function useTwammPositions(
           provider,
         );
         const result = await broker.activeTwammOrder();
-        trackedOrderId = result[2];
+        trackedOrderId = result[8]; // orderId is the 9th return value (index 8)
         if (
           trackedOrderId ===
           "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -234,7 +237,9 @@ export function useTwammPositions(
           const buyToken = isBuy ? "wRLP" : "waUSDC";
 
           const tracked =
-            trackedOrderId != null && trackedOrderId === evt.orderId;
+            trackedOrderId != null &&
+            trackedOrderId.replace(/^0x/, "").toLowerCase() ===
+              (evt.orderId || "").replace(/^0x/, "").toLowerCase();
 
           return {
             orderId: evt.orderId,
