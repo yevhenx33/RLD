@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { ethers } from "ethers";
+import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
 import {
   Loader2,
   Terminal,
@@ -210,8 +211,14 @@ export default function SimulationTerminal() {
     market?.indexPrice,
   );
 
-  // TWAMM order actions (cancel + claim)
-  const { cancelOrder: cancelTwammOrder, claimExpiredOrder: claimTwammOrder, executing: cancellingTwamm } = useTwammOrder(
+  // TWAMM order actions (cancel + claim + track/untrack)
+  const {
+    cancelOrder: cancelTwammOrder,
+    claimExpiredOrder: claimTwammOrder,
+    trackTwammOrder,
+    untrackTwammOrder,
+    executing: cancellingTwamm,
+  } = useTwammOrder(
     account,
     brokerAddress,
     marketInfo?.infrastructure,
@@ -228,6 +235,10 @@ export default function SimulationTerminal() {
   // Trading State (must be declared before swap hooks that reference tradeSide/collateral)
   const [tradeSide, setTradeSide] = useState("LONG");
   const [activeAction, setActiveAction] = useState(null);
+
+  // Collateral registration confirmation modal
+  const [collateralConfirm, setCollateralConfirm] = useState(null);
+  // { type: 'track-lp'|'untrack-lp'|'track-twamm'|'untrack-twamm', label, data }
   const [actionsHeight, setActionsHeight] = useState(null);
   const actionsRef = useRef(null);
 
@@ -1331,6 +1342,38 @@ export default function SimulationTerminal() {
                                           <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Status</span><span className="text-cyan-400">ACTIVE (tracked)</span></div>
                                         )}
                                       </div>
+                                      {/* Track / Untrack as collateral */}
+                                      {!lp.isActive ? (
+                                        <button
+                                          onClick={() => {
+                                            setPositionDropdown(null);
+                                            setCollateralConfirm({
+                                              type: 'track-lp',
+                                              label: `Track LP #${lp.tokenId?.toString()} as collateral?`,
+                                              sub: `Range: ${lp.priceLower} — ${lp.priceUpper}  •  Value: $${lp.value.toFixed(0)}`,
+                                              data: lp,
+                                            });
+                                          }}
+                                          className="w-full text-left px-4 py-2 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors border-t border-white/5"
+                                        >
+                                          Track as Collateral
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={() => {
+                                            setPositionDropdown(null);
+                                            setCollateralConfirm({
+                                              type: 'untrack-lp',
+                                              label: `Untrack LP #${lp.tokenId?.toString()} from collateral?`,
+                                              sub: 'This LP position will no longer count toward your collateral ratio.',
+                                              data: lp,
+                                            });
+                                          }}
+                                          className="w-full text-left px-4 py-2 text-sm font-mono text-orange-400 hover:bg-orange-500/5 transition-colors border-t border-white/5"
+                                        >
+                                          Untrack from Collateral
+                                        </button>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -1399,6 +1442,39 @@ export default function SimulationTerminal() {
                                         className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-white/5 transition-colors"
                                       >
                                         {cancellingTwamm ? "Cancelling..." : "Cancel Order"}
+                                      </button>
+                                    )}
+                                    {/* Track / Untrack as collateral */}
+                                    {!tw.isDone && !tw.tracked && (
+                                      <button
+                                        onClick={() => {
+                                          setPositionDropdown(null);
+                                          setCollateralConfirm({
+                                            type: 'track-twamm',
+                                            label: `Track this TWAMM order as collateral?`,
+                                            sub: `${tw.direction}  •  $${tw.valueUsd.toFixed(0)}  •  ${tw.progress}% complete`,
+                                            data: tw,
+                                          });
+                                        }}
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors border-t border-white/5"
+                                      >
+                                        Track as Collateral
+                                      </button>
+                                    )}
+                                    {tw.tracked && (
+                                      <button
+                                        onClick={() => {
+                                          setPositionDropdown(null);
+                                          setCollateralConfirm({
+                                            type: 'untrack-twamm',
+                                            label: `Untrack this TWAMM order from collateral?`,
+                                            sub: 'This order will no longer count toward your collateral ratio.',
+                                            data: tw,
+                                          });
+                                        }}
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-orange-400 hover:bg-orange-500/5 transition-colors border-t border-white/5"
+                                      >
+                                        Untrack from Collateral
                                       </button>
                                     )}
                                     {tw.isDone && tw.tracked && (
@@ -1724,7 +1800,107 @@ export default function SimulationTerminal() {
         executionStep={swapStep}
         executionError={swapError}
       />
+
+      {/* ── Collateral registration confirmation modal ── */}
+      {collateralConfirm && (
+        <CollateralConfirmModal
+          label={collateralConfirm.label}
+          sub={collateralConfirm.sub}
+          onCancel={() => setCollateralConfirm(null)}
+          onConfirm={async () => {
+            const { type, data } = collateralConfirm;
+            setCollateralConfirm(null);
+
+            if (type === 'track-twamm') {
+              trackTwammOrder(data, () => {
+                refreshTwamm();
+                refreshBrokerState?.();
+                addToast({ type: 'success', title: 'Order tracked as collateral' });
+              });
+            } else if (type === 'untrack-twamm') {
+              untrackTwammOrder(() => {
+                refreshTwamm();
+                refreshBrokerState?.();
+                addToast({ type: 'success', title: 'Order untracked from collateral' });
+              });
+            } else if (type === 'track-lp') {
+              try {
+                const signer = await getAnvilSigner();
+                const broker = new ethers.Contract(brokerAddress, [
+                  'function setActiveV4Position(uint256 newTokenId) external',
+                ], signer);
+                const tx = await broker.setActiveV4Position(data.tokenId, { gasLimit: 300_000n });
+                await tx.wait();
+                refreshBrokerState?.();
+                addToast({ type: 'success', title: 'LP tracked as collateral' });
+              } catch (e) {
+                console.error('[LP] track failed:', e);
+                addToast({ type: 'error', title: e.reason || e.shortMessage || 'Track failed' });
+              } finally {
+                await restoreAnvilChainId();
+              }
+            } else if (type === 'untrack-lp') {
+              try {
+                const signer = await getAnvilSigner();
+                const broker = new ethers.Contract(brokerAddress, [
+                  'function setActiveV4Position(uint256 newTokenId) external',
+                ], signer);
+                const tx = await broker.setActiveV4Position(0, { gasLimit: 300_000n });
+                await tx.wait();
+                refreshBrokerState?.();
+                addToast({ type: 'success', title: 'LP untracked from collateral' });
+              } catch (e) {
+                console.error('[LP] untrack failed:', e);
+                addToast({ type: 'error', title: e.reason || e.shortMessage || 'Untrack failed' });
+              } finally {
+                await restoreAnvilChainId();
+              }
+            }
+          }}
+        />
+      )}
     </>
+  );
+}
+
+// ── Collateral Registration Confirmation Modal ────────────────
+
+function CollateralConfirmModal({ label, sub, onConfirm, onCancel }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onCancel}>
+      <div
+        className="bg-[#0a0b0d] border border-white/10 shadow-2xl w-full max-w-sm mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-white/5">
+          <div className="text-sm font-mono text-white font-bold">{label}</div>
+          {sub && <div className="text-xs font-mono text-gray-500 mt-1">{sub}</div>}
+        </div>
+        <div className="px-5 py-4 text-xs text-gray-500 font-mono">
+          This will send a transaction to update which position is counted toward your collateral ratio. A solvency check will be performed.
+        </div>
+        <div className="flex border-t border-white/5">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="flex-1 px-4 py-3 text-sm font-mono text-gray-400 hover:bg-white/5 transition-colors border-r border-white/5"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              setBusy(true);
+              try { await onConfirm(); } finally { setBusy(false); }
+            }}
+            disabled={busy}
+            className="flex-1 px-4 py-3 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors font-bold"
+          >
+            {busy ? "Sending..." : "Confirm"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

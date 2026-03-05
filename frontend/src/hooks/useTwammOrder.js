@@ -71,6 +71,23 @@ const PRIME_BROKER_TWAMM_ABI = [
       { name: "claimed1", type: "uint256" },
     ],
   },
+  {
+    name: "setActiveTwammOrder",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "info",
+        type: "tuple",
+        components: [
+          POOL_KEY_TUPLE,
+          ORDER_KEY_TUPLE,
+          { name: "orderId", type: "bytes32" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -359,10 +376,140 @@ export function useTwammOrder(
     [account, brokerAddress],
   );
 
+  /**
+   * Track a TWAMM order as collateral by calling setActiveTwammOrder.
+   *
+   * @param {object} order  Enriched order from useTwammPositions (needs expiration, zeroForOne, orderId)
+   * @param {Function} onSuccess Called on success
+   */
+  const trackTwammOrder = useCallback(
+    async (order, onSuccess) => {
+      if (!account || !brokerAddress || !infrastructure?.twamm_hook) {
+        setError("Missing required addresses");
+        return;
+      }
+      if (!window.ethereum) { setError("MetaMask not found"); return; }
+
+      setExecuting(true);
+      setError(null);
+      setTxHash(null);
+      setStep("Tracking TWAMM order as collateral...");
+
+      try {
+        const signer = await getAnvilSigner();
+        const broker = new ethers.Contract(brokerAddress, PRIME_BROKER_TWAMM_ABI, signer);
+        const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
+
+        const orderId = order.orderId.startsWith("0x") ? order.orderId : `0x${order.orderId}`;
+        const info = {
+          key: poolKey,
+          orderKey: {
+            owner: brokerAddress,
+            expiration: BigInt(order.expiration),
+            zeroForOne: order.zeroForOne,
+          },
+          orderId,
+        };
+
+        setStep("Confirm in wallet...");
+        const tx = await broker.setActiveTwammOrder(info, { gasLimit: 500_000n });
+        setTxHash(tx.hash);
+
+        setStep("Waiting for confirmation...");
+        const receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          setStep("Order tracked ✓");
+          if (onSuccess) onSuccess(receipt);
+        } else {
+          setError("Transaction reverted");
+          setStep("");
+        }
+      } catch (e) {
+        console.error("[TWAMM] trackOrder failed:", e);
+        const reason = e.revert?.args?.[0] || e.reason || e.shortMessage || e.message;
+        setError(reason || "Track order failed");
+        setStep("");
+      } finally {
+        await restoreAnvilChainId();
+        setExecuting(false);
+      }
+    },
+    [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
+  );
+
+  /**
+   * Untrack the active TWAMM order from collateral.
+   *
+   * @param {Function} onSuccess Called on success
+   */
+  const untrackTwammOrder = useCallback(
+    async (onSuccess) => {
+      if (!account || !brokerAddress || !infrastructure?.twamm_hook) {
+        setError("Missing required addresses");
+        return;
+      }
+      if (!window.ethereum) { setError("MetaMask not found"); return; }
+
+      setExecuting(true);
+      setError(null);
+      setTxHash(null);
+      setStep("Untracking TWAMM order...");
+
+      try {
+        const signer = await getAnvilSigner();
+        const broker = new ethers.Contract(brokerAddress, PRIME_BROKER_TWAMM_ABI, signer);
+
+        // Pass zeroed-out info to clear the active order
+        const emptyInfo = {
+          key: {
+            currency0: ethers.ZeroAddress,
+            currency1: ethers.ZeroAddress,
+            fee: 0,
+            tickSpacing: 0,
+            hooks: ethers.ZeroAddress,
+          },
+          orderKey: {
+            owner: ethers.ZeroAddress,
+            expiration: 0n,
+            zeroForOne: false,
+          },
+          orderId: ethers.ZeroHash,
+        };
+
+        setStep("Confirm in wallet...");
+        const tx = await broker.setActiveTwammOrder(emptyInfo, { gasLimit: 300_000n });
+        setTxHash(tx.hash);
+
+        setStep("Waiting for confirmation...");
+        const receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          setStep("Order untracked ✓");
+          if (onSuccess) onSuccess(receipt);
+        } else {
+          setError("Transaction reverted");
+          setStep("");
+        }
+      } catch (e) {
+        console.error("[TWAMM] untrackOrder failed:", e);
+        const reason = e.revert?.args?.[0] || e.reason || e.shortMessage || e.message;
+        setError(reason || "Untrack order failed");
+        setStep("");
+      } finally {
+        await restoreAnvilChainId();
+        setExecuting(false);
+      }
+    },
+    [account, brokerAddress, infrastructure],
+  );
+
   return {
     submitOrder,
     cancelOrder,
     claimExpiredOrder,
+    trackTwammOrder,
+    untrackTwammOrder,
     executing,
     error,
     step,

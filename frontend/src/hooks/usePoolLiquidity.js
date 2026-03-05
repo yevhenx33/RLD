@@ -497,10 +497,100 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
     },
     [brokerAddress, posmAddr, refreshPosition],
   );
+  /**
+   * Track a V4 LP position as collateral.
+   * @param {BigInt|number} tokenId NFT token ID to track
+   * @param {Function} onSuccess Called with receipt on success
+   */
+  const trackLpPosition = useCallback(
+    async (tokenId, onSuccess) => {
+      if (!brokerAddress) { setExecutionError("Missing broker address"); return; }
+      if (!window.ethereum) { setExecutionError("MetaMask not found"); return; }
+
+      setExecuting(true);
+      setExecutionError(null);
+      setExecutionStep("Tracking LP position as collateral...");
+
+      try {
+        const signer = await getAnvilSigner();
+        const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, signer);
+
+        setExecutionStep("Confirm in wallet...");
+        const tx = await broker.setActiveV4Position(tokenId, { gasLimit: 300_000n });
+
+        setExecutionStep("Waiting for confirmation...");
+        const receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          setExecutionStep("Position tracked ✓");
+          refreshPosition();
+          if (onSuccess) onSuccess(receipt);
+        } else {
+          setExecutionError("Transaction reverted");
+          setExecutionStep("");
+        }
+      } catch (e) {
+        console.error("[LP] trackPosition failed:", e);
+        const reason = e.revert?.args?.[0] || e.reason || e.shortMessage || e.message;
+        setExecutionError(reason || "Track position failed");
+        setExecutionStep("");
+      } finally {
+        await restoreAnvilChainId();
+        setExecuting(false);
+      }
+    },
+    [brokerAddress, refreshPosition],
+  );
+
+  /**
+   * Untrack the active V4 LP position from collateral.
+   * @param {Function} onSuccess Called with receipt on success
+   */
+  const untrackLpPosition = useCallback(
+    async (onSuccess) => {
+      if (!brokerAddress) { setExecutionError("Missing broker address"); return; }
+      if (!window.ethereum) { setExecutionError("MetaMask not found"); return; }
+
+      setExecuting(true);
+      setExecutionError(null);
+      setExecutionStep("Untracking LP position...");
+
+      try {
+        const signer = await getAnvilSigner();
+        const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, signer);
+
+        setExecutionStep("Confirm in wallet...");
+        const tx = await broker.setActiveV4Position(0, { gasLimit: 300_000n });
+
+        setExecutionStep("Waiting for confirmation...");
+        const receipt = await tx.wait();
+
+        if (receipt.status === 1) {
+          setExecutionStep("Position untracked ✓");
+          refreshPosition();
+          if (onSuccess) onSuccess(receipt);
+        } else {
+          setExecutionError("Transaction reverted");
+          setExecutionStep("");
+        }
+      } catch (e) {
+        console.error("[LP] untrackPosition failed:", e);
+        const reason = e.revert?.args?.[0] || e.reason || e.shortMessage || e.message;
+        setExecutionError(reason || "Untrack position failed");
+        setExecutionStep("");
+      } finally {
+        await restoreAnvilChainId();
+        setExecuting(false);
+      }
+    },
+    [brokerAddress, refreshPosition],
+  );
 
   return {
     executeAddLiquidity,
     executeRemoveLiquidity,
+    trackLpPosition,
+    untrackLpPosition,
     activePosition,
     allPositions,
     refreshPosition,
