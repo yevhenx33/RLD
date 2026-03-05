@@ -536,7 +536,117 @@ class Query:
     @strawberry.field(description="All LP positions for a specific broker (latest block).")
     def lp_positions(self, broker_address: str) -> List[LPPosition]:
         rows = get_lp_positions(broker_address)
-        return [_row_to_lp(r) for r in rows]
+        if rows:
+            return [_row_to_lp(r) for r in rows]
+        # Fallback: live RPC query for brokers not in tracked_brokers
+        try:
+            from indexers.comprehensive import ComprehensiveIndexer
+            # Build a lightweight indexer just for LP queries
+            rpc = os.getenv("RPC_URL", "http://host.docker.internal:8545")
+            config_file = os.getenv("CONFIG_FILE", "/config/deployment.json")
+            with open(config_file) as f:
+                cfg = json.load(f)
+            from web3 import Web3
+            w3 = Web3(Web3.HTTPProvider(rpc))
+            posm_addr = cfg.get("v4_position_manager")
+            state_view_addr = cfg.get("v4_state_view")
+            if not posm_addr:
+                return []
+            # Use the indexer's POSM ABI and methods
+            from indexers.comprehensive import POSM_ABI
+            posm = w3.eth.contract(
+                address=Web3.to_checksum_address(posm_addr),
+                abi=POSM_ABI
+            )
+            # Scan Transfer events to this broker
+            transfer_topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+            broker_padded = '0x' + broker_address.lower().replace('0x', '').zfill(64)
+            logs = w3.eth.get_logs({
+                'fromBlock': 0,
+                'toBlock': 'latest',
+                'address': posm.address,
+                'topics': [transfer_topic, None, broker_padded],
+            })
+            candidate_ids = list(set(
+                int(log['topics'][3].hex() if hasattr(log['topics'][3], 'hex') else log['topics'][3], 16)
+                for log in logs if len(log['topics']) > 3
+            ))
+            if not candidate_ids:
+                return []
+            # Get active token ID
+            from indexers.comprehensive import PRIME_BROKER_ABI
+            broker_contract = w3.eth.contract(
+                address=Web3.to_checksum_address(broker_address),
+                abi=PRIME_BROKER_ABI + [{"inputs": [], "name": "activeTokenId",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "stateMutability": "view", "type": "function"}]
+            )
+            try:
+                active_token_id = broker_contract.functions.activeTokenId().call()
+            except Exception:
+                active_token_id = 0
+            positions = []
+            for token_id in candidate_ids:
+                try:
+                    owner = posm.functions.ownerOf(token_id).call()
+                    if owner.lower() != broker_address.lower():
+                        continue
+                    liquidity = posm.functions.getPositionLiquidity(token_id).call()
+                    if liquidity == 0:
+                        continue
+                    tick_lower = 0
+                    tick_upper = 0
+                    try:
+                        info = posm.functions.positionInfo(token_id).call()
+                        # Decode position info (same as indexer)
+                        info_bytes = bytes.fromhex(info.hex() if hasattr(info, 'hex') else str(info).replace('0x', ''))
+                        tick_lower_raw = int.from_bytes(info_bytes[25:28], 'big')
+                        tick_upper_raw = int.from_bytes(info_bytes[28:31], 'big')
+                        tick_lower = tick_lower_raw - 0x1000000 if tick_lower_raw >= 0x800000 else tick_lower_raw
+                        tick_upper = tick_upper_raw - 0x1000000 if tick_upper_raw >= 0x800000 else tick_upper_raw
+                    except Exception:
+                        pass
+                    # Entry price from mint block
+                    entry_price = None
+                    mint_block = None
+                    for log in logs:
+                        if len(log['topics']) > 3:
+                            tid = int(log['topics'][3].hex() if hasattr(log['topics'][3], 'hex') else log['topics'][3], 16)
+                            if tid == token_id:
+                                mint_block = log['blockNumber']
+                                break
+                    if mint_block and state_view_addr:
+                        try:
+                            from indexers.comprehensive import STATE_VIEW_ABI
+                            sv = w3.eth.contract(
+                                address=Web3.to_checksum_address(state_view_addr),
+                                abi=STATE_VIEW_ABI
+                            )
+                            pool_id = cfg.get("pool_id")
+                            if pool_id:
+                                pool_id_bytes = bytes.fromhex(pool_id.replace('0x', ''))
+                                slot0 = sv.functions.getSlot0(pool_id_bytes).call(block_identifier=mint_block)
+                                entry_price = math.pow(1.0001, slot0[1])
+                        except Exception:
+                            pass
+                    positions.append(LPPosition(
+                        token_id=token_id,
+                        liquidity=str(liquidity),
+                        tick_lower=tick_lower,
+                        tick_upper=tick_upper,
+                        entry_tick=None,
+                        entry_price=entry_price,
+                        mint_block=mint_block,
+                        is_active=(token_id == active_token_id),
+                        broker_address=broker_address.lower(),
+                    ))
+                except Exception:
+                    continue
+            return positions
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Live LP query failed: {e}")
+            return []
 
     @strawberry.field(description="All LP positions across all brokers (latest block).")
     def all_lp_positions(self) -> List[LPPosition]:

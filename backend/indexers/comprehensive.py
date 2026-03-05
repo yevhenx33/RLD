@@ -336,8 +336,19 @@ class ComprehensiveIndexer:
         self.running = False
 
         # V4 Position Manager for LP tracking
+        # Try env var first, then fall back to deployment.json config
         posm_addr = os.getenv("V4_POSITION_MANAGER")
         state_view_addr = os.getenv("V4_STATE_VIEW")
+        if not posm_addr:
+            config_file = os.getenv("CONFIG_FILE", "/config/deployment.json")
+            try:
+                import json
+                with open(config_file) as f:
+                    cfg = json.load(f)
+                posm_addr = cfg.get("v4_position_manager")
+                state_view_addr = state_view_addr or cfg.get("v4_state_view")
+            except Exception:
+                pass
         if posm_addr:
             self.posm = self.w3.eth.contract(
                 address=Web3.to_checksum_address(posm_addr),
