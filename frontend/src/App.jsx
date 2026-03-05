@@ -84,7 +84,7 @@ function App() {
   // Shared chart controls
   const controls = useChartControls({
     defaultRange: "ALL",
-    defaultDays: 9999,
+    defaultDays: 3,
     defaultResolution: "1D",
   });
   const { appliedStart, appliedEnd, activeRange, resolution } = controls;
