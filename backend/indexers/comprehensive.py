@@ -817,6 +817,13 @@ class ComprehensiveIndexer:
         if self.bond_factory_addr:
             contract_addresses.append(self.bond_factory_addr.lower())
         
+        # Add tracked brokers — PrimeBroker uses delegatecall to TWAMM hook,
+        # so SubmitOrder/CancelOrder events are emitted from broker addresses
+        for broker_addr in self.tracked_brokers:
+            ba = broker_addr.lower()
+            if ba not in contract_addresses:
+                contract_addresses.append(ba)
+        
         # Get ALL logs for all tracked contracts
         try:
             logs = self.w3.eth.get_logs({
