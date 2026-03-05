@@ -598,10 +598,10 @@ class Query:
                     tick_upper = 0
                     try:
                         info = posm.functions.positionInfo(token_id).call()
-                        # Decode position info (same as indexer)
-                        info_bytes = bytes.fromhex(info.hex() if hasattr(info, 'hex') else str(info).replace('0x', ''))
-                        tick_lower_raw = int.from_bytes(info_bytes[25:28], 'big')
-                        tick_upper_raw = int.from_bytes(info_bytes[28:31], 'big')
+                        # Decode using bit shifting (matching JS frontend)
+                        val = int.from_bytes(info, 'big') if isinstance(info, (bytes, bytearray)) else int(info.hex(), 16) if hasattr(info, 'hex') else int(info)
+                        tick_lower_raw = (val >> 8) & 0xFFFFFF
+                        tick_upper_raw = (val >> 32) & 0xFFFFFF
                         tick_lower = tick_lower_raw - 0x1000000 if tick_lower_raw >= 0x800000 else tick_lower_raw
                         tick_upper = tick_upper_raw - 0x1000000 if tick_upper_raw >= 0x800000 else tick_upper_raw
                     except Exception:
