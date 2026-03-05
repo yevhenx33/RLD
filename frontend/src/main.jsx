@@ -1,31 +1,22 @@
 import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import App from "./App";
 import "./index.css";
 import { WalletProvider } from "./context/WalletContext.jsx";
-import Layout from "./components/Layout";
+import Layout from "./components/layout/Layout";
 
-// Lazy Load Secondary Pages
-const Bonds = lazy(() => import("./components/Bonds"));
-const Markets = lazy(() => import("./components/Markets"));
-
-const Portfolio = lazy(() => import("./components/Portfolio"));
-const SimulationTerminal = lazy(
-  () => import("./components/SimulationTerminal"),
-);
-const Homepage = lazy(() => import("./components/Homepage"));
-const LandingTerminal = lazy(() => import("./components/LandingTerminal"));
-const LandingInteractive = lazy(
-  () => import("./components/LandingInteractive"),
-);
-const LandingModular = lazy(() => import("./components/LandingModular"));
-
-const PoolLP = lazy(() => import("./components/PoolLP"));
-const PoolsDirectory = lazy(() => import("./components/PoolsDirectory"));
-const PerpsDirectory = lazy(() => import("./components/PerpsDirectory"));
-const BondsDirectory = lazy(() => import("./components/BondsDirectory"));
-const TwammOrders = lazy(() => import("./components/TwammOrders"));
+// Lazy Load All Pages
+const App = lazy(() => import("./App"));
+const Homepage = lazy(() => import("./components/landing/Homepage"));
+const Bonds = lazy(() => import("./components/bonds/Bonds"));
+const BondsDirectory = lazy(() => import("./components/bonds/BondsDirectory"));
+const Markets = lazy(() => import("./components/charts/Markets"));
+const Portfolio = lazy(() => import("./components/portfolio/Portfolio"));
+const SimulationTerminal = lazy(() => import("./components/trading/SimulationTerminal"));
+const PerpsDirectory = lazy(() => import("./components/trading/PerpsDirectory"));
+const PoolLP = lazy(() => import("./components/pools/PoolLP"));
+const PoolsDirectory = lazy(() => import("./components/pools/PoolsDirectory"));
+const TwammOrders = lazy(() => import("./components/twamm/TwammOrders"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -79,30 +70,13 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 }
               />
               <Route
-                path="/landing/a"
+                path="/app"
                 element={
                   <Suspense fallback={<Loading />}>
-                    <LandingTerminal />
+                    <App />
                   </Suspense>
                 }
               />
-              <Route
-                path="/landing/b"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <LandingInteractive />
-                  </Suspense>
-                }
-              />
-              <Route
-                path="/landing/c"
-                element={
-                  <Suspense fallback={<Loading />}>
-                    <LandingModular />
-                  </Suspense>
-                }
-              />
-              <Route path="/app" element={<App />} />
               <Route
                 path="/bonds"
                 element={
@@ -127,7 +101,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   </Suspense>
                 }
               />
-
               <Route
                 path="/portfolio"
                 element={
@@ -156,7 +129,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                   </Suspense>
                 }
               />
-
               <Route
                 path="/markets/pools"
                 element={

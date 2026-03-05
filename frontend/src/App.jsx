@@ -12,17 +12,17 @@ import {
   TrendingDown,
   FileDown,
 } from "lucide-react";
-import RLDPerformanceChart from "./components/RLDChart";
+import RLDPerformanceChart from "./components/charts/RLDChart";
 
 import { useWallet } from "./context/WalletContext";
 import TradingTerminal, {
   InputGroup,
   SummaryRow,
-} from "./components/TradingTerminal";
-import SettingsButton from "./components/SettingsButton";
-import ControlCell from "./components/ControlCell";
-import StatItem from "./components/StatItem";
-import ChartControlBar from "./components/ChartControlBar";
+} from "./components/trading/TradingTerminal";
+import SettingsButton from "./components/common/SettingsButton";
+import ControlCell from "./components/common/ControlCell";
+import StatItem from "./components/common/StatItem";
+import ChartControlBar from "./components/charts/ChartControlBar";
 import { useChartControls } from "./hooks/useChartControls";
 import { API_BASE, authHeaders, fetcher, getToday } from "./utils/helpers";
 
