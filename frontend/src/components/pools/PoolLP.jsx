@@ -577,9 +577,11 @@ export default function PoolLP() {
     const apr = tvl > 0 ? ((fees24h * 365) / tvl) * 100 : 0;
     const aprWeekly = apr / 52;
 
-    // Funding
-    const fundingRate = funding?.spreadPct || 0;
-    const fundingDirection = funding?.direction === "LONGS_PAY" ? "longs" : "shorts";
+    // Funding — use corrected annualized exponential rate (same as perps page)
+    const annualizedPct = funding?.annualizedPct ?? 0;
+    const fundingRate = Math.abs(annualizedPct);
+    // Positive annualizedPct → mark > index → shorts pay longs
+    const fundingDirection = annualizedPct >= 0 ? "shorts" : "longs";
 
     // Hook address
     const hookAddr = marketInfo.infrastructure?.twamm_hook || "";
@@ -606,7 +608,7 @@ export default function PoolLP() {
       currentPrice: pool.markPrice,
       indexPrice: market.indexPrice,
       markPrice: pool.markPrice,
-      fundingRate: Math.abs(fundingRate),
+      fundingRate,
       fundingDirection,
       activeLiquidity: pool.liquidity || 0,
       token0: {
@@ -785,7 +787,7 @@ export default function PoolLP() {
                       <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">Funding</div>
                       <div className="flex items-baseline gap-2">
                         <span className={`text-sm font-light tracking-tight ${poolData.fundingDirection === "longs" ? "text-red-400" : "text-green-400"}`}>
-                          {poolData.fundingRate.toFixed(4)}%
+                          {poolData.fundingRate.toFixed(2)}%
                         </span>
                         <span className="text-sm text-gray-500 uppercase tracking-widest">
                           {poolData.fundingDirection === "longs" ? "Longs pay Shorts" : "Shorts pay Longs"}
