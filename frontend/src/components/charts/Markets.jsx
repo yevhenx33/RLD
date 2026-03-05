@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { JsonRpcProvider, Contract, formatUnits } from "ethers";
 import useSWR from "swr";
-import { API_BASE, fetcher } from "../../utils/helpers";
+import { fetcher } from "../../utils/helpers";
 import { useChartControls } from "../../hooks/useChartControls";
 import RLDPerformanceChart from "./RLDChart";
 import ChartControlBar from "./ChartControlBar";
@@ -299,7 +299,7 @@ export default function Markets() {
           let apy = 0;
           try {
             const apiRes = await fetch(
-              `${API_BASE}/rates?resolution=1H&limit=1&symbol=${asset.symbol}`,
+              `/api/rates?resolution=1H&limit=1&symbol=${asset.symbol}`,
             );
             const apiData = await apiRes.json();
             if (apiData && apiData.length > 0)
@@ -339,7 +339,7 @@ export default function Markets() {
 
   // --- Chart Data Fetching ---
   const getHistoryUrl = (symbol) => {
-    return `${API_BASE}/rates?symbol=${symbol}&resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
+    return `/api/rates?symbol=${symbol}&resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
   };
 
   const { data: usdcHistory } = useSWR(getHistoryUrl("USDC"), fetcher);
@@ -348,7 +348,7 @@ export default function Markets() {
   const { data: sofrHistory } = useSWR(getHistoryUrl("SOFR"), fetcher);
 
   const { data: ethPrices } = useSWR(() => {
-    return `${API_BASE}/eth-prices?resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
+    return `/api/eth-prices?resolution=${resolution}&start_date=${appliedStart}&end_date=${appliedEnd}`;
   }, fetcher);
 
   // Merge Chart Data

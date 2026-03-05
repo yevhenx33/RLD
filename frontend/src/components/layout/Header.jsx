@@ -57,7 +57,7 @@ export default function Header({ isCapped, ratesLoaded }) {
 
   return (
     <>
-      <div className="sticky top-0 bg-[#050505]/95 backdrop-blur-md z-50 w-full border-b border-white/10">
+      <div className="sticky top-0 bg-[#050505]/95 backdrop-blur-md z-50 w-full">
         <header className="max-w-[1800px] mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-5 pl-1">
             {/* LOGO */}
