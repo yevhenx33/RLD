@@ -621,8 +621,8 @@ cat /config/deployment.json | python3 -m json.tool
 sync_timestamp
 log_ok "Timestamp synchronized after deployment"
 cast rpc evm_setAutomine false --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-cast rpc evm_setIntervalMining 1 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
-log_ok "Interval mining restored (1s blocks)"
+cast rpc evm_setIntervalMining 12 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+log_ok "Interval mining restored (12s blocks)"
 
 echo ""
 echo -e "${MAGENTA}╔═══════════════════════════════════════════════════╗${NC}"

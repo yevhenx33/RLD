@@ -4,7 +4,7 @@
 # Anvil runs EXTERNALLY. Set RPC_URL in .env pointing to it.
 #
 #  Usage:
-#    1. Start Anvil:  anvil --fork-url $ETH_RPC_URL --fork-block-number 21698573 --block-time 1
+#    1. Start Anvil:  anvil --fork-url $ETH_RPC_URL --fork-block-number 21698573 --block-time 12
 #    2. Copy .env.example → .env and fill in RPC_URL
 #    3. docker compose up --build
 #

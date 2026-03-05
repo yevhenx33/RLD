@@ -66,7 +66,7 @@ Complete containerized infrastructure for the RLD Protocol: simulation stack, ra
 
 ```bash
 # 1. Start Anvil fork
-anvil --fork-url $MAINNET_RPC_URL --fork-block-number 21698573 --block-time 1 --host 0.0.0.0
+anvil --fork-url $MAINNET_RPC_URL --fork-block-number 21698573 --block-time 12 --host 0.0.0.0
 
 # 2. Start persistent services (only needed once)
 docker compose -f docker/docker-compose.rates.yml --env-file docker/.env up -d

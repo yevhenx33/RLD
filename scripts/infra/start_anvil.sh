@@ -20,7 +20,7 @@ log_step "1" "Starting Anvil fork at block $FORK_BLOCK..."
 log_info "RPC: ${ETH_RPC_URL:0:50}..."
 
 anvil --fork-url "$ETH_RPC_URL" --fork-block-number $FORK_BLOCK \
-    --no-rate-limit --block-time 1 \
+    --no-rate-limit --block-time 12 \
     > /tmp/anvil.log 2>&1 &
 
 echo $! > /tmp/anvil.pid

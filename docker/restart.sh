@@ -230,7 +230,7 @@ nohup anvil \
     --fork-url "$MAINNET_RPC_URL" \
     --fork-block-number "$FORK_BLOCK" \
     --chain-id 31337 \
-    --block-time 1 \
+    --block-time 12 \
     --host "$ANVIL_HOST" \
     --dump-state /tmp/anvil-state/state.json \
     > "$ANVIL_LOG" 2>&1 &

@@ -92,7 +92,7 @@ nohup "$ANVIL_BIN" \
     --fork-url "$FORK_URL" \
     --fork-block-number "$FORK_BLOCK" \
     --chain-id 31337 \
-    --block-time 1 \
+    --block-time 12 \
     --host 0.0.0.0 \
     $LOAD_FLAG \
     --dump-state "$STATE_FILE" \

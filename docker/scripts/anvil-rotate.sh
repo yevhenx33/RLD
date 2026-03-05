@@ -49,7 +49,7 @@ if [[ -z "$ANVIL_PID" ]]; then
         nohup anvil \
             --load-state "$STATE_FILE" \
             --chain-id 31337 \
-            --block-time 1 \
+            --block-time 12 \
             --host "$ANVIL_HOST" \
             > "$ANVIL_LOG" 2>&1 &
     elif [[ -n "${MAINNET_RPC_URL:-}" ]] && [[ -n "${FORK_BLOCK:-}" ]]; then
@@ -58,7 +58,7 @@ if [[ -z "$ANVIL_PID" ]]; then
             --fork-url "$MAINNET_RPC_URL" \
             --fork-block-number "$FORK_BLOCK" \
             --chain-id 31337 \
-            --block-time 1 \
+            --block-time 12 \
             --host "$ANVIL_HOST" \
             > "$ANVIL_LOG" 2>&1 &
     else
@@ -148,7 +148,7 @@ log "Restarting Anvil from state dump..."
 nohup anvil \
     --load-state "$STATE_FILE" \
     --chain-id 31337 \
-    --block-time 1 \
+    --block-time 12 \
     --host "$ANVIL_HOST" \
     > "$ANVIL_LOG" 2>&1 &
 
