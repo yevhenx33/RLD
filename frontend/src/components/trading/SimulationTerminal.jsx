@@ -149,7 +149,7 @@ export default function SimulationTerminal() {
     error,
     market,
     pool,
-    funding: _funding,
+    funding,
     fundingFromNF,
     oracleChange24h,
     volumeData,
