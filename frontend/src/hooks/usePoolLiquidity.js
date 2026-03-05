@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
-import { API_BASE } from "../utils/helpers";
 
 // ── PrimeBroker LP ABI ────────────────────────────────────────────
 const BROKER_LP_ABI = [
@@ -194,7 +193,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
 
     // --- Try GraphQL first (single request) ---
     try {
-      const gqlRes = await fetch(`${API_BASE}/graphql`, {
+      const gqlRes = await fetch("/graphql", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
