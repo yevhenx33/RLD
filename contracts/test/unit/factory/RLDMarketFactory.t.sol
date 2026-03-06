@@ -165,7 +165,7 @@ contract RLDMarketFactoryTest is Test {
 
         // Fork mainnet
         vm.createSelectFork(
-            "https://eth-mainnet.g.alchemy.com/v2/***REDACTED_ALCHEMY***"
+            vm.envOr("ETH_RPC_URL", string("https://eth.llamarpc.com"))
         );
 
         deployer = address(this);

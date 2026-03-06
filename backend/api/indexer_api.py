@@ -62,9 +62,14 @@ app = FastAPI(
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://rld.fi",
+        "https://www.rld.fi",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -208,7 +213,6 @@ async def health(request: Request):
             "lag_blocks": lag,
             "total_blocks_indexed": total_blocks,
             "total_events": total_events,
-            "db_path": DB_PATH,
         }
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
@@ -248,7 +252,6 @@ async def get_status():
 
         return {
             "last_indexed_block": get_last_indexed_block(),
-            "db_path": DB_PATH,
             "total_block_states": total_blocks,
             "total_events": total_events,
         }

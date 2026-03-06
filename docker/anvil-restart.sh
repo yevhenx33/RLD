@@ -21,7 +21,7 @@ STATE_DIR="/tmp/anvil-state"
 STATE_FILE="$STATE_DIR/state.json"
 BACKUP_FILE="$STATE_DIR/state-backup.json"
 ANVIL_BIN="/home/ubuntu/.foundry/bin/anvil"
-FORK_URL="https://eth-mainnet.g.alchemy.com/v2/***REDACTED_ALCHEMY***"
+FORK_URL="${MAINNET_RPC_URL:?MAINNET_RPC_URL not set}"
 FORK_BLOCK=21698573
 
 log() { echo "[$(date)] $1" >> "$LOG"; }

@@ -55,7 +55,7 @@ log_success "MockOracle: $MOCK_ORACLE"
 # Set initial rate from API (local)
 log_step "3" "Setting initial rate..."
 API_URL="${API_URL:-http://localhost:8080}"
-API_KEY="${API_KEY:-***REDACTED_API_KEY***}"
+API_KEY="${API_KEY:-}"
 
 RATE_JSON=$(curl -s --max-time 5 "$API_URL/rates?limit=1&symbol=USDC" -H "X-API-Key: $API_KEY" 2>/dev/null)
 APY=$(echo "$RATE_JSON" | jq -r '.[0].apy' 2>/dev/null)

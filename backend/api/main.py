@@ -114,7 +114,7 @@ async def security_headers_middleware(request: Request, call_next):
 # 1. Security & Compression
 app.add_middleware(
     TrustedHostMiddleware, 
-    allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0", "testserver", "rate-dashboard.onrender.com", "*"]
+    allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0", "testserver", "rate-dashboard.onrender.com", "rld.fi", "www.rld.fi"]
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
@@ -1191,8 +1191,8 @@ async def download_database(filename: str, secret: str = Query(...)):
     Usage: /download/db/aave_rates.db?secret=YOUR_SECRET
     """
     # Simple protection - set via env var or use default for migration
-    expected_secret = os.getenv("MIGRATION_SECRET", "***REDACTED_SECRET***")
-    if secret != expected_secret:
+    expected_secret = os.getenv("MIGRATION_SECRET", "")
+    if not expected_secret or secret != expected_secret:
         raise HTTPException(status_code=403, detail="Invalid secret")
     
     # Only allow specific files

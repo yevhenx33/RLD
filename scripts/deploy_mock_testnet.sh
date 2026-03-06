@@ -66,7 +66,7 @@ echo -e "${GREEN}✓ MockRLDAaveOracle: $MOCK_ORACLE${NC}"
 echo -e "${YELLOW}[2/3] Setting initial rate from API...${NC}"
 
 # Fetch current rate
-API_KEY=${API_KEY:-***REDACTED_API_KEY***}
+API_KEY=${API_KEY:-}
 RATE_JSON=$(curl -s "https://rate-dashboard.onrender.com/rates?limit=1&symbol=USDC" \
     -H "X-API-Key: $API_KEY")
 APY=$(echo $RATE_JSON | jq -r '.[0].apy')

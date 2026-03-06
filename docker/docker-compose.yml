@@ -33,7 +33,7 @@ services:
       - MM_KEY=${MM_KEY}
       - CHAOS_KEY=${CHAOS_KEY}
       - API_URL=${API_URL:-http://rates-indexer:8080}
-      - API_KEY=${API_KEY:-***REDACTED_API_KEY***}
+      - API_KEY=${API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -85,7 +85,7 @@ services:
       - MM_KEY=${MM_KEY}
       - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
       - API_URL=${API_URL:-http://rates-indexer:8080}
-      - API_KEY=${API_KEY:-***REDACTED_API_KEY***}
+      - API_KEY=${API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

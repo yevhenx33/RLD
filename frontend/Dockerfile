@@ -25,7 +25,7 @@ COPY frontend/ .
 
 # Vite reads VITE_* env vars at build time
 ARG VITE_API_BASE_URL=https://rld.fi/api
-ARG VITE_MAINNET_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/***REDACTED_ALCHEMY***
+ARG VITE_MAINNET_RPC_URL=https://eth.llamarpc.com
 
 # Vite envDir points to '../', so write .env to parent
 RUN echo "VITE_API_BASE_URL=$VITE_API_BASE_URL" > ../.env && \

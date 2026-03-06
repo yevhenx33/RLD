@@ -17,6 +17,9 @@
 *_logs.txt
 .DS_Store
 .env
+anvil.log
+rate-dashboard.env
+*.sol.bak
 __pycache__/
 backups/
 contracts/broadcast/

@@ -40,7 +40,7 @@ FORK_BLOCK=21698573
 
 # API Configuration
 API_URL="https://rate-dashboard.onrender.com"
-API_KEY="${API_KEY:-***REDACTED_API_KEY***}"
+API_KEY="${API_KEY:-}"
 
 # Amounts (6 decimals for USDC)
 COLLATERAL_AMOUNT=100000000       # $100M
