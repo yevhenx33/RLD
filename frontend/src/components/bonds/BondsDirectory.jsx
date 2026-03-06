@@ -124,15 +124,15 @@ export default function BondsDirectory() {
       <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
 
         {/* 2-Column Layout: Branding + Table */}
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+        <div className="flex flex-col xl:flex-row gap-6 items-start">
 
           {/* LEFT — Branding + Mechanism Card */}
-          <div className="xl:col-span-3">
+          <div className="w-full xl:w-[360px] shrink-0">
             <BondBrandingPanel accentSteps={["1"]} />
           </div>
 
           {/* RIGHT — Table */}
-          <div className="xl:col-span-9">
+          <div className="flex-1 w-full min-w-0">
             <div className="border border-white/10 bg-[#080808]">
               {/* Table Header Bar */}
               <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
@@ -190,57 +190,88 @@ export default function BondsDirectory() {
                 </div>
               )}
 
-              {/* Table Rows */}
+              {/* Table Rows (Desktop) / Cards (Mobile) */}
               {sortedMarkets.map((m) => (
                 <div
                   key={m.id}
                   onClick={() => navigate(`/bonds/${m.id}`)}
-                  className="grid grid-cols-1 md:grid-cols-6 gap-4 px-6 py-4 hover:bg-white/[0.02] transition-colors border-b border-white/5 last:border-b-0 cursor-pointer group items-center"
+                  className="flex flex-col md:grid md:grid-cols-6 gap-y-4 md:gap-x-4 px-6 py-4 hover:bg-white/[0.02] transition-colors border-b border-white/5 last:border-b-0 cursor-pointer group md:items-center"
                 >
-                  {/* Asset */}
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-1.5 group-hover:border-white/30 transition-colors">
-                      <img
-                        src={m.icon}
-                        alt={m.asset}
-                        className="w-full h-full object-contain rounded-full"
-                      />
-                    </div>
-                    <div>
-                      <div className="text-sm font-mono text-white group-hover:text-cyan-400 transition-colors">
-                        {m.asset}
+                  {/* Top Row (Mobile) / Col 1 & 2 (Desktop) */}
+                  <div className="flex items-center justify-between md:contents">
+                    {/* Asset */}
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 md:w-8 md:h-8 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-1.5 group-hover:border-white/30 transition-colors shrink-0">
+                        <img
+                          src={m.icon}
+                          alt={m.asset}
+                          className="w-full h-full object-contain rounded-full"
+                        />
                       </div>
-                      <div className="text-[10px] text-gray-600 uppercase tracking-widest">
-                        {m.name}
+                      <div>
+                        <div className="text-base md:text-sm font-mono text-white group-hover:text-cyan-400 transition-colors">
+                          {m.asset}
+                        </div>
+                        <div className="text-[10px] text-gray-600 uppercase tracking-widest">
+                          {m.name}
+                        </div>
                       </div>
+                    </div>
+
+                    {/* Protocol (Badge on Mobile, Text on Desktop) */}
+                    <div className="md:hidden">
+                      <span className="text-[10px] font-mono text-cyan-400 bg-cyan-400/10 px-2 py-1 uppercase tracking-widest border border-cyan-500/20">
+                        {m.protocol}
+                      </span>
+                    </div>
+                    <div className="hidden md:block text-sm font-mono text-gray-400 text-center">
+                      {m.protocol}
                     </div>
                   </div>
 
-                  {/* Protocol */}
-                  <div className="text-sm font-mono text-gray-400 text-center">
-                    {m.protocol}
-                  </div>
+                  {/* Metrics Grid (Mobile 2-col, Desktop horizontal) */}
+                  <div className="grid grid-cols-2 gap-4 md:contents mt-2 md:mt-0">
+                    {/* Index Price / APY */}
+                    <div className="md:text-center flex flex-col md:block">
+                      <span className="md:hidden text-[9px] text-gray-600 uppercase tracking-widest mb-1.5">
+                        Fixed APY
+                      </span>
+                      <div className="text-base md:text-sm font-mono text-cyan-400">
+                        {formatPrice(m.indexPrice)}
+                      </div>
+                    </div>
 
-                  {/* Index Price */}
-                  <div className="text-sm font-mono text-cyan-400 text-center">
-                    {formatPrice(m.indexPrice)}
-                  </div>
+                    {/* Open Interest */}
+                    <div className="md:text-center flex flex-col md:block items-end md:items-center">
+                      <span className="md:hidden text-[9px] text-gray-600 uppercase tracking-widest mb-1.5">
+                        Open Interest
+                      </span>
+                      <div className="text-base md:text-sm font-mono text-white">
+                        {formatUSD(m.openInterest)}
+                      </div>
+                    </div>
 
-                  {/* Open Interest */}
-                  <div className="text-sm font-mono text-white text-center">
-                    {formatUSD(m.openInterest)}
-                  </div>
+                    {/* Liquidity */}
+                    <div className="md:text-center flex flex-col md:block">
+                      <span className="md:hidden text-[9px] text-gray-600 uppercase tracking-widest mb-1.5">
+                        Liquidity
+                      </span>
+                      <div className="text-sm font-mono text-white">
+                        {formatUSD(m.liquidity)}
+                      </div>
+                    </div>
 
-                  {/* Liquidity */}
-                  <div className="text-sm font-mono text-white text-center">
-                    {formatUSD(m.liquidity)}
-                  </div>
-
-                  {/* 1Y Range */}
-                  <div className="text-sm font-mono text-center">
-                    <span className="text-gray-500">{formatPrice(m.rangeMin)}</span>
-                    <span className="text-gray-700 mx-1">–</span>
-                    <span className="text-white">{formatPrice(m.rangeMax)}</span>
+                    {/* 1Y Range */}
+                    <div className="md:text-center flex flex-col md:block items-end md:items-center">
+                      <span className="md:hidden text-[9px] text-gray-600 uppercase tracking-widest mb-1.5">
+                        1Y Range
+                      </span>
+                      <div className="text-sm font-mono text-center">
+                        <span className="text-gray-500">{formatPrice(m.rangeMin)}</span>
+                        <span className="text-gray-700 mx-1">–</span>
+                        <span className="text-white">{formatPrice(m.rangeMax)}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}

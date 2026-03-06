@@ -10,7 +10,7 @@ const MECHANISM_STEPS = [
 
 export default function BondBrandingPanel({ accentSteps = ["1", "2", "3", "4"] }) {
   return (
-    <div className="border border-white/10 bg-[#080808] p-4 md:px-6 md:pt-6 md:pb-7 flex flex-col">
+    <div className="w-full min-w-[360px] mx-auto xl:mx-0 border border-white/10 bg-[#080808] p-4 md:px-6 md:pt-6 md:pb-7 flex flex-col">
       {/* Product Identity */}
       <div className="flex justify-between items-center mb-6">
         <span className="text-sm font-bold uppercase tracking-widest text-cyan-400 bg-cyan-400/10 px-2 py-1">

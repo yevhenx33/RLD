@@ -73,7 +73,7 @@ export default function Header({ isCapped, ratesLoaded }) {
             </Link>
 
             {/* DESKTOP NAV */}
-            <div className="hidden md:flex text-sm items-center gap-1 font-bold tracking-[0.15em] uppercase">
+            <div className="hidden lg:flex text-sm items-center gap-1 font-bold tracking-[0.15em] uppercase">
               <span className="text-white/10">//</span>
 
               <Link
@@ -160,7 +160,7 @@ export default function Header({ isCapped, ratesLoaded }) {
 
           <div className="flex items-center gap-4">
             {/* STATUS INDICATOR (Desktop Only) */}
-            <div className="hidden md:flex items-center gap-6 text-[11px] uppercase tracking-widest text-gray-500 border-r border-white/10 pr-6 h-6">
+            <div className="hidden lg:flex items-center gap-6 text-[11px] uppercase tracking-widest text-gray-500 border-r border-white/10 pr-6 h-6">
               <span className="flex items-center gap-2">
                 <div
                   className={`w-1.5 h-1.5 ${
@@ -176,7 +176,7 @@ export default function Header({ isCapped, ratesLoaded }) {
               <button
                 onClick={() => requestFaucet(account)}
                 disabled={faucetLoading}
-                className="hidden md:flex items-center gap-2 border border-cyan-500/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all px-3 py-2 text-xs font-bold uppercase tracking-widest text-cyan-400 disabled:opacity-50 disabled:cursor-wait"
+                className="hidden lg:flex items-center gap-2 border border-cyan-500/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all px-3 py-2 text-xs font-bold uppercase tracking-widest text-cyan-400 disabled:opacity-50 disabled:cursor-wait"
               >
                 {faucetLoading ? (
                   <Loader2 size={12} className="animate-spin" />
@@ -190,7 +190,7 @@ export default function Header({ isCapped, ratesLoaded }) {
             {/* WALLET BUTTON */}
             <button
               onClick={handleWalletClick}
-              className="flex items-center gap-3 border border-white/10 hover:bg-white/5 hover:border-white/30 transition-all px-4 md:px-6 py-2 focus:outline-none rounded-none"
+              className="flex items-center gap-3 border border-white/10 hover:bg-white/5 hover:border-white/30 transition-all px-4 lg:px-6 py-2 focus:outline-none rounded-none"
             >
               <div
                 className={`w-1.5 h-1.5 rounded-full ${
@@ -207,7 +207,7 @@ export default function Header({ isCapped, ratesLoaded }) {
             {/* MOBILE MENU TOGGLE */}
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="md:hidden p-2 text-gray-400 hover:text-white"
+              className="lg:hidden p-2 text-gray-400 hover:text-white"
             >
               {isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
@@ -216,7 +216,7 @@ export default function Header({ isCapped, ratesLoaded }) {
 
         {/* MOBILE MENU DROPDOWN */}
         {isMobileMenuOpen && (
-          <div className="md:hidden absolute top-full left-0 w-full bg-[#050505] border-b border-white/10 flex flex-col p-6 animate-in slide-in-from-top-5 duration-200 shadow-2xl">
+          <div className="lg:hidden absolute top-full left-0 w-full bg-[#050505] border-b border-white/10 flex flex-col p-6 animate-in slide-in-from-top-5 duration-200 shadow-2xl">
             {/* MOBILE STATUS */}
             <div className="flex items-center gap-2 mb-6 text-[10px] uppercase tracking-widest text-gray-500 border-b border-white/5 pb-4">
               <div
@@ -225,18 +225,41 @@ export default function Header({ isCapped, ratesLoaded }) {
               {isCapped ? "WARN: LIMIT_ACTIVE" : "NET: STABLE"}
             </div>
 
-            <nav className="flex flex-col gap-4 text-sm font-bold tracking-[0.15em] uppercase">
-              <Link
-                to="/"
-                className={`py-2 ${location.pathname === "/" ? "text-white" : "text-gray-500"}`}
-              >
-                TERMINAL
-              </Link>
+            <nav className="flex flex-col gap-4 text-sm font-bold tracking-[0.15em] uppercase pb-6">
               <Link
                 to="/bonds"
                 className={`py-2 ${location.pathname === "/bonds" ? "text-white" : "text-gray-500"}`}
               >
                 BONDS
+              </Link>
+              <div>
+                <span
+                  className={`py-2 block ${location.pathname.startsWith("/markets") ? "text-white" : "text-gray-500"}`}
+                >
+                  MARKETS
+                </span>
+                <div className="pl-4 flex flex-col gap-2 mt-1 border-l border-white/5 ml-1">
+                  <Link
+                    to="/markets/perps"
+                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/perps") ? "text-cyan-400" : "text-gray-500"}`}
+                  >
+                    <div className="w-1 h-1 bg-cyan-500/50" />
+                    Perps
+                  </Link>
+                  <Link
+                    to="/markets/pools"
+                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/pools") ? "text-cyan-400" : "text-gray-500"}`}
+                  >
+                    <div className="w-1 h-1 bg-cyan-500/50" />
+                    LP Pools
+                  </Link>
+                </div>
+              </div>
+              <Link
+                to="/portfolio"
+                className={`py-2 ${location.pathname === "/portfolio" ? "text-white" : "text-gray-500"}`}
+              >
+                PORTFOLIO
               </Link>
               <Link
                 to="/explore"
@@ -252,44 +275,25 @@ export default function Header({ isCapped, ratesLoaded }) {
               >
                 DOCS
               </a>
-
-              <Link
-                to="/portfolio"
-                className={`py-2 ${location.pathname === "/portfolio" ? "text-white" : "text-gray-500"}`}
-              >
-                PORTFOLIO
-              </Link>
-              <div>
-                <span
-                  className={`py-2 block ${location.pathname.startsWith("/markets") ? "text-cyan-400" : "text-cyan-700"}`}
-                >
-                  SIM
-                </span>
-                <div className="pl-4 flex flex-col gap-2 mt-1">
-                  <Link
-                    to="/markets/perps"
-                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/perps") ? "text-cyan-400" : "text-cyan-700"}`}
-                  >
-                    <div className="w-1 h-1 bg-cyan-500/50" />
-                    Long/Short
-                  </Link>
-                  <Link
-                    to="/markets/pools"
-                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/pools") ? "text-cyan-400" : "text-cyan-700"}`}
-                  >
-                    <div className="w-1 h-1 bg-cyan-500/50" />
-                    Pools
-                  </Link>
-                  <Link
-                    to="/markets/twamm"
-                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/twamm") ? "text-cyan-400" : "text-cyan-700"}`}
-                  >
-                    <div className="w-1 h-1 bg-cyan-500/50" />
-                    TWAMM
-                  </Link>
-                </div>
-              </div>
             </nav>
+
+            {/* MOBILE FAUCET */}
+            {account && (
+              <div className="pt-4 border-t border-white/5">
+                <button
+                  onClick={() => requestFaucet(account)}
+                  disabled={faucetLoading}
+                  className="w-full flex items-center justify-center gap-2 border border-cyan-500/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all px-3 py-3 text-sm font-bold uppercase tracking-widest text-cyan-400 disabled:opacity-50 disabled:cursor-wait"
+                >
+                  {faucetLoading ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Droplets size={14} />
+                  )}
+                  {faucetLoading ? "Funding Wallet..." : "Request Faucet Funds"}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

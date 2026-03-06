@@ -10,10 +10,10 @@ const formatUSD = (val) => {
   return `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 };
 
-const MetricCell = ({ label, Icon, content }) => (
-  <div className="p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px]">
-    <div className="text-sm text-gray-500 uppercase tracking-widest mb-4 flex justify-between">
-      {label} {Icon && <Icon size={15} className="opacity-90" />}
+const MetricCell = ({ label, Icon, content, hideLabelOnMobile }) => (
+  <div className="p-3 md:p-6 flex flex-col justify-between h-full min-h-[100px] md:min-h-[180px]">
+    <div className={`${hideLabelOnMobile ? 'hidden md:flex' : 'flex'} text-[9px] md:text-sm text-gray-500 uppercase tracking-widest mb-2 md:mb-4 justify-between`}>
+      {label} {Icon && <Icon size={15} className="md:opacity-90 hidden md:block" />}
     </div>
     {content}
   </div>
@@ -21,39 +21,40 @@ const MetricCell = ({ label, Icon, content }) => (
 
 const StatItem = ({ label, value }) => (
   <div>
-    <div className="text-sm text-gray-400 uppercase tracking-widest mb-1">
+    <div className="text-[9px] md:text-sm text-gray-400 uppercase tracking-widest mb-0.5 md:mb-1">
       {label}
     </div>
-    <div className="text-xl font-light text-white font-mono tracking-tighter">
+    <div className="text-base md:text-xl font-light text-white font-mono tracking-tighter truncate">
       {value}
     </div>
   </div>
 );
 
 const MetricsGrid = ({ latest, dailyChange, openInterest, liquidity }) => (
-  <div className="grid grid-cols-1 md:grid-cols-3 h-full border border-white/10 bg-[#080808] divide-y md:divide-y-0 md:divide-x divide-white/10">
+  <div className="grid grid-cols-3 h-full border border-white/10 bg-[#080808] divide-x divide-white/10">
     <MetricCell
       label="CURRENT_SPOT"
       Icon={Terminal}
       content={
-        <div>
-          <div className="text-3xl font-light text-white mb-2 tracking-tight">
+        <div className="mt-auto">
+          <div className="text-2xl md:text-3xl font-light text-white mb-1 md:mb-2 tracking-tight">
             {formatNum(latest.apy)}
-            <span className="text-sm text-gray-600 ml-1">%</span>
+            <span className="text-[10px] md:text-sm text-gray-600 ml-1">%</span>
           </div>
-          <div className="text-sm text-gray-500 uppercase tracking-widest">
+          <div className="text-[9px] md:text-sm text-gray-500 uppercase tracking-widest">
             <div
-              className={`flex items-center gap-2 ${
+              className={`flex items-center gap-1 md:gap-2 ${
                 dailyChange >= 0 ? "text-green-500" : "text-red-500"
               }`}
             >
               {dailyChange >= 0 ? (
-                <TrendingUp size={15} />
+                <TrendingUp size={12} className="md:w-[15px] md:h-[15px]" />
               ) : (
-                <TrendingDown size={15} />
+                <TrendingDown size={12} className="md:w-[15px] md:h-[15px]" />
               )}
-              <span className="font-bold">
-                24H: {dailyChange > 0 ? "+" : ""}
+              <span className="font-bold whitespace-nowrap">
+                <span className="hidden md:inline">24H: </span>
+                {dailyChange > 0 ? "+" : ""}
                 {formatNum(dailyChange)}%
               </span>
             </div>
@@ -64,8 +65,9 @@ const MetricsGrid = ({ latest, dailyChange, openInterest, liquidity }) => (
     <MetricCell
       label="MARKET_DEPTH"
       Icon={BarChart3}
+      hideLabelOnMobile={true}
       content={
-        <div className="flex flex-col gap-6 mt-auto">
+        <div className="flex flex-col gap-3 md:gap-6 mt-auto">
           <StatItem label="OPEN_INTEREST" value={formatUSD(openInterest)} />
           <StatItem label="LIQUIDITY" value={formatUSD(liquidity)} />
         </div>
@@ -74,10 +76,11 @@ const MetricsGrid = ({ latest, dailyChange, openInterest, liquidity }) => (
     <MetricCell
       label="PARAMETERS"
       Icon={Clock}
+      hideLabelOnMobile={true}
       content={
-        <div className="flex flex-col gap-6 mt-auto">
+        <div className="flex flex-col gap-3 md:gap-6 mt-auto">
           <StatItem label="MATURITY" value="1H — 1Y" />
-          <StatItem label="WITHDRAW" value="Instant" />
+          <StatItem label="WITHDRAW" value="Inst." />
         </div>
       }
     />

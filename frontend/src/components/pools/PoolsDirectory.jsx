@@ -170,8 +170,8 @@ export default function PoolsDirectory() {
 
         {/* Table */}
         <div className="border border-white/10">
-          {/* Table Header */}
-          <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 bg-[#0a0a0a]">
+          {/* Desktop Table Header (lg+) */}
+          <div className="hidden lg:grid grid-cols-12 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 bg-[#0a0a0a]">
             <button
               onClick={() => toggleSort("pair")}
               className="col-span-3 relative flex items-center gap-1.5 text-left hover:text-white transition-colors"
@@ -237,54 +237,93 @@ export default function PoolsDirectory() {
               <div
                 key={pool.address}
                 onClick={() => navigate(`/markets/pools/${pool.address}`)}
-                className="grid grid-cols-1 md:grid-cols-12 gap-4 px-6 py-4 hover:bg-white/[0.02] transition-colors border-b border-white/5 last:border-b-0 cursor-pointer group items-center"
+                className="border-b border-white/5 last:border-b-0 cursor-pointer group hover:bg-white/[0.02] transition-colors"
               >
-                {/* Pool */}
-                <div className="col-span-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.4)]" />
-                    <div>
-                      <div className="text-sm font-mono text-white group-hover:text-cyan-400 transition-colors">
-                        {pool.pair}
-                      </div>
-                      <div className="text-sm text-gray-600 flex items-center gap-2">
-                        {pool.feeTier}
-                        <span className="text-gray-700">·</span>
-                        <span className="text-gray-700">
-                          {pool.address.slice(0, 6)}...{pool.address.slice(-4)}
-                        </span>
+                {/* ── Desktop Row (lg+) ── */}
+                <div className="hidden lg:grid grid-cols-12 gap-4 px-6 py-4 items-center">
+                  {/* Pool */}
+                  <div className="col-span-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 bg-cyan-500 shadow-[0_0_6px_rgba(6,182,212,0.4)]" />
+                      <div>
+                        <div className="text-sm font-mono text-white group-hover:text-cyan-400 transition-colors">
+                          {pool.pair}
+                        </div>
+                        <div className="text-sm text-gray-600 flex items-center gap-2">
+                          {pool.feeTier}
+                          <span className="text-gray-700">·</span>
+                          <span className="text-gray-700">
+                            {pool.address.slice(0, 6)}...{pool.address.slice(-4)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
+                  {/* TVL */}
+                  <div className="col-span-2 text-sm font-mono text-white text-center">
+                    {formatUSD(pool.tvl)}
+                  </div>
+                  {/* Volume 24H */}
+                  <div className="col-span-2 text-sm font-mono text-white text-center">
+                    {formatUSD(pool.volume24h)}
+                  </div>
+                  {/* Fees 24H */}
+                  <div className="col-span-2 text-sm font-mono text-white text-center">
+                    {formatUSD(pool.fees24h)}
+                  </div>
+                  {/* APR 7D */}
+                  <div className="col-span-1 text-sm font-mono text-green-400 text-center">
+                    {pool.apr7d.toFixed(1)}%
+                  </div>
+                  {/* APR 30D */}
+                  <div className="col-span-2 text-sm font-mono text-green-400 text-center">
+                    {pool.apr30d.toFixed(1)}%
+                  </div>
                 </div>
 
-                {/* TVL */}
-                <div className="col-span-2 text-sm font-mono text-white text-center">
-                  {formatUSD(pool.tvl)}
-                </div>
-
-                {/* Volume 24H */}
-                <div className="col-span-2 text-sm font-mono text-white text-center">
-                  {formatUSD(pool.volume24h)}
-                </div>
-
-                {/* Fees 24H */}
-                <div className="col-span-2 text-sm font-mono text-white text-center">
-                  {formatUSD(pool.fees24h)}
-                </div>
-
-                {/* APR 7D */}
-                <div className="col-span-1 text-sm font-mono text-green-400 text-center">
-                  {pool.apr7d.toFixed(1)}%
-                </div>
-
-                {/* APR 30D */}
-                <div className="col-span-2 text-sm font-mono text-green-400 text-center">
-                  {pool.apr30d.toFixed(1)}%
+                {/* ── Mobile Card (<lg) ── */}
+                <div className="lg:hidden flex flex-col">
+                  {/* Card Header: cyan accent bar */}
+                  <div className="flex items-center justify-between px-4 py-3 bg-cyan-500/[0.06] border-b border-cyan-500/10">
+                    <div className="text-base font-mono text-cyan-400 font-bold tracking-tight">
+                      {pool.pair}
+                      <span className="text-cyan-600 ml-1.5 font-normal text-sm">{pool.feeTier}</span>
+                    </div>
+                    <div className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest">
+                      {pool.protocol}
+                    </div>
+                  </div>
+                  {/* Card Metrics */}
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-4 py-4">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-gray-600 uppercase tracking-widest mb-1">TVL</span>
+                      <span className="text-base font-mono text-white">{formatUSD(pool.tvl)}</span>
+                    </div>
+                    <div className="flex flex-col items-end">
+                      <span className="text-[10px] text-gray-600 uppercase tracking-widest mb-1">Volume</span>
+                      <span className="text-base font-mono text-white">{formatUSD(pool.volume24h)}</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-gray-600 uppercase tracking-widest mb-1">Fees 24H</span>
+                      <span className="text-base font-mono text-white">{formatUSD(pool.fees24h)}</span>
+                    </div>
+                    <div className="flex flex-col items-end">
+                      <span className="text-[10px] text-gray-600 uppercase tracking-widest mb-1">APR 7D</span>
+                      <span className="text-base font-mono text-green-400">{pool.apr7d.toFixed(1)}%</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             ))
           )}
+
+          {/* Footer */}
+          <div className="px-4 md:px-6 py-3 border-t border-white/5 bg-[#0a0a0a] flex justify-between items-center text-[10px] uppercase tracking-widest text-gray-600">
+            <span>Showing {pools.length} Pool{pools.length !== 1 ? "s" : ""}</span>
+            <span className="flex items-center gap-1">
+              Data provided by <span className="text-white ml-1">RLD Protocol</span>
+            </span>
+          </div>
         </div>
       </div>
     </div>

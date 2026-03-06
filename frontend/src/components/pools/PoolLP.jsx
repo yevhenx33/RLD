@@ -855,8 +855,9 @@ export default function PoolLP() {
 
             {/* 2. CHART */}
             <div className="relative flex-1 min-h-[350px] md:min-h-[400px] border border-white/10">
-              {/* Row 1: View switcher | Resolution | Timeframe — divided cells */}
-              <div className="flex items-stretch border-b border-white/10">
+
+              {/* ── Desktop controls (lg+): single row, unchanged ── */}
+              <div className="hidden lg:flex items-stretch border-b border-white/10">
                 {/* View switcher */}
                 <div className="flex items-center gap-1 px-4 py-2 border-r border-white/10">
                   {Object.entries(CHART_VIEWS).map(([key, view]) => (
@@ -961,6 +962,42 @@ export default function PoolLP() {
                 </div>
               </div>
 
+              {/* ── Mobile controls (<lg): multi-row layout ── */}
+              {/* Mobile Row 1: View tabs (Price, Liquidity, Volume) */}
+              <div className="lg:hidden flex items-center gap-1 px-3 py-2 border-b border-white/10">
+                {Object.entries(CHART_VIEWS).map(([key, view]) => (
+                  <button
+                    key={key}
+                    onClick={() => setChartView(key)}
+                    className={`flex-1 px-2 py-1.5 text-xs font-semibold uppercase tracking-widest text-center transition-colors ${
+                      chartView === key
+                        ? "text-white bg-white/10"
+                        : "text-gray-600 hover:text-gray-400"
+                    }`}
+                  >
+                    {view.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Mobile Row 2: Series legend (Index Price, Mark Price) */}
+              <div className="lg:hidden flex items-center justify-center gap-5 px-3 py-2 border-b border-white/10">
+                {activeChartConfig.areas.map((s) => (
+                  <div
+                    key={s.key}
+                    className="flex items-center gap-2"
+                  >
+                    <div
+                      className="w-2 h-2"
+                      style={{ backgroundColor: s.color }}
+                    />
+                    <span className="text-xs uppercase tracking-widest text-gray-400">
+                      {s.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
               {/* Chart body */}
               <div className="h-[350px] md:h-[500px] w-full p-4">
                 {chartView === "LIQUIDITY" ? (
@@ -991,6 +1028,77 @@ export default function PoolLP() {
                     resolution={resolution}
                   />
                 )}
+              </div>
+
+              {/* ── Mobile Row 3 (below chart): Resolution | Timeframe ── */}
+              <div className="lg:hidden flex items-stretch border-t border-white/10">
+                {/* Resolution dropdown */}
+                <div className="relative flex-1 flex items-center justify-center px-3 py-2 border-r border-white/10">
+                  <button
+                    onClick={() => setChartDropdown(chartDropdown === 'resolution' ? null : 'resolution')}
+                    className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    Res: <span className="text-white">{resolution}</span>
+                    <ChevronDown size={10} className={`transition-transform ${chartDropdown === 'resolution' ? 'rotate-180' : ''}`} />
+                  </button>
+                  {chartDropdown === 'resolution' && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setChartDropdown(null)} />
+                      <div className="absolute left-0 bottom-full mb-0 z-50 bg-[#0a0a0a] border border-white/10">
+                        {["1H", "4H", "1D", "1W"].map((res) => (
+                          <button
+                            key={res}
+                            onClick={() => { chartControls.setResolution(res); setChartDropdown(null); }}
+                            className={`block w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors ${
+                              resolution === res
+                                ? "text-white bg-white/10"
+                                : "text-gray-600 hover:text-gray-400"
+                            }`}
+                          >
+                            {res}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Timeframe dropdown */}
+                <div className="relative flex-1 flex items-center justify-center px-3 py-2">
+                  <button
+                    onClick={() => setChartDropdown(chartDropdown === 'timeframe' ? null : 'timeframe')}
+                    className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-widest text-gray-600 hover:text-gray-400 transition-colors"
+                  >
+                    Range: <span className="text-white">{chartControls.activeRange}</span>
+                    <ChevronDown size={10} className={`transition-transform ${chartDropdown === 'timeframe' ? 'rotate-180' : ''}`} />
+                  </button>
+                  {chartDropdown === 'timeframe' && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setChartDropdown(null)} />
+                      <div className="absolute left-0 bottom-full mb-0 z-50 bg-[#0a0a0a] border border-white/10">
+                        {[
+                          { l: "1D", d: 1 },
+                          { l: "1W", d: 7 },
+                          { l: "1M", d: 30 },
+                          { l: "3M", d: 90 },
+                          { l: "ALL", d: 9999 },
+                        ].map((btn) => (
+                          <button
+                            key={btn.l}
+                            onClick={() => { chartControls.handleQuickRange(btn.d, btn.l); setChartDropdown(null); }}
+                            className={`block w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors ${
+                              chartControls.activeRange === btn.l
+                                ? "text-white bg-white/10"
+                                : "text-gray-600 hover:text-gray-400"
+                            }`}
+                          >
+                            {btn.l}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
