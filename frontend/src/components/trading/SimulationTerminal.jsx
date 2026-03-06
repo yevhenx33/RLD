@@ -150,7 +150,7 @@ export default function SimulationTerminal() {
     market,
     pool,
     funding,
-    fundingFromNF,
+    fundingFromNF: _fundingFromNF,
     oracleChange24h,
     volumeData,
     protocolStats,
