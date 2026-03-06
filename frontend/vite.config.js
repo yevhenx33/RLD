@@ -33,9 +33,43 @@ function clearBotLogsPlugin() {
   };
 }
 
+// Serve VitePress docs build at /docs during development
+import path from 'path';
+import { fileURLToPath } from 'url';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const docsDistDir = path.resolve(__dirname, '../docs-site/.vitepress/dist');
+
+function serveDocsPlugin() {
+  return {
+    name: 'serve-docs',
+    configureServer(server) {
+      server.middlewares.use('/docs', (req, res, next) => {
+        // Redirect /docs to /docs/
+        if (req.url === '/' || req.url === '') {
+          // Serve index.html
+          req.url = '/index.html';
+        }
+        const filePath = path.join(docsDistDir, req.url.split('?')[0]);
+        // Try exact file, then .html extension
+        const candidates = [filePath, filePath + '.html', path.join(filePath, 'index.html')];
+        for (const candidate of candidates) {
+          if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            const ext = path.extname(candidate);
+            const mimeTypes = { '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.woff': 'font/woff' };
+            res.writeHead(200, { 'Content-Type': mimeTypes[ext] || 'application/octet-stream' });
+            res.end(fs.readFileSync(candidate));
+            return;
+          }
+        }
+        next();
+      });
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), clearBotLogsPlugin()],
+  plugins: [react(), clearBotLogsPlugin(), serveDocsPlugin()],
   envDir: '../',
   server: {
     host: '0.0.0.0',

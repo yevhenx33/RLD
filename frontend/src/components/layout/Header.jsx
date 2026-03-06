@@ -148,7 +148,7 @@ export default function Header({ isCapped, ratesLoaded }) {
               <span className="text-white/10">|</span>
 
               <a
-                href="https://docs.rld.fi"
+                href="/docs"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="transition-colors px-2 tracking-widest text-white hover:text-cyan-400 cursor-pointer"
@@ -245,7 +245,7 @@ export default function Header({ isCapped, ratesLoaded }) {
                 DATA
               </Link>
               <a
-                href="https://docs.rld.fi"
+                href="/docs"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="py-2 text-gray-500 hover:text-white transition-colors"
