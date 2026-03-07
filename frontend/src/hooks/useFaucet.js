@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 
 /**
- * One-click Anvil faucet: provisions ETH + waUSDC to the connected wallet.
+ * One-click Anvil faucet: provisions ETH + USDC + waUSDC to the connected wallet.
  *
  * Flow (all via Anvil admin RPCs — zero MetaMask popups):
  *   1. anvil_setBalance → 100 ETH for gas
@@ -22,7 +22,11 @@ const USDC_WHALE = "0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341";
 const RPC_URL = `${window.location.origin}/rpc`;
 
 // Amount to fund: 100k USDC (6 decimals)
-const FUND_AMOUNT = 100_000n * 1_000_000n; // 100,000 USDC in wei
+const FUND_AMOUNT = "100000000000"; // 100,000 USDC as string to avoid BigInt issues
+// Amount of USDC to keep liquid (not wrapped): 10k
+const USDC_KEEP = "10000000000"; // 10,000 USDC
+// Amount to send to Aave for wrapping: 90k
+const AAVE_AMOUNT = "90000000000"; // 90,000 USDC
 
 // Minimal ABIs for the calls we need
 const ERC20_ABI = [
@@ -42,7 +46,8 @@ const WAUSDC_ABI = [
  * Send a transaction from an impersonated account via raw JSON-RPC.
  * This bypasses MetaMask entirely — the tx is sent directly to Anvil.
  */
-async function sendImpersonatedTx(rpcUrl, from, to, data) {
+async function sendImpersonatedTx(rpcUrl, from, to, data, label = "") {
+  console.log(`[faucet] TX ${label}: from=${from.slice(0,8)}… to=${to.slice(0,8)}…`);
   const res = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -54,7 +59,8 @@ async function sendImpersonatedTx(rpcUrl, from, to, data) {
     }),
   });
   const json = await res.json();
-  if (json.error) throw new Error(`TX failed: ${json.error.message}`);
+  if (json.error) throw new Error(`TX ${label} failed: ${json.error.message}`);
+  console.log(`[faucet] TX ${label} hash: ${json.result}`);
   return json.result; // tx hash
 }
 
@@ -62,6 +68,7 @@ async function sendImpersonatedTx(rpcUrl, from, to, data) {
  * Call an Anvil admin RPC method (e.g. anvil_setBalance).
  */
 async function anvilRpc(rpcUrl, method, params = []) {
+  console.log(`[faucet] RPC: ${method}`);
   const res = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -102,7 +109,7 @@ async function waitForTx(rpcUrl, txHash, timeout = 30000) {
 export function useFaucet(account, waUsdcAddress) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [step, _setStep] = useState(""); // Current step description
+  const [step, setStep] = useState(""); // Current step description
   const [waUsdcBalance, setWaUsdcBalance] = useState(null);
 
   // ── Fetch waUSDC balance for any address ───────────────────────
@@ -147,16 +154,18 @@ export function useFaucet(account, waUsdcAddress) {
 
       try {
         const user = userAddress.toLowerCase();
+        console.log(`[faucet] Starting for ${user}, waUSDC=${waUsdcAddress}`);
 
         // ── Step 1: Set ETH balance (100 ETH for gas) ────────────────
-
+        setStep("Setting ETH balance...");
         await anvilRpc(RPC_URL, "anvil_setBalance", [
           user,
           "0x56BC75E2D63100000", // 100 ETH in hex wei
         ]);
+        console.log("[faucet] ✓ ETH balance set");
 
         // ── Step 2: Impersonate whale → transfer USDC to user ────────
-
+        setStep("Transferring USDC...");
         await anvilRpc(RPC_URL, "anvil_impersonateAccount", [USDC_WHALE]);
 
         // Give whale some ETH for gas too
@@ -170,47 +179,41 @@ export function useFaucet(account, waUsdcAddress) {
           FUND_AMOUNT,
         ]);
         const txTransfer = await sendImpersonatedTx(
-          RPC_URL,
-          USDC_WHALE,
-          USDC,
-          transferData,
+          RPC_URL, USDC_WHALE, USDC, transferData, "USDC transfer",
         );
         await waitForTx(RPC_URL, txTransfer);
         await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [USDC_WHALE]);
+        console.log("[faucet] ✓ USDC transferred");
 
         // ── Step 3: Impersonate user → deposit USDC to Aave ──────────
-
+        setStep("Supplying to Aave...");
         await anvilRpc(RPC_URL, "anvil_impersonateAccount", [user]);
 
         // Approve USDC → Aave Pool
         const approveAaveData = iface.erc20.encodeFunctionData("approve", [
           AAVE_POOL,
-          FUND_AMOUNT,
+          AAVE_AMOUNT,
         ]);
         const txApproveAave = await sendImpersonatedTx(
-          RPC_URL,
-          user,
-          USDC,
-          approveAaveData,
+          RPC_URL, user, USDC, approveAaveData, "USDC→Aave approve",
         );
         await waitForTx(RPC_URL, txApproveAave);
 
         // Supply USDC to Aave → get aUSDC
         const supplyData = iface.pool.encodeFunctionData("supply", [
           USDC,
-          FUND_AMOUNT,
+          AAVE_AMOUNT,
           user,
           0,
         ]);
         const txSupply = await sendImpersonatedTx(
-          RPC_URL,
-          user,
-          AAVE_POOL,
-          supplyData,
+          RPC_URL, user, AAVE_POOL, supplyData, "Aave supply",
         );
         await waitForTx(RPC_URL, txSupply);
+        console.log("[faucet] ✓ Aave supply done");
 
         // ── Step 4: Wrap aUSDC → waUSDC ──────────────────────────────
+        setStep("Wrapping to waUSDC...");
 
         // Read aUSDC balance
         const aUsdcProvider = new ethers.JsonRpcProvider(RPC_URL);
@@ -220,46 +223,52 @@ export function useFaucet(account, waUsdcAddress) {
           aUsdcProvider,
         );
         const aUsdcBal = await aUsdcContract.balanceOf(user);
+        console.log(`[faucet] aUSDC balance: ${aUsdcBal.toString()}`);
 
-        // Approve aUSDC → waUSDC wrapper
-        const approveWrapData = iface.erc20.encodeFunctionData("approve", [
-          waUsdcAddress,
-          aUsdcBal,
-        ]);
-        const txApproveWrap = await sendImpersonatedTx(
-          RPC_URL,
-          user,
-          AUSDC,
-          approveWrapData,
-        );
-        await waitForTx(RPC_URL, txApproveWrap);
+        if (aUsdcBal > 0n) {
+          // Approve aUSDC → waUSDC wrapper
+          const approveWrapData = iface.erc20.encodeFunctionData("approve", [
+            waUsdcAddress,
+            aUsdcBal,
+          ]);
+          const txApproveWrap = await sendImpersonatedTx(
+            RPC_URL, user, AUSDC, approveWrapData, "aUSDC→waUSDC approve",
+          );
+          await waitForTx(RPC_URL, txApproveWrap);
 
-        // Wrap
-        const wrapData = iface.waUsdc.encodeFunctionData("wrap", [aUsdcBal]);
-        const txWrap = await sendImpersonatedTx(
-          RPC_URL,
-          user,
-          waUsdcAddress,
-          wrapData,
-        );
-        await waitForTx(RPC_URL, txWrap);
+          // Wrap
+          const wrapData = iface.waUsdc.encodeFunctionData("wrap", [aUsdcBal]);
+          const txWrap = await sendImpersonatedTx(
+            RPC_URL, user, waUsdcAddress, wrapData, "wrap aUSDC",
+          );
+          await waitForTx(RPC_URL, txWrap);
+          console.log("[faucet] ✓ Wrapped to waUSDC");
+        }
 
         await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [user]);
 
-        // ── Read final waUSDC balance ────────────────────────────────
-
+        // ── Read final balances ──────────────────────────────────────
+        setStep("Done!");
         await fetchBalance(user);
+        console.log("[faucet] ✓ Complete");
 
-        return { success: true, waUsdcBalance };
+        return { success: true };
       } catch (err) {
         console.error("Faucet error:", err);
         setError(err.message || "Faucet failed");
+        // Try to clean up impersonation
+        try {
+          await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [userAddress.toLowerCase()]);
+        } catch { /* ignore cleanup errors */ }
+        try {
+          await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [USDC_WHALE]);
+        } catch { /* ignore cleanup errors */ }
         return { success: false, error: err.message };
       } finally {
         setLoading(false);
       }
     },
-    [fetchBalance, waUsdcBalance, waUsdcAddress],
+    [fetchBalance, waUsdcAddress],
   );
 
   return {

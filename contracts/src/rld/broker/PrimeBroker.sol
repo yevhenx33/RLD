@@ -837,6 +837,48 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     // │ If you have 100k in position A and 1k in position B, track position A.                 │
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
+    /// @notice Execute an arbitrary external call from this broker
+    /// @dev Enables the broker to interact with any external protocol (Aave, Curve, etc.)
+    ///      The broker is the msg.sender for the target call, so any state changes
+    ///      (Aave supply/borrow, DEX swaps) happen in the broker's context.
+    ///
+    /// ## Security
+    /// - Only owner or operator can call (onlyAuthorized)
+    /// - Solvency check after execution ensures broker remains healthy
+    /// - Cannot call Core directly (use modifyPosition instead)
+    ///
+    /// @param target The contract to call
+    /// @param data The encoded function call
+    /// @return result The return data from the call
+    function execute(
+        address target,
+        bytes calldata data
+    )
+        external
+        onlyAuthorized
+        nonReentrant
+        whenNotFrozen
+        returns (bytes memory result)
+    {
+        require(target != CORE, "Use modifyPosition");
+        require(target != address(this), "No self-call");
+
+        bool success;
+        (success, result) = target.call(data);
+        if (!success) {
+            if (result.length > 0) {
+                assembly {
+                    revert(add(32, result), mload(result))
+                }
+            } else {
+                revert("Execute failed");
+            }
+        }
+
+        emit Execute(target, data);
+        _checkSolvency();
+    }
+
     /// @notice Sets which V4 LP position is tracked for solvency calculations
     /// @dev V1 LIMITATION: Only ONE position can be tracked at a time
     ///

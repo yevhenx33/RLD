@@ -139,6 +139,15 @@ export default function Header({ isCapped, ratesLoaded }) {
               <span className="text-white/10">|</span>
 
               <Link
+                to="/strategies"
+                className={`transition-colors px-2 tracking-widest ${location.pathname.startsWith("/strategies") ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+              >
+                STRATEGIES
+              </Link>
+
+              <span className="text-white/10">|</span>
+
+              <Link
                 to="/explore"
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/explore" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
@@ -260,6 +269,12 @@ export default function Header({ isCapped, ratesLoaded }) {
                 className={`py-2 ${location.pathname === "/portfolio" ? "text-white" : "text-gray-500"}`}
               >
                 PORTFOLIO
+              </Link>
+              <Link
+                to="/strategies"
+                className={`py-2 ${location.pathname.startsWith("/strategies") ? "text-white" : "text-gray-500"}`}
+              >
+                STRATEGIES
               </Link>
               <Link
                 to="/explore"

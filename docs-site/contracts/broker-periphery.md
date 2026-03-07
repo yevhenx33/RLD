@@ -163,19 +163,6 @@ Stateless valuation module for Uniswap V4 LP positions.
 | **JTMBrokerModule**       | `getValue()`                 | `view` (stateless)              | Anyone               | ✅ Phase 7 |
 | **UniswapV4BrokerModule** | `getValue()`                 | `view` (stateless)              | Anyone               | ✅ Phase 7 |
 
-### Red-Team Security Properties
-
-1. **No Token Leakage** — All periphery contracts sweep residuals to the broker before returning. Verified: `balanceOf(router) == 0` and `balanceOf(executor) == 0` after every operation (Phase 4, 5, 6, 8).
-2. **No Lingering Operators** — BrokerExecutor and LeverageShortExecutor always revoke operator status, even on revert (atomic tx guarantees). Verified Phase 5, 6.
-3. **TWAP Resistance** — Solvency uses oracle TWAP, not spot price. Single-block flash loan manipulation has no effect on solvency checks. Verified Phase 8.
-4. **Re-initialization Protection** — `PrimeBroker.initialize()` uses a `!initialized` flag. No actor (including the factory) can re-initialize an existing broker. Verified Phase 8.
-5. **Multi-Broker Isolation** — Two brokers in the same market have completely independent state. Broker A's operations never affect Broker B's debt, collateral, or solvency. Verified Phase 8.
-6. **Ghost Never Inflates NAV** — The JTM module's discount formula ensures ghost is always valued at or below face value. Verified Phase 7.
-
----
-
-## Penetration Testing — 8 Phases
-
 ### Summary
 
 | Phase     | Focus Area                  | Tests   | Suite                           | Bugs Found |
@@ -278,26 +265,6 @@ Integration attack vectors:
 - **Operator during liquidation**: `nonReentrant` shared lock blocks concurrent access
 - **Multi-broker isolation**: independent positions, debt, solvency across brokers in same market
 
----
-
-## Production Bugs Found & Fixed
-
-### Critical Severity
-
-| #   | Contract                | Bug                           | Impact                                                         | Fix                                    |
-| --- | ----------------------- | ----------------------------- | -------------------------------------------------------------- | -------------------------------------- |
-| 1   | `BrokerRouter`          | `closeShort()` debt underflow | Arithmetic revert when repaying more wRLP than `debtPrincipal` | Cap repayment at outstanding debt      |
-| 2   | `LeverageShortExecutor` | `amountSpecified` sign        | Positive = exact output in V4; left ~8 wRLP stranded           | Changed to `-int256(targetDebtAmount)` |
-
-### High Severity
-
-| #   | Contract                | Bug                    | Impact                                     | Fix                             |
-| --- | ----------------------- | ---------------------- | ------------------------------------------ | ------------------------------- |
-| 3   | `BrokerRouter`          | No pool key validation | Users could swap against rogue pools       | Added `_validatePoolKey()`      |
-| 4   | `BrokerRouter`          | Implicit swap proceeds | Output amount never explicitly decoded     | Explicit `BalanceDelta` decode  |
-| 5   | `LeverageShortExecutor` | No wRLP sweep          | Residual wRLP stranded in executor forever | Added post-swap sweep to broker |
-
----
 
 ## Architectural Decisions
 
@@ -317,6 +284,5 @@ Integration attack vectors:
 
 1. **Single Active JTM Order**: V1 supports only one JTM order per broker (`activeJtmOrder`).
 2. **Ghost Pro-Rata Approximation**: Exact within an epoch but approximate across epoch boundaries where orders were added/removed.
-3. **Swap Slippage**: `calculateOptimalDebt()` does not account for swap fees or slippage, meaning actual leverage may be slightly below target.
-4. **Caller-Supplied Tokens in LSE**: `LeverageShortExecutor` accepts `collateralToken` and `positionToken` as parameters rather than reading from the broker (unlike `BrokerRouter`).
-5. **Deposit Route Registration**: Each market's deposit wrapping path must be manually registered via `setDepositRoute()` before the `deposit()` function works.
+3. **Caller-Supplied Tokens in LSE**: `LeverageShortExecutor` accepts `collateralToken` and `positionToken` as parameters rather than reading from the broker (unlike `BrokerRouter`).
+4. **Deposit Route Registration**: Each market's deposit wrapping path must be manually registered via `setDepositRoute()` before the `deposit()` function works.

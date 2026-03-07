@@ -156,8 +156,6 @@ badDebt -= chunk
 
 The gradual spreading prevents sudden net worth shocks. A market with $100M in total debt absorbing $10k in bad debt would increase NF by ~0.01% over 7 days — negligible to individual positions.
 
-> **For bond holders**: Synthetic bonds are designed with initial LTV of ~5% (health ratio ~20:1). Even a 20× rate spike (5% → 100%) only brings LTV to 50% — the wRLP in the TWAMM order scales with debt, acting as a natural hedge.
-
 ## Running a Liquidation Bot
 
 Liquidation is permissionless and represents an MEV opportunity:

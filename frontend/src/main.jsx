@@ -18,6 +18,9 @@ const PerpsDirectory = lazy(() => import("./components/trading/PerpsDirectory"))
 const PoolLP = lazy(() => import("./components/pools/PoolLP"));
 const PoolsDirectory = lazy(() => import("./components/pools/PoolsDirectory"));
 const TwammOrders = lazy(() => import("./components/twamm/TwammOrders"));
+const Vaults = lazy(() => import("./components/common/Vaults"));
+const VaultDetail = lazy(() => import("./components/common/VaultDetail"));
+const BasisTrade = lazy(() => import("./components/basis-trade/BasisTrade"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -152,6 +155,30 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 element={
                   <Suspense fallback={<Loading />}>
                     <TwammOrders />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/strategies"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <Vaults />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/strategies/basis-trade"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <BasisTrade />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/strategies/:id"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <VaultDetail />
                   </Suspense>
                 }
               />

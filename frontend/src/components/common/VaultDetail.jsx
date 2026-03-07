@@ -128,7 +128,7 @@ export default function VaultDetail() {
         {/* ── BREADCRUMB ── */}
         <div className="flex items-center gap-3 py-4">
           <Link
-            to="/vaults"
+            to="/strategies"
             className="flex items-center gap-2 text-gray-500 hover:text-white transition-colors text-[11px] uppercase tracking-widest"
           >
             <ArrowLeft size={12} />
