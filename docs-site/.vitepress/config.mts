@@ -5,7 +5,7 @@ export default withMermaid(
   defineConfig({
     title: 'RLD Protocol',
     description: 'Rate-Level Derivatives — On-chain synthetic bonds and interest rate trading',
-    base: '/docs/',
+    base: '/',
     head: [
       ['meta', { name: 'theme-color', content: '#0f0f0f' }],
       ['meta', { property: 'og:title', content: 'RLD Protocol Documentation' }],
