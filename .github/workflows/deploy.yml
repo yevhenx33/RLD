@@ -81,15 +81,15 @@ jobs:
           script: |
             cd /home/ubuntu/RLD
 
-            # Force-recreate the frontend container so it picks up the new dist/
-            # (Nginx now serves via volume mount — no image rebuild needed)
+            # Sync ALL config files first (docker-compose, nginx.conf, etc.)
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Force-recreate the frontend container with the new dist/
+            # docker-compose.frontend.yml now uses volume mounts — no image rebuild
             echo "🔄 Restarting frontend container..."
             docker compose -f docker/docker-compose.frontend.yml up -d --no-deps --force-recreate frontend
             echo "✅ Frontend live"
-
-            # Sync source for backend deploys
-            git fetch origin main
-            git reset --hard origin/main
 
             # Rebuild backend containers if backend changed
             if git diff HEAD~1 --name-only | grep -q "^backend/"; then
