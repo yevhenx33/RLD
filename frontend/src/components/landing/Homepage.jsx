@@ -594,7 +594,7 @@ function CoreArchitectureSection() {
 
 export default function Homepage() {
   return (
-    <div className="bg-[#080808]" >
+    <div className="bg-[#080808] font-mono" >
       <HeroSection />
       <UseCasesSection />
       <SolvencyInsuranceSection />
