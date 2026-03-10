@@ -44,7 +44,7 @@ function HeroSection() {
       <Grain />
 
       {/* Header lives inside the hero for the homepage */}
-      <div className="relative z-20">
+      <div className="relative z-20" style={{ fontFamily: '"Space Grotesk", system-ui, Helvetica, Arial, sans-serif' }}>
         <Header isCapped={false} ratesLoaded={true} transparent />
       </div>
 
