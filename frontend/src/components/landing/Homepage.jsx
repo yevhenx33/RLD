@@ -58,11 +58,11 @@ function HeroSection() {
           {/* HEADLINE */}
           <h1 className="mb-5 leading-[1.08] lg:tracking-[-0.025em]">
             <span className="block text-white font-['Space_Grotesk'] font-light"
-              style={{ fontSize: 'clamp(30px, 5.5vw, 62px)' }}>
+              style={{ fontSize: 'clamp(35px, 5.5vw, 62px)' }}>
               Interest Rate Derivatives
             </span>
             <span className="block text-[#666] font-['Space_Grotesk'] font-light"
-              style={{ fontSize: 'clamp(30px, 5.5vw, 62px)' }}>
+              style={{ fontSize: 'clamp(35px, 5.5vw, 62px)' }}>
               for On-Chain Finance
             </span>
           </h1>
@@ -163,7 +163,7 @@ function UseCase({ title, subtitle, description, metrics, cta, ctaTo, delay = 0 
           {title}
         </h3>
         <p className="font-mono text-[11px] tracking-[0.08em] text-[#666] mb-8">{subtitle}</p>
-        <p className="font-mono text-[12px] leading-[1.9] text-[#666] mb-10 max-w-[480px]">{description}</p>
+        <p className="text-[12px] leading-[1.9] text-[#666] mb-10 max-w-[480px]">{description}</p>
         <div className="mb-10">
           {metrics.map((m) => <Metric key={m.label} {...m} />)}
         </div>
@@ -327,7 +327,7 @@ function SolvencyInsuranceSection() {
               Insure Protocol<br />
               <span className="text-[#666]">Solvency On-Chain</span>
             </h2>
-            <p className="font-mono text-[12px] leading-[1.9] text-[#666] max-w-[460px] mb-8">
+            <p className="text-[12px] leading-[1.9] text-[#666] max-w-[460px] mb-8">
               Protocol insolvency is DeFi&apos;s largest unpriced tail risk.
               RLD Credit Default Swaps let you hedge it — parametric trigger,
               trustless execution, and 100% notional payout.
@@ -439,7 +439,7 @@ function Feature({ index, label, title, body, inView, delay }) {
       >
         {title}
       </h3>
-      <p className="font-mono text-[11px] leading-[1.9] text-[#666]">{body}</p>
+      <p className="text-[11px] leading-[1.9] text-[#666]">{body}</p>
     </div>
   )
 }
@@ -477,7 +477,7 @@ function RatePerpsSection() {
               <br />
               <span className="text-[#555]">as a Volatility Asset</span>
             </h2>
-            <p className="font-mono text-[12px] leading-[1.9] text-[#666] max-w-[440px] mb-8">
+            <p className="text-[12px] leading-[1.9] text-[#666] max-w-[440px] mb-8">
               DeFi borrow rates are not symmetric. They have a hard floor at the
               risk-free rate but can surge 5–10× during periods of high leverage
               demand — creating a structurally asymmetric payoff profile that
