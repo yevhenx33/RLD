@@ -7,7 +7,6 @@ export default {
       // ── Design Tokens ──
       fontFamily: {
         'Space_Grotesk': ['Space Grotesk', 'sans-serif'],
-        mono: ['JetBrains Mono', 'IBM Plex Mono', 'Courier New', 'monospace'],
       },
       fontSize: {
         micro: ["9px", { lineHeight: "12px" }],

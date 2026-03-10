@@ -28,9 +28,9 @@ function LiveTicker() {
   return (
     <div className="flex items-center gap-4 mb-5 select-none" aria-hidden="true">
       {vals.map((v, i) => (
-        <span key={i} className="font-mono text-[10px] text-[#2a2a2a] tracking-widest">{v}</span>
+        <span key={i} className="font-['JetBrains_Mono'] text-[10px] text-[#2a2a2a] tracking-widest">{v}</span>
       ))}
-      <span className="font-mono text-[10px] text-[#222] tracking-widest">— LIVE</span>
+      <span className="font-['JetBrains_Mono'] text-[10px] text-[#222] tracking-widest">— LIVE</span>
     </div>
   )
 }
@@ -58,11 +58,11 @@ function HeroSection() {
           {/* HEADLINE */}
           <h1 className="mb-5 leading-[1.08] lg:tracking-[-0.025em]">
             <span className="block text-white font-['Space_Grotesk'] font-light"
-              style={{ fontSize: 'clamp(35px, 5.5vw, 62px)' }}>
+              style={{ fontSize: 'clamp(30px, 5.5vw, 62px)' }}>
               Interest Rate Derivatives
             </span>
             <span className="block text-[#666] font-['Space_Grotesk'] font-light"
-              style={{ fontSize: 'clamp(35px, 5.5vw, 62px)' }}>
+              style={{ fontSize: 'clamp(30px, 5.5vw, 62px)' }}>
               for On-Chain Finance
             </span>
           </h1>
@@ -96,7 +96,7 @@ function HeroSection() {
               to="/bonds"
               id="cta-launch-app-hero"
               className="flex items-center gap-2 px-12 py-[12px] border border-[#555]
-                         text-[11px] tracking-[0.22em] uppercase text-white font-mono
+                         text-[11px] tracking-[0.22em] uppercase text-white font-['JetBrains_Mono']
                          hover:border-white hover:bg-white hover:text-black
                          transition-all duration-200"
             >
@@ -105,7 +105,7 @@ function HeroSection() {
             <a
               href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
               id="cta-docs"
-              className="text-[11px] tracking-[0.22em] uppercase text-[#666] font-mono
+              className="text-[11px] tracking-[0.22em] uppercase text-[#666] font-['JetBrains_Mono']
                          hover:text-[#ccc] transition-colors duration-200 border-b border-transparent
                          hover:border-[#555] pb-[1px]"
             >
@@ -117,8 +117,8 @@ function HeroSection() {
 
       {/* Status strip */}
       <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-8 md:px-14 py-3 border-t border-[#111]">
-        <span className="font-mono text-[11px] tracking-[0.2em] uppercase text-[#666]">Testnet Live</span>
-        <span className="font-mono text-[11px] tracking-[0.2em] uppercase text-[#666]">V.01 / Experimental Beta</span>
+        <span className="font-['JetBrains_Mono'] text-[11px] tracking-[0.2em] uppercase text-[#666]">Testnet Live</span>
+        <span className="font-['JetBrains_Mono'] text-[11px] tracking-[0.2em] uppercase text-[#666]">V.01 / Experimental Beta</span>
       </div>
     </section>
   )
@@ -131,8 +131,8 @@ function HeroSection() {
 function Metric({ label, value }) {
   return (
     <div className="flex items-baseline justify-between border-b border-[#141414] py-3">
-      <span className="font-mono text-[10px] tracking-[0.18em] uppercase text-[#555]">{label}</span>
-      <span className="font-mono text-[12px] text-[#999]">{value}</span>
+      <span className="font-['JetBrains_Mono'] text-[10px] tracking-[0.18em] uppercase text-[#555]">{label}</span>
+      <span className="font-['JetBrains_Mono'] text-[12px] text-[#999]">{value}</span>
     </div>
   )
 }
@@ -162,7 +162,7 @@ function UseCase({ title, subtitle, description, metrics, cta, ctaTo, delay = 0 
         >
           {title}
         </h3>
-        <p className="font-mono text-[11px] tracking-[0.08em] text-[#666] mb-8">{subtitle}</p>
+        <p className="font-['JetBrains_Mono'] text-[11px] tracking-[0.08em] text-[#666] mb-8">{subtitle}</p>
         <p className="text-[12px] leading-[1.9] text-[#666] mb-10 max-w-[480px]">{description}</p>
         <div className="mb-10">
           {metrics.map((m) => <Metric key={m.label} {...m} />)}
@@ -173,7 +173,7 @@ function UseCase({ title, subtitle, description, metrics, cta, ctaTo, delay = 0 
         <Link
           to={ctaTo}
           className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
-                     font-mono text-[10px] tracking-[0.22em] uppercase text-white
+                     font-['JetBrains_Mono'] text-[10px] tracking-[0.22em] uppercase text-white
                      hover:bg-white hover:text-black transition-all duration-200"
         >
           {cta}
@@ -195,8 +195,8 @@ function UseCasesSection() {
           className="flex items-center gap-3 mb-14 transition-all duration-500"
           style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
         >
-          <span className="font-mono text-[#333] text-[11px]">|—</span>
-          <span className="font-mono text-[12px] tracking-[0.28em] uppercase text-[#333]">Synthetic Bonds</span>
+          <span className="font-['JetBrains_Mono'] text-[#333] text-[11px]">|—</span>
+          <span className="font-['JetBrains_Mono'] text-[12px] tracking-[0.28em] uppercase text-[#333]">Synthetic Bonds</span>
           <span className="flex-1 h-px bg-[#141414]" />
         </div>
 
@@ -256,7 +256,7 @@ function Stat({ value, label }) {
       >
         {value}
       </div>
-      <div className="font-mono text-[10px] tracking-[0.18em] uppercase text-[#444]">{label}</div>
+      <div className="font-['JetBrains_Mono'] text-[10px] tracking-[0.18em] uppercase text-[#444]">{label}</div>
     </div>
   )
 }
@@ -275,8 +275,8 @@ function RiskCard({ index, title, description, inView, delay }) {
       <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#1e1e1e]" />
 
       <div className="flex items-start justify-between">
-        <span className="font-mono text-[9px] tracking-[0.3em] text-[#252525]">0{index}</span>
-        <span className="font-mono text-[8px] tracking-[0.22em] uppercase text-[#1e1e1e] border border-[#181818] px-2 py-[2px]">
+        <span className="font-['JetBrains_Mono'] text-[9px] tracking-[0.3em] text-[#252525]">0{index}</span>
+        <span className="font-['JetBrains_Mono'] text-[8px] tracking-[0.22em] uppercase text-[#1e1e1e] border border-[#181818] px-2 py-[2px]">
           Covered
         </span>
       </div>
@@ -288,7 +288,7 @@ function RiskCard({ index, title, description, inView, delay }) {
         {title}
       </h3>
 
-      <p className="font-mono text-[11px] leading-[1.85] text-[#666] flex-1">{description}</p>
+      <p className="font-['JetBrains_Mono'] text-[11px] leading-[1.85] text-[#666] flex-1">{description}</p>
       <div className="h-px w-8 bg-[#222]" />
     </div>
   )
@@ -309,8 +309,8 @@ function SolvencyInsuranceSection() {
           className="flex items-center gap-3 mb-14 transition-all duration-500"
           style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
         >
-          <span className="font-mono text-[#333] text-[11px]">|—</span>
-          <span className="font-mono text-[12px] tracking-[0.28em] uppercase text-[#333]">Solvency Insurance</span>
+          <span className="font-['JetBrains_Mono'] text-[#333] text-[11px]">|—</span>
+          <span className="font-['JetBrains_Mono'] text-[12px] tracking-[0.28em] uppercase text-[#333]">Solvency Insurance</span>
           <span className="flex-1 h-px bg-[#141414]" />
         </div>
 
@@ -333,8 +333,8 @@ function SolvencyInsuranceSection() {
               trustless execution, and 100% notional payout.
             </p>
             <div className="inline-flex items-center gap-3 px-6 py-[11px] border border-[#1e1e1e] cursor-not-allowed">
-              <span className="font-mono text-[10px] tracking-[0.22em] uppercase text-[#333]">Explore CDS</span>
-              <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-cyan-900 border border-cyan-900/40 px-1.5 py-px">Soon</span>
+              <span className="font-['JetBrains_Mono'] text-[10px] tracking-[0.22em] uppercase text-[#333]">Explore CDS</span>
+              <span className="font-['JetBrains_Mono'] text-[9px] tracking-[0.2em] uppercase text-cyan-900 border border-cyan-900/40 px-1.5 py-px">Soon</span>
             </div>
           </div>
 
@@ -382,8 +382,8 @@ function RateChart({ inView }) {
       style={{ opacity: inView ? 1 : 0, transform: inView ? 'translateY(0)' : 'translateY(20px)' }}
     >
       <div className="flex items-center justify-between mb-5">
-        <span className="font-mono text-[9px] tracking-[0.28em] uppercase text-[#2a2a2a]">Borrow Rate / Time</span>
-        <span className="font-mono text-[9px] tracking-[0.2em] uppercase text-[#666]">Illustrative</span>
+        <span className="font-['JetBrains_Mono'] text-[9px] tracking-[0.28em] uppercase text-[#2a2a2a]">Borrow Rate / Time</span>
+        <span className="font-['JetBrains_Mono'] text-[9px] tracking-[0.2em] uppercase text-[#666]">Illustrative</span>
       </div>
       <svg viewBox="0 0 320 140" className="w-full" preserveAspectRatio="none">
         {[0, 35, 70, 105, 140].map((y) => (
@@ -406,11 +406,11 @@ function RateChart({ inView }) {
       <div className="flex items-center gap-6 mt-4">
         <div className="flex items-center gap-2">
           <div className="w-6 h-px bg-[#888]" />
-          <span className="font-mono text-[9px] text-[#444]">Demand spike range</span>
+          <span className="font-['JetBrains_Mono'] text-[9px] text-[#444]">Demand spike range</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-6 h-px bg-[#333]" />
-          <span className="font-mono text-[9px] text-[#333]">Baseline range</span>
+          <span className="font-['JetBrains_Mono'] text-[9px] text-[#333]">Baseline range</span>
         </div>
       </div>
     </div>
@@ -428,8 +428,8 @@ function Feature({ index, label, title, body, inView, delay }) {
       }}
     >
       <div className="flex items-center gap-3 mb-4">
-        <span className="font-mono text-[9px] tracking-[0.28em] text-[#999]">0{index}</span>
-        <span className="font-mono text-[9px] tracking-[0.22em] uppercase text-[#999] border border-[#1a1a1a] px-2 py-[2px]">
+        <span className="font-['JetBrains_Mono'] text-[9px] tracking-[0.28em] text-[#999]">0{index}</span>
+        <span className="font-['JetBrains_Mono'] text-[9px] tracking-[0.22em] uppercase text-[#999] border border-[#1a1a1a] px-2 py-[2px]">
           {label}
         </span>
       </div>
@@ -459,8 +459,8 @@ function RatePerpsSection() {
           className="flex items-center gap-3 mb-14 transition-all duration-500"
           style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
         >
-          <span className="font-mono text-[#555] text-[11px]">|—</span>
-          <span className="font-mono text-[12px] tracking-[0.28em] uppercase text-[#333]">Rate Perpetuals</span>
+          <span className="font-['JetBrains_Mono'] text-[#555] text-[11px]">|—</span>
+          <span className="font-['JetBrains_Mono'] text-[12px] tracking-[0.28em] uppercase text-[#333]">Rate Perpetuals</span>
           <span className="flex-1 h-px bg-[#141414]" />
         </div>
 
@@ -486,7 +486,7 @@ function RatePerpsSection() {
             <Link
               to="/markets/perps"
               className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
-                         font-mono text-[10px] tracking-[0.22em] uppercase text-white
+                         font-['JetBrains_Mono'] text-[10px] tracking-[0.22em] uppercase text-white
                          hover:bg-white hover:text-black transition-all duration-200"
             >
               Trade Rates <span className="text-[#555]">↗</span>
@@ -540,7 +540,7 @@ function CoreArchitectureSection() {
         >
           Start Trading Rates
         </h2>
-        <p className="font-mono text-[12px] text-[#666] tracking-[0.06em] mb-10 max-w-[400px]">
+        <p className="font-['JetBrains_Mono'] text-[12px] text-[#666] tracking-[0.06em] mb-10 max-w-[400px]">
           Testnet is live. Fix yields, trade rate movements, and insure
           solvency — entirely on-chain.
         </p>
@@ -549,14 +549,14 @@ function CoreArchitectureSection() {
           <Link
             to="/bonds"
             className="flex items-center gap-2 px-10 py-[13px] border border-white
-                       font-mono text-[11px] tracking-[0.22em] uppercase text-white font-bold
+                       font-['JetBrains_Mono'] text-[11px] tracking-[0.22em] uppercase text-white font-bold
                        hover:bg-white hover:text-black transition-all duration-200"
           >
             Launch App ↗
           </Link>
           <a
             href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
-            className="font-mono text-[11px] tracking-[0.22em] uppercase text-[#666]
+            className="font-['JetBrains_Mono'] text-[11px] tracking-[0.22em] uppercase text-[#666]
                        hover:text-white transition-colors duration-200"
           >
             Docs ↗
@@ -568,9 +568,9 @@ function CoreArchitectureSection() {
       <div className="relative z-10 border-t border-[#1e1e1e]">
         <div className="max-w-[1100px] mx-auto lg:px-0 pt-6 pb-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-6">
-            <span className="font-mono text-[11px] tracking-[0.3em] uppercase text-white font-bold">RLD</span>
-            <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-[#888]">Ethereum Testnet</span>
-            <span className="font-mono text-[9px] tracking-[0.18em] uppercase text-[#888]">V.01</span>
+            <span className="font-['JetBrains_Mono'] text-[11px] tracking-[0.3em] uppercase text-white font-bold">RLD</span>
+            <span className="font-['JetBrains_Mono'] text-[9px] tracking-[0.18em] uppercase text-[#888]">Ethereum Testnet</span>
+            <span className="font-['JetBrains_Mono'] text-[9px] tracking-[0.18em] uppercase text-[#888]">V.01</span>
           </div>
           <div className="flex items-center gap-6">
             {[
@@ -583,7 +583,7 @@ function CoreArchitectureSection() {
                 href={link.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="font-mono text-[10px] tracking-[0.15em] uppercase text-[#888] hover:text-white transition-colors duration-200"
+                className="font-['JetBrains_Mono'] text-[10px] tracking-[0.15em] uppercase text-[#888] hover:text-white transition-colors duration-200"
               >
                 {link.label}
               </a>
