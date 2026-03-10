@@ -1,6 +1,5 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import webfontDownload from 'vite-plugin-webfont-dl'
 import fs from 'fs'
 
 // Custom plugin to serve clear bot log file
@@ -92,7 +91,7 @@ function copyDocsPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), webfontDownload(), clearBotLogsPlugin(), serveDocsPlugin(), copyDocsPlugin()],
+  plugins: [react(), clearBotLogsPlugin(), serveDocsPlugin(), copyDocsPlugin()],
   envDir: '../',
   server: {
     host: '0.0.0.0',
