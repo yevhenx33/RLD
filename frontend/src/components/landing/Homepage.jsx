@@ -594,25 +594,40 @@ function CoreArchitectureSection() {
 
 export default function Homepage() {
   useEffect(() => {
-    document.fonts.ready.then(() => {
-      const toCheck = [
-        "300 12px 'JetBrains Mono'",
-        "400 12px 'JetBrains Mono'",
-        "700 12px 'JetBrains Mono'",
-        "300 12px 'Space Grotesk'",
-        "400 12px 'Space Grotesk'",
-      ]
-      console.group('[Homepage] Font loading status')
-      toCheck.forEach(spec => {
-        const loaded = document.fonts.check(spec)
-        console.log(`${loaded ? '✅' : '❌'} ${spec}`)
-      })
-      console.log('[Homepage] All loaded faces:')
-      document.fonts.forEach(f => {
-        console.log(`  ${f.family} w${f.weight} style:${f.style} → ${f.status}`)
-      })
+    async function diagnose() {
+      console.group('[Homepage] Font diagnosis')
+
+      // 1. Check what /fonts.css actually contains
+      try {
+        const r = await fetch('/fonts.css', { cache: 'no-store' })
+        const text = await r.text()
+        const hasJBM = text.includes('JetBrains Mono')
+        const hasSG = text.includes('Space Grotesk')
+        console.log(`/fonts.css → ${r.status} ${r.statusText} | JBM: ${hasJBM ? '✅' : '❌'} | SpaceGrotesk: ${hasSG ? '✅' : '❌'} | ${text.length} bytes`)
+        if (!hasJBM) console.warn('fonts.css content (first 300 chars):\n' + text.slice(0, 300))
+      } catch (e) { console.error('/fonts.css fetch failed:', e) }
+
+      // 2. Check /fonts/JetBrainsMono-latin.woff2 serves correctly
+      try {
+        const r = await fetch('/fonts/JetBrainsMono-latin.woff2', { cache: 'no-store', method: 'HEAD' })
+        console.log(`/fonts/JetBrainsMono-latin.woff2 → ${r.status} | size: ${r.headers.get('content-length')} bytes | type: ${r.headers.get('content-type')}`)
+      } catch (e) { console.error('/fonts/JetBrainsMono-latin.woff2 fetch failed:', e) }
+
+      // 3. Force-load via FontFace API to bypass CSS pipeline
+      try {
+        const face = new FontFace('JBM-Debug', "url('/fonts/JetBrainsMono-latin.woff2')")
+        await face.load()
+        console.log(`FontFace force-load: ${face.status} — ${face.family}`)
+      } catch (e) { console.error('FontFace force-load failed:', e.message) }
+
+      // 4. List all known faces
+      await document.fonts.ready
+      console.log('Faces in FontFaceSet:')
+      document.fonts.forEach(f => console.log(`  ${f.family} w${f.weight} → ${f.status}`))
+
       console.groupEnd()
-    })
+    }
+    diagnose()
   }, [])
 
   return (
