@@ -28,7 +28,8 @@ def init_db():
             usdc_rate REAL,
             dai_rate REAL,
             usdt_rate REAL,
-            sofr_rate REAL
+            sofr_rate REAL,
+            susde_yield REAL
         )
     """)
     

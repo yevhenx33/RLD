@@ -1290,27 +1290,63 @@ async def get_market_info(request: Request):
 
 
 # ═══════════════════════════════════════════════════════════
-# sUSDe Yield Proxy (cached, avoids CSP issues)
+# sUSDe Yield (serves from indexed DB, with API fallback)
 # ═══════════════════════════════════════════════════════════
 
 _susde_cache = {"data": None, "ts": 0, "lock": threading.Lock()}
 _SUSDE_CACHE_TTL = 60  # seconds
 
-ETHENA_YIELD_URL = "https://ethena.fi/api/yields/protocol-and-staking-yield"
-
 
 @app.get("/api/yields/susde")
 async def get_susde_yield():
-    """Cached proxy for Ethena sUSDe staking yield.
-    Fetches from Ethena API server-side and caches for 60s."""
+    """Serve sUSDe yield from the rates-indexer DB.
+    Falls back to live Ethena API if DB is unavailable."""
     now = _time.time()
 
+    # Check cache first
     with _susde_cache["lock"]:
         if _susde_cache["data"] is not None and (now - _susde_cache["ts"]) < _SUSDE_CACHE_TTL:
             return {**_susde_cache["data"], "cached": True, "cacheAge": round(now - _susde_cache["ts"], 1)}
 
+    # Try reading from rates DB (production path)
+    try:
+        import sqlite3 as _sqlite3
+        # The rates-indexer writes to this DB
+        rates_db_paths = [
+            "/var/lib/data/clean_rates.db",   # Docker production
+            "/data/clean_rates.db",            # Alternative Docker path
+            os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "clean_rates.db"),
+        ]
+        db_path = None
+        for p in rates_db_paths:
+            if os.path.exists(p):
+                db_path = p
+                break
+
+        if db_path:
+            conn = _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            cur = conn.cursor()
+            # Get the latest susde_yield from hourly_stats
+            cur.execute("SELECT susde_yield FROM hourly_stats WHERE susde_yield IS NOT NULL ORDER BY timestamp DESC LIMIT 1")
+            row = cur.fetchone()
+            conn.close()
+
+            if row and row[0] is not None:
+                result = {
+                    "stakingYield": row[0],
+                    "source": "indexed",
+                }
+                with _susde_cache["lock"]:
+                    _susde_cache["data"] = result
+                    _susde_cache["ts"] = now
+                return {**result, "cached": False, "cacheAge": 0}
+    except Exception:
+        pass  # Fall through to API fallback
+
+    # Fallback: fetch live from Ethena API
     try:
         import urllib.request as urlreq
+        ETHENA_YIELD_URL = "https://ethena.fi/api/yields/protocol-and-staking-yield"
         req = urlreq.Request(ETHENA_YIELD_URL, headers={"User-Agent": "RLD-Indexer/1.0"})
         with urlreq.urlopen(req, timeout=10) as resp:
             raw = json.loads(resp.read())
@@ -1321,6 +1357,7 @@ async def get_susde_yield():
             "avg30d": raw.get("avg30dSusdeYield", {}).get("value"),
             "avg90d": raw.get("avg90dSusdeYield", {}).get("value"),
             "lastUpdated": raw.get("stakingYield", {}).get("lastUpdated"),
+            "source": "ethena_api",
         }
 
         with _susde_cache["lock"]:
@@ -1333,7 +1370,7 @@ async def get_susde_yield():
         with _susde_cache["lock"]:
             if _susde_cache["data"] is not None:
                 return {**_susde_cache["data"], "cached": True, "stale": True, "cacheAge": round(now - _susde_cache["ts"], 1)}
-        raise HTTPException(status_code=502, detail=f"Ethena API unavailable: {e}")
+        raise HTTPException(status_code=502, detail=f"sUSDe yield unavailable: {e}")
 
 @app.post("/api/admin/reload-config")
 async def admin_reload_config(request: Request):

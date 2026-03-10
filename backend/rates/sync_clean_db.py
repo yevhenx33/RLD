@@ -14,7 +14,8 @@ SYMBOL_MAP = {
     "USDC": "usdc_rate",
     "DAI": "dai_rate",
     "USDT": "usdt_rate",
-    "SOFR": "sofr_rate"
+    "SOFR": "sofr_rate",
+    "sUSDe": "susde_yield"
 }
 
 
@@ -27,9 +28,15 @@ def _ensure_tables(cursor):
             usdc_rate REAL,
             dai_rate REAL,
             usdt_rate REAL,
-            sofr_rate REAL
+            sofr_rate REAL,
+            susde_yield REAL
         )
     """)
+    # Migrate existing tables: add susde_yield column if missing
+    try:
+        cursor.execute("ALTER TABLE hourly_stats ADD COLUMN susde_yield REAL")
+    except Exception:
+        pass  # Column already exists
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sync_state (
             key TEXT PRIMARY KEY,
@@ -103,10 +110,14 @@ def _sync_asset_incremental(conn_raw, cursor_clean, table, col_name, since_ts):
     hour_floor = (since_ts // 3600) * 3600
 
     cursor_raw = conn_raw.cursor()
-    cursor_raw.execute(
-        f"SELECT timestamp, apy FROM {table} WHERE timestamp >= ?",
-        (hour_floor,)
-    )
+    try:
+        cursor_raw.execute(
+            f"SELECT timestamp, apy FROM {table} WHERE timestamp >= ?",
+            (hour_floor,)
+        )
+    except Exception:
+        # Table doesn't exist yet (e.g. susde_yields before daemon creates it)
+        return 0
     rows = cursor_raw.fetchall()
 
     if not rows:

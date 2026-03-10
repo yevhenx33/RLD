@@ -958,6 +958,7 @@ async def broadcast_rates():
                             "DAI": latest.get("dai_rate"),
                             "USDT": latest.get("usdt_rate"),
                             "SOFR": latest.get("sofr_rate"),
+                            "sUSDe": latest.get("susde_yield"),
                             "ETH": latest.get("eth_price")
                         }
                     }
@@ -997,10 +998,12 @@ def get_rates(
             "USDC": "usdc_rate",
             "DAI": "dai_rate",
             "USDT": "usdt_rate",
-            "SOFR": "sofr_rate"
+            "SOFR": "sofr_rate",
+            "SUSDE": "susde_yield",
+            "sUSDe": "susde_yield",
         }
         
-        target_col = symbol_map.get(symbol.upper())
+        target_col = symbol_map.get(symbol.upper()) or symbol_map.get(symbol)
         if not target_col:
             raise HTTPException(status_code=400, detail="Invalid Symbol")
 

@@ -6,7 +6,8 @@ const SUSDE_YIELD_URL = `${API_URL}/yields/susde`;
 const fetcher = (url) => fetch(url).then((r) => r.json());
 
 /**
- * Fetches real-time sUSDe staking yield from backend proxy (cached Ethena data).
+ * Fetches real-time sUSDe staking yield from the backend.
+ * The rates daemon polls Ethena hourly and stores in DB.
  * Returns { stakingYield, protocolYield, avg30d, avg90d, isLoading, error }
  */
 export function useSusdeYield() {

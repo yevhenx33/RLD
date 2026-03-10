@@ -32,6 +32,11 @@ ASSETS = {
         "source_file": "SOFR.xlsx",
         "table": "sofr_rates",
         "type": "offchain_file"
+    },
+    "sUSDe": {
+        "table": "susde_yields",
+        "type": "offchain_api",
+        "api_url": "https://ethena.fi/api/yields/protocol-and-staking-yield"
     }
 }
 

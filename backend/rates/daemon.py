@@ -62,6 +62,8 @@ BLOCKS_7D = int(7 * 24 * 3600 / 12)  # ~50400 blocks
 SOFR_SYNC_INTERVAL = 86400  # Sync SOFR once per day
 SOFR_GENESIS = "2023-03-01"  # Backfill start date
 SOFR_API_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/search.json"
+SUSD_SYNC_INTERVAL = 3600   # Sync sUSDe yield every hour
+SUSD_API_URL = "https://ethena.fi/api/yields/protocol-and-staking-yield"
 
 # Read ETH_PRICE_GRAPH_URL after all envs loaded (config.py loads too early)
 ETH_PRICE_GRAPH_URL_LOCAL = os.getenv("ETH_PRICE_GRAPH_URL")
@@ -463,6 +465,46 @@ def sync_sofr_rates(conn):
         return 0
 
 
+def sync_susde_yield(conn):
+    """Fetch current sUSDe staking yield from Ethena API and insert into susde_yields."""
+    cursor = conn.cursor()
+
+    # Ensure table exists
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS susde_yields (
+            timestamp INTEGER PRIMARY KEY,
+            apy REAL
+        )
+    """)
+
+    try:
+        response = requests.get(SUSD_API_URL, timeout=15, headers={"User-Agent": "RLD-Indexer/1.0"})
+        response.raise_for_status()
+        data = response.json()
+
+        staking_yield = data.get("stakingYield", {}).get("value")
+        if staking_yield is None:
+            logger.debug("No sUSDe yield data returned from Ethena API")
+            return 0
+
+        # Store at hourly granularity (floor to current hour)
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        hour_ts = int(now.replace(minute=0, second=0, microsecond=0).timestamp())
+
+        cursor.execute(
+            "INSERT OR REPLACE INTO susde_yields (timestamp, apy) VALUES (?, ?)",
+            (hour_ts, float(staking_yield))
+        )
+        conn.commit()
+        logger.info(f"📊 sUSDe yield synced: {staking_yield:.2f}% (ts={hour_ts})")
+        return 1
+
+    except Exception as e:
+        logger.error(f"sUSDe yield sync error: {e}")
+        return 0
+
+
 def run_initial_repair(cursor, conn):
     """Repair gaps from the last 7 days on startup."""
     logger.info("🛠️  Running initial 7-day gap repair...")
@@ -555,10 +597,12 @@ def run_daemon():
     run_initial_repair(cursor, conn)
     sync_eth_prices(conn)  # Sync ETH prices on startup
     sync_sofr_rates(conn)  # Backfill SOFR from NY Fed on startup
+    sync_susde_yield(conn)  # Sync sUSDe yield from Ethena on startup
     sync_clean_db()
 
     last_sync_time = time.time()
     last_sofr_sync = time.time()
+    last_susde_sync = time.time()
 
     # Continuous loop
     while running:
@@ -587,6 +631,11 @@ def run_daemon():
                 if time.time() - last_sofr_sync > SOFR_SYNC_INTERVAL:
                     sync_sofr_rates(conn)
                     last_sofr_sync = time.time()
+
+                # Hourly sUSDe yield sync
+                if time.time() - last_susde_sync > SUSD_SYNC_INTERVAL:
+                    sync_susde_yield(conn)
+                    last_susde_sync = time.time()
             else:
                 logger.debug(f"Up to date at block {current_block}")
 
