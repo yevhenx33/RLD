@@ -19,7 +19,18 @@ const ERC20_ABI = [
   "function approve(address spender, uint256 amount) returns (bool)",
   "function allowance(address owner, address spender) view returns (uint256)",
   "function balanceOf(address owner) view returns (uint256)",
+  "function transfer(address to, uint256 amount) returns (bool)",
 ];
+
+const SUSDE_ABI = [
+  "function convertToAssets(uint256 shares) view returns (uint256)",
+  "function balanceOf(address owner) view returns (uint256)",
+  "function transfer(address to, uint256 amount) returns (bool)",
+];
+
+// Mainnet sUSDe address
+const SUSDE_ADDRESS = "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
+const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 
 
 // ── Hedge math (off-chain) ────────────────────────────────────────
@@ -378,6 +389,7 @@ export function useBasisTradeExecution(
         if (receipt.status === 1) {
           // Parse BasisTradeClosed event
           const iface = new ethers.Interface(BASIS_TRADE_FACTORY_ABI);
+          let sUsdeReturnedRaw = 0n;
           for (const log of receipt.logs) {
             try {
               const parsed = iface.parseLog({
@@ -385,11 +397,35 @@ export function useBasisTradeExecution(
                 data: log.data,
               });
               if (parsed?.name === "BasisTradeClosed") {
-                const sUsdeReturned = ethers.formatUnits(parsed.args.sUsdeReturned, 18);
-                console.log("[BasisTrade] sUSDe returned:", sUsdeReturned);
+                sUsdeReturnedRaw = parsed.args.sUsdeReturned;
+                console.log("[BasisTrade] sUSDe returned:", ethers.formatUnits(sUsdeReturnedRaw, 18));
                 break;
               }
             } catch { /* not our event */ }
+          }
+
+          // ── Burn excess sUSDe to simulate realistic flash loan repayment ──
+          try {
+            const bondMeta = JSON.parse(localStorage.getItem(`rld_bond_${brokerAddress.toLowerCase()}`) || "null");
+            if (bondMeta?.levDebt && sUsdeReturnedRaw > 0n) {
+              setStep("Settling flash loan...");
+              const sUsde = new ethers.Contract(SUSDE_ADDRESS, SUSDE_ABI, signer);
+              // Convert levDebt (PYUSD 6 dec) to sUSDe (18 dec)
+              // 1 sUSDe is worth convertToAssets(1e18) USDe ≈ PYUSD
+              const assetsPerShare = await sUsde.convertToAssets(ethers.parseUnits("1", 18));
+              // debtSUSDe = levDebt * 1e18 / assetsPerShare  (levDebt is in 6 dec)
+              const levDebtBig = BigInt(Math.ceil(bondMeta.levDebt)) * 10n ** 12n; // 6 dec → 18 dec
+              const burnAmount = (levDebtBig * 10n ** 18n) / assetsPerShare;
+              const userBal = await sUsde.balanceOf(account);
+              const actualBurn = burnAmount > userBal ? userBal / 2n : burnAmount; // safety cap
+              if (actualBurn > 0n) {
+                console.log(`[BasisTrade] Burning ${ethers.formatUnits(actualBurn, 18)} sUSDe (flash loan repayment simulation)`);
+                const burnTx = await sUsde.transfer(DEAD_ADDRESS, actualBurn);
+                await burnTx.wait();
+              }
+            }
+          } catch (burnErr) {
+            console.warn("[BasisTrade] Burn excess failed (non-critical):", burnErr);
           }
 
           // Clean up localStorage

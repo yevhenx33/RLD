@@ -20,7 +20,7 @@ export default function CloseTradeModal({
 
   const spread = (susdeYield || 0) - (usdcCost || 0);
   const lev = bond.leverage || 3;
-  const lockedRate = spread * lev;
+  const lockedRate = bond.entryBorrowRate || (spread * lev);
   const leveragedCapital = bond.principal * lev;
   const pnl = leveragedCapital * (spread / 100) * (bond.elapsed / 365);
   const estReturn = bond.principal + pnl;
@@ -76,12 +76,12 @@ export default function CloseTradeModal({
 
           {/* Return */}
           <div className="border border-white/10 bg-white/[0.02] p-4">
-            <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">Estimated Return</div>
+            <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">You Receive</div>
             <div className="flex items-baseline justify-between">
               <span className={`text-2xl font-light tracking-tight ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
                 {formatNum(estReturn, 2)}
               </span>
-              <span className="text-xs text-gray-500 uppercase tracking-widest">sUSDe</span>
+              <span className="text-xs text-pink-400 uppercase tracking-widest font-bold">sUSDe</span>
             </div>
           </div>
 
