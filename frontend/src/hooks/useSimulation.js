@@ -73,7 +73,7 @@ const SIM_QUERY = `
       positionToken { name symbol address }
       brokerFactory
       infrastructure {
-        brokerRouter brokerExecutor twammHook bondFactory
+        brokerRouter brokerExecutor twammHook bondFactory basisTradeFactory
         poolFee tickSpacing poolManager v4Quoter
         v4PositionManager v4PositionDescriptor v4StateView
         universalRouter permit2
@@ -168,6 +168,7 @@ export function useSimulation({
             broker_executor: mi.infrastructure.brokerExecutor,
             twamm_hook: mi.infrastructure.twammHook,
             bond_factory: mi.infrastructure.bondFactory,
+            basis_trade_factory: mi.infrastructure.basisTradeFactory,
             pool_fee: mi.infrastructure.poolFee,
             tick_spacing: mi.infrastructure.tickSpacing,
             pool_manager: mi.infrastructure.poolManager,

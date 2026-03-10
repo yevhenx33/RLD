@@ -2,10 +2,12 @@ import React, { useState, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useWallet } from "../../context/WalletContext";
 import { useFaucet } from "../../hooks/useFaucet";
+import { useToast } from "../../hooks/useToast";
 import { useSim } from "../../context/SimulationContext";
 import { mutate } from "swr";
 import { SIM_API } from "../../config/simulationConfig";
 import WalletModal from "../modals/WalletModal";
+import { ToastContainer } from "../common/Toast";
 import { Menu, X, Droplets, Loader2 } from "lucide-react";
 
 export default function Header({ isCapped, ratesLoaded, transparent = false }) {
@@ -13,6 +15,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
+  const { toasts, addToast, removeToast } = useToast();
 
   // Faucet integration
   const { marketInfo } = useSim();
@@ -26,6 +29,24 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
     account,
     waUsdcAddr,
   );
+
+  const handleFaucetClick = async () => {
+    try {
+      await requestFaucet(account);
+      addToast({
+        type: "faucet",
+        title: "Simulation Funded",
+        message: "Your wallet has been credited with USDC and waUSDC.",
+        duration: 5000,
+      });
+    } catch (err) {
+      addToast({
+        type: "error",
+        title: "Faucet Failed",
+        message: err.message || "Could not fund wallet",
+      });
+    }
+  };
 
   const handleWalletClick = () => {
     if (account) {
@@ -192,7 +213,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
             {/* REQUEST FUNDS (only when connected) */}
             {account && (
               <button
-                onClick={() => requestFaucet(account)}
+                onClick={handleFaucetClick}
                 disabled={faucetLoading}
                 className="hidden lg:flex items-center gap-2 border border-cyan-500/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all px-3 py-2 text-xs font-bold uppercase tracking-widest text-cyan-400 disabled:opacity-50 disabled:cursor-wait"
               >
@@ -305,7 +326,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
             {account && (
               <div className="pt-4 border-t border-white/5">
                 <button
-                  onClick={() => requestFaucet(account)}
+                  onClick={handleFaucetClick}
                   disabled={faucetLoading}
                   className="w-full flex items-center justify-center gap-2 border border-cyan-500/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all px-3 py-3 text-sm font-bold uppercase tracking-widest text-cyan-400 disabled:opacity-50 disabled:cursor-wait"
                 >
@@ -327,13 +348,14 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
         account={account}
         usdcBalance={usdcBalance}
         waUsdcBalance={waUsdcBalance}
-        onFaucet={requestFaucet}
+        onFaucet={handleFaucetClick}
         faucetLoading={faucetLoading}
         disconnect={() => {
           disconnect();
           setIsModalOpen(false);
         }}
       />
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </>
   );
 }

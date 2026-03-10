@@ -194,6 +194,8 @@ class V4PoolReader:
         """
         Calculate exact swap amount to move pool to target price.
         
+        target_price is the wRLP mark price in waUSDC terms (waUSDC per wRLP).
+        
         Returns: (amount_in, zero_for_one, direction)
             amount_in: raw token amount
             zero_for_one: swap direction
@@ -205,34 +207,54 @@ class V4PoolReader:
         if sqrtPriceX96_current == 0 or liquidity == 0:
             return (0, True, "UNKNOWN")
         
-        # Current and target price in raw token1/token0 terms
-        # The factory initializes the pool so raw_price IS the mark price
+        # raw_price_wad is token1/token0 from sqrtPriceX96.
+        # When wausdc_is_token0: raw = wRLP/waUSDC (inverse of mark)
+        # When wRLP is token0:   raw = waUSDC/wRLP (= mark price)
         raw_price_wad = (sqrtPriceX96_current * sqrtPriceX96_current * 10**18) // Q192
-        current_wrlp_price = raw_price_wad
         
-        target_price_wad = int(target_price * 10**18)
-        target_raw_wad = target_price_wad
+        # Convert target_price (waUSDC/wRLP) to raw token1/token0 units
+        if self.wausdc_is_token0:
+            # raw = wRLP/waUSDC = 1/mark_price
+            target_raw_wad = int(10**36 // int(target_price * 10**18)) if target_price > 0 else 0
+        else:
+            # raw = waUSDC/wRLP = mark_price
+            target_raw_wad = int(target_price * 10**18)
         
         # target sqrtPriceX96 = sqrt(target_raw * 2^192 / 1e18)
         target_price_q192 = (target_raw_wad * Q192) // (10**18)
         sqrtPriceX96_target = int(math.isqrt(target_price_q192))
         
-        # Direction based on wRLP price
-        sell_wrlp = current_wrlp_price > target_price_wad
+        # Direction: compare in raw units (token1/token0)
+        # If raw > target_raw: raw price too high → need to move it down
+        # When wausdc_is_token0: raw=wRLP/waUSDC too high means wRLP overpriced → sell wRLP
+        # When wRLP is token0:  raw=waUSDC/wRLP too high means waUSDC overvalued → buy wRLP
+        if self.wausdc_is_token0:
+            sell_wrlp = raw_price_wad < target_raw_wad  # raw < target means mark > target_mark → sell
+        else:
+            sell_wrlp = raw_price_wad > target_raw_wad
         
         delta_sqrt = abs(sqrtPriceX96_target - sqrtPriceX96_current)
         
         if sell_wrlp:
-            # Sell wRLP: give token1 (if wausdc is token0)
-            zero_for_one = False
-            # amount1 = L * |delta_sqrt| / Q96
-            amount_in = (liquidity * delta_sqrt) // Q96
+            if self.wausdc_is_token0:
+                # Sell wRLP (token1→token0): zeroForOne=False
+                zero_for_one = False
+                amount_in = (liquidity * delta_sqrt) // Q96
+            else:
+                # Sell wRLP (token0→token1): zeroForOne=True
+                zero_for_one = True
+                product = (sqrtPriceX96_current * sqrtPriceX96_target) // Q96
+                amount_in = (liquidity * delta_sqrt) // product if product > 0 else 0
         else:
-            # Buy wRLP: give token0 (waUSDC)
-            zero_for_one = True
-            # amount0 = L * |delta_sqrt| / (sqrtP_current * sqrtP_target / Q96)
-            product = (sqrtPriceX96_current * sqrtPriceX96_target) // Q96
-            amount_in = (liquidity * delta_sqrt) // product if product > 0 else 0
+            if self.wausdc_is_token0:
+                # Buy wRLP (token0→token1): zeroForOne=True
+                zero_for_one = True
+                product = (sqrtPriceX96_current * sqrtPriceX96_target) // Q96
+                amount_in = (liquidity * delta_sqrt) // product if product > 0 else 0
+            else:
+                # Buy wRLP (token1→token0): zeroForOne=False
+                zero_for_one = False
+                amount_in = (liquidity * delta_sqrt) // Q96
         
         direction = "SELL_WRLP" if sell_wrlp else "BUY_WRLP"
         return (amount_in, zero_for_one, direction)

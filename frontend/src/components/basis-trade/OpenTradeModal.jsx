@@ -13,8 +13,9 @@ export default function OpenTradeModal({
   leverage,
   duration,
   spread,
-  hedgeSize = 0,
-  selectedToken = "sUSDe",
+  levDebt = 0,
+  hedge = 0,
+  selectedToken = "USDC",
   executing,
   executionStep,
   executionError,
@@ -88,7 +89,7 @@ export default function OpenTradeModal({
             {[
               { label: "Leverage", value: `${lev}×`, color: "text-pink-400" },
               { label: "Duration", value: `${days} Days` },
-              { label: "Rate_Hedge", value: `${formatNum(hedgeSize, 2)} wRLP`, color: "text-purple-400" },
+              { label: "Rate_Hedge", value: `${Math.ceil(hedge).toLocaleString()} PYUSD`, color: "text-purple-400" },
               { label: "Est._Return", value: `${estReturn >= 0 ? "+" : ""}${formatNum(estReturn, 2)} ${selectedToken}`, color: estReturn >= 0 ? "text-green-400" : "text-red-400" },
             ].map((row) => (
               <div key={row.label} className="flex justify-between items-center px-4 py-2.5">
@@ -118,7 +119,7 @@ export default function OpenTradeModal({
             ) : executing ? (
               <span className="text-pink-400/60">{executionStep}</span>
             ) : (
-              <span className="text-gray-600">REVIEW · sUSDe → Aave · USDC borrow · wRLP hedge via TWAMM</span>
+              <span className="text-gray-600">REVIEW · USDC → Morpho flash → sUSDe collateral · PYUSD hedge via TWAMM</span>
             )}
           </div>
         </div>

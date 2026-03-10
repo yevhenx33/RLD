@@ -4,19 +4,15 @@ import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 
 // ── ABI fragments ─────────────────────────────────────────────────
 
-const BOND_FACTORY_ABI = [
-  "function mintBond(uint256 notional, uint256 hedgeAmount, uint256 duration, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying) returns (address broker)",
-  "function closeBond(address broker, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying)",
-  "event BondMinted(address indexed user, address indexed broker, uint256 notional, uint256 hedge, uint256 duration)",
-  "event BondClosed(address indexed user, address indexed broker, uint256 collateralReturned, uint256 positionReturned)",
-];
-
-const WRAPPED_ATOKEN_ABI = [
-  "function aToken() view returns (address)",
-];
-
-const ATOKEN_ABI = [
-  "function UNDERLYING_ASSET_ADDRESS() view returns (address)",
+// New flash-loan BasisTradeFactory: accepts BasisTradeParams struct
+const BASIS_TRADE_FACTORY_ABI = [
+  // openBasisTradeWithUSDC(BasisTradeParams params) returns (address broker)
+  // BasisTradeParams = (uint256 amount, uint256 levDebt, uint256 hedge, uint256 duration, PoolKey poolKey, bytes swapPath)
+  "function openBasisTradeWithUSDC(tuple(uint256 amount, uint256 levDebt, uint256 hedge, uint256 duration, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bytes swapPath) params) returns (address broker)",
+  "function openBasisTrade(tuple(uint256 amount, uint256 levDebt, uint256 hedge, uint256 duration, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bytes swapPath) params, uint256 sUsdeAmount) returns (address broker)",
+  "function closeBasisTrade(address broker, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey)",
+  "event BasisTradeOpened(address indexed user, address indexed broker, uint256 amount, uint256 effectiveLeverage, uint256 duration)",
+  "event BasisTradeClosed(address indexed user, address indexed broker, uint256 sUsdeReturned)",
 ];
 
 const ERC20_ABI = [
@@ -26,22 +22,53 @@ const ERC20_ABI = [
 ];
 
 
+// ── Hedge math (off-chain) ────────────────────────────────────────
+
+/**
+ * Compute levDebt and hedge from user inputs.
+ *
+ * @param {number} capitalUSD   User capital in USD (e.g., 5000)
+ * @param {number} leverage     Target leverage multiplier (e.g., 3 => 3x)
+ * @param {number} durationDays Duration in days (e.g., 90)
+ * @param {number} borrowRateAPY Morpho borrow APY (e.g., 2.9 for 2.9%)
+ * @returns {{ levDebt: number, hedge: number }}
+ */
+function computeLevDebtAndHedge(capitalUSD, leverage, durationDays, borrowRateAPY = 2.9) {
+  // levDebt = capital × (leverage - 1)
+  // This is the additional PYUSD borrowed via flash to achieve target leverage
+  const levDebt = capitalUSD * (leverage - 1);
+
+  // α = borrowRate × T  (T = duration in years)
+  const T = durationDays / 365;
+  const r = borrowRateAPY / 100;
+  const alpha = r * T;
+
+  // hedge = levDebt × α / (1 - α)
+  // Self-covering: the hedge covers its own interest cost
+  let hedge = 0;
+  if (alpha > 0 && alpha < 1) {
+    hedge = (levDebt * alpha) / (1 - alpha);
+  }
+
+  return { levDebt, hedge };
+}
+
 
 // ── Hook ──────────────────────────────────────────────────────────
 
 /**
- * useBondExecution — Create and close bonds via BondFactory (single TX each).
+ * useBasisTradeExecution — Open and close basis trades via BasisTradeFactory (flash loan edition).
  *
- * Bond creation:
- *   1. Ensure waUSDC approval for BondFactory
- *   2. bondFactory.mintBond() → creates broker, short, TWAMM, freezes, mints NFT
+ * Open:
+ *   1. Ensure USDC approval for BasisTradeFactory
+ *   2. Compute levDebt and hedge off-chain from (capital, leverage, duration)
+ *   3. basisTradeFactory.openBasisTradeWithUSDC(BasisTradeParams)
  *
- * Bond close:
- *   1. Ensure NFT approval for BondFactory
- *   2. bondFactory.closeBond() → unfreezes, unwinds TWAMM, repays debt, withdraws
+ * Close:
+ *   1. basisTradeFactory.closeBasisTrade(broker, poolKey)
  *
  * @param {string} account           Connected wallet address
- * @param {object} infrastructure    { bond_factory, broker_factory, broker_router, twamm_hook, pool_fee, tick_spacing }
+ * @param {object} infrastructure    { basis_trade_factory, twamm_hook, pool_fee, tick_spacing }
  * @param {string} collateralAddr    waUSDC address
  * @param {string} positionAddr      wRLP address
  */
@@ -57,15 +84,17 @@ export function useBasisTradeExecution(
   const [txHash, setTxHash] = useState(null);
 
   /**
-   * Create a bond in a single transaction.
+   * Open a basis trade in a single atomic transaction (flash loan).
    *
-   * @param {number} notionalUSD    Bond notional in USD
-   * @param {number} durationHours  Bond duration in hours (>= 1)
-   * @param {number} ratePercent    Entry rate (e.g. 5.25)
-   * @param {Function} onSuccess    Called with { receipt, brokerAddress }
+   * @param {number}   capitalUSD     Capital in USD (e.g., 5000)
+   * @param {number}   leverage       Leverage multiplier (e.g., 3)
+   * @param {number}   durationDays   Duration in days (e.g., 90)
+   * @param {number}   borrowRateAPY  Current borrow rate (e.g., 2.9)
+   * @param {Function} onSuccess      Called with { receipt, brokerAddress }
+   * @param {object}   opts           { useUnderlying: bool }
    */
   const createBasisTrade = useCallback(
-    async (notionalUSD, durationHours, ratePercent, onSuccess, { useUnderlying = true } = {}) => {
+    async (capitalUSD, leverage, durationDays, borrowRateAPY, onSuccess, { useUnderlying = true } = {}) => {
       if (
         !account ||
         !collateralAddr ||
@@ -75,22 +104,19 @@ export function useBasisTradeExecution(
         return;
       }
 
-      // Bond factory address (from indexer API — no fallback)
-      const bondFactoryAddr = infrastructure?.bond_factory;
+      const basisTradeFactoryAddress = infrastructure?.basis_trade_factory;
 
-      if (!bondFactoryAddr || !infrastructure?.twamm_hook) {
-        setError("Bond factory not available — waiting for config");
+      if (!basisTradeFactoryAddress || !infrastructure?.twamm_hook) {
+        setError("BasisTrade factory not available — waiting for config");
         return;
       }
 
       setExecuting(true);
       setError(null);
-      setStep("Preparing...");
+      setStep("Computing strategy...");
 
       try {
         // ── Direct RPC provider for read-only calls ─────────────
-        // Uses the Vite-proxied RPC (/rpc → Anvil) to avoid MetaMask
-        // RPC issues after simulation restarts.
         const readProvider = new ethers.JsonRpcProvider(RPC_URL);
 
         // ── Build pool key ──────────────────────────────────────
@@ -103,50 +129,51 @@ export function useBasisTradeExecution(
           hooks: infrastructure.twamm_hook,
         };
 
-        // ── Compute amounts ─────────────────────────────────────
-        // Hedge amount = notional × rate × duration / 8760
-        // Minimum: max(1% of notional, $1) to avoid TWAMM sell rate underflow
-        const hedgeUSD = Math.max(
-          notionalUSD * (ratePercent / 100) * (durationHours / 8760),
-          notionalUSD * 0.01,  // at least 1% of notional
-          1.0,                 // at least $1
-        );
-        const notionalWei = ethers.parseUnits(notionalUSD.toString(), 6);
-        const hedgeWei = ethers.parseUnits(hedgeUSD.toFixed(6), 6);
-        
-        // Basis Trade: The hedge is borrowed against the Aave collateral,
-        // so the user only needs to supply the notional capital.
-        const totalWei = notionalWei;
+        // ── Compute levDebt and hedge off-chain ─────────────────
+        const lev = Number(leverage) || 1;
+        const days = Number(durationDays) || 90;
+        const { levDebt, hedge } = computeLevDebtAndHedge(capitalUSD, lev, days, borrowRateAPY);
 
-        console.log("[BasisTrade] Notional:", notionalUSD, "Hedge (Borrowed):", hedgeUSD.toFixed(6));
+        const amountWei = ethers.parseUnits(capitalUSD.toString(), 6);
+        const levDebtWei = ethers.parseUnits(Math.ceil(levDebt).toString(), 6);
+        const hedgeWei = ethers.parseUnits(Math.ceil(hedge).toString(), 6);
+        const durationSec = Math.floor(days * 86400);
+
+        console.log("[BasisTrade] Computed:", {
+          capital: capitalUSD,
+          leverage: lev,
+          duration: days,
+          levDebt: Math.ceil(levDebt),
+          hedge: Math.ceil(hedge),
+          totalFlash: Math.ceil(levDebt + hedge),
+          durationSec,
+        });
+
+        // The user only needs to supply the capital (USDC/sUSDe)
+        const totalWei = amountWei;
 
         // ── Determine which token to approve ─────────────────────
-        let approveTokenAddr = collateralAddr; // default: waUSDC
-        let approveLabel = "waUSDC";
+        let approveTokenAddr;
+        let approveLabel;
 
         if (useUnderlying) {
-          // Derive USDC address from WrappedAToken chain (read-only, use direct RPC)
-          try {
-            const wrapper = new ethers.Contract(collateralAddr, WRAPPED_ATOKEN_ABI, readProvider);
-            const aTokenAddr = await wrapper.aToken();
-            const aToken = new ethers.Contract(aTokenAddr, ATOKEN_ABI, readProvider);
-            approveTokenAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
-            approveLabel = "USDC";
-            console.log("[Bond] Using underlying:", approveTokenAddr);
-          } catch (e) {
-            console.warn("[Bond] Failed to derive underlying, falling back to waUSDC", e);
-          }
+          // USDC directly
+          approveTokenAddr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+          approveLabel = "USDC";
+        } else {
+          // sUSDe
+          approveTokenAddr = "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
+          approveLabel = "sUSDe";
         }
 
-        // ── Ensure approval (read-only check via direct RPC) ────
+        // ── Pre-flight balance check ────────────────────────────
         setStep("Checking balance...");
         const tokenReader = new ethers.Contract(approveTokenAddr, ERC20_ABI, readProvider);
-
-        // Pre-flight balance check
         const balance = await tokenReader.balanceOf(account);
+
         if (balance < totalWei) {
-          const have = Number(ethers.formatUnits(balance, 6)).toFixed(2);
-          const need = Number(ethers.formatUnits(totalWei, 6)).toFixed(2);
+          const have = Number(ethers.formatUnits(balance, useUnderlying ? 6 : 18)).toFixed(2);
+          const need = Number(ethers.formatUnits(totalWei, useUnderlying ? 6 : 18)).toFixed(2);
           setError(
             `Insufficient ${approveLabel} — need $${need}, have $${have}`,
           );
@@ -154,76 +181,80 @@ export function useBasisTradeExecution(
           return;
         }
 
+        // ── Ensure approval ────────────────────────────────────
         setStep("Checking approval...");
-        const allowance = await tokenReader.allowance(account, bondFactoryAddr);
+        const allowance = await tokenReader.allowance(account, basisTradeFactoryAddress);
 
-        // ── Get signer only when needed for transactions ────────
         let signer;
         if (allowance < totalWei) {
           setStep("Syncing chain ID...");
           signer = await getAnvilSigner();
-          setStep(`Approve ${approveLabel} for BondFactory...`);
+          setStep(`Approve ${approveLabel} for BasisTradeFactory...`);
           const tokenToApprove = new ethers.Contract(approveTokenAddr, ERC20_ABI, signer);
           const approveTx = await tokenToApprove.approve(
-            bondFactoryAddr,
+            basisTradeFactoryAddress,
             ethers.MaxUint256,
           );
           await approveTx.wait();
-          console.log(`[Bond] Approved BondFactory for ${approveLabel}`);
+          console.log(`[BasisTrade] Approved BasisTradeFactory for ${approveLabel}`);
         }
 
-        // ── Mint bond (single TX) ───────────────────────────────
+        // ── Open position (single TX with flash loan) ───────────
         if (!signer) {
           setStep("Syncing chain ID...");
           signer = await getAnvilSigner();
         }
-        setStep("Minting bond...");
-        const bondFactory = new ethers.Contract(
-          bondFactoryAddr,
-          BOND_FACTORY_ABI,
+        setStep("Opening position (flash loan)...");
+
+        const factory = new ethers.Contract(
+          basisTradeFactoryAddress,
+          BASIS_TRADE_FACTORY_ABI,
           signer,
         );
 
-        const durationSec = Math.floor(durationHours * 3600);
-
-        console.log("[Bond] mintBond params:", {
-          notionalWei: notionalWei.toString(),
-          hedgeWei: hedgeWei.toString(),
-          durationSec,
-          poolKey,
-        });
-
-        const tx = await bondFactory.mintBond(
-          notionalWei,
-          0, // Pass 0 for the mocked hedge since BondFactory expects upfront capital, but BasisTradeFactory borrows it
-          durationSec,
-          [
+        // Build BasisTradeParams struct
+        const params = {
+          amount: amountWei,
+          levDebt: levDebtWei,
+          hedge: hedgeWei,
+          duration: durationSec,
+          poolKey: [
             poolKey.currency0,
             poolKey.currency1,
             poolKey.fee,
             poolKey.tickSpacing,
             poolKey.hooks,
           ],
-          useUnderlying,
-          { gasLimit: 10_000_000 },
-        );
+          swapPath: "0x", // empty for V1
+        };
+
+        let tx;
+        if (useUnderlying) {
+          tx = await factory.openBasisTradeWithUSDC(params, {
+            gasLimit: 10_000_000,
+          });
+        } else {
+          tx = await factory.openBasisTrade(params, totalWei, {
+            gasLimit: 10_000_000,
+          });
+        }
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
-        console.log(`[MintBond] Gas used: ${receipt.gasUsed.toString()}`);
+        console.log(`[BasisTrade] Gas used: ${receipt.gasUsed.toString()}`);
 
         if (receipt.status === 1) {
-          // Parse BondMinted event for broker address
+          // Parse BasisTradeOpened event for broker address
           let brokerAddress = null;
-          const iface = new ethers.Interface(BOND_FACTORY_ABI);
+          const iface = new ethers.Interface(BASIS_TRADE_FACTORY_ABI);
           for (const log of receipt.logs) {
             try {
               const parsed = iface.parseLog({
                 topics: log.topics,
                 data: log.data,
               });
-              if (parsed?.name === "BondMinted") {
+              if (parsed?.name === "BasisTradeOpened") {
                 brokerAddress = parsed.args.broker;
                 break;
               }
@@ -232,21 +263,27 @@ export function useBasisTradeExecution(
             }
           }
 
-          // Save bond metadata to localStorage
+          // Fire success immediately so toast shows before localStorage writes
+          setStep("Position Opened ✓");
+          if (onSuccess) onSuccess({ ...receipt, brokerAddress });
+
+          // Save trade metadata to localStorage (non-blocking)
           if (brokerAddress) {
             try {
-              const bondMeta = {
-                notionalUSD,
-                ratePercent,
-                durationHours,
+              const tradeMeta = {
+                capitalUSD,
+                leverage: lev,
+                durationDays: days,
+                levDebt: Math.ceil(levDebt),
+                hedge: Math.ceil(hedge),
+                borrowRateAPY,
                 createdAt: Date.now(),
                 txHash: receipt.hash,
                 brokerAddress,
               };
               const key = `rld_bond_${brokerAddress.toLowerCase()}`;
-              localStorage.setItem(key, JSON.stringify(bondMeta));
+              localStorage.setItem(key, JSON.stringify(tradeMeta));
 
-              // Also save to bond list for enumeration
               const listKey = `rld_bonds_${account.toLowerCase()}`;
               const existing = JSON.parse(localStorage.getItem(listKey) || "[]");
               if (!existing.includes(brokerAddress.toLowerCase())) {
@@ -255,16 +292,13 @@ export function useBasisTradeExecution(
               }
             } catch { /* ignore localStorage errors */ }
           }
-
-          setStep("Bond created ✓");
-          if (onSuccess) onSuccess({ ...receipt, brokerAddress });
         } else {
           setError("Transaction reverted");
           setStep("");
         }
       } catch (e) {
-        console.error("[Bond] createBond failed:", e);
-        let msg = "Bond creation failed";
+        console.error("[BasisTrade] createBasisTrade failed:", e);
+        let msg = "Strategy entry failed";
         if (e.reason) msg = e.reason;
         else if (e.message?.includes("user rejected")) msg = "User rejected";
         else if (e.data) {
@@ -283,12 +317,9 @@ export function useBasisTradeExecution(
   );
 
   /**
-   * Close a bond in a single transaction via BondFactory.closeBond().
+   * Close a basis trade — unwind all positions, return sUSDe to user.
    *
-   * Flow: approve NFT → bondFactory.closeBond(broker, poolKey)
-   * The contract atomically: unfreezes, handles TWAMM, repays debt, withdraws.
-   *
-   * @param {string}   brokerAddress  The bond's PrimeBroker clone address
+   * @param {string}   brokerAddress  The trade's PrimeBroker clone address
    * @param {Function} onSuccess      Called with { brokerAddress } on completion
    */
   const closeBasisTrade = useCallback(
@@ -298,11 +329,10 @@ export function useBasisTradeExecution(
         return;
       }
 
-      const bondFactoryAddr = infrastructure?.bond_factory;
-      const brokerFactoryAddr = infrastructure?.broker_factory;
+      const basisTradeFactoryAddress = infrastructure?.basis_trade_factory;
 
-      if (!bondFactoryAddr || !brokerFactoryAddr) {
-        setError("Bond factory not available — waiting for config");
+      if (!basisTradeFactoryAddress) {
+        setError("BasisTrade factory not available — waiting for config");
         return;
       }
 
@@ -318,7 +348,7 @@ export function useBasisTradeExecution(
       try {
         const signer = await getAnvilSigner();
 
-        // ── 1. Build pool key ─────────────────────────────────────
+        // ── Build pool key ─────────────────────────────────────
         const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();
         const poolKeyArr = [
           sorted ? positionAddr : collateralAddr,
@@ -328,35 +358,35 @@ export function useBasisTradeExecution(
           infrastructure.twamm_hook,
         ];
 
-        // ── 2. Close bond (single TX, no approval needed) ──────────
-        setStep("Closing bond...");
-        const bondFactory = new ethers.Contract(
-          bondFactoryAddr,
-          BOND_FACTORY_ABI,
+        // ── Close trade (single TX) ──────────────────────────────
+        setStep("Closing position...");
+        const factory = new ethers.Contract(
+          basisTradeFactoryAddress,
+          BASIS_TRADE_FACTORY_ABI,
           signer,
         );
 
-        const tx = await bondFactory.closeBond(brokerAddress, poolKeyArr, useUnderlying, {
+        const tx = await factory.closeBasisTrade(brokerAddress, poolKeyArr, {
           gasLimit: 25_000_000,
         });
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
-        console.log(`[CloseBond] Gas used: ${receipt.gasUsed.toString()}`);
+        console.log(`[BasisTrade] Close gas used: ${receipt.gasUsed.toString()}`);
 
         if (receipt.status === 1) {
-          // Parse BondClosed event for return amounts
-          const iface = new ethers.Interface(BOND_FACTORY_ABI);
+          // Parse BasisTradeClosed event
+          const iface = new ethers.Interface(BASIS_TRADE_FACTORY_ABI);
           for (const log of receipt.logs) {
             try {
               const parsed = iface.parseLog({
                 topics: log.topics,
                 data: log.data,
               });
-              if (parsed?.name === "BondClosed") {
-                const collReturned = ethers.formatUnits(parsed.args.collateralReturned, 6);
-                console.log("[CloseBond] Returned:", collReturned, "waUSDC");
+              if (parsed?.name === "BasisTradeClosed") {
+                const sUsdeReturned = ethers.formatUnits(parsed.args.sUsdeReturned, 18);
+                console.log("[BasisTrade] sUSDe returned:", sUsdeReturned);
                 break;
               }
             } catch { /* not our event */ }
@@ -373,15 +403,15 @@ export function useBasisTradeExecution(
             localStorage.removeItem(`rld_bond_${brokerAddress.toLowerCase()}`);
           } catch { /* ignore localStorage errors */ }
 
-          setStep("Bond closed ✓");
+          setStep("Position Closed ✓");
           if (onSuccess) onSuccess({ brokerAddress });
         } else {
           setError("Transaction reverted");
           setStep("");
         }
       } catch (e) {
-        console.error("[CloseBond] failed:", e);
-        let msg = "Close bond failed";
+        console.error("[BasisTrade] closeBasisTrade failed:", e);
+        let msg = "Close position failed";
         if (e.reason) msg = e.reason;
         else if (e.message?.includes("user rejected")) msg = "User rejected";
         else if (e.message?.includes("revert")) {
@@ -405,5 +435,6 @@ export function useBasisTradeExecution(
     error,
     step,
     txHash,
+    computeLevDebtAndHedge,
   };
 }

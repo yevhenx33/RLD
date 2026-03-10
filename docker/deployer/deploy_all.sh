@@ -56,6 +56,19 @@ V4_STATE_VIEW="0x7ffe42c4a5deea5b0fec41c94c136cf115597227"
 UNIVERSAL_ROUTER="0x66a9893cc07d91d95644aedd05d03f95e1dba8af"
 PERMIT2="0x000000000022D473030F116dDEE9F6B43aC78BA3"
 
+# ─── Basis Trade addresses (mainnet fork) ──────────────────────
+SUSDE="0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"
+USDE="0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"
+PYUSD="0x6c3ea9036406852006290770BEdFcAbA0e23A0e8"
+CURVE_USDE_USDC_POOL="0x02950460E2b9529D0E00284A5fA2d7bDF3fA4d72"
+CURVE_PYUSD_USDC_POOL="0x383E6b4437b59fff47B619CBA855CA29342A8559"
+
+# ─── Morpho Blue (mainnet fork) ────────────────────────────────
+MORPHO="0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
+MORPHO_ORACLE="0xE6212D05cB5aF3C821Fef1C1A233a678724F9E7E"
+MORPHO_IRM="0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC"
+MORPHO_LLTV="915000000000000000"  # 91.5%
+
 # ─── Wait for Anvil ───────────────────────────────────────────
 log_phase "0" "WAITING FOR ANVIL"
 for i in $(seq 1 60); do
@@ -576,6 +589,46 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════
+# PHASE 4.7: DEPLOY BASIS TRADE FACTORY (Flash Loan / Morpho Blue)
+# ═══════════════════════════════════════════════════════════════
+log_phase "4.7" "DEPLOY BASIS TRADE FACTORY (Morpho Flash Loan)"
+
+cd /workspace/contracts
+
+log_step "4.7" "Deploying BasisTradeFactory (18-arg Morpho constructor)..."
+BASIS_TRADE_FACTORY=$(forge create src/periphery/BasisTradeFactory.sol:BasisTradeFactory \
+    --private-key $DEPLOYER_KEY \
+    --rpc-url $RPC_URL \
+    --broadcast \
+    --constructor-args \
+        $BROKER_FACTORY_ADDR \
+        $TWAMM_HOOK \
+        $WAUSDC \
+        $POOL_MANAGER \
+        $MORPHO \
+        $SUSDE \
+        $USDE \
+        $USDC \
+        $PYUSD \
+        $CURVE_USDE_USDC_POOL \
+        $CURVE_PYUSD_USDC_POOL \
+        0 \
+        1 \
+        0 \
+        1 \
+        $MORPHO_ORACLE \
+        $MORPHO_IRM \
+        $MORPHO_LLTV \
+    2>&1 | grep "Deployed to:" | awk '{print $3}')
+
+if [ -n "$BASIS_TRADE_FACTORY" ]; then
+    log_ok "BasisTradeFactory: $BASIS_TRADE_FACTORY"
+else
+    log_info "BasisTradeFactory deploy failed (non-critical)"
+    BASIS_TRADE_FACTORY=""
+fi
+
+# ═══════════════════════════════════════════════════════════════
 log_phase "5" "WRITE DEPLOYMENT CONFIG"
 
 mkdir -p /config
@@ -593,6 +646,7 @@ cat > /config/deployment.json << EOF
     "broker_factory": "$BROKER_FACTORY_ADDR",
     "swap_router": "$SWAP_ROUTER",
     "bond_factory": "$BOND_FACTORY",
+    "basis_trade_factory": "$BASIS_TRADE_FACTORY",
     "broker_executor": "$BROKER_EXECUTOR",
     "pool_manager": "$POOL_MANAGER",
     "pool_id": "$POOL_ID",

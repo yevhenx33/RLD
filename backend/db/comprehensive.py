@@ -878,12 +878,10 @@ FIVE_MIN = 300  # seconds per bucket
 
 
 def build_5m_candles(since_ts: int = 0) -> int:
-    """Aggregate raw block_state + pool_state into price_candles_5m.
-
-    Reads all blocks with block_timestamp >= since_ts, groups them into
-    5-minute buckets, computes proper OHLC (open=first block, close=last,
-    high=max, low=min) for both index_price and mark_price, then upserts
-    the results into price_candles_5m.
+    """Aggregate raw block_state + pool_state into price_candles_5m using SQL.
+    
+    Performs grouping directly in SQLite to avoid loading the entire 
+    history into Python memory.
 
     Returns the number of candles written.
     """
@@ -895,59 +893,60 @@ def build_5m_candles(since_ts: int = 0) -> int:
         # candle always gets refreshed with new blocks.
         lookback_ts = max(0, since_ts - FIVE_MIN * 2)
 
-        # Fetch all relevant block_state rows joined with pool_state.
-        # pool_state has no timestamp so we join on block_number.
-        c.execute("""
-            SELECT
-                bs.block_number,
-                bs.block_timestamp           AS ts,
-                (bs.block_timestamp / ?)  * ? AS bucket_ts,
-                CAST(bs.index_price AS REAL)  AS index_price,
-                CAST(bs.normalization_factor AS REAL) AS nf,
-                CAST(bs.total_debt AS REAL)   AS debt,
-                ps.mark_price
-            FROM block_state bs
-            LEFT JOIN pool_state ps ON ps.block_number = bs.block_number
-            WHERE bs.block_timestamp >= ?
-            ORDER BY bs.block_timestamp ASC
-        """, (FIVE_MIN, FIVE_MIN, lookback_ts))
-        rows = c.fetchall()
+        # We construct the 5-minute buckets using SQL. SQLite doesn't have 
+        # standard FIRST/LAST window functions in all versions, so we use
+        # correlated subqueries for the FIRST and LAST values of the bucket.
+        # This is significantly faster and uses less memory than Python grouping.
 
+        c.execute("""
+            WITH BucketedBlocks AS (
+                SELECT
+                    bs.block_number,
+                    bs.block_timestamp,
+                    (bs.block_timestamp / ?) * ? AS bucket_ts,
+                    CAST(bs.index_price AS REAL) / 1e18 AS index_price,
+                    CAST(bs.normalization_factor AS REAL) / 1e18 AS nf,
+                    CAST(bs.total_debt AS REAL) / 1e6 AS debt,
+                    ps.mark_price
+                FROM block_state bs
+                LEFT JOIN pool_state ps ON ps.block_number = bs.block_number
+                WHERE bs.block_timestamp >= ?
+            ),
+            BucketBoundaries AS (
+                SELECT 
+                    bucket_ts,
+                    MIN(block_timestamp) as first_ts,
+                    MAX(block_timestamp) as last_ts,
+                    COUNT(*) as sample_count,
+                    MAX(index_price) as index_high,
+                    MIN(index_price) as index_low,
+                    MAX(mark_price) as mark_high,
+                    MIN(mark_price) as mark_low
+                FROM BucketedBlocks
+                GROUP BY bucket_ts
+            )
+            SELECT 
+                bb.bucket_ts AS ts,
+                bb.index_high,
+                bb.index_low,
+                bb.mark_high,
+                bb.mark_low,
+                bb.sample_count,
+                (SELECT index_price FROM BucketedBlocks b WHERE b.bucket_ts = bb.bucket_ts AND b.block_timestamp = bb.first_ts LIMIT 1) AS index_open,
+                (SELECT index_price FROM BucketedBlocks b WHERE b.bucket_ts = bb.bucket_ts AND b.block_timestamp = bb.last_ts LIMIT 1) AS index_close,
+                (SELECT mark_price FROM BucketedBlocks b WHERE b.bucket_ts = bb.bucket_ts AND b.block_timestamp = bb.first_ts LIMIT 1) AS mark_open,
+                (SELECT mark_price FROM BucketedBlocks b WHERE b.bucket_ts = bb.bucket_ts AND b.block_timestamp = bb.last_ts LIMIT 1) AS mark_close,
+                (SELECT nf FROM BucketedBlocks b WHERE b.bucket_ts = bb.bucket_ts AND b.block_timestamp = bb.last_ts LIMIT 1) AS nf_close,
+                (SELECT debt FROM BucketedBlocks b WHERE b.bucket_ts = bb.bucket_ts AND b.block_timestamp = bb.last_ts LIMIT 1) AS debt_close
+            FROM BucketBoundaries bb
+        """, (FIVE_MIN, FIVE_MIN, lookback_ts))
+        
+        rows = c.fetchall()
         if not rows:
             return 0
 
-        # Group into buckets
-        buckets: dict = {}
-        for row in rows:
-            bts = row["bucket_ts"]
-            if bts not in buckets:
-                buckets[bts] = []
-            buckets[bts].append(row)
-
         upserted = 0
-        for bts, brows in buckets.items():
-            # index_price values (WAD = 1e18)
-            idx_vals = [r["index_price"] / 1e18 for r in brows
-                        if r["index_price"] and r["index_price"] > 0]
-            # mark_price values (already float)
-            mk_vals = [r["mark_price"] for r in brows
-                       if r["mark_price"] is not None and r["mark_price"] > 0]
-
-            # NF and debt from the last block in the bucket
-            last = brows[-1]
-            nf_close  = (last["nf"]   / 1e18) if last["nf"]   else None
-            debt_close = (last["debt"] / 1e6)  if last["debt"] else None
-
-            idx_open  = idx_vals[0]  if idx_vals else None
-            idx_close = idx_vals[-1] if idx_vals else None
-            idx_high  = max(idx_vals) if idx_vals else None
-            idx_low   = min(idx_vals) if idx_vals else None
-
-            mk_open  = mk_vals[0]  if mk_vals else None
-            mk_close = mk_vals[-1] if mk_vals else None
-            mk_high  = max(mk_vals) if mk_vals else None
-            mk_low   = min(mk_vals) if mk_vals else None
-
+        for r in rows:
             c.execute("""
                 INSERT INTO price_candles_5m (
                     ts,
@@ -969,11 +968,11 @@ def build_5m_candles(since_ts: int = 0) -> int:
                     debt_close   = excluded.debt_close,
                     sample_count = excluded.sample_count
             """, (
-                bts,
-                idx_open, idx_high, idx_low, idx_close,
-                mk_open,  mk_high,  mk_low,  mk_close,
-                nf_close, debt_close,
-                len(brows),
+                r["ts"],
+                r["index_open"], r["index_high"], r["index_low"], r["index_close"],
+                r["mark_open"], r["mark_high"], r["mark_low"], r["mark_close"],
+                r["nf_close"], r["debt_close"],
+                r["sample_count"],
             ))
             upserted += 1
 

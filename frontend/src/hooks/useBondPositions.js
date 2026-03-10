@@ -18,9 +18,10 @@ const fetcher = (url) => fetch(url).then((r) => r.json());
  *
  * @param {string}  account      Connected wallet address
  * @param {number}  entryRate    Fallback rate (for accrued calculation)
+ * @param {string}  bondFactoryAddr Optional bond factory address filter (to separate Bonds from Basis Trades)
  * @param {number}  pollInterval Polling ms (default 15000)
  */
-export function useBondPositions(account, entryRate, pollInterval = 15000) {
+export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterval = 15000) {
   const apiUrl = account
     ? `${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all&enrich=true`
     : null;
@@ -35,11 +36,19 @@ export function useBondPositions(account, entryRate, pollInterval = 15000) {
   // ── Transform server data to match existing component contract ──
   const bonds = (data?.bonds || [])
     .filter((b) => b.status === "active") // only active bonds (closed bonds hidden)
+    .filter((b) => !bondFactoryAddr || (b.bond_factory && b.bond_factory.toLowerCase() === bondFactoryAddr.toLowerCase()))
     .map((b) => {
       const notional = b.notional_usd || 0;
       const rate = entryRate || 0;
       const elapsedDays = b.elapsed_days || 0;
       const accrued = notional * (rate / 100) * (elapsedDays / 365);
+
+      // Read entry-time borrow rate from localStorage (stored at position open)
+      let entryBorrowRate = rate;
+      try {
+        const meta = JSON.parse(localStorage.getItem(`rld_bond_${b.broker_address.toLowerCase()}`) || "null");
+        if (meta?.borrowRateAPY) entryBorrowRate = meta.borrowRateAPY;
+      } catch { /* ignore */ }
 
       return {
         id: b.bond_id,
@@ -47,6 +56,7 @@ export function useBondPositions(account, entryRate, pollInterval = 15000) {
         principal: notional,
         debtTokens: b.debt_usd || 0,
         fixedRate: rate,
+        entryBorrowRate,
         maturityDays: b.maturity_days || 0,
         elapsed: elapsedDays,
         remaining: b.remaining_days || 0,

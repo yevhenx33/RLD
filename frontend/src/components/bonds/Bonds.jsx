@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { ethers } from "ethers";
-import { RPC_URL } from "../../utils/anvil";
+import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
 import { Shield, Terminal, AlertTriangle, ChevronDown, Wallet } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
 import Header from "../layout/Header";
@@ -53,21 +53,28 @@ export default function BondsPage() {
   const { poolTVL, protocolStats, marketInfo } = useSim();
   const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
 
-  // Wallet balance — track both USDC and waUSDC
+  // Wallet balance & allowance
   const [walletBalance, setWalletBalance] = useState(null);
   const [usdcWalletBalance, setUsdcWalletBalance] = useState(null);
+  const [waUsdcAllowance, setWaUsdcAllowance] = useState(0);
+  const [usdcAllowance, setUsdcAllowance] = useState(0);
+
   useEffect(() => {
-    if (!account || !marketInfo?.collateral?.address) return;
+    if (!account || !marketInfo?.collateral?.address || !marketInfo?.infrastructure?.bond_factory) return;
     const fetchBal = async () => {
       try {
         const provider = new ethers.JsonRpcProvider(RPC_URL);
-        const balABI = ["function balanceOf(address) view returns (uint256)"];
-        // waUSDC balance
+        const balABI = ["function balanceOf(address) view returns (uint256)", "function allowance(address, address) view returns (uint256)"];
+        const bondFactory = marketInfo.infrastructure.bond_factory;
+
+        // waUSDC balance & allowance
         const waToken = new ethers.Contract(marketInfo.collateral.address, balABI, provider);
         const waBal = await waToken.balanceOf(account);
+        const waAllow = await waToken.allowance(account, bondFactory);
         setWalletBalance(Number(ethers.formatUnits(waBal, 6)));
+        setWaUsdcAllowance(Number(ethers.formatUnits(waAllow, 6)));
 
-        // Derive USDC address and fetch balance
+        // Derive USDC address and fetch balance & allowance
         try {
           const wrapABI = ["function aToken() view returns (address)"];
           const aTokenABI = ["function UNDERLYING_ASSET_ADDRESS() view returns (address)"];
@@ -77,14 +84,16 @@ export default function BondsPage() {
           const usdcAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
           const usdcToken = new ethers.Contract(usdcAddr, balABI, provider);
           const uBal = await usdcToken.balanceOf(account);
+          const uAllow = await usdcToken.allowance(account, bondFactory);
           setUsdcWalletBalance(Number(ethers.formatUnits(uBal, 6)));
+          setUsdcAllowance(Number(ethers.formatUnits(uAllow, 6)));
         } catch { /* ignore USDC balance fetch errors */ }
       } catch { /* ignore balance fetch errors */ }
     };
     fetchBal();
     const id = setInterval(fetchBal, 10000);
     return () => clearInterval(id);
-  }, [account, marketInfo?.collateral?.address]);
+  }, [account, marketInfo]);
 
   // Close token dropdown on outside click
   useEffect(() => {
@@ -96,6 +105,49 @@ export default function BondsPage() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  const [isApproving, setIsApproving] = useState(false);
+
+  const handleApprove = async () => {
+    try {
+      if (!marketInfo?.infrastructure?.bond_factory || !marketInfo?.collateral?.address) return;
+      setIsApproving(true);
+      const signer = await getAnvilSigner();
+      
+      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      let approveTokenAddr = marketInfo.collateral.address;
+      if (selectedToken === "USDC") {
+        const wrapABI = ["function aToken() view returns (address)"];
+        const aTokenABI = ["function UNDERLYING_ASSET_ADDRESS() view returns (address)"];
+        const wrapper = new ethers.Contract(approveTokenAddr, wrapABI, provider);
+        const aTokenAddr = await wrapper.aToken();
+        const aToken = new ethers.Contract(aTokenAddr, aTokenABI, provider);
+        approveTokenAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
+      }
+      
+      const token = new ethers.Contract(approveTokenAddr, ["function approve(address,uint256) returns (bool)"], signer);
+      const tx = await token.approve(marketInfo.infrastructure.bond_factory, ethers.MaxUint256);
+      addToast({ type: "info", title: "Approving", message: `Approving ${selectedToken}...` });
+      const receipt = await tx.wait();
+      
+      if (selectedToken === "USDC") {
+        setUsdcAllowance(Number.MAX_SAFE_INTEGER);
+      } else {
+        setWaUsdcAllowance(Number.MAX_SAFE_INTEGER);
+      }
+      
+      addToast({ type: "success", title: "Approved", message: `Successfully approved ${selectedToken} — tx ${receipt.hash.slice(0, 10)}…` });
+    } catch (err) {
+      console.error(err);
+      let msg = err.message;
+      if (err.reason) msg = err.reason;
+      else if (err.message?.includes("user rejected")) msg = "User rejected";
+      addToast({ type: "error", title: "Approval Failed", message: msg });
+    } finally {
+      setIsApproving(false);
+      try { await restoreAnvilChainId(); } catch {}
+    }
+  };
 
 
   // Bond execution hook (atomic via BrokerExecutor)
@@ -119,6 +171,7 @@ export default function BondsPage() {
   const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(
     account,
     latest?.apy,
+    marketInfo?.infrastructure?.bond_factory
   );
 
   const {
@@ -149,6 +202,12 @@ export default function BondsPage() {
     const ltv = calcInitialLTV(notional, hedge);
     return { hedge, ltv };
   }, [notional, latest.apy, maturityHours]);
+
+  const notionalAmount = Number(notional) || 0;
+  const hedgeAmount = hedgeInfo.hedge || 0;
+  const totalRequired = notionalAmount + hedgeAmount;
+  const currentAllowance = selectedToken === "USDC" ? usdcAllowance : waUsdcAllowance;
+  const needsApproval = currentAllowance < totalRequired;
 
   if (error)
     return (
@@ -222,17 +281,27 @@ export default function BondsPage() {
             actionButton={{
               label: !account
                 ? "Connect Wallet"
-                : bondExecuting
-                  ? bondStep || "Processing..."
-                  : activeTab === "OPEN" ? "Create Bond" : "Close Bond",
+                : activeTab === "OPEN"
+                  ? needsApproval 
+                    ? isApproving
+                      ? `Approving ${selectedToken}...`
+                      : `Approve ${selectedToken}`
+                    : bondExecuting 
+                      ? bondStep || "Processing..." 
+                      : "Create Bond"
+                  : bondExecuting
+                    ? bondStep || "Processing..."
+                    : "Close Bond",
               onClick: !account
                 ? connectWallet
                 : activeTab === "OPEN"
-                  ? () => setShowBondModal(true)
+                  ? needsApproval
+                    ? handleApprove
+                    : () => setShowBondModal(true)
                   : () => {
                       if (selectedBond) setShowCloseModal(true);
                     },
-              disabled: bondExecuting || (activeTab === "CLOSE" && !selectedBond),
+              disabled: bondExecuting || isApproving || (activeTab === "CLOSE" && !selectedBond),
               variant: activeProduct === "FIXED_BORROW" ? "pink" : activeTab === "CLOSE" ? "pink" : "cyan",
             }}
           >

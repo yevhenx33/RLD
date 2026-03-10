@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { ethers } from "ethers";
-import { RPC_URL } from "../../utils/anvil";
+import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
 import { TrendingUp, Terminal, AlertTriangle, ChevronDown, Layers } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
 import { formatNum } from "../../utils/helpers";
-import { calcHedgeSize, calcInitialLTV } from "../../utils/hedgeCalc";
+
 import { useToast } from "../../hooks/useToast";
 import { ToastContainer } from "../common/Toast";
 
@@ -111,10 +111,10 @@ export default function BasisTradePage() {
   const [actionDropdown, setActionDropdown] = useState(null);
   const [selectedToken, setSelectedToken] = useState("USDC");
   const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false);
-  const [expectedYield, setExpectedYield] = useState("");
+  const [expectedYield, setExpectedYield] = useState("10");
   const [leverage, setLeverage] = useState("3");
   const [timeHorizon, setTimeHorizon] = useState("365");
-  const [capital, setCapital] = useState("100000");
+  const [capital, setCapital] = useState("10000");
   const tokenDropdownRef = useRef(null);
   
   const { account, connectWallet } = useWallet();
@@ -140,26 +140,39 @@ export default function BasisTradePage() {
   const USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const [susdeBalance, setSusdeBalance] = useState(null);
   const [usdcBalance, setUsdcBalance] = useState(null);
+  const [susdeAllowance, setSusdeAllowance] = useState(0);
+  const [usdcAllowance, setUsdcAllowance] = useState(0);
+
   useEffect(() => {
-    if (!account) return;
+    if (!account || !marketInfo?.infrastructure) return;
+    const basisTradeFactory = marketInfo.infrastructure?.basis_trade_factory;
+    // Fallback: if basis_trade_factory isn't available yet, use broker_factory for allowance checks
+    const spender = basisTradeFactory || marketInfo.broker_factory;
+    if (!spender) return;
     const fetchBal = async () => {
       try {
         const provider = new ethers.JsonRpcProvider(RPC_URL);
-        const abi = ["function balanceOf(address) view returns (uint256)"];
+        const abi = ["function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)"];
+        
         const susde = new ethers.Contract(SUSDE_ADDRESS, abi, provider);
         const sBal = await susde.balanceOf(account);
+        const sAllow = await susde.allowance(account, spender);
         setSusdeBalance(Number(ethers.formatUnits(sBal, 18)));
-        try {
-          const usdc = new ethers.Contract(USDC_ADDRESS, abi, provider);
-          const uBal = await usdc.balanceOf(account);
-          setUsdcBalance(Number(ethers.formatUnits(uBal, 6)));
-        } catch { /* ignore */ }
-      } catch { /* ignore */ }
+        setSusdeAllowance(Number(ethers.formatUnits(sAllow, 18)));
+
+        const usdc = new ethers.Contract(USDC_ADDRESS, abi, provider);
+        const uBal = await usdc.balanceOf(account);
+        const uAllow = await usdc.allowance(account, spender);
+        setUsdcBalance(Number(ethers.formatUnits(uBal, 6)));
+        setUsdcAllowance(Number(ethers.formatUnits(uAllow, 6)));
+      } catch (e) {
+        console.warn("[BasisTrade] balance fetch error:", e);
+      }
     };
     fetchBal();
     const id = setInterval(fetchBal, 10000);
     return () => clearInterval(id);
-  }, [account]);
+  }, [account, marketInfo]);
   const walletBalance = selectedToken === "USDC" ? (usdcBalance ?? 0) : (susdeBalance ?? 0);
 
   useEffect(() => {
@@ -172,13 +185,47 @@ export default function BasisTradePage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Use basis trade execution to match BasisTradeFactory funding flow
+  const [isApproving, setIsApproving] = useState(false);
+
+  const handleApprove = async () => {
+    try {
+      if (!marketInfo?.infrastructure?.basis_trade_factory) return;
+      setIsApproving(true);
+      const signer = await getAnvilSigner();
+      const basisTradeFactory = marketInfo.infrastructure.basis_trade_factory;
+      const approveTokenAddr = selectedToken === "USDC" ? USDC_ADDRESS : SUSDE_ADDRESS;
+      
+      const token = new ethers.Contract(approveTokenAddr, ["function approve(address,uint256) returns (bool)"], signer);
+      const tx = await token.approve(basisTradeFactory, ethers.MaxUint256);
+      addToast({ type: "info", title: "Approving", message: `Approving ${selectedToken}...` });
+      const receipt = await tx.wait();
+      
+      if (selectedToken === "USDC") {
+        setUsdcAllowance(Number.MAX_SAFE_INTEGER);
+      } else {
+        setSusdeAllowance(Number.MAX_SAFE_INTEGER);
+      }
+      
+      addToast({ type: "success", title: "Approved", message: `Successfully approved ${selectedToken} — tx ${receipt.hash.slice(0, 10)}…` });
+    } catch (err) {
+      console.error(err);
+      let msg = err.message;
+      if (err.reason) msg = err.reason;
+      else if (err.message?.includes("user rejected")) msg = "User rejected";
+      addToast({ type: "error", title: "Approval Failed", message: msg });
+    } finally {
+      setIsApproving(false);
+      try { await restoreAnvilChainId(); } catch {}
+    }
+  };
+
   const {
     createBasisTrade,
     closeBasisTrade,
     executing: bondExecuting,
     error: bondError,
     step: bondStep,
+    computeLevDebtAndHedge,
   } = useBasisTradeExecution(
     account,
     marketInfo?.infrastructure ? { ...marketInfo.infrastructure, broker_factory: marketInfo.broker_factory } : undefined,
@@ -190,7 +237,11 @@ export default function BasisTradePage() {
   const basisApy = (latest?.apy || 0) + 4.2;
   const tradeLogic = useTradeLogic(basisApy);
 
-  const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(account, basisApy);
+  const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(
+    account, 
+    basisApy,
+    marketInfo?.infrastructure?.basis_trade_factory
+  );
 
   const {
     activeTab,
@@ -202,10 +253,18 @@ export default function BasisTradePage() {
   } = tradeLogic.actions;
 
   const hedgeInfo = useMemo(() => {
-    const hedge = calcHedgeSize(notional, basisApy, maturityHours);
-    const ltv = calcInitialLTV(notional, hedge);
-    return { hedge, ltv };
-  }, [notional, basisApy, maturityHours]);
+    const lev = Number(leverage) || 1;
+    const days = Number(timeHorizon) || 90;
+    const borrowRate = usdcCost || 2.9;
+    const { levDebt, hedge } = computeLevDebtAndHedge
+      ? computeLevDebtAndHedge(Number(capital) || 0, lev, days, borrowRate)
+      : { levDebt: 0, hedge: 0 };
+    return { levDebt, hedge };
+  }, [capital, leverage, timeHorizon, usdcCost, computeLevDebtAndHedge]);
+
+  const notionalAmount = Number(capital) || 0;
+  const currentAllowance = selectedToken === "USDC" ? usdcAllowance : susdeAllowance;
+  const needsApproval = currentAllowance < notionalAmount;
 
   if (error) return <div className="h-screen flex items-center justify-center text-red-600 bg-black font-mono text-xs">ERR: API_DISCONNECTED</div>;
   if (isLoading || !rates) return <div className="h-screen flex items-center justify-center text-gray-500 bg-black font-mono text-xs animate-pulse">SYSTEM_INITIALIZING...</div>;
@@ -318,7 +377,7 @@ export default function BasisTradePage() {
                   
                   {userBonds.map((bond) => {
                     const lev = bond.leverage || 3;
-                    const lockedRate = spread * lev;
+                    const lockedRate = bond.entryBorrowRate || basisApy;
                     const leveragedCapital = bond.principal * lev;
                     const pnl = leveragedCapital * (spread / 100) * (bond.elapsed / 365);
                     const remaining = bond.maturityDays - bond.elapsed;
@@ -380,9 +439,21 @@ export default function BasisTradePage() {
               { id: "CLOSE", label: "CLOSE", onClick: () => setActiveTab("CLOSE"), isActive: activeTab === "CLOSE" },
             ]}
             actionButton={{
-              label: !account ? "Connect Wallet" : bondExecuting ? bondStep || "Processing..." : activeTab === "OPEN" ? "Enter Strategy" : "Exit Strategy",
-              onClick: !account ? connectWallet : activeTab === "OPEN" ? () => setShowBondModal(true) : () => { if (selectedBond) setShowCloseModal(true); },
-              disabled: bondExecuting || (activeTab === "CLOSE" && !selectedBond),
+              label: !account 
+                ? "Connect Wallet" 
+                : activeTab === "OPEN"
+                  ? needsApproval
+                    ? isApproving ? `Approving ${selectedToken}...` : `Approve ${selectedToken}`
+                    : bondExecuting ? bondStep || "Processing..." : "Enter Strategy"
+                  : bondExecuting ? bondStep || "Processing..." : "Exit Strategy",
+              onClick: !account 
+                ? connectWallet 
+                : activeTab === "OPEN" 
+                  ? needsApproval 
+                    ? handleApprove 
+                    : () => setShowBondModal(true) 
+                  : () => { if (selectedBond) setShowCloseModal(true); },
+              disabled: bondExecuting || isApproving || (activeTab === "CLOSE" && !selectedBond),
               variant: "pink",
             }}
           >
@@ -461,7 +532,8 @@ export default function BasisTradePage() {
                 <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02] text-sm tracking-widest">
                   <SummaryRow label="Net_APY" value={`${formatNum(basisApy)}%`} />
                   <SummaryRow label="Leverage" value={`${leverage}x`} />
-                  <SummaryRow label="Hedge_Required" value={`${hedgeInfo.hedge.toFixed(2)} wRLP`} />
+
+                  <SummaryRow label="Hedge" value={`${Math.ceil(hedgeInfo.hedge).toLocaleString()} PYUSD`} />
                   {bondError && <div className="text-xs text-red-400 font-mono mt-2 break-all">{bondError}</div>}
                 </div>
               </>
@@ -543,9 +615,12 @@ export default function BasisTradePage() {
         onClose={() => setShowBondModal(false)}
         onConfirm={() => {
           setShowBondModal(false);
-          createBasisTrade(notional, maturityHours, basisApy, (receipt) => {
+          const lev = Number(leverage) || 1;
+          const days = Number(timeHorizon) || 90;
+          const borrowRate = usdcCost || 2.9;
+          createBasisTrade(Number(capital) || 0, lev, days, borrowRate, (receipt) => {
             addToast({ type: "success", title: "Position Opened", message: `${Number(capital).toLocaleString()} ${selectedToken} position created — tx ${receipt.hash.slice(0, 10)}…` });
-            if (receipt.brokerAddress) optimisticCreate(receipt.brokerAddress, notional, maturityHours);
+            if (receipt.brokerAddress) optimisticCreate(receipt.brokerAddress, Number(capital) || 0, days * 24);
             else refreshBonds();
           }, { useUnderlying: selectedToken === "USDC" });
         }}
@@ -555,7 +630,8 @@ export default function BasisTradePage() {
         susdeYield={susdeRate}
         usdcCost={usdcCost}
         spread={spread}
-        hedgeSize={hedgeInfo.hedge}
+        levDebt={hedgeInfo.levDebt}
+        hedge={hedgeInfo.hedge}
         selectedToken={selectedToken}
         executing={bondExecuting}
         executionStep={bondStep}

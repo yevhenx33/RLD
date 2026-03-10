@@ -70,6 +70,7 @@ if os.path.exists(config_file):
         "broker_router": "BROKER_ROUTER",
         "broker_executor": "BROKER_EXECUTOR",
         "bond_factory": "BOND_FACTORY",
+        "basis_trade_factory": "BASIS_TRADE_FACTORY",
         "v4_quoter": "V4_QUOTER",
         "v4_position_manager": "V4_POSITION_MANAGER",
         "v4_position_descriptor": "V4_POSITION_DESCRIPTOR",
@@ -80,7 +81,7 @@ if os.path.exists(config_file):
         "chaos_broker": "CHAOS_BROKER",
     }
     for json_key, env_key in CONFIG_MAP.items():
-        if json_key in deploy_config and env_key not in os.environ:
+        if json_key in deploy_config:
             os.environ[env_key] = str(deploy_config[json_key])
     # Set BROKERS from known broker addresses
     broker_keys = ["user_a_broker", "mm_broker", "chaos_broker"]
@@ -167,11 +168,17 @@ def main():
         lag = last_indexed - chain_head
         if last_indexed > 0 and lag > 1:
             logger.warning(f"  ⚠️  STALE DB DETECTED: indexed block {last_indexed:,} > chain head {chain_head:,} (lag: {lag:,})")
-            logger.warning(f"  🔄 Simulation was restarted — wiping DB and re-indexing from scratch")
-            if os.path.exists(db_path):
-                os.remove(db_path)
-            init_comprehensive_db()
-            logger.info(f"  ✅ DB reset complete. Will index from chain head.")
+            logger.warning(f"  🔄 Simulation was restarted — clearing indexer tables (preserving bonds)")
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            c = conn.cursor()
+            # Drop indexer tables but preserve bonds (user positions)
+            for table in ("block_state", "pool_state", "events", "broker_positions",
+                          "lp_positions", "transactions", "indexer_state", "price_candles_5m"):
+                c.execute(f"DELETE FROM {table}")
+            conn.commit()
+            conn.close()
+            logger.info(f"  ✅ Indexer tables cleared. Bonds preserved. Will re-index from chain head.")
         else:
             logger.info(f"  Chain head: {chain_head:,} | Last indexed: {last_indexed:,} | OK")
     except Exception as e:
@@ -210,7 +217,7 @@ def main():
     # Attach config to app for /health and /config endpoints
     # Augment with infrastructure addresses loaded from deployment.json
     infra_keys = (
-        "broker_router", "broker_executor", "bond_factory", "v4_quoter", "broker_factory", "swap_router",
+        "broker_router", "broker_executor", "bond_factory", "basis_trade_factory", "v4_quoter", "broker_factory", "swap_router",
         "v4_position_manager", "v4_position_descriptor", "v4_state_view",
         "universal_router", "permit2",
     )

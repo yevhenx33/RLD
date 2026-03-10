@@ -139,6 +139,7 @@ class Infrastructure:
     broker_executor: str = ""
     twamm_hook: str = ""
     bond_factory: str = ""
+    basis_trade_factory: str = ""
     pool_fee: int = 500
     tick_spacing: int = 5
     pool_manager: str = ""
@@ -449,6 +450,27 @@ def _get_market_info() -> Optional[MarketInfo]:
         if not market_config:
             return None
 
+        # Re-read infrastructure addresses from deployment.json to avoid stale env cache
+        _deploy_json_path = os.environ.get("CONFIG_FILE", "/config/deployment.json")
+        if not os.path.exists(_deploy_json_path):
+            # Try the default dev path
+            _deploy_json_path = os.path.join(os.path.dirname(__file__), "../../docker/deployment.json")
+        if os.path.exists(_deploy_json_path):
+            try:
+                with open(_deploy_json_path) as _f:
+                    _deploy = json.load(_f)
+                _infra_keys = (
+                    "broker_router", "broker_executor", "bond_factory", "basis_trade_factory",
+                    "v4_quoter", "broker_factory", "swap_router", "pool_manager",
+                    "v4_position_manager", "v4_position_descriptor", "v4_state_view",
+                    "universal_router", "permit2",
+                )
+                for _k in _infra_keys:
+                    if _k in _deploy:
+                        market_config[_k] = _deploy[_k]
+            except Exception:
+                pass  # Fall through to cached values
+
         import urllib.request as urlreq
 
         rpc_url = market_config.get("rpc_url", os.environ.get("RPC_URL", "http://localhost:8545"))
@@ -495,6 +517,7 @@ def _get_market_info() -> Optional[MarketInfo]:
                 broker_executor=market_config.get("broker_executor", ""),
                 twamm_hook=market_config.get("twamm_hook", ""),
                 bond_factory=market_config.get("bond_factory", ""),
+                basis_trade_factory=market_config.get("basis_trade_factory", ""),
                 pool_manager=market_config.get("pool_manager", "0x000000000004444c5dc75cB358380D2e3dE08A90"),
                 v4_quoter=market_config.get("v4_quoter", "0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203"),
                 v4_position_manager=market_config.get("v4_position_manager", "0xbd216513d74c8cf14cf4747e6aaa6420ff64ee9e"),

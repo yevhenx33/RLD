@@ -331,6 +331,14 @@ class ComprehensiveIndexer:
         else:
             self.bond_factory_addr = None
 
+        # BasisTradeFactory for basis trade event tracking
+        basis_trade_factory_addr = os.getenv("BASIS_TRADE_FACTORY", "")
+        if basis_trade_factory_addr:
+            self.basis_trade_factory_addr = Web3.to_checksum_address(basis_trade_factory_addr)
+            logger.info(f"   BasisTradeFactory: {self.basis_trade_factory_addr}")
+        else:
+            self.basis_trade_factory_addr = None
+
         # Initialize database
         init_comprehensive_db()
         
@@ -799,6 +807,10 @@ class ComprehensiveIndexer:
             Web3.keccak(text="BondReturned(address,address)").hex(): "BondReturned",
             Web3.keccak(text="BondClaimed(address,address)").hex(): "BondClaimed",
 
+            # BasisTradeFactory Events
+            Web3.keccak(text="BasisTradeOpened(address,address,uint256,uint256,uint256)").hex(): "BasisTradeOpened",
+            Web3.keccak(text="BasisTradeClosed(address,address,uint256)").hex(): "BasisTradeClosed",
+
             # Universal Router Events (just track the execute)
             Web3.keccak(text="UniversalRouterExecute()").hex(): "UniversalRouterExecute",
         }
@@ -828,6 +840,9 @@ class ComprehensiveIndexer:
         # Add BondFactory to monitored addresses
         if self.bond_factory_addr:
             contract_addresses.append(self.bond_factory_addr.lower())
+        # Add BasisTradeFactory to monitored addresses
+        if self.basis_trade_factory_addr:
+            contract_addresses.append(self.basis_trade_factory_addr.lower())
         
         # Add tracked brokers — PrimeBroker uses delegatecall to TWAMM hook,
         # so SubmitOrder/CancelOrder events are emitted from broker addresses
@@ -1060,6 +1075,28 @@ class ComprehensiveIndexer:
                 broker = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
                 return {'user': user, 'broker': broker}
 
+            elif event_name == "BasisTradeOpened":
+                # BasisTradeOpened(address indexed user, address indexed broker, uint256 amount, uint256 effectiveLeverage, uint256 duration)
+                user = '0x' + topics[1].hex()[-40:] if len(topics) > 1 else None
+                broker = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                amount = str(int(data[0:64], 16)) if len(data) >= 64 else '0'
+                eff_leverage = str(int(data[64:128], 16)) if len(data) >= 128 else '0'
+                duration = int(data[128:192], 16) if len(data) >= 192 else 0
+                return {
+                    'user': user, 'broker': broker,
+                    'notional': amount, 'hedge': eff_leverage, 'duration': duration
+                }
+
+            elif event_name == "BasisTradeClosed":
+                # BasisTradeClosed(address indexed user, address indexed broker, uint256 sUsdeReturned)
+                user = '0x' + topics[1].hex()[-40:] if len(topics) > 1 else None
+                broker = '0x' + topics[2].hex()[-40:] if len(topics) > 2 else None
+                susde_returned = str(int(data[0:64], 16)) if len(data) >= 64 else '0'
+                return {
+                    'user': user, 'broker': broker,
+                    'collateralReturned': susde_returned, 'positionReturned': '0'
+                }
+
             else:
                 # Generic parsing for unknown events
                 return {
@@ -1240,6 +1277,40 @@ class ComprehensiveIndexer:
                     logger.info(f"   🔓 Bond {be['event_name'].lower()}: broker={bd['broker'][:10]}...")
             except Exception as ex:
                 logger.warning(f"   ⚠️  Failed to process bond event: {ex}")
+
+        # 3a-2. Process basis trade events (BasisTradeOpened / BasisTradeClosed)
+        basis_events = [e for e in events if e['event_name'] in ('BasisTradeOpened', 'BasisTradeClosed')]
+        for be in basis_events:
+            bd = be.get('data', {})
+            try:
+                if be['event_name'] == 'BasisTradeOpened':
+                    insert_bond(
+                        broker_address=bd['broker'],
+                        owner=bd['user'],
+                        bond_factory=self.basis_trade_factory_addr or '',
+                        notional=bd.get('notional', '0'),
+                        hedge=bd.get('hedge', '0'),
+                        duration=bd.get('duration', 0),
+                        created_block=block_number,
+                        created_timestamp=block_timestamp,
+                        created_tx=be['tx_hash'],
+                    )
+                    # Auto-track the new basis trade's broker
+                    if bd['broker'].lower() not in [b.lower() for b in self.tracked_brokers]:
+                        self.tracked_brokers.append(bd['broker'])
+                    logger.info(f"   📈 Basis trade opened: broker={bd['broker'][:10]}... owner={bd['user'][:10]}...")
+                elif be['event_name'] == 'BasisTradeClosed':
+                    update_bond_closed(
+                        broker_address=bd['broker'],
+                        closed_block=block_number,
+                        closed_timestamp=block_timestamp,
+                        closed_tx=be['tx_hash'],
+                        collateral_returned=bd.get('collateralReturned', '0'),
+                        position_returned=bd.get('positionReturned', '0'),
+                    )
+                    logger.info(f"   📉 Basis trade closed: broker={bd['broker'][:10]}...")
+            except Exception as ex:
+                logger.warning(f"   ⚠️  Failed to process basis trade event: {ex}")
         
         # 3b. Override pool state from Swap events (most accurate source)
         # Swap events contain the post-swap sqrtPriceX96, tick, and liquidity
