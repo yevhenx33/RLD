@@ -593,6 +593,28 @@ function CoreArchitectureSection() {
 ════════════════════════════════════════════════════ */
 
 export default function Homepage() {
+  useEffect(() => {
+    document.fonts.ready.then(() => {
+      const toCheck = [
+        "300 12px 'JetBrains Mono'",
+        "400 12px 'JetBrains Mono'",
+        "700 12px 'JetBrains Mono'",
+        "300 12px 'Space Grotesk'",
+        "400 12px 'Space Grotesk'",
+      ]
+      console.group('[Homepage] Font loading status')
+      toCheck.forEach(spec => {
+        const loaded = document.fonts.check(spec)
+        console.log(`${loaded ? '✅' : '❌'} ${spec}`)
+      })
+      console.log('[Homepage] All loaded faces:')
+      document.fonts.forEach(f => {
+        console.log(`  ${f.family} w${f.weight} style:${f.style} → ${f.status}`)
+      })
+      console.groupEnd()
+    })
+  }, [])
+
   return (
     <div className="bg-[#080808] font-mono" >
       <HeroSection />
