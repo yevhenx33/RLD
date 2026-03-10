@@ -82,6 +82,13 @@ jobs:
             cd /home/ubuntu/RLD
             git pull --ff-only
 
+            # Always rebuild + restart the frontend container with the new dist
+            echo "🔄 Rebuilding frontend container..."
+            docker compose -f docker/docker-compose.frontend.yml build frontend \
+              --build-arg VITE_API_BASE_URL=https://rld.fi/api
+            docker compose -f docker/docker-compose.frontend.yml up -d --no-deps --force-recreate frontend
+            echo "✅ Frontend restarted"
+
             # Rebuild backend containers if backend changed
             if git diff HEAD~1 --name-only | grep -q "^backend/"; then
               echo "🔄 Backend changed — rebuilding indexer + bot..."
