@@ -1392,27 +1392,13 @@ class ComprehensiveIndexer:
                     logger.info(f"   🔄 Pool (swap): Price=${swap_mark:.4f}, "
                                f"Tick={swap_tick}, Liq={swap_liq}")
             
-            # Broker positions
-            broker_positions = []
-            for broker in self.tracked_brokers:
-                position = self.get_broker_position(broker)
-                if position:
-                    insert_broker_position(block_number, broker, self.market_id, position, cur=cur)
-                    broker_positions.append({'broker': broker, **position})
-            snapshot['broker_positions'] = broker_positions
-            if broker_positions:
-                logger.info(f"   👤 Brokers: {len(broker_positions)} position(s) tracked")
-            
-            # LP Positions
-            all_lp = []
-            for broker in self.tracked_brokers:
-                lp_positions = self.get_broker_lp_positions(broker, block_number)
-                for lp in lp_positions:
-                    insert_lp_position(block_number, broker, lp, cur=cur)
-                    all_lp.append({'broker': broker, **lp})
-            snapshot['lp_positions'] = all_lp
-            if all_lp:
-                logger.info(f"   📌 LP Positions: {len(all_lp)} NFT(s) across {len(self.tracked_brokers)} broker(s)")
+            # Broker positions (use pre-collected data — no RPC inside write_batch)
+            for bp in broker_positions:
+                insert_broker_position(block_number, bp['broker'], self.market_id, bp, cur=cur)
+
+            # LP Positions (use pre-collected data — no RPC inside write_batch)
+            for lp in all_lp:
+                insert_lp_position(block_number, lp['broker'], lp, cur=cur)
             
             # Transactions
             for tx in transactions:
