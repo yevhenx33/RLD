@@ -206,16 +206,20 @@ log_ok "Oracle cardinality grown to 65535"
 # Each iteration advances 30 min and writes one observation slot.
 # We need at least 2 populated slots for TWAP to work (cardinality >= 2).
 # Writing 10 slots provides a solid baseline (5 hours of history).
+# NOTE: Individual iterations are best-effort — transient failures are OK.
+WARMUP_OK=0
 for i in $(seq 1 10); do
-    cast rpc evm_increaseTime 1800 --rpc-url "$RPC_URL" > /dev/null
-    cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null
+    cast rpc evm_increaseTime 1800 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
+    cast rpc anvil_mine 1 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
     # Trigger an oracle write via executeJTMOrders (no-op swap, just writes observation)
-    cast send "$TWAMM_HOOK" \
+    if cast send "$TWAMM_HOOK" \
         "executeJTMOrders((address,address,uint24,int24,address))" \
         "($TOKEN0,$TOKEN1,500,5,$TWAMM_HOOK)" \
-        --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1
+        --private-key $DEPLOYER_KEY --rpc-url $RPC_URL > /dev/null 2>&1; then
+        WARMUP_OK=$((WARMUP_OK + 1))
+    fi
 done
-log_ok "Oracle warmed up (10 observations over 5h)"
+log_ok "Oracle warmed up ($WARMUP_OK/10 observations written)"
 
 # ─── Configure BrokerRouter deposit route ──────────────────────
 log_step "2.3" "Configuring BrokerRouter deposit route (USDC → aUSDC → waUSDC)..."
@@ -686,6 +690,67 @@ log_ok "Timestamp synchronized after deployment"
 cast rpc evm_setAutomine false --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
 cast rpc evm_setIntervalMining 12 --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
 log_ok "Interval mining restored (12s blocks)"
+
+# ═══════════════════════════════════════════════════════════════
+# PHASE 5.5: VERIFY FACTORY IMMUTABLES (Poka-Yoke)
+# ═══════════════════════════════════════════════════════════════
+log_phase "5.5" "VERIFY FACTORY IMMUTABLES"
+
+VERIFY_FAILED=false
+
+# Verify BondFactory immutables match deployed addresses
+if [ -n "$BOND_FACTORY" ]; then
+    log_step "5.5a" "Verifying BondFactory immutables..."
+    BF_COLLATERAL=$(cast call "$BOND_FACTORY" "COLLATERAL()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    BF_TWAMM=$(cast call "$BOND_FACTORY" "TWAMM_HOOK()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    BF_ROUTER=$(cast call "$BOND_FACTORY" "ROUTER()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    EXPECTED_WAUSDC=$(echo "$WAUSDC" | tr '[:upper:]' '[:lower:]')
+    EXPECTED_TWAMM=$(echo "$TWAMM_HOOK" | tr '[:upper:]' '[:lower:]')
+    EXPECTED_ROUTER=$(echo "$BROKER_ROUTER" | tr '[:upper:]' '[:lower:]')
+
+    if [ "$BF_COLLATERAL" != "$EXPECTED_WAUSDC" ]; then
+        echo -e "${RED}  ✗ BondFactory.COLLATERAL=$BF_COLLATERAL != expected $EXPECTED_WAUSDC${NC}"
+        VERIFY_FAILED=true
+    fi
+    if [ "$BF_TWAMM" != "$EXPECTED_TWAMM" ]; then
+        echo -e "${RED}  ✗ BondFactory.TWAMM_HOOK=$BF_TWAMM != expected $EXPECTED_TWAMM${NC}"
+        VERIFY_FAILED=true
+    fi
+    if [ "$BF_ROUTER" != "$EXPECTED_ROUTER" ]; then
+        echo -e "${RED}  ✗ BondFactory.ROUTER=$BF_ROUTER != expected $EXPECTED_ROUTER${NC}"
+        VERIFY_FAILED=true
+    fi
+    if [ "$VERIFY_FAILED" = false ]; then
+        log_ok "BondFactory immutables verified ✓"
+    fi
+else
+    log_info "BondFactory not deployed — skipping verification"
+fi
+
+# Verify BasisTradeFactory immutables match deployed addresses
+if [ -n "$BASIS_TRADE_FACTORY" ]; then
+    log_step "5.5b" "Verifying BasisTradeFactory immutables..."
+    BTF_COLLATERAL=$(cast call "$BASIS_TRADE_FACTORY" "COLLATERAL()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    BTF_TWAMM=$(cast call "$BASIS_TRADE_FACTORY" "TWAMM_HOOK()(address)" --rpc-url "$RPC_URL" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+
+    if [ "$BTF_COLLATERAL" != "$EXPECTED_WAUSDC" ]; then
+        echo -e "${RED}  ✗ BasisTradeFactory.COLLATERAL=$BTF_COLLATERAL != expected $EXPECTED_WAUSDC${NC}"
+        VERIFY_FAILED=true
+    fi
+    if [ "$BTF_TWAMM" != "$EXPECTED_TWAMM" ]; then
+        echo -e "${RED}  ✗ BasisTradeFactory.TWAMM_HOOK=$BTF_TWAMM != expected $EXPECTED_TWAMM${NC}"
+        VERIFY_FAILED=true
+    fi
+    if [ "$VERIFY_FAILED" = false ]; then
+        log_ok "BasisTradeFactory immutables verified ✓"
+    fi
+else
+    log_info "BasisTradeFactory not deployed — skipping verification"
+fi
+
+if [ "$VERIFY_FAILED" = true ]; then
+    log_err "FATAL: Factory immutables do not match deployed addresses — deployment is inconsistent!"
+fi
 
 echo ""
 echo -e "${MAGENTA}╔═══════════════════════════════════════════════════╗${NC}"

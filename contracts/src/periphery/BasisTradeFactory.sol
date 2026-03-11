@@ -338,7 +338,7 @@ contract BasisTradeFactory is ReentrancyGuard {
         uint256 initialSUsde = _swapUsdcToSUsde(params.amount);
 
         // ── 2. Create fresh PrimeBroker ──────────────────────────────────
-        bytes32 salt = keccak256(abi.encodePacked(msg.sender, nonce++));
+        bytes32 salt = keccak256(abi.encodePacked(address(this), msg.sender, nonce++));
         broker = BROKER_FACTORY.createBroker(salt);
 
         // ── 3. Execute flash loan leverage + hedge ───────────────────────
@@ -377,7 +377,7 @@ contract BasisTradeFactory is ReentrancyGuard {
         IERC20(SUSDE).transferFrom(msg.sender, address(this), sUsdeAmount);
 
         // ── 2. Create fresh PrimeBroker ──────────────────────────────────
-        bytes32 salt = keccak256(abi.encodePacked(msg.sender, nonce++));
+        bytes32 salt = keccak256(abi.encodePacked(address(this), msg.sender, nonce++));
         broker = BROKER_FACTORY.createBroker(salt);
 
         // ── 3. Execute flash loan leverage + hedge ───────────────────────

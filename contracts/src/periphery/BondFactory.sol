@@ -197,7 +197,7 @@ contract BondFactory is ReentrancyGuard {
         require(duration > 0, "Zero duration");
 
         // ── 1. Create fresh broker ──────────────────────────────────────
-        bytes32 salt = keccak256(abi.encodePacked(msg.sender, nonce++));
+        bytes32 salt = keccak256(abi.encodePacked(address(this), msg.sender, nonce++));
         broker = BROKER_FACTORY.createBroker(salt);
 
         // ── 2. Fund broker with collateral ──────────────────────────────
