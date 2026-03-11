@@ -139,7 +139,7 @@ def discover_market(rpc_url: str, rld_core: str, market_id: str,
 
 def discover_from_env() -> dict:
     """Discover market config from environment variables."""
-    rpc_url = os.environ.get("RPC_URL", "http://localhost:8545")
+    rpc_url = os.environ.get("RPC_URL", "http://host.docker.internal:8545")
     rld_core = os.environ.get("RLD_CORE")
     market_id = os.environ.get("MARKET_ID")
     twamm_hook = os.environ.get("TWAMM_HOOK")

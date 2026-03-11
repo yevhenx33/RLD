@@ -99,7 +99,7 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # Load config from env files
-source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|INDEXER_PORT|RATES_PORT|DB_PORT|SIM_ID|API_KEY)=' "$ENV_FILE" | sed 's/^/export /')
+source <(grep -E '^(MAINNET_RPC_URL|RPC_URL|ETH_RPC_URL|FORK_BLOCK|INDEXER_PORT|RATES_PORT|DB_PORT|SIM_ID|API_KEY)=' "$ENV_FILE" | sed 's/^/export /')
 
 # Also load FORK_BLOCK from root .env if not in docker/.env
 if [ -z "${FORK_BLOCK:-}" ] && [ -f "$RLD_ROOT/.env" ]; then
