@@ -337,7 +337,7 @@ export function useBasisTradeExecution(
    * @param {Function} onSuccess      Called with { brokerAddress } on completion
    */
   const closeBasisTrade = useCallback(
-    async (brokerAddress, onSuccess, { useUnderlying: _useUnderlying = true } = {}) => {
+    async (brokerAddress, onSuccess) => {
       if (!account || !brokerAddress) {
         setError("Missing parameters");
         return;
