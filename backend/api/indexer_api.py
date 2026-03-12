@@ -22,15 +22,20 @@ from fastapi.responses import JSONResponse
 # Add parent dir to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db.comprehensive import (
-    get_latest_summary,
-    get_block_summary,
-    get_block_states,
-    get_pool_states,
-    get_events,
-    get_broker_history,
+from db.event_driven import (
     get_last_indexed_block,
+    get_events,
     get_conn,
+    get_all_markets,
+    get_market,
+    get_all_brokers,
+    get_broker,
+    get_pool,
+    get_lp_distribution,
+    get_broker_lp_positions,
+    get_active_bonds,
+    get_candles,
+    get_latest_summary,
 )
 
 
@@ -175,46 +180,70 @@ async def root():
     return {"status": "ok", "service": "rld-market-indexer"}
 
 
+# In-memory health cache — updated by background task every 5s
+# This ensures /health never blocks the event loop or holds db connections
+_HEALTH_CACHE: dict = {
+    "status": "starting",
+    "mode": "event-driven",
+    "last_indexed_block": 0,
+    "chain_head": None,
+    "lag_blocks": None,
+    "total_events": 0,
+    "total_markets": 0,
+    "total_brokers": 0,
+    "detected_block_time_s": None,
+    "poll_interval_s": None,
+}
+
+async def _refresh_health_cache():
+    """Background coroutine — refreshes _HEALTH_CACHE every 5s without blocking."""
+    while True:
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            # Run blocking DB calls in a thread pool so the event loop stays free
+            def _fetch():
+                try:
+                    lb = get_last_indexed_block()
+                    with get_conn() as conn:
+                        c = conn.cursor()
+                        c.execute("SELECT COUNT(*) FROM events")
+                        te = c.fetchone()[0]
+                        c.execute("SELECT COUNT(*) FROM market_meta")
+                        tm = c.fetchone()[0]
+                        c.execute("SELECT COUNT(*) FROM broker_state")
+                        tb = c.fetchone()[0]
+                    return lb, te, tm, tb
+                except Exception:
+                    return None, None, None, None
+
+            lb, te, tm, tb = await loop.run_in_executor(None, _fetch)
+            if lb is not None:
+                _HEALTH_CACHE["last_indexed_block"] = lb
+                _HEALTH_CACHE["total_events"] = te
+                _HEALTH_CACHE["total_markets"] = tm
+                _HEALTH_CACHE["total_brokers"] = tb
+                _HEALTH_CACHE["status"] = "healthy"
+        except Exception:
+            pass
+        import asyncio
+        await asyncio.sleep(5)
+
+
 @app.get("/health")
 async def health(request: Request):
-    """Detailed health check with indexer lag."""
-    try:
-        last_block = get_last_indexed_block()
+    """Instant health check — reads from in-memory cache only (zero blocking)."""
+    # Merge app.state extras (block_time, poll_interval set by entrypoint)
+    bt = getattr(request.app.state, "detected_block_time", None)
+    pi = getattr(request.app.state, "poll_interval_s", None)
+    return {
+        **_HEALTH_CACHE,
+        "market_id": os.environ.get("MARKET_ID", "unknown"),
+        "detected_block_time_s": bt,
+        "poll_interval_s": pi,
+    }
 
-        with get_conn() as conn:
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM block_state")
-            total_blocks = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM events")
-            total_events = c.fetchone()[0]
 
-        # Get chain head if web3 is available
-        chain_head = None
-        lag = None
-        try:
-            from web3 import Web3
-            rpc = os.environ.get("RPC_URL", "http://localhost:8545")
-            w3 = Web3(Web3.HTTPProvider(rpc))
-            chain_head = w3.eth.block_number
-            if last_block and chain_head:
-                lag = chain_head - last_block
-        except:
-            pass
-
-        # Market config from entrypoint discovery
-        market_id = os.environ.get("MARKET_ID", "unknown")
-
-        return {
-            "status": "healthy",
-            "market_id": market_id,
-            "last_indexed_block": last_block,
-            "chain_head": chain_head,
-            "lag_blocks": lag,
-            "total_blocks_indexed": total_blocks,
-            "total_events": total_events,
-        }
-    except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
 
 
 @app.get("/config")
@@ -240,20 +269,143 @@ async def get_status():
     try:
         with get_conn() as conn:
             cursor = conn.cursor()
-
-            cursor.execute("SELECT COUNT(*) FROM block_state")
-            total_blocks = cursor.fetchone()[0]
-
             cursor.execute("SELECT COUNT(*) FROM events")
             total_events = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM market_meta")
+            total_markets = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM broker_state")
+            total_brokers = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM lp_position_state WHERE liquidity > 0")
+            active_lp = cursor.fetchone()[0]
 
         return {
             "last_indexed_block": get_last_indexed_block(),
-            "total_block_states": total_blocks,
             "total_events": total_events,
+            "total_markets": total_markets,
+            "total_brokers": total_brokers,
+            "active_lp_positions": active_lp,
+            "mode": "event-driven",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════
+# Event-Driven Projection Endpoints
+# ═══════════════════════════════════════════════════════════
+
+@app.get("/api/markets")
+async def list_markets():
+    """Get all markets with current state."""
+    try:
+        return get_all_markets()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/markets/{market_id}")
+async def get_market_endpoint(market_id: str):
+    """Get a single market with current state."""
+    result = get_market(market_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Market not found")
+    return result
+
+
+@app.get("/api/brokers")
+async def list_brokers(market_id: Optional[str] = Query(None)):
+    """Get all tracked brokers and their current state."""
+    try:
+        return get_all_brokers(market_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/broker/{broker_address}")
+async def get_broker_endpoint(broker_address: str):
+    """Get current state for a single broker."""
+    result = get_broker(broker_address)
+    if not result:
+        raise HTTPException(status_code=404, detail="Broker not found")
+    return result
+
+
+@app.get("/api/pool/{pool_id}")
+async def get_pool_endpoint(pool_id: str):
+    """Get current pool state (price, tick, liquidity)."""
+    result = get_pool(pool_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Pool not found")
+    return result
+
+
+@app.get("/api/lp-distribution/{pool_id}")
+async def get_lp_distribution_endpoint(pool_id: str):
+    """
+    Get liquidity distribution across tick ranges for a pool.
+    Served entirely from local DB — zero RPC calls.
+    Suitable for charting LP depth/distribution.
+    """
+    try:
+        data = get_lp_distribution(pool_id)
+        return {"pool_id": pool_id, "ticks": data, "count": len(data)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/lp-positions/{broker_address}")
+async def get_broker_lp_endpoint(broker_address: str):
+    """Get all active LP positions for a broker. Zero RPC calls."""
+    try:
+        positions = get_broker_lp_positions(broker_address)
+        return {"broker_address": broker_address, "positions": positions, "count": len(positions)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/candles/{pool_id}")
+async def get_candles_endpoint(
+    pool_id: str,
+    resolution: str = Query("5m", description="Resolution: 5m, 15m, 1h, 4h, 1d"),
+    from_ts: Optional[int] = Query(None, description="Start unix timestamp"),
+    to_ts: Optional[int] = Query(None, description="End unix timestamp"),
+    limit: int = Query(500, le=2000),
+):
+    """
+    Get OHLCV candles for a pool.
+    resolution=5m  → price_candles_5m  (written live by indexer on each Swap)
+    resolution=15m → price_candles_15m (pre-aggregated by CandleAggregator)
+    resolution=1h  → price_candles_1h
+    resolution=4h  → price_candles_4h
+    resolution=1d  → price_candles_1d
+    """
+    try:
+        candles = get_candles(pool_id, from_ts, to_ts, limit, resolution=resolution)
+        return {"pool_id": pool_id, "resolution": resolution, "candles": candles, "count": len(candles)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/api/events")
+async def get_events_list(
+    event_name: Optional[str] = Query(None),
+    market_id: Optional[str] = Query(None),
+    from_block: Optional[int] = Query(None),
+    to_block: Optional[int] = Query(None),
+    limit: int = Query(100, le=1000),
+):
+    """Get historical events from the audit log."""
+    try:
+        return get_events(
+            from_block=from_block, to_block=to_block,
+            event_name=event_name, market_id=market_id, limit=limit
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.get("/api/latest")
@@ -613,7 +765,7 @@ async def get_bonds_endpoint(
     via server-side batched RPC — eliminates 20+ sequential frontend calls.
     """
     try:
-        from db.comprehensive import get_bonds_by_owner, get_all_bonds
+        from db.event_driven import get_bonds_by_owner, get_all_bonds
         if owner:
             bonds = get_bonds_by_owner(owner, status if status != "all" else None)
         else:
@@ -635,7 +787,7 @@ async def get_bonds_endpoint(
 async def get_bond_detail(broker_address: str):
     """Get a single bond's indexed data by its broker address."""
     try:
-        from db.comprehensive import get_bond
+        from db.event_driven import get_bond
         bond = get_bond(broker_address)
         if not bond:
             raise HTTPException(status_code=404, detail="Bond not found")
@@ -713,129 +865,62 @@ async def get_price_chart(
                     'to_block':       None,
                 }
 
-            # ── Standard path: live aggregation from block_state + pool_state ──
-            ms_query = '''
-                SELECT
-                    (block_timestamp / %s) * %s as bucket_ts,
-                    MIN(block_number) as first_block,
-                    MAX(block_number) as last_block,
-                    MAX(CAST(index_price AS BIGINT)) as index_high,
-                    MIN(CAST(index_price AS BIGINT)) as index_low,
-                    COUNT(*) as sample_count
-                FROM block_state
-                WHERE 1=1
-            '''
-            params = [bucket_sec, bucket_sec]
+            # ── Standard path: read from pre-aggregated candle table ──
+            TABLE_MAP = {
+                "5M":  "price_candles_5m",
+                "15M": "price_candles_15m",
+                "1H":  "price_candles_1h",
+                "4H":  "price_candles_4h",
+                "1D":  "price_candles_1d",
+                "1W":  "price_candles_1d",  # resample daily for weekly
+            }
+            table = TABLE_MAP.get(res, "price_candles_1h")
 
+            q = f"SELECT * FROM {table} WHERE 1=1"
+            params = []
             if start_time:
-                ms_query += ' AND block_timestamp >= %s'
+                q += " AND ts >= %s"
                 params.append(start_time)
             if end_time:
-                ms_query += ' AND block_timestamp <= %s'
+                q += " AND ts <= %s"
                 params.append(end_time)
-
-            ms_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT %s'
+            q += " ORDER BY ts DESC LIMIT %s"
             params.append(limit)
 
-            c.execute(ms_query, params)
-            ms_bucket_rows = c.fetchall()
+            try:
+                c.execute(q, params)
+                candle_rows = c.fetchall()
+            except Exception:
+                candle_rows = []
 
-            # Fetch open/close values per bucket
-            ms_rows = []
-            for row in ms_bucket_rows:
-                fb, lb = row['first_block'], row['last_block']
-                c.execute('SELECT index_price, normalization_factor, total_debt FROM block_state WHERE block_number = %s', (fb,))
-                open_r = c.fetchone()
-                c.execute('SELECT index_price, normalization_factor, total_debt FROM block_state WHERE block_number = %s', (lb,))
-                close_r = c.fetchone()
-                ms_rows.append({
-                    'bucket_ts': row['bucket_ts'],
-                    'first_block': fb,
-                    'last_block': lb,
-                    'index_high': row['index_high'],
-                    'index_low': row['index_low'],
-                    'sample_count': row['sample_count'],
-                    'index_open': int(open_r['index_price'] or 0) if open_r else 0,
-                    'index_close': int(close_r['index_price'] or 0) if close_r else 0,
-                    'nf_close': int(close_r['normalization_factor'] or 0) if close_r else 0,
-                    'debt_close': int(close_r['total_debt'] or 0) if close_r else 0,
+            chart_data = []
+            for row in reversed(candle_rows):
+                chart_data.append({
+                    'timestamp':            row['ts'],
+                    'block_number':         None,
+                    'index_price':          row.get('index_close') or 0,
+                    'index_open':           row.get('index_open')  or 0,
+                    'index_high':           row.get('index_high')  or 0,
+                    'index_low':            row.get('index_low')   or 0,
+                    'mark_price':           row.get('mark_close')  or 0,
+                    'mark_open':            row.get('mark_open')   or 0,
+                    'mark_high':            row.get('mark_high')   or 0,
+                    'mark_low':             row.get('mark_low')    or 0,
+                    'normalization_factor': 0,   # not stored in candle tables
+                    'total_debt':           0,   # not stored in candle tables
+                    'tick':                 None,
+                    'liquidity':            None,
+                    'samples':              row.get('swap_count') or 0,
                 })
 
-            # ── Bucketed pool state (mark price, tick, liquidity) ──────
-            ps_query = '''
-                SELECT
-                    (bs.block_timestamp / %s) * %s as bucket_ts,
-                    MIN(ps.block_number) as first_block,
-                    MAX(ps.block_number) as last_block,
-                    MAX(ps.mark_price) as mark_high,
-                    MIN(ps.mark_price) as mark_low
-                FROM pool_state ps
-                JOIN block_state bs ON bs.block_number = ps.block_number
-                WHERE 1=1
-            '''
-            ps_params = [bucket_sec, bucket_sec]
-
-            if start_time:
-                ps_query += ' AND bs.block_timestamp >= %s'
-                ps_params.append(start_time)
-            if end_time:
-                ps_query += ' AND bs.block_timestamp <= %s'
-                ps_params.append(end_time)
-
-            ps_query += ' GROUP BY bucket_ts ORDER BY bucket_ts DESC LIMIT %s'
-            ps_params.append(limit)
-
-            c.execute(ps_query, ps_params)
-            ps_rows = c.fetchall()
-
-            pool_map = {}
-            for row in ps_rows:
-                bucket_ts = row['bucket_ts']
-                fb, lb = row['first_block'], row['last_block']
-                c.execute('SELECT mark_price, tick, liquidity FROM pool_state WHERE block_number = %s', (fb,))
-                open_row = c.fetchone()
-                c.execute('SELECT mark_price, tick, liquidity FROM pool_state WHERE block_number = %s', (lb,))
-                close_row = c.fetchone()
-                pool_map[bucket_ts] = {
-                    'mark_open': open_row['mark_price'] if open_row else None,
-                    'mark_close': close_row['mark_price'] if close_row else None,
-                    'mark_high': row['mark_high'],
-                    'mark_low': row['mark_low'],
-                    'tick_close': close_row['tick'] if close_row else None,
-                    'liq_close': close_row['liquidity'] if close_row else None,
-                }
-
-        chart_data = []
-        for row in reversed(ms_rows):
-            ts = row['bucket_ts']
-            point = {
-                'timestamp': ts,
-                'block_number': row['last_block'],
-                'index_price': (row['index_close'] or 0) / 1e18,
-                'index_high': (row['index_high'] or 0) / 1e18,
-                'index_low': (row['index_low'] or 0) / 1e18,
-                'normalization_factor': (row['nf_close'] or 0) / 1e18,
-                'total_debt': (row['debt_close'] or 0) / 1e6,
-                'samples': row['sample_count'],
+            return {
+                'data':           chart_data,
+                'count':          len(chart_data),
+                'resolution':     res,
+                'bucket_seconds': bucket_sec,
+                'from_block':     None,
+                'to_block':       None,
             }
-            if ts in pool_map:
-                ps = pool_map[ts]
-                point['mark_price'] = ps.get('mark_close') or 0
-                point['mark_high'] = ps.get('mark_high') or 0
-                point['mark_low'] = ps.get('mark_low') or 0
-                point['tick'] = ps.get('tick_close') or 0
-                point['liquidity'] = ps.get('liq_close') or 0
-
-            chart_data.append(point)
-
-        return {
-            'data': chart_data,
-            'count': len(chart_data),
-            'resolution': res,
-            'bucket_seconds': bucket_sec,
-            'from_block': chart_data[0]['block_number'] if chart_data else None,
-            'to_block': chart_data[-1]['block_number'] if chart_data else None,
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1123,17 +1208,17 @@ async def get_liquidity_distribution(
         # Primary: read from DB
         positions = []
         try:
-            from db.comprehensive import get_all_latest_lp_positions
-            rows = get_all_latest_lp_positions()
+            from db.event_driven import get_lp_positions
+            rows = get_lp_positions(active_only=True)
             positions = [
                 {
                     "token_id": r.get("token_id", 0),
-                    "liquidity": int(r.get("liquidity", 0)),
+                    "liquidity": int(r.get("current_liquidity", 0)),
                     "tick_lower": r.get("tick_lower", 0),
                     "tick_upper": r.get("tick_upper", 0),
                 }
                 for r in rows
-                if int(r.get("liquidity", 0)) > 0
+                if int(r.get("current_liquidity", 0)) > 0
             ]
         except Exception:
             pass

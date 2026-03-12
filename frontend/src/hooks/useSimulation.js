@@ -26,9 +26,6 @@ const gqlFetcher = ([url, query, variables]) => {
     });
 };
 
-// REST fetcher for chart data (resolution-specific, stays REST)
-const restFetcher = (url) => fetch(url).then((r) => r.json());
-
 // ── Single GraphQL query that replaces 7 REST calls ──────────
 const SIM_QUERY = `
   query SimSnapshot {
@@ -90,37 +87,61 @@ const SIM_QUERY = `
   }
 `;
 
-// Shallow-compare chart data to skip re-renders
-const compareChartData = (a, b) => {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  const ad = a?.data,
-    bd = b?.data;
-  if (!ad || !bd || ad.length !== bd.length) return false;
-  if (ad.length === 0) return true;
-  return (
-    ad[0].timestamp === bd[0].timestamp &&
-    ad[ad.length - 1].timestamp === bd[bd.length - 1].timestamp &&
-    ad.length === bd.length
-  );
-};
+// ── Rates query (isolated — rates-indexer may be slow/cold) ─────────
+const RATES_QUERY = `
+  query Rates {
+    rates(symbols: ["USDC"], resolution: "1H", limit: 1) {
+      symbol
+      data { timestamp apy }
+    }
+  }
+`;
+
+// ── Account-specific GraphQL query (bonds, balances) ──────────
+const ACCOUNT_QUERY = `
+  query AccountSnapshot($owner: String!, $status: String) {
+    bonds(owner: $owner, status: $status) {
+      bondId brokerAddress notionalUsd debtUsd freeCollateral
+      maturityDays elapsedDays remainingDays maturityDate
+      frozen isMatured hasActiveOrder orderId bondFactory createdTx status
+    }
+    balances(owner: $owner) {
+      token { name symbol address }
+      balance
+    }
+  }
+`;
+
+// ── Chart-specific GraphQL query (candles) ────────────────────
+const CHART_QUERY = `
+  query ChartCandles($resolution: String!, $limit: Int, $startTime: Int, $endTime: Int) {
+    chart(resolution: $resolution, limit: $limit, startTime: $startTime, endTime: $endTime) {
+      timestamp
+      indexOpen indexClose indexHigh indexLow
+      markOpen markClose markHigh markLow
+      volume swapCount
+    }
+  }
+`;
 
 /**
- * Hook that connects to the simulation indexer API.
- * Uses a SINGLE GraphQL query for all core data (market, pool, brokers,
- * volume, events, marketInfo, status) and a separate REST call for
- * resolution-specific chart data.
+ * useSimulation — Connects to the simulation indexer API.
+ *
+ * Tier 1 (GLOBAL_QUERY): market, pool, volume, events, marketInfo, rates — 2s poll
+ * Tier 2 (ACCOUNT_QUERY): bonds, balances — 5s poll, keyed on account
+ * Tier 3 (CHART_QUERY): OHLC candles — 30s poll, resolution-specific
  */
 export function useSimulation({
   pollInterval = 2000,
   chartResolution = "1H",
   chartStartTime = null,
   chartEndTime = null,
+  account = null,        // wallet address for Tier 2 user query
 } = {}) {
   const [connected, setConnected] = useState(false);
   const prevBlock = useRef(null);
 
-  // ── Single GraphQL query for ALL core data ──────────────────
+  // ── Tier 1: Global SWR (no wallet needed) ──────────────────────
   const {
     data: gqlData,
     error: gqlError,
@@ -134,21 +155,48 @@ export function useSimulation({
     onError: () => setConnected(false),
   });
 
-  // ── Chart data (price history — still REST, resolution-specific) ──
-  const chartUrl = useMemo(() => {
-    let url = `${SIM_API}/api/chart/price?resolution=${chartResolution}&limit=1000`;
-    if (chartStartTime) url += `&start_time=${chartStartTime}`;
-    if (chartEndTime) url += `&end_time=${chartEndTime}`;
-    return url;
-  }, [chartResolution, chartStartTime, chartEndTime]);
+  // ── Tier 2: Account SWR (wallet-keyed, 5s poll) ────────────────
+  const accountVars = account
+    ? { owner: account.toLowerCase(), status: "all" }
+    : null;
+  const { data: accountData } = useSWR(
+    account ? [GQL_URL, ACCOUNT_QUERY, accountVars] : null,
+    gqlFetcher,
+    {
+      refreshInterval: 5000,
+      revalidateOnFocus: false,
+      dedupingInterval: 2000,
+      keepPreviousData: true,
+    },
+  );
 
-  const { data: chartRaw, error: chartError } = useSWR(
-    chartUrl,
-    restFetcher,
+  // ── Rates SWR (isolated — separate from core SIM_QUERY) ────────
+  const { data: ratesGqlData } = useSWR(
+    [GQL_URL, RATES_QUERY, null],
+    gqlFetcher,
+    {
+      refreshInterval: 60000,   // rates change slowly
+      revalidateOnFocus: false,
+      dedupingInterval: 30000,
+      keepPreviousData: true,
+      onError: () => {},        // silent — non-critical
+    },
+  );
+
+  // ── Tier 3: Chart SWR (GQL, resolution-specific, 30s poll) ──────
+  const chartVars = useMemo(() => ({
+    resolution: chartResolution,
+    limit: 1000,
+    startTime: chartStartTime || null,
+    endTime: chartEndTime || null,
+  }), [chartResolution, chartStartTime, chartEndTime]);
+
+  const { data: chartGqlData, error: chartError } = useSWR(
+    [GQL_URL, CHART_QUERY, chartVars],
+    gqlFetcher,
     {
       refreshInterval: 30000,
       revalidateOnFocus: false,
-      compare: compareChartData,
       keepPreviousData: false,
     },
   );
@@ -274,8 +322,8 @@ export function useSimulation({
     // fundingRate as per contract (WAD-equivalent but in float)
     const fundingRate = spread / index;
 
-    // Annualize: in the contract, rate is applied as exp(-rate * dt / period)
-    // Over 1 year (365 days), the NF multiplier would be exp(-rate * 365d / period)
+    // Annualize: in the contract, rate is applied as exp(-rate * 365d / period)
+    // Over 1 year (365 days), the NF multiplier would be exp(-rate * 365*86400 / period)
     // The annualized percentage change = (exp(-rate * 365*86400 / period) - 1) × 100
     const fundingPeriod = marketInfo?.risk_params?.funding_period_sec || 2_592_000;
     const yearSec = 365 * 86400;
@@ -320,33 +368,35 @@ export function useSimulation({
     return { totalCollateral, totalDebtUnits, totalDebtUsd, overCollat };
   }, [brokers, market]);
 
-  // ── Derived: chart data ─────────────────────────────────────
+  // ── Derived: chart data (from GQL candles) ────────────────────
   const chartData = useMemo(() => {
-    if (!chartRaw?.data?.length) return [];
+    const candles = chartGqlData?.chart;
+    if (!candles?.length) return [];
 
     const volBars = volumeHistoryRaw || [];
     const volMap = new Map();
     for (const bar of volBars) {
       volMap.set(bar.timestamp, bar.volumeUsd);
     }
-    const bucketSec = 3600; // 1 hour default
+    const bucketSec = 3600;
 
-    return chartRaw.data.map((d) => {
-      const bucketTs = Math.floor((d.timestamp || 0) / bucketSec) * bucketSec;
-      const vol = volMap.get(bucketTs) || 0;
+    return candles.map((c) => {
+      const bucketTs = Math.floor((c.timestamp || 0) / bucketSec) * bucketSec;
       return {
-        timestamp: d.timestamp,
-        blockNumber: d.block_number,
-        indexPrice: d.index_price,
-        markPrice: d.mark_price || null,
-        normalizationFactor: d.normalization_factor,
-        totalDebt: d.total_debt,
-        tick: d.tick,
-        liquidity: d.liquidity,
-        volume: vol,
+        timestamp: c.timestamp,
+        indexPrice: c.indexClose,
+        markPrice: c.markClose,
+        indexOpen: c.indexOpen, indexHigh: c.indexHigh, indexLow: c.indexLow,
+        markOpen: c.markOpen,  markHigh: c.markHigh,  markLow: c.markLow,
+        normalizationFactor: 0,  // not in candles; use market.normalizationFactor
+        totalDebt: 0,            // not in candles; use market.totalDebt
+        tick: 0,
+        liquidity: 0,
+        volume: c.volume || volMap.get(bucketTs) || 0,
+        swapCount: c.swapCount,
       };
     });
-  }, [chartRaw, volumeHistoryRaw]);
+  }, [chartGqlData, volumeHistoryRaw]);
 
   // ── Derived: observed funding from NF change ────────────────
   // This measures the actual cumulative NF drift and annualizes it
@@ -427,6 +477,39 @@ export function useSimulation({
     prevBlock.current = latest.blockNumber;
   }, [latest?.blockNumber]);
 
+  // ── Derived: USDC borrow rate (isolated SWR — won't block market data) ──
+  const latestRate = useMemo(() => {
+    const series = ratesGqlData?.rates?.find((s) => s.symbol === "USDC");
+    return series?.data?.[0] ?? null;  // { timestamp, apy }
+  }, [ratesGqlData]);
+
+  // ── Derived: account bonds (from Tier 2 ACCOUNT_QUERY) ──────────
+  const bonds = useMemo(() => {
+    return (accountData?.bonds || []).map((b) => ({
+      id: b.bondId,
+      brokerAddress: b.brokerAddress,
+      principal: b.notionalUsd,
+      debtTokens: b.debtUsd,
+      freeCollateral: b.freeCollateral,
+      fixedRate: latestRate?.apy || 0,
+      maturityDays: b.maturityDays,
+      elapsed: b.elapsedDays,
+      remaining: b.remainingDays,
+      maturityDate: b.maturityDate,
+      frozen: b.frozen,
+      isMatured: b.isMatured,
+      hasActiveOrder: b.hasActiveOrder,
+      orderId: b.orderId,
+      bondFactory: b.bondFactory,
+      txHash: b.createdTx,
+      status: b.status,
+      accrued: b.notionalUsd * ((latestRate?.apy || 0) / 100) * (b.elapsedDays / 365),
+    }));
+  }, [accountData, latestRate]);
+
+  // ── Derived: account token balances (from Tier 2 ACCOUNT_QUERY) ──
+  const balances = useMemo(() => accountData?.balances ?? null, [accountData]);
+
   return {
     // Connection
     connected,
@@ -437,33 +520,29 @@ export function useSimulation({
     latest: latest
       ? {
           block_number: latest.blockNumber,
+          market: latest.market,       // GQL shape (camelCase)
+          pool: latest.pool,           // GQL shape (camelCase)
           market_states: latest.market
-            ? [
-                {
-                  block_number: latest.market.blockNumber,
-                  block_timestamp: latest.market.blockTimestamp,
-                  market_id: latest.market.marketId,
-                  normalization_factor: parseInt(
-                    latest.market.normalizationFactor,
-                  ),
-                  total_debt: parseInt(latest.market.totalDebt),
-                  index_price: parseInt(latest.market.indexPrice),
-                  last_update_timestamp: latest.market.lastUpdateTimestamp,
-                },
-              ]
+            ? [{
+                block_number: latest.market.blockNumber,
+                block_timestamp: latest.market.blockTimestamp,
+                market_id: latest.market.marketId,
+                normalization_factor: parseInt(latest.market.normalizationFactor),
+                total_debt: parseInt(latest.market.totalDebt),
+                index_price: parseInt(latest.market.indexPrice),
+                last_update_timestamp: latest.market.lastUpdateTimestamp,
+              }]
             : [],
           pool_states: latest.pool
-            ? [
-                {
-                  pool_id: latest.pool.poolId,
-                  tick: latest.pool.tick,
-                  mark_price: latest.pool.markPrice,
-                  liquidity: latest.pool.liquidity,
-                  sqrt_price_x96: latest.pool.sqrtPriceX96,
-                  token0_balance: latest.pool.token0Balance,
-                  token1_balance: latest.pool.token1Balance,
-                },
-              ]
+            ? [{
+                pool_id: latest.pool.poolId,
+                tick: latest.pool.tick,
+                mark_price: latest.pool.markPrice,
+                liquidity: latest.pool.liquidity,
+                sqrt_price_x96: latest.pool.sqrtPriceX96,
+                token0_balance: latest.pool.token0Balance,
+                token1_balance: latest.pool.token1Balance,
+              }]
             : [],
           broker_positions: (latest.brokers || []).map((b) => ({
             broker_address: b.address,
@@ -496,6 +575,11 @@ export function useSimulation({
     })),
     events,
     blockChanged,
+
+    // Tier 2: per-account
+    bonds,
+    balances,
+    latestRate,
 
     // Meta
     blockNumber: latest?.blockNumber || null,

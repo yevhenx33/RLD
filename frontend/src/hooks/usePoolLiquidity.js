@@ -358,7 +358,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo) {
                 const res = await fetch(`/api/block/${mintBlock}`);
                 if (res.ok) {
                   const data = await res.json();
-                  entryPrice = data.pool_states?.[0]?.mark_price ?? null;
+                  entryPrice = data.pool?.markPrice ?? data.pool_states?.[0]?.mark_price ?? null;
                 }
               } catch { /* ignore */ }
             })() : Promise.resolve();

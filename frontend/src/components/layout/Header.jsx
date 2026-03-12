@@ -1,11 +1,10 @@
-import React, { useState, useCallback } from "react";
+import React, { useState } from "react";
+
 import { Link, useLocation } from "react-router-dom";
 import { useWallet } from "../../context/WalletContext";
 import { useFaucet } from "../../hooks/useFaucet";
 import { useToast } from "../../hooks/useToast";
 import { useSim } from "../../context/SimulationContext";
-import { mutate } from "swr";
-import { SIM_API } from "../../config/simulationConfig";
 import WalletModal from "../modals/WalletModal";
 import { ToastContainer } from "../common/Toast";
 import { Menu, X, Droplets, Loader2 } from "lucide-react";
@@ -62,25 +61,8 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
     setIsMobileMenuOpen(false);
   }, [location]);
 
-  // ── SWR Prefetch on nav hover ──────────────────────────────
-  // Triggers background fetch so data is cached by the time user clicks
-  const fetcher = (url) => fetch(url).then((r) => r.json());
-  const prefetchBonds = useCallback(() => {
-    if (account) {
-      mutate(
-        `${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all&enrich=true`,
-        (prev) => prev || fetcher(`${SIM_API}/api/bonds?owner=${account.toLowerCase()}&status=all&enrich=true`),
-        { revalidate: false },
-      );
-    }
-  }, [account]);
-  const prefetchSim = useCallback(() => {
-    mutate(
-      `${SIM_API}/api/latest`,
-      (prev) => prev || fetcher(`${SIM_API}/api/latest`),
-      { revalidate: false },
-    );
-  }, []);
+  // Nav prefetch: bonds data is now in ACCOUNT_QUERY (SimulationContext)
+  // No REST prefetch needed — SWR dedups automatically.
 
   return (
     <>
@@ -105,7 +87,6 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
 
               <Link
                 to="/bonds"
-                onMouseEnter={prefetchBonds}
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 BONDS
@@ -116,7 +97,6 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               <div className="relative group">
                 <Link
                   to="/markets"
-                  onMouseEnter={prefetchSim}
                   className={`transition-colors px-2 tracking-widest flex items-center gap-1 ${location.pathname.startsWith("/markets") ? "text-cyan-400 cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
                 >
                   Markets

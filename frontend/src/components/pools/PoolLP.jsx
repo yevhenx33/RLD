@@ -324,7 +324,7 @@ export default function PoolLP() {
   // Update simBlockTs once when simulation data first arrives
   useEffect(() => {
     if (simBlockTs) return; // only set once
-    const ts = simShared?.latest?.market_states?.[0]?.block_timestamp;
+    const ts = simShared?.latest?.market?.blockTimestamp;
     if (ts) setSimBlockTs(ts);
   }, [simShared?.latest, simBlockTs]);
   const {
@@ -396,24 +396,32 @@ export default function PoolLP() {
 
   useEffect(() => {
     let cancelled = false;
+    const GQL_URL = `/graphql`;
+    const LIQ_QUERY = `query { liquidityBins(numBins: 60) { price priceFrom priceTo liquidity amount0 amount1 } }`;
+
     async function fetchDistribution() {
-      // Retry up to 3 times with 2s delays (handles indexer startup timing)
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const res = await fetch("/api/liquidity-distribution?num_bins=60");
+          const res = await fetch(GQL_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: LIQ_QUERY }),
+          });
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data = await res.json();
-          if (!cancelled && data.bins?.length) {
-            setLiquidityBins(data.bins);
-            if (data.currentPrice) setLiqDistPrice(data.currentPrice);
-            return; // Success — done
+          const json = await res.json();
+          const bins = json?.data?.liquidityBins;
+          if (!cancelled && bins?.length) {
+            setLiquidityBins(bins);
+            const priceFromMid = bins[Math.floor(bins.length / 2)]?.price;
+            if (priceFromMid) setLiqDistPrice(parseFloat(priceFromMid));
+            return;
           }
         } catch (err) {
           if (attempt < 2) {
-            await new Promise(r => setTimeout(r, 2000)); // Wait 2s before retry
+            await new Promise(r => setTimeout(r, 2000));
             continue;
           }
-          console.warn("[LP] API unavailable after retries, using local fallback:", err.message);
+          console.warn("[LP] GQL liquidityBins unavailable after retries, using local fallback:", err.message);
         }
       }
       // Fallback: build from local positions

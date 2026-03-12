@@ -209,9 +209,9 @@ PG_JSON=$(docker exec docker-postgres-1 psql -U rld -d rld_indexer -t -A -c "
 SELECT json_build_object(
   'healthy', true,
   'schemas', (SELECT json_agg(schema_name) FROM information_schema.schemata WHERE schema_name LIKE 'sim_%'),
-  'last_indexed_block', COALESCE((SELECT last_indexed_block FROM sim_default.indexer_state WHERE id=1), -1),
-  'block_state_rows', (SELECT COUNT(*) FROM sim_default.block_state),
-  'events_rows', (SELECT COUNT(*) FROM sim_default.events)
+  'last_indexed_block', COALESCE((SELECT MAX(last_block) FROM sim_default.market_state), -1),
+  'events_rows', (SELECT COUNT(*) FROM sim_default.events),
+  'brokers_indexed', (SELECT COUNT(*) FROM sim_default.broker_state)
 );
 " 2>/dev/null) || PG_JSON='{"healthy":false}'
 

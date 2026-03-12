@@ -23,7 +23,7 @@ import urllib.parse
 from typing import Optional, List
 from strawberry.types import Info
 
-from db.comprehensive import (
+from db.event_driven import (
     get_latest_summary,
     get_lp_positions,
     get_all_latest_lp_positions,
@@ -33,6 +33,7 @@ from db.comprehensive import (
     get_bonds_by_owner,
     get_all_bonds,
     get_conn,
+    get_broker_lp_positions,
 )
 
 
@@ -206,10 +207,57 @@ class Bond:
     broker_address: str
     owner: str
     status: str
-    notional_usd: float = 0
     bond_id: int = 0
     created_block: Optional[int] = None
     created_tx: Optional[str] = None
+    # ── Enriched fields (server-side RPC, cached per-call) ──
+    notional_usd: float = 0.0
+    debt_usd: float = 0.0
+    free_collateral: float = 0.0
+    elapsed_days: int = 0
+    maturity_days: int = 0
+    remaining_days: int = 0
+    maturity_date: str = "—"
+    bond_factory: str = ""
+    order_id: str = ""
+    frozen: bool = False
+    has_active_order: bool = False
+    is_matured: bool = False
+
+
+@strawberry.type
+class Candle:
+    """OHLC price candle from pre-aggregated candle tables."""
+    timestamp: int
+    index_open: float
+    index_high: float
+    index_low: float
+    index_close: float
+    mark_open: float
+    mark_high: float
+    mark_low: float
+    mark_close: float
+    volume: float = 0.0
+    swap_count: int = 0
+
+
+@strawberry.type
+class LiquidityBin:
+    """Aggregated liquidity distribution bin (Uniswap V4 tick math)."""
+    price: float
+    price_from: float
+    price_to: float
+    liquidity: float
+    amount0: float
+    amount1: float
+
+
+@strawberry.type
+class AccountBalances:
+    """Server-side batched token balances for a user account."""
+    collateral_balance: float  # waUSDC (6 dec)
+    position_balance: float   # wRLP  (6 dec)
+    usdc_balance: float       # raw USDC (6 dec)
 
 
 @strawberry.type
@@ -225,6 +273,7 @@ class RatePoint:
     timestamp: int
     apy: float
     eth_price: Optional[float] = None
+    total_debt: Optional[float] = None  # AAVE debt token totalSupply (USD)
 
 
 @strawberry.type
@@ -264,6 +313,7 @@ def _fetch_rates(symbol: str, resolution: str = "1H", limit: int = 50000,
                 timestamp=int(d.get("timestamp", 0)),
                 apy=float(d.get("apy", 0)),
                 eth_price=float(d["eth_price"]) if d.get("eth_price") else None,
+                total_debt=float(d["total_debt"]) if d.get("total_debt") is not None else None,
             )
             for d in data
         ]
@@ -353,7 +403,7 @@ def _build_snapshot(summary: dict) -> Snapshot:
     bp_list = summary.get('broker_positions', [])
     for bp in bp_list:
         addr = bp.get('broker_address', '')
-        lp_rows = get_lp_positions(addr, block_number)
+        lp_rows = get_broker_lp_positions(addr)
         lps = [_row_to_lp(r) for r in lp_rows]
         brokers.append(BrokerState(
             address=addr,
@@ -619,7 +669,7 @@ def _get_status() -> IndexerStatus:
     try:
         with get_conn() as conn:
             c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM block_state")
+            c.execute("SELECT COUNT(*) FROM market_state")
             total_blocks = c.fetchone()[0]
             c.execute("SELECT COUNT(*) FROM events")
             total_events = c.fetchone()[0]
@@ -630,6 +680,306 @@ def _get_status() -> IndexerStatus:
         )
     except Exception:
         return IndexerStatus()
+
+
+# ── Bond enrichment (ports batched RPC logic from indexer_api) ─────────────────
+
+def _enrich_bonds(rows: list, rpc_url: str) -> list:
+    """
+    Enrich bond DB rows with live on-chain data (batched JSON-RPC).
+    Returns list of Bond strawberry objects with all 20 fields populated.
+    """
+    import urllib.request as urlreq
+    import math
+    from datetime import datetime, timezone
+
+    def _eth_batch(batch):
+        payload = json.dumps(batch).encode()
+        req = urlreq.Request(rpc_url, data=payload, headers={"Content-Type": "application/json"})
+        with urlreq.urlopen(req, timeout=10) as resp:
+            return {r["id"]: r.get("result", "0x") for r in json.loads(resp.read())}
+
+    def pad_addr(addr):
+        return addr.lower().replace("0x", "").zfill(64)
+
+    result_bonds = []
+    active = [r for r in rows if r.get("status") == "active"]
+    closed = [r for r in rows if r.get("status") != "active"]
+
+    # Closed bonds — no RPC needed
+    for r in closed:
+        notional = int(r.get("notional") or 0) / 1e6
+        result_bonds.append(Bond(
+            broker_address=r.get("broker_address", ""),
+            owner=r.get("owner", ""),
+            status=r.get("status", "closed"),
+            bond_id=int(r.get("broker_address", "0x")[-4:], 16) % 10000,
+            created_block=r.get("created_block"),
+            created_tx=r.get("created_tx"),
+            notional_usd=notional, debt_usd=0, free_collateral=0,
+            elapsed_days=0, maturity_days=0, remaining_days=0,
+            maturity_date="—", bond_factory=r.get("bond_factory", ""),
+            order_id="0x" + "0" * 64,
+            frozen=False, has_active_order=False, is_matured=True,
+        ))
+
+    if not active:
+        return result_bonds
+
+    # Phase 1 batch: core, marketId, collateral, frozen, twammOrder
+    SEL = {
+        "core": "0xf8f9da28", "market_id": "0x1dce43f9",
+        "collateral": "0xb2016bd4", "frozen": "0x054f7d9c",
+        "twamm_order": "0xe4d7907d",
+        "get_position": "0x713f9507", "get_market_state": "0x544e4c74",
+        "balance_of": "0x70a08231",
+    }
+    batch1 = []
+    for i, b in enumerate(active):
+        addr = b["broker_address"]
+        bi = i * 5
+        for j, sel in enumerate([SEL["core"], SEL["market_id"], SEL["collateral"], SEL["frozen"], SEL["twamm_order"]]):
+            batch1.append({"jsonrpc": "2.0", "id": bi + j, "method": "eth_call", "params": [{"to": addr, "data": sel}, "latest"]})
+    block_id = len(active) * 5
+    batch1.append({"jsonrpc": "2.0", "id": block_id, "method": "eth_getBlockByNumber", "params": ["latest", False]})
+
+    try:
+        r1 = _eth_batch(batch1)
+    except Exception:
+        # RPC failed — return unenriched
+        for r in active:
+            result_bonds.append(Bond(
+                broker_address=r.get("broker_address", ""), owner=r.get("owner", ""),
+                status=r.get("status", "active"),
+                bond_id=int(r.get("broker_address", "0x")[-4:], 16) % 10000,
+                created_block=r.get("created_block"), created_tx=r.get("created_tx"),
+            ))
+        return result_bonds
+
+    block_data = r1.get(block_id, {})
+    block_ts = int(block_data.get("timestamp", "0x0"), 16) if isinstance(block_data, dict) else 0
+
+    # Parse phase-1 results
+    broker_meta = {}
+    batch2 = []
+    for i, b in enumerate(active):
+        bi = i * 5
+        core = "0x" + str(r1.get(bi, "0x" + "0" * 64))[-40:]
+        mid = r1.get(bi + 1, "0x" + "0" * 64)
+        col = "0x" + str(r1.get(bi + 2, "0x" + "0" * 64))[-40:]
+        frozen_hex = r1.get(bi + 3, "0x0")
+        frozen = int(frozen_hex, 16) != 0 if frozen_hex else False
+        twamm_raw = r1.get(bi + 4, "")
+        exp = 0; oid = "0x" + "0" * 64
+        if twamm_raw and len(twamm_raw) > 2:
+            rb = bytes.fromhex(twamm_raw.replace("0x", ""))
+            if len(rb) >= 288:
+                exp = int.from_bytes(rb[192:224], "big")
+                oid = "0x" + rb[256:288].hex()
+        broker_meta[b["broker_address"]] = {"core": core, "mid": mid, "col": col, "frozen": frozen, "exp": exp, "oid": oid}
+
+        # Phase 2 batch calls
+        pos_data = SEL["get_position"] + mid.replace("0x", "").zfill(64) + pad_addr(b["broker_address"])
+        ms_data  = SEL["get_market_state"] + mid.replace("0x", "").zfill(64)
+        bal_data = SEL["balance_of"] + pad_addr(b["broker_address"])
+        for j, (to, data) in enumerate([(core, pos_data), (core, ms_data), (col, bal_data)]):
+            batch2.append({"jsonrpc": "2.0", "id": i * 3 + j, "method": "eth_call", "params": [{"to": to, "data": data}, "latest"]})
+
+    try:
+        r2 = _eth_batch(batch2)
+    except Exception:
+        r2 = {}
+
+    # Assemble enriched bonds
+    for i, b in enumerate(active):
+        meta = broker_meta[b["broker_address"]]
+        pos_raw = r2.get(i * 3, "0x" + "0" * 64)
+        ms_raw  = r2.get(i * 3 + 1, "0x" + "0" * 64)
+        bal_raw = r2.get(i * 3 + 2, "0x" + "0" * 64)
+
+        debt_principal = int(pos_raw[-32:], 16) if pos_raw and len(pos_raw) > 2 else 0
+        nf = int(ms_raw[2:66], 16) if ms_raw and len(ms_raw) > 2 else int(1e18)
+        col_balance = int(bal_raw, 16) if bal_raw and len(bal_raw) > 2 else 0
+
+        true_debt = (debt_principal * nf) // (10 ** 18)
+        debt_usd  = true_debt / 1e6
+        free_col  = col_balance / 1e6
+        notional  = int(b.get("notional") or 0) / 1e6
+
+        has_order = meta["oid"] != "0x" + "0" * 64
+        rem_sec   = max(0, meta["exp"] - block_ts)
+        rem_days  = max(0, math.ceil(rem_sec / 86400))
+        is_matured = has_order and rem_sec <= 0
+
+        # Duration
+        dur_hours = int(b.get("duration_hours", 0) or 0)
+        mat_days  = math.ceil(dur_hours / 24) if dur_hours > 0 else rem_days
+
+        # Elapsed
+        created_ts = int(b.get("created_ts") or 0)
+        elapsed_sec = max(0, block_ts - created_ts) if created_ts else 0
+        el_days = elapsed_sec // 86400
+
+        mat_date = "—"
+        if meta["exp"] > 0:
+            try:
+                mat_date = datetime.fromtimestamp(meta["exp"], tz=timezone.utc).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        result_bonds.append(Bond(
+            broker_address=b.get("broker_address", ""),
+            owner=b.get("owner", ""),
+            status=b.get("status", "active"),
+            bond_id=int(b.get("broker_address", "0x")[-4:], 16) % 10000,
+            created_block=b.get("created_block"),
+            created_tx=b.get("created_tx"),
+            notional_usd=notional, debt_usd=debt_usd, free_collateral=free_col,
+            elapsed_days=el_days, maturity_days=mat_days,
+            remaining_days=rem_days, maturity_date=mat_date,
+            bond_factory=b.get("bond_factory", ""),
+            order_id=meta["oid"], frozen=meta["frozen"],
+            has_active_order=has_order, is_matured=is_matured,
+        ))
+
+    return result_bonds
+
+
+# ── Chart resolver (reads pre-aggregated candle tables) ────────────────────
+
+_CANDLE_TABLE = {
+    "5M":  "price_candles_5m",
+    "15M": "price_candles_15m",
+    "1H":  "price_candles_1h",
+    "4H":  "price_candles_4h",
+    "1D":  "price_candles_1d",
+    "1W":  "price_candles_1d",
+}
+
+def _get_chart(
+    resolution: str = "1H",
+    limit: int = 1000,
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+) -> List["Candle"]:
+    table = _CANDLE_TABLE.get(resolution.upper(), "price_candles_1h")
+    try:
+        with get_conn() as conn:
+            c = conn.cursor()
+            q = f"SELECT * FROM {table} WHERE 1=1"
+            params = []
+            if start_time:
+                q += " AND ts >= %s"; params.append(start_time)
+            if end_time:
+                q += " AND ts <= %s"; params.append(end_time)
+            q += " ORDER BY ts DESC LIMIT %s"; params.append(limit)
+            c.execute(q, params)
+            rows = c.fetchall()
+        return [
+            Candle(
+                timestamp=row[0],
+                index_open=_safe_float(row[6]),  index_high=_safe_float(row[7]),
+                index_low=_safe_float(row[8]),   index_close=_safe_float(row[9]),
+                mark_open=_safe_float(row[2]),   mark_high=_safe_float(row[3]),
+                mark_low=_safe_float(row[4]),    mark_close=_safe_float(row[5]),
+                volume=_safe_float(row[10]),     swap_count=int(row[11] or 0),
+            )
+            for row in reversed(rows)
+        ]
+    except Exception as e:
+        print(f"[GraphQL] chart error: {e}")
+        return []
+
+
+# ── LiquidityBins resolver ─────────────────────────────────────────────────
+
+def _get_liquidity_bins(num_bins: int = 60) -> List["LiquidityBin"]:
+    """Compute LP distribution bins from lp_positions + current pool price."""
+    try:
+        with get_conn() as conn:
+            c = conn.cursor()
+            c.execute("SELECT tick_lower, tick_upper, liquidity FROM lp_positions WHERE liquidity > 0")
+            positions = c.fetchall()
+            c.execute("SELECT mark_price FROM pool_state LIMIT 1")
+            row = c.fetchone()
+            if not row:
+                return []
+            current_price = float(row[0])
+
+        if not positions or not current_price:
+            return []
+
+        min_p = current_price * 0.5
+        max_p = current_price * 2.0
+        bin_w = (max_p - min_p) / num_bins
+        bins = []
+        for i in range(num_bins):
+            p_from = min_p + i * bin_w
+            p_to   = min_p + (i + 1) * bin_w
+            liq = 0.0
+            for (tl, tu, liq_raw) in positions:
+                pL = 1.0001 ** tl
+                pH = 1.0001 ** tu
+                if pH > p_from and pL < p_to:
+                    liq += float(liq_raw)
+            sa, sb = p_from ** 0.5, p_to ** 0.5
+            sp = max(sa, min(current_price ** 0.5, sb))
+            a0 = liq * (1 / sp - 1 / sb) / 1e6 if sp < sb else 0
+            a1 = liq * (sp - sa) / 1e6 if sp > sa else 0
+            bins.append(LiquidityBin(
+                price=(p_from + p_to) / 2,
+                price_from=p_from, price_to=p_to,
+                liquidity=liq,
+                amount0=max(0, a0), amount1=max(0, a1),
+            ))
+        return bins
+    except Exception as e:
+        print(f"[GraphQL] liquidity_bins error: {e}")
+        return []
+
+
+# ── AccountBalances resolver (batched RPC for 3 tokens) ──────────────────
+
+def _get_account_balances(owner: str, rpc_url: str) -> Optional["AccountBalances"]:
+    """Fetch collateral, position token, and raw USDC balances server-side."""
+    import urllib.request as urlreq
+    try:
+        from api.indexer_api import app
+        mc = getattr(app.state, "market_config", {}) or {}
+    except Exception:
+        mc = {}
+
+    col_addr  = mc.get("collateral_token", "")
+    pos_addr  = mc.get("position_token", "")
+    ext = mc.get("external_contracts", {})
+    usdc_addr = ext.get("usdc", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+
+    if not col_addr or not pos_addr:
+        return None
+
+    def pad(addr):
+        return addr.lower().replace("0x", "").zfill(64)
+
+    SEL_BAL = "0x70a08231"
+    data = pad(owner)
+    batch = [
+        {"jsonrpc": "2.0", "id": 0, "method": "eth_call", "params": [{"to": col_addr,  "data": SEL_BAL + data}, "latest"]},
+        {"jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [{"to": pos_addr,  "data": SEL_BAL + data}, "latest"]},
+        {"jsonrpc": "2.0", "id": 2, "method": "eth_call", "params": [{"to": usdc_addr, "data": SEL_BAL + data}, "latest"]},
+    ]
+    payload = json.dumps(batch).encode()
+    req = urlreq.Request(rpc_url, data=payload, headers={"Content-Type": "application/json"})
+    with urlreq.urlopen(req, timeout=5) as resp:
+        res = {r["id"]: r.get("result", "0x") for r in json.loads(resp.read())}
+
+    def parse(hex_val):
+        return int(hex_val, 16) / 1e6 if hex_val and hex_val != "0x" else 0.0
+
+    return AccountBalances(
+        collateral_balance=parse(res.get(0, "0x")),
+        position_balance=parse(res.get(1, "0x")),
+        usdc_balance=parse(res.get(2, "0x")),
+    )
 
 
 # ═══════════════════════════════════════════════════════════
@@ -652,118 +1002,12 @@ class Query:
 
     @strawberry.field(description="All LP positions for a specific broker (latest block).")
     def lp_positions(self, broker_address: str) -> List[LPPosition]:
-        rows = get_lp_positions(broker_address)
+        rows = get_broker_lp_positions(broker_address)
         if rows:
             return [_row_to_lp(r) for r in rows]
-        # Fallback: live RPC query for brokers not in tracked_brokers
-        try:
-            from indexers.comprehensive import ComprehensiveIndexer
-            # Build a lightweight indexer just for LP queries
-            rpc = os.getenv("RPC_URL", "http://host.docker.internal:8545")
-            config_file = os.getenv("CONFIG_FILE", "/config/deployment.json")
-            with open(config_file) as f:
-                cfg = json.load(f)
-            from web3 import Web3
-            w3 = Web3(Web3.HTTPProvider(rpc))
-            posm_addr = cfg.get("v4_position_manager")
-            state_view_addr = cfg.get("v4_state_view")
-            if not posm_addr:
-                return []
-            # Use the indexer's POSM ABI and methods
-            from indexers.comprehensive import POSM_ABI
-            posm = w3.eth.contract(
-                address=Web3.to_checksum_address(posm_addr),
-                abi=POSM_ABI
-            )
-            # Scan Transfer events to this broker
-            transfer_topic = Web3.keccak(text="Transfer(address,address,uint256)").hex()
-            broker_padded = '0x' + broker_address.lower().replace('0x', '').zfill(64)
-            logs = w3.eth.get_logs({
-                'fromBlock': 0,
-                'toBlock': 'latest',
-                'address': posm.address,
-                'topics': [transfer_topic, None, broker_padded],
-            })
-            candidate_ids = list(set(
-                int(log['topics'][3].hex() if hasattr(log['topics'][3], 'hex') else log['topics'][3], 16)
-                for log in logs if len(log['topics']) > 3
-            ))
-            if not candidate_ids:
-                return []
-            # Get active token ID
-            from indexers.comprehensive import PRIME_BROKER_ABI
-            broker_contract = w3.eth.contract(
-                address=Web3.to_checksum_address(broker_address),
-                abi=PRIME_BROKER_ABI + [{"inputs": [], "name": "activeTokenId",
-                    "outputs": [{"name": "", "type": "uint256"}],
-                    "stateMutability": "view", "type": "function"}]
-            )
-            try:
-                active_token_id = broker_contract.functions.activeTokenId().call()
-            except Exception:
-                active_token_id = 0
-            positions = []
-            for token_id in candidate_ids:
-                try:
-                    owner = posm.functions.ownerOf(token_id).call()
-                    if owner.lower() != broker_address.lower():
-                        continue
-                    liquidity = posm.functions.getPositionLiquidity(token_id).call()
-                    if liquidity == 0:
-                        continue
-                    tick_lower = 0
-                    tick_upper = 0
-                    try:
-                        info = posm.functions.positionInfo(token_id).call()
-                        # Decode using bit shifting (matching JS frontend)
-                        val = int.from_bytes(info, 'big') if isinstance(info, (bytes, bytearray)) else int(info.hex(), 16) if hasattr(info, 'hex') else int(info)
-                        tick_lower_raw = (val >> 8) & 0xFFFFFF
-                        tick_upper_raw = (val >> 32) & 0xFFFFFF
-                        tick_lower = tick_lower_raw - 0x1000000 if tick_lower_raw >= 0x800000 else tick_lower_raw
-                        tick_upper = tick_upper_raw - 0x1000000 if tick_upper_raw >= 0x800000 else tick_upper_raw
-                    except Exception:
-                        pass
-                    # Entry price from mint block
-                    entry_price = None
-                    mint_block = None
-                    for log in logs:
-                        if len(log['topics']) > 3:
-                            tid = int(log['topics'][3].hex() if hasattr(log['topics'][3], 'hex') else log['topics'][3], 16)
-                            if tid == token_id:
-                                mint_block = log['blockNumber']
-                                break
-                    if mint_block and state_view_addr:
-                        try:
-                            from indexers.comprehensive import STATE_VIEW_ABI
-                            sv = w3.eth.contract(
-                                address=Web3.to_checksum_address(state_view_addr),
-                                abi=STATE_VIEW_ABI
-                            )
-                            pool_id = cfg.get("pool_id")
-                            if pool_id:
-                                pool_id_bytes = bytes.fromhex(pool_id.replace('0x', ''))
-                                slot0 = sv.functions.getSlot0(pool_id_bytes).call(block_identifier=mint_block)
-                                entry_price = math.pow(1.0001, slot0[1])
-                        except Exception:
-                            pass
-                    positions.append(LPPosition(
-                        token_id=token_id,
-                        liquidity=str(liquidity),
-                        tick_lower=tick_lower,
-                        tick_upper=tick_upper,
-                        entry_tick=None,
-                        entry_price=entry_price,
-                        mint_block=mint_block,
-                        is_active=(token_id == active_token_id),
-                        broker_address=broker_address.lower(),
-                    ))
-                except Exception:
-                    continue
-            return positions
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Live LP query failed: {e}")
-            return []
+        # Fallback: event-driven indexer tracks LP positions from events.
+        # If no positions found in DB, return empty (no RPC scan needed).
+        return []
 
     @strawberry.field(description="All LP positions across all brokers (latest block).")
     def all_lp_positions(self) -> List[LPPosition]:
@@ -802,21 +1046,66 @@ class Query:
     def twamm_orders(self, owner: Optional[str] = None) -> List[TwammOrder]:
         return _get_twamm_orders(owner)
 
-    @strawberry.field(description="Bond positions. Optionally filtered by owner.")
-    def bonds(self, owner: Optional[str] = None, status: Optional[str] = None) -> List[Bond]:
+    @strawberry.field(description="Bond positions with full enrichment (server-side batched RPC). Filter by owner/status.")
+    def bonds(
+        self,
+        owner: Optional[str] = None,
+        status: Optional[str] = None,
+        enrich: bool = True,
+    ) -> List[Bond]:
         if owner:
             rows = get_bonds_by_owner(owner, status)
         else:
             rows = get_all_bonds(status, 100)
-        return [Bond(
-            broker_address=r.get("broker_address", ""),
-            owner=r.get("owner", ""),
-            status=r.get("status", "active"),
-            notional_usd=float(r.get("notional_usd", 0)),
-            bond_id=int(r.get("broker_address", "0x0")[-4:], 16) % 10000,
-            created_block=r.get("created_block"),
-            created_tx=r.get("created_tx"),
-        ) for r in rows]
+
+        if not enrich:
+            # Fast path: return basic fields only (no RPC)
+            return [Bond(
+                broker_address=r.get("broker_address", ""),
+                owner=r.get("owner", ""),
+                status=r.get("status", "active"),
+                bond_id=int(r.get("broker_address", "0x0")[-4:], 16) % 10000,
+                created_block=r.get("created_block"),
+                created_tx=r.get("created_tx"),
+                notional_usd=float(r.get("notional_usd", 0)),
+            ) for r in rows]
+
+        # Full enrichment path: batched on-chain RPC
+        try:
+            from api.indexer_api import app
+            mc = getattr(app.state, "market_config", {}) or {}
+        except Exception:
+            mc = {}
+        rpc_url = mc.get("rpc_url", os.environ.get("RPC_URL", "http://localhost:8545"))
+        return _enrich_bonds(list(rows), rpc_url)
+
+    @strawberry.field(description="OHLC price candles from pre-aggregated tables. resolution: 5M|15M|1H|4H|1D|1W")
+    def chart(
+        self,
+        resolution: str = "1H",
+        limit: int = 1000,
+        start_time: Optional[int] = None,
+        end_time: Optional[int] = None,
+    ) -> List[Candle]:
+        return _get_chart(resolution, limit, start_time, end_time)
+
+    @strawberry.field(description="LP liquidity distribution bins (Uniswap V4 tick math). Used by pool liquidity chart.")
+    def liquidity_bins(self, num_bins: int = 60) -> List[LiquidityBin]:
+        return _get_liquidity_bins(num_bins)
+
+    @strawberry.field(description="Server-side batched token balances for a wallet. Returns collateral, position token, and USDC.")
+    def balances(self, owner: str) -> Optional[AccountBalances]:
+        try:
+            from api.indexer_api import app
+            mc = getattr(app.state, "market_config", {}) or {}
+        except Exception:
+            mc = {}
+        rpc_url = mc.get("rpc_url", os.environ.get("RPC_URL", "http://localhost:8545"))
+        try:
+            return _get_account_balances(owner, rpc_url)
+        except Exception as e:
+            print(f"[GraphQL] balances error: {e}")
+            return None
 
     @strawberry.field(description="Lending rates for one or more symbols. Proxies to rates API.")
     def rates(
