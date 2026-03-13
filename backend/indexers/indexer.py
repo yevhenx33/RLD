@@ -333,10 +333,12 @@ async def run(rpc_url: str, dsn: str) -> None:
                     continue
 
                 # Fetch all logs in [last_block+1 .. to_block] for watched addresses
+                # web3.py requires checksum addresses for the filter; internally we use lowercase
+                watched_cs = [Web3.to_checksum_address(a) for a in watched]
                 logs = w3.eth.get_logs({
                     "fromBlock": last_block + 1,
                     "toBlock": to_block,
-                    "address": list(watched),
+                    "address": watched_cs,
                 })
 
                 if not logs:
