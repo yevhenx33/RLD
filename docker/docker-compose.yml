@@ -8,11 +8,8 @@
 #    2. Copy .env.example → .env and fill in RPC_URL
 #    3. docker compose up --build
 #
-#  What happens:
-#    postgres   → shared database for all simulations
-#    deployer   → deploys protocol, market, users, router, then exits
-#    mm-daemon  → starts market making after deployer finishes
-#    chaos      → starts chaos trading after deployer finishes
+#  Startup order:
+#    postgres → indexer → deployer → mm-daemon / chaos
 # ═══════════════════════════════════════════════════════════════
 
 services:
@@ -34,11 +31,42 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ─── DEPLOYER (one-shot) ────────────────────────────────────
+  # ─── INDEXER (starts first, stays running) ───────────────────
+  indexer:
+    build:
+      context: ..
+      dockerfile: docker/indexer/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
+      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - DEPLOYMENT_JSON=/config/deployment.json
+      - POLL_INTERVAL=${POLL_INTERVAL:-2}
+      - BATCH_SIZE=${BATCH_SIZE:-100}
+    volumes:
+      - ./deployment.json:/config/deployment.json:ro
+    ports:
+      - "${INDEXER_PORT:-8080}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  # ─── DEPLOYER (one-shot) — waits for indexer to be healthy ──
   deployer:
     build:
       context: ..
       dockerfile: docker/deployer/Dockerfile
+    depends_on:
+      indexer:
+        condition: service_healthy
     volumes:
       - ./deployment.json:/config/deployment.json
       - ../contracts/src:/workspace/contracts/src
@@ -53,6 +81,7 @@ services:
       - CHAOS_KEY=${CHAOS_KEY}
       - API_URL=${API_URL:-http://rates-indexer:8080}
       - API_KEY=${API_KEY}
+      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

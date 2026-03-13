@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv jq curl bash \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps for deploy_swap_router.py
-RUN pip3 install --no-cache-dir web3 python-dotenv
+# Install Python deps for deploy_swap_router.py and market DB registration
+RUN pip3 install --no-cache-dir web3 python-dotenv psycopg2-binary
 
 WORKDIR /workspace
 

@@ -684,7 +684,76 @@ EOF
 log_ok "Written /config/deployment.json"
 cat /config/deployment.json | python3 -m json.tool
 
-# Sync timestamp after all evm_increaseTime jumps, then restore interval mining
+# ─── Register market in Postgres (indexer reads from here) ────
+if [ -n "$DATABASE_URL" ]; then
+    log_step "5.1" "Registering market in Postgres markets table..."
+    DEPLOY_BLOCK=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+    DEPLOY_TS=$(date +%s)
+    python3 - <<PYEOF
+import os, sys
+try:
+    import psycopg2
+except ImportError:
+    print("psycopg2 not available — skipping DB registration")
+    sys.exit(0)
+
+dsn = os.environ["DATABASE_URL"]
+conn = psycopg2.connect(dsn)
+cur = conn.cursor()
+
+cur.execute("""
+    INSERT INTO markets (
+        market_id, deploy_block, deploy_timestamp,
+        broker_factory, mock_oracle, twamm_hook,
+        swap_router, bond_factory, basis_trade_factory, broker_executor,
+        wausdc, wausdc_symbol, wrlp, wrlp_symbol,
+        pool_id, pool_fee, tick_spacing,
+        min_col_ratio, maintenance_margin, liq_close_factor,
+        funding_period_sec, debt_cap,
+        created_at
+    ) VALUES (
+        %(mid)s, %(db)s, %(dt)s,
+        %(bf)s, %(mo)s, %(th)s,
+        %(sr)s, %(bof)s, %(btf)s, %(be)s,
+        %(wa)s, 'waUSDC', %(pt)s, 'wRLP',
+        %(pid)s, 3000, 60,
+        '1500000000000000000', '1200000000000000000', '500000000000000000',
+        2592000, '10000000000000000000000000000',
+        NOW()
+    )
+    ON CONFLICT (market_id) DO NOTHING
+""", {
+    'mid': "${MARKET_ID}",
+    'db':  int("${DEPLOY_BLOCK}" or "0"),
+    'dt':  int("${DEPLOY_TS}"),
+    'bf':  "${BROKER_FACTORY_ADDR}",
+    'mo':  "${MOCK_ORACLE}",
+    'th':  "${TWAMM_HOOK}",
+    'sr':  "${SWAP_ROUTER}" or None,
+    'bof': "${BOND_FACTORY}" or None,
+    'btf': "${BASIS_TRADE_FACTORY}" or None,
+    'be':  "${BROKER_EXECUTOR}" or None,
+    'wa':  "${WAUSDC}",
+    'pt':  "${POSITION_TOKEN}",
+    'pid': "${POOL_ID}",
+})
+
+cur.execute("""
+    INSERT INTO indexer_state (market_id, last_indexed_block, total_events)
+    VALUES (%(mid)s, %(db)s, 0)
+    ON CONFLICT DO NOTHING
+""", {'mid': "${MARKET_ID}", 'db': int("${DEPLOY_BLOCK}" or "0")})
+
+conn.commit()
+cur.close()
+conn.close()
+print("Market ${MARKET_ID} registered in DB")
+PYEOF
+    log_ok "Market registered in Postgres"
+else
+    log_info "DATABASE_URL not set — skipping DB registration (indexer will pick up from deployment.json)"
+fi
+
 sync_timestamp
 log_ok "Timestamp synchronized after deployment"
 cast rpc evm_setAutomine false --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
