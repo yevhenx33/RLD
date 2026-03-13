@@ -108,8 +108,8 @@ class TwammOrder:
     expiration: int
     zero_for_one: bool
     amount_in: str
-    is_active: bool
-    submit_block: int
+    is_cancelled: bool
+    block_number: int
 
 
 @strawberry.type
@@ -269,15 +269,15 @@ class Query:
         async with pool.acquire() as conn:
             q = "SELECT * FROM twamm_orders WHERE market_id=$1"
             if active_only:
-                q += " AND is_active=TRUE"
-            q += " ORDER BY submit_block DESC"
+                q += " AND is_cancelled=FALSE"
+            q += " ORDER BY block_number DESC"
             rows = await conn.fetch(q, market_id)
         return [TwammOrder(
             order_id=r["order_id"], market_id=r["market_id"],
             owner=r["owner"], expiration=r["expiration"],
             zero_for_one=r["zero_for_one"],
             amount_in=str(r["amount_in"]),
-            is_active=r["is_active"], submit_block=r["submit_block"],
+            is_cancelled=r["is_cancelled"], block_number=r["block_number"],
         ) for r in rows]
 
     @strawberry.field
