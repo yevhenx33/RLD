@@ -9,9 +9,6 @@ from unittest.mock import patch
 # Add backend to sys.path
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-# Set RATE_ONLY before importing app (prevents sim imports)
-os.environ["RATE_ONLY"] = "true"
-
 from api.main import app
 
 
