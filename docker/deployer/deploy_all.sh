@@ -465,6 +465,7 @@ cast send "$PERMIT2" "approve(address,address,uint160,uint48)" \
 cd /workspace/contracts
 AUSDC_AMOUNT=$LP_WEI WRLP_AMOUNT=$LP_WEI \
     WAUSDC=$WAUSDC POSITION_TOKEN=$POSITION_TOKEN TWAMM_HOOK=$TWAMM_HOOK \
+    TICK_SPACING=60 POOL_FEE=3000 \
     forge script script/AddLiquidityWrapped.s.sol --tc AddLiquidityWrappedScript \
     --rpc-url "$RPC_URL" --broadcast --code-size-limit 99999 -v > /tmp/lp_output.log 2>&1 || true
 

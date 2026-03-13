@@ -27,10 +27,8 @@ contract AddLiquidityWrappedScript is Script {
     address constant V4_POOL_MANAGER = 0x000000000004444c5dc75cB358380D2e3dE08A90;
     address constant V4_POSITION_MANAGER = 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e;
 
-    // Pool params - must match market creation
-    int24 constant TICK_SPACING = 5;
-    uint24 constant FEE = 500;
-
+    // Pool params — read from environment to match deployment
+    // Defaults: fee=3000 (0.3%), tickSpacing=60
     function run() external {
         // Read from environment
         address waUSDC = vm.envAddress("WAUSDC");
@@ -38,6 +36,10 @@ contract AddLiquidityWrappedScript is Script {
         address twammHook = vm.envAddress("TWAMM_HOOK");
         uint256 waUsdcAmount = vm.envUint("AUSDC_AMOUNT"); // waUSDC amount
         uint256 wrlpAmount = vm.envUint("WRLP_AMOUNT");
+
+        // Pool params — must match the pool created by deploy_all.sh
+        int24 tickSpacing = int24(int256(vm.envOr("TICK_SPACING", uint256(60))));
+        uint24 fee = uint24(vm.envOr("POOL_FEE", uint256(3000)));
 
         console.log("=== AddLiquidity (Wrapped) ===");
         console.log("waUSDC:", waUSDC);
@@ -58,8 +60,8 @@ contract AddLiquidityWrappedScript is Script {
         PoolKey memory poolKey = PoolKey({
             currency0: Currency.wrap(currency0Addr),
             currency1: Currency.wrap(currency1Addr),
-            fee: FEE,
-            tickSpacing: TICK_SPACING,
+            fee: fee,
+            tickSpacing: tickSpacing,
             hooks: IHooks(twammHook)
         });
 
@@ -96,8 +98,8 @@ contract AddLiquidityWrappedScript is Script {
         }
 
         // Align to tick spacing
-        tickLower = (tickLower / TICK_SPACING) * TICK_SPACING;
-        tickUpper = (tickUpper / TICK_SPACING) * TICK_SPACING;
+        tickLower = (tickLower / tickSpacing) * tickSpacing;
+        tickUpper = (tickUpper / tickSpacing) * tickSpacing;
 
         console.log("Tick lower:", int256(tickLower));
         console.log("Tick upper:", int256(tickUpper));
