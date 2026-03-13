@@ -279,8 +279,9 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════
-# PHASE 3: SETUP USERS
+# PHASE 3: SETUP USERS (skipped when SKIP_USER_SETUP=true)
 # ═══════════════════════════════════════════════════════════════
+if [ "${SKIP_USER_SETUP:-true}" != "true" ]; then
 log_phase "3" "SETUP USERS"
 
 # ─── Helper functions ──────────────────────────────────────────
@@ -517,6 +518,10 @@ print(tokens)
 mint_wrlp "$CHAOS_BROKER" "$CHAOS_KEY" "$WRLP_MINT"
 withdraw_position "$CHAOS_BROKER" "$CHAOS_KEY" "$WRLP_MINT"
 log_ok "Chaos trader ready"
+
+else
+    log_ok "Phase 3 skipped (SKIP_USER_SETUP=true — contracts-only mode)"
+fi # end SKIP_USER_SETUP
 
 # ═══════════════════════════════════════════════════════════════
 # PHASE 4: DEPLOY SWAP ROUTER

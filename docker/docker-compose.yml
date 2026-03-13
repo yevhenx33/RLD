@@ -82,6 +82,7 @@ services:
       - API_URL=${API_URL:-http://rates-indexer:8080}
       - API_KEY=${API_KEY}
       - DATABASE_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
+      - SKIP_USER_SETUP=${SKIP_USER_SETUP:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

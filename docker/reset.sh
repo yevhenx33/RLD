@@ -82,7 +82,7 @@ fi
 # ── 3. Bring the stack back up ────────────────────────────────────────────
 echo ""
 echo "▶ Starting fresh stack (postgres → indexer → deployer → daemons)..."
-docker compose up -d
+docker compose up -d --scale mm-daemon=0 --scale chaos-trader=0
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
