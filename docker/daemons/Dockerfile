@@ -15,7 +15,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend code
 COPY backend/services/ services/
 COPY backend/tools/ tools/
-COPY backend/indexers/ indexers/
 COPY backend/db/ db/
 COPY backend/api/ api/
 

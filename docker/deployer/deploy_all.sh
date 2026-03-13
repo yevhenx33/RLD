@@ -757,5 +757,5 @@ echo -e "${MAGENTA}╔═══════════════════�
 echo -e "${MAGENTA}║     DEPLOYMENT COMPLETE                           ║${NC}"
 echo -e "${MAGENTA}╚═══════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "  Indexer, MM daemon, and Chaos trader will start automatically."
+echo "  MM daemon and Chaos trader will start automatically."
 echo ""
