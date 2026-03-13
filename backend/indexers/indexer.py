@@ -359,18 +359,24 @@ async def run(rpc_url: str, dsn: str) -> None:
                     for log_entry in logs:
                         await dispatch(log_entry, conn, global_cfg, addr_market_map, w3)
 
-                    # Update progress per market seen in this batch
-                    markets_in_batch = {
-                        addr_market_map.get(log_entry["address"].lower())
-                        for log_entry in logs
-                    } - {None}
-
-                    for mid in markets_in_batch:
+                    # Advance progress for ALL tracked markets, not just those
+                    # with events in this batch. Without this, last_indexed_block
+                    # freezes at deploy_block when the market is quiet, creating
+                    # a fake block-lag reading.
+                    all_market_ids = set(addr_market_map.values()) - {None}
+                    for mid in all_market_ids:
                         row = await conn.fetchrow(
                             "SELECT 1 FROM indexer_state WHERE market_id = $1", mid
                         )
                         if row:
-                            await update_indexer_state(conn, mid, to_block)
+                            await conn.execute("""
+                                UPDATE indexer_state
+                                SET last_indexed_block = $1,
+                                    last_indexed_at = NOW(),
+                                    total_events = (SELECT COUNT(*) FROM events WHERE market_id = $2)
+                                WHERE market_id = $2
+                                  AND last_indexed_block < $1
+                            """, to_block, mid)
 
             last_block = to_block
             log.info("Indexed blocks %d→%d (%d logs)", last_block - len(logs) + 1,
