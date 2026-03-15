@@ -88,7 +88,7 @@ async def materialize_snapshot(
     funding_rate = (normalized_mark - index_price) / index_price if index_price > 0 else 0
     # Read market config
     mkt = await conn.fetchrow(
-        "SELECT wausdc, wrlp, pool_id, funding_period_sec FROM markets WHERE market_id = $1",
+        "SELECT wausdc, wrlp, pool_id, funding_period_sec, total_broker_wausdc, total_broker_wrlp FROM markets WHERE market_id = $1",
         market_id
     )
     if not mkt:
@@ -118,13 +118,14 @@ async def materialize_snapshot(
 
     # ── Brokers ──
     brokers = await conn.fetch("""
-        SELECT address, owner, wausdc_balance, debt_principal,
-               wausdc_value, wrlp_value, health_factor
+        SELECT address, owner, wausdc_balance, wrlp_balance, debt_principal
         FROM brokers WHERE market_id = $1
     """, market_id)
 
-    # waUSDC ≈ $1 stablecoin, so collateral USD ≈ wausdc_balance
-    total_col_usd = sum(float(b["wausdc_balance"] or 0) for b in brokers)
+    # System-level collateral from running counters (O(1), no broker iteration)
+    sys_wausdc = float(mkt["total_broker_wausdc"] or 0)
+    sys_wrlp = float(mkt["total_broker_wrlp"] or 0)
+    total_col_usd = sys_wausdc + sys_wrlp * index_price  # waUSDC=1:1, wRLP=indexed
     total_debt_usd = sum(float(b["debt_principal"] or 0) * index_price for b in brokers)
     over_collat = (total_col_usd / total_debt_usd * 100) if total_debt_usd > 0 else 0
 
@@ -145,9 +146,7 @@ async def materialize_snapshot(
     # All values are human-readable (DB already stores them that way).
     # NF, index_price, mark_price, total_debt, broker balances — all floats.
     # Token balances in block_states are raw 6-dec — divide by 1e6 for display.
-    pool_id = await conn.fetchval(
-        "SELECT pool_id FROM markets WHERE market_id = $1", market_id
-    ) or ""
+    pool_id = mkt["pool_id"] or ""
 
     snapshot = {
         "blockNumber": block_number,
@@ -193,10 +192,15 @@ async def materialize_snapshot(
                 "address": b["address"],
                 "owner": b["owner"],
                 "collateral": float(b["wausdc_balance"] or 0),
+                "wrlpBalance": float(b.get("wrlp_balance", 0) or 0),
                 "debt": float(b["debt_principal"] or 0),
-                "collateralValue": float(b["wausdc_balance"] or 0),
+                "collateralValue": float(b["wausdc_balance"] or 0) + float(b.get("wrlp_balance", 0) or 0) * index_price,
                 "debtValue": round(float(b["debt_principal"] or 0) * index_price, 2),
-                "healthFactor": str(b["health_factor"] or "0"),
+                "healthFactor": round(
+                    (float(b["wausdc_balance"] or 0) + float(b.get("wrlp_balance", 0) or 0) * index_price)
+                    / (float(b["debt_principal"] or 0) * index_price)
+                    if float(b["debt_principal"] or 0) > 0 else 0, 4
+                ),
             }
             for b in brokers
         ],

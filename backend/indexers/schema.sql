@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS markets (
   -- Precomputed data blobs
   snapshot            JSONB,            -- materialized global state (rebuilt per block)
   liquidity_bins      JSONB,            -- materialized tick distribution (rebuilt on ModifyLiquidity)
+  -- Running counters: total broker-held token balances (updated on ERC20Transfer)
+  total_broker_wausdc NUMERIC DEFAULT 0,  -- SUM of all broker wausdc_balance
+  total_broker_wrlp   NUMERIC DEFAULT 0,  -- SUM of all broker wrlp_balance
   created_at          TIMESTAMPTZ NOT NULL
 );
 

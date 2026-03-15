@@ -364,6 +364,7 @@ async def dispatch(
         # Transfer(address indexed from, address indexed to, uint256 amount)
         # Emitted by waUSDC and wRLP contracts.
         # Update wausdc_balance or wrlp_balance for any broker that is the sender or recipient.
+        # Also maintain running counters on markets table for O(1) total collateral.
         try:
             from_addr = ("0x" + topics[1][-20:].hex()) if isinstance(topics[1], bytes) else ("0x" + topics[1][-40:])
             to_addr   = ("0x" + topics[2][-20:].hex()) if isinstance(topics[2], bytes) else ("0x" + topics[2][-40:])
@@ -374,30 +375,54 @@ async def dispatch(
             contract_lower = contract.lower()
 
             # Determine which column to update based on which token emitted the event
-            markets = await conn.fetch("SELECT wausdc, wrlp FROM markets LIMIT 1")
+            markets = await conn.fetch("SELECT market_id, wausdc, wrlp FROM markets LIMIT 1")
             if not markets:
                 return
             m = markets[0]
+            mkt_id = m["market_id"]
             wausdc = (m["wausdc"] or "").lower()
             wrlp   = (m["wrlp"]   or "").lower()
+
+            # Broker-level column
             col = "wausdc_balance" if contract_lower == wausdc else (
                   "wrlp_balance"   if contract_lower == wrlp   else None)
             if col is None:
                 return  # Not a token we care about
 
+            # Market-level counter column
+            mkt_col = "total_broker_wausdc" if contract_lower == wausdc else "total_broker_wrlp"
+
             divisor = 1e6  # waUSDC and wRLP are 6-decimal
-            # Update sender balance (subtract)
-            await conn.execute(
+            human_amount = amount / divisor
+
+            # Update sender balance (subtract) — returns row count
+            from_result = await conn.execute(
                 f"UPDATE brokers SET {col} = COALESCE({col}, 0) - $1 WHERE address = $2",
-                amount / divisor, from_addr
+                human_amount, from_addr
             )
+            from_is_broker = from_result.split(" ")[-1] != "0"
+
             # Update recipient balance (add)
-            await conn.execute(
+            to_result = await conn.execute(
                 f"UPDATE brokers SET {col} = COALESCE({col}, 0) + $1 WHERE address = $2",
-                amount / divisor, to_addr
+                human_amount, to_addr
             )
-            log.debug("[ERC20Transfer] %s from=%s to=%s amount=%d col=%s",
-                      contract[:10], from_addr[:10], to_addr[:10], amount, col)
+            to_is_broker = to_result.split(" ")[-1] != "0"
+
+            # Update market-level running counter (only for known broker addresses)
+            delta = 0.0
+            if to_is_broker:
+                delta += human_amount
+            if from_is_broker:
+                delta -= human_amount
+            if delta != 0:
+                await conn.execute(
+                    f"UPDATE markets SET {mkt_col} = COALESCE({mkt_col}, 0) + $1 WHERE market_id = $2",
+                    delta, mkt_id
+                )
+
+            log.debug("[ERC20Transfer] %s from=%s to=%s amount=%d col=%s delta=%.2f",
+                      contract[:10], from_addr[:10], to_addr[:10], amount, col, delta)
         except Exception as e:
             log.warning("[dispatch] ERC20Transfer decode failed: %s", e)
 
