@@ -74,6 +74,7 @@ class PoolSnapshot:
     sqrt_price_x96: Optional[str]
     liquidity: Optional[str]
     normalization_factor: Optional[str]
+    total_debt: Optional[float]
 
 
 @strawberry.type
@@ -147,9 +148,9 @@ def _market(r) -> Market:
         min_col_ratio=str(r["min_col_ratio"]),
         maintenance_margin=str(r["maintenance_margin"]),
         debt_cap=str(r["debt_cap"]),
-        normalization_factor=str(r["normalization_factor"]) if r["normalization_factor"] else None,
-        total_debt_raw=str(r["total_debt_raw"]) if r["total_debt_raw"] else None,
-        bad_debt=str(r["bad_debt"]) if r["bad_debt"] else None,
+        normalization_factor=str(r["normalization_factor"]) if r["normalization_factor"] is not None else None,
+        total_debt_raw=str(r["total_debt_raw"]) if r["total_debt_raw"] is not None else None,
+        bad_debt=str(r["bad_debt"]) if r["bad_debt"] is not None else None,
     )
 
 
@@ -228,11 +229,22 @@ class Query:
             row = await conn.fetchrow("""
                 SELECT
                   b.market_id, b.block_number, b.block_timestamp,
-                  b.mark_price, b.tick, b.sqrt_price_x96, b.liquidity,
-                  b.normalization_factor,
-                  (SELECT index_price FROM block_states
+                  b.sqrt_price_x96, b.liquidity,
+                  COALESCE(b.mark_price, (SELECT mark_price FROM block_states
+                   WHERE market_id=$1 AND mark_price IS NOT NULL
+                   ORDER BY block_number DESC LIMIT 1)) AS mark_price,
+                  COALESCE(b.tick, (SELECT tick FROM block_states
+                   WHERE market_id=$1 AND tick IS NOT NULL
+                   ORDER BY block_number DESC LIMIT 1)) AS tick,
+                  COALESCE(b.normalization_factor, (SELECT normalization_factor FROM block_states
+                   WHERE market_id=$1 AND normalization_factor IS NOT NULL
+                   ORDER BY block_number DESC LIMIT 1)) AS normalization_factor,
+                  COALESCE(b.total_debt, (SELECT total_debt FROM block_states
+                   WHERE market_id=$1 AND total_debt IS NOT NULL
+                   ORDER BY block_number DESC LIMIT 1)) AS total_debt,
+                  COALESCE(b.index_price, (SELECT index_price FROM block_states
                    WHERE market_id=$1 AND index_price IS NOT NULL
-                   ORDER BY block_number DESC LIMIT 1) AS index_price
+                   ORDER BY block_number DESC LIMIT 1)) AS index_price
                 FROM block_states b
                 WHERE b.market_id=$1
                 ORDER BY b.block_number DESC
@@ -244,12 +256,13 @@ class Query:
             market_id=row["market_id"],
             block_number=row["block_number"],
             block_timestamp=row["block_timestamp"],
-            mark_price=float(row["mark_price"]) if row["mark_price"] else None,
-            index_price=float(row["index_price"]) if row["index_price"] else None,
+            mark_price=float(row["mark_price"]) if row["mark_price"] is not None else None,
+            index_price=float(row["index_price"]) if row["index_price"] is not None else None,
             tick=row["tick"],
-            sqrt_price_x96=str(row["sqrt_price_x96"]) if row["sqrt_price_x96"] else None,
-            liquidity=str(row["liquidity"]) if row["liquidity"] else None,
-            normalization_factor=str(row["normalization_factor"]) if row["normalization_factor"] else None,
+            sqrt_price_x96=str(row["sqrt_price_x96"]) if row["sqrt_price_x96"] is not None else None,
+            liquidity=str(row["liquidity"]) if row["liquidity"] is not None else None,
+            normalization_factor=str(row["normalization_factor"]) if row["normalization_factor"] is not None else None,
+            total_debt=float(row["total_debt"]) if row["total_debt"] is not None else None,
         )
 
     @strawberry.field

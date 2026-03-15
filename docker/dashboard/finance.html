@@ -765,7 +765,7 @@
                 body: JSON.stringify({ query: `
                   query {
                     poolSnapshot(marketId: "${mId}") {
-                      blockNumber markPrice indexPrice tick
+                      blockNumber markPrice indexPrice tick totalDebt
                     }
                     brokers(marketId: "${mId}") {
                       address wausdcBalance debtPrincipal
@@ -787,7 +787,7 @@
                    market_states: [{
                      index_price: (ps.indexPrice || 0).toString(),
                      normalization_factor: nfRaw,
-                     total_debt: m.totalDebtRaw || "0"
+                     total_debt: (ps.totalDebt != null ? Math.floor(ps.totalDebt).toString() : m.totalDebtRaw) || "0"
                    }],
                    pool_states: [{
                      mark_price: ps.markPrice || 0,
