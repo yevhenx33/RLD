@@ -105,7 +105,7 @@ source <(grep -E '^(MAINNET_RPC_URL|RPC_URL|ETH_RPC_URL|FORK_BLOCK|INDEXER_PORT|
 if [ -z "${FORK_BLOCK:-}" ] && [ -f "$RLD_ROOT/.env" ]; then
     FORK_BLOCK=$(grep -E '^FORK_BLOCK=' "$RLD_ROOT/.env" 2>/dev/null | cut -d= -f2 || echo "")
 fi
-FORK_BLOCK="${FORK_BLOCK:-21698573}"
+FORK_BLOCK="${FORK_BLOCK:-24660000}"
 
 if [ -z "${MAINNET_RPC_URL:-}" ]; then
     fail "MAINNET_RPC_URL not set in $ENV_FILE"

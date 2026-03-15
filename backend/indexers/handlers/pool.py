@@ -74,13 +74,15 @@ async def handle_swap(
     # Upsert block_states (pool fields only — other fields may have been set by market handler)
     await conn.execute("""
         INSERT INTO block_states
-          (market_id, block_number, block_timestamp, sqrt_price_x96, tick, mark_price, liquidity)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+          (market_id, block_number, block_timestamp, sqrt_price_x96, tick, mark_price, liquidity, index_price)
+        VALUES ($1, $2, $3, $4, $5, $6, $7,
+                (SELECT index_price FROM block_states WHERE market_id=$1 AND index_price IS NOT NULL ORDER BY block_number DESC LIMIT 1))
         ON CONFLICT (market_id, block_number) DO UPDATE SET
           sqrt_price_x96 = EXCLUDED.sqrt_price_x96,
           tick           = EXCLUDED.tick,
           mark_price     = EXCLUDED.mark_price,
-          liquidity      = EXCLUDED.liquidity
+          liquidity      = EXCLUDED.liquidity,
+          index_price    = COALESCE(block_states.index_price, EXCLUDED.index_price)
     """, market_id, block_number, block_timestamp,
          str(sqrt_price_x96), tick, mark_price, str(liquidity))
 
@@ -132,11 +134,13 @@ async def handle_modify_liquidity(
     # Update block_states liquidity snapshot
     await conn.execute("""
         INSERT INTO block_states
-          (market_id, block_number, block_timestamp, tick, mark_price)
-        VALUES ($1, $2, $3, $4, $5)
+          (market_id, block_number, block_timestamp, tick, mark_price, index_price)
+        VALUES ($1, $2, $3, $4, $5,
+                (SELECT index_price FROM block_states WHERE market_id=$1 AND index_price IS NOT NULL ORDER BY block_number DESC LIMIT 1))
         ON CONFLICT (market_id, block_number) DO UPDATE SET
-          tick       = COALESCE(block_states.tick,       EXCLUDED.tick),
-          mark_price = COALESCE(block_states.mark_price, EXCLUDED.mark_price)
+          tick        = COALESCE(block_states.tick,       EXCLUDED.tick),
+          mark_price  = COALESCE(block_states.mark_price, EXCLUDED.mark_price),
+          index_price = COALESCE(block_states.index_price, EXCLUDED.index_price)
     """, market_id, block_number, block_timestamp,
          None, sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp) if sqrt_price_x96 else None)
 

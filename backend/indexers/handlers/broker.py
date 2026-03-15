@@ -49,15 +49,17 @@ async def handle_position_modified(
     delta_debt: int,
     block_number: int,
 ) -> None:
-    # Update debt principal. deltaDebt is raw 6-decimal integer.
-    # We add it to debt_principal in brokers table.
+    # PositionModified carries (deltaCollateral int256, deltaDebt int256).
+    # deltaCollateral > 0 = deposit, < 0 = withdrawal; raw 6-decimal USDC units.
+    # deltaDebt > 0 = borrow, < 0 = repay.
     await conn.execute("""
         UPDATE brokers
-        SET debt_principal = debt_principal + $1
-        WHERE address = $2
-    """, delta_debt, broker_address.lower())
-    log.debug("[broker] PositionModified broker=%s deltaDebt=%d block=%d",
-              broker_address, delta_debt, block_number)
+        SET wausdc_balance = COALESCE(wausdc_balance, 0) + $1,
+            debt_principal  = COALESCE(debt_principal, 0) + $2
+        WHERE address = $3
+    """, delta_collateral / 1e6, delta_debt / 1e6, broker_address.lower())
+    log.debug("[broker] PositionModified broker=%s deltaCol=%d deltaDebt=%d block=%d",
+              broker_address, delta_collateral, delta_debt, block_number)
 
 
 async def handle_collateral_deposited(
@@ -68,9 +70,10 @@ async def handle_collateral_deposited(
     block_number: int,
     tx_hash: str,
 ) -> None:
-    # State is recalculated from getFullState() via the pool handler writing block_states.
-    # Here we just record the raw event for audit.
-    log.debug("[broker] CollateralDeposited broker=%s token=%s amount=%d block=%d",
+    # CollateralDeposited doesn't exist as a standalone on-chain event —
+    # collateral changes are tracked via PositionModified. This handler is kept
+    # as a no-op for legacy compatibility.
+    log.debug("[broker] CollateralDeposited (no-op) broker=%s token=%s amount=%d block=%d",
               broker_address, token, amount, block_number)
 
 
@@ -80,7 +83,7 @@ async def handle_active_token_set(
     token_id: int,
 ) -> None:
     await conn.execute("""
-        UPDATE brokers SET active_token_id = $1 WHERE address = $2
+        UPDATE brokers SET active_lp_token_id = $1 WHERE address = $2
     """, token_id, broker_address.lower())
     # Also update lp_positions: the given token_id is now active, all others for this broker are not
     await conn.execute("""
@@ -94,10 +97,10 @@ async def handle_active_token_set(
 async def update_broker_state(
     conn: asyncpg.Connection,
     broker_address: str,
-    collateral: int | None = None,
-    debt: int | None = None,
-    collateral_value: int | None = None,
-    debt_value: int | None = None,
+    wausdc_balance: int | None = None,
+    wrlp_balance: int | None = None,
+    wausdc_value: int | None = None,
+    wrlp_value: int | None = None,
     health_factor: str | None = None,
 ) -> None:
     """
@@ -106,14 +109,14 @@ async def update_broker_state(
     Only non-None fields are written.
     """
     fields = {}
-    if collateral is not None:
-        fields["collateral"] = collateral / 1e6
-    if debt is not None:
-        fields["debt"] = debt / 1e6
-    if collateral_value is not None:
-        fields["collateral_value"] = collateral_value / 1e6
-    if debt_value is not None:
-        fields["debt_value"] = debt_value / 1e6
+    if wausdc_balance is not None:
+        fields["wausdc_balance"] = wausdc_balance / 1e6
+    if wrlp_balance is not None:
+        fields["wrlp_balance"] = wrlp_balance / 1e6
+    if wausdc_value is not None:
+        fields["wausdc_value"] = wausdc_value / 1e6
+    if wrlp_value is not None:
+        fields["wrlp_value"] = wrlp_value / 1e6
     if health_factor is not None:
         fields["health_factor"] = health_factor
 
@@ -126,3 +129,4 @@ async def update_broker_state(
         f"UPDATE brokers SET {set_clause} WHERE address = $1",
         *values
     )
+

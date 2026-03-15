@@ -4,10 +4,18 @@
 
 log_phase "4" "WRITE DEPLOYMENT CONFIG & RESET INDEXER"
 
+# ─── Capture deploy block + timestamp before switching to interval mining ──
+FORK_BLOCK="${FORK_BLOCK:-24660000}"
+DEPLOY_BLOCK=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo "0")
+DEPLOY_TIMESTAMP=$(cast block latest --rpc-url "$RPC_URL" --field timestamp 2>/dev/null || echo "0")
+
 mkdir -p /config
 
 cat > /config/deployment.json << EOF
 {
+    "fork_block": $FORK_BLOCK,
+    "deploy_block": $DEPLOY_BLOCK,
+    "deploy_timestamp": $DEPLOY_TIMESTAMP,
     "rpc_url": "$RPC_URL",
     "rld_core": "$RLD_CORE",
     "twamm_hook": "$TWAMM_HOOK",
@@ -44,6 +52,8 @@ EOF
 
 log_ok "Written /config/deployment.json"
 cat /config/deployment.json | python3 -m json.tool
+
+log_ok "Written /config/deployment.json (fork_block=${FORK_BLOCK}, deploy_block=${DEPLOY_BLOCK})"
 
 # ─── Signal indexer to reset ──────────────────────────────────
 log_step "4.1" "Resetting indexer with new deployment config..."

@@ -37,3 +37,19 @@ if [ -z "$MOCK_ORACLE" ]; then
     log_err "MockRLDAaveOracle deployment failed"
 fi
 log_ok "MockRLDAaveOracle: $MOCK_ORACLE (admin-settable rate for simulation)"
+
+# --- Sync Initial Rate ---
+log_step "1.3" "Syncing initial oracle rate from rates-indexer..."
+RATE_APY=$(curl -sf "http://rates-indexer:8080/rates?limit=1&symbol=USDC" | jq -r '.[0].apy' || echo "")
+
+if [ -n "$RATE_APY" ] && [ "$RATE_APY" != "null" ]; then
+    # Convert APY percent to RAY (APY / 100 * 1e27)
+    RATE_RAY=$(python3 -c "print(int(float('${RATE_APY}') * 1e25))")
+    
+    log_ok "Fetched live rate: $RATE_APY% (RAY: $RATE_RAY)"
+    cast send "$MOCK_ORACLE" "setRate(uint256)" "$RATE_RAY" \
+        --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1
+    log_ok "MockRLDAaveOracle initialized with live rate"
+else
+    log_info "Rates-indexer unreachable or returned null. MockRLDAaveOracle will use default 5%."
+fi

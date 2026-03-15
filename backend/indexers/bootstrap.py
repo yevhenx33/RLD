@@ -68,8 +68,11 @@ def load_deployment_json() -> dict:
     if missing:
         raise ValueError(f"deployment.json missing required keys: {missing}")
 
-    # session_start_block defaults to 0 if not present (indexer will catch up)
-    cfg.setdefault("session_start_block", 0)
+    # session_start_block: always driven by fork_block so indexer starts
+    # at the chain fork point, not at block 0.
+    cfg["session_start_block"] = cfg.get("fork_block") or cfg.get("session_start_block", 0)
+    cfg.setdefault("deploy_block", cfg["session_start_block"])
+    cfg.setdefault("deploy_timestamp", 0)
     cfg.setdefault("chain_id", 1)
     cfg.setdefault("v4_state_view", cfg.get("v4_state_view", ""))
     cfg.setdefault("v4_quoter", cfg.get("v4_quoter", ""))
@@ -78,8 +81,9 @@ def load_deployment_json() -> dict:
     cfg.setdefault("permit2", cfg.get("permit2", ""))
 
     log.info(
-        "Loaded deployment.json from %s: rld_core=%s v4_pool=%s session_start=%d",
-        path, cfg["rld_core"], cfg["v4_pool_manager"], cfg["session_start_block"]
+        "Loaded deployment.json from %s: rld_core=%s v4_pool=%s fork_block=%d session_start=%d",
+        path, cfg["rld_core"], cfg["v4_pool_manager"],
+        cfg.get("fork_block", 0), cfg["session_start_block"]
     )
     return cfg
 
@@ -138,11 +142,11 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 min_col_ratio, maintenance_margin, liq_close_factor,
                 funding_period_sec, debt_cap, created_at
             ) VALUES (
-                $1, $2, 0,
-                $3, $4, $5,
-                $6, 'waUSDC', $7, 'wRLP',
-                $8, 500, 5,
-                $9, $10, $11, $12,
+                $1, $2, $3,
+                $4, $5, $6,
+                $7, 'waUSDC', $8, 'wRLP',
+                $9, 500, 5,
+                $10, $11, $12, $13,
                 '1500000000000000000', '1250000000000000000', '500000000000000000',
                 28800, '1000000000000000000000000', NOW()
             )
@@ -159,7 +163,8 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 broker_executor     = COALESCE(NULLIF(EXCLUDED.broker_executor, ''),     markets.broker_executor)
         """,
             market_id,
-            cfg.get("session_start_block", 0),
+            cfg.get("deploy_block", 0),
+            cfg.get("deploy_timestamp", 0),
             cfg.get("broker_factory", ""),
             cfg.get("mock_oracle", ""),
             cfg.get("twamm_hook", ""),
@@ -176,7 +181,7 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
             INSERT INTO indexer_state (market_id, last_indexed_block, total_events)
             VALUES ($1, $2, 0)
             ON CONFLICT (market_id) DO UPDATE SET last_indexed_block = EXCLUDED.last_indexed_block
-        """, market_id, cfg.get("session_start_block", 0))
+        """, market_id, cfg["session_start_block"])
 
     log.info("Seeded market %s with oracle=%s pool_id=%s",
              market_id[:16], cfg.get("mock_oracle", "")[:16], cfg.get("pool_id", "")[:16])

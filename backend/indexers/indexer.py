@@ -44,7 +44,7 @@ TOPICS = {
     Web3.keccak(text="RateUpdated(uint256,uint256)").hex():
         "RateUpdated",
     # BrokerFactory
-    Web3.keccak(text="BrokerCreated(address,address,bytes32)").hex():
+    Web3.keccak(text="BrokerCreated(address,address,uint256)").hex():
         "BrokerCreated",
     # PrimeBroker
     Web3.keccak(text="CollateralDeposited(address,uint256)").hex():
@@ -59,7 +59,7 @@ TOPICS = {
         "ActiveTokenSet",
     Web3.keccak(text="V4LiquidityAdded(uint256,int24,int24,uint128)").hex():
         "V4LiquidityAdded",
-    Web3.keccak(text="V4LiquidityRemoved(uint256,uint128)").hex():
+    Web3.keccak(text="V4LiquidityRemoved(uint256,uint128,bool)").hex():
         "V4LiquidityRemoved",
     # V4 PoolManager
     Web3.keccak(text="Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)").hex():
@@ -69,8 +69,9 @@ TOPICS = {
     # TWAMM Hook
     Web3.keccak(text="SubmitOrder(address,uint160,bool,uint256)").hex():
         "SubmitOrder",
-    Web3.keccak(text="CancelOrder(address,uint160,bool)").hex():
-        "CancelOrder",
+    # waUSDC / wRLP — ERC20 Transfer events track collateral deposits/withdrawals
+    Web3.keccak(text="Transfer(address,address,uint256)").hex():
+        "ERC20Transfer",
 }
 
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
@@ -90,9 +91,9 @@ async def build_watch_set(conn: asyncpg.Connection, global_cfg: dict) -> set[str
         addr = global_cfg.get(key)
         if addr:
             watched.add(addr.lower())
-    # Per-market addresses from DB
+    # Per-market addresses from DB — broker_factory, oracle, twamm hook
     for m in markets:
-        for col in ("broker_factory", "mock_oracle", "twamm_hook"):
+        for col in ("broker_factory", "mock_oracle", "twamm_hook", "wausdc", "wrlp"):
             if m[col]:
                 watched.add(m[col].lower())
     for b in brokers:
@@ -323,7 +324,7 @@ async def dispatch(
 
     elif event_name == "V4LiquidityRemoved":
         try:
-            decoded = w3.eth.codec.decode(["uint256", "uint128"], data_bytes)
+            decoded = w3.eth.codec.decode(["uint256", "uint128", "bool"], data_bytes)
             await lp_handler.handle_v4_liquidity_removed(conn, decoded[0], decoded[1])
         except Exception as e:
             log.warning("[dispatch] V4LiquidityRemoved decode failed: %s", e)
@@ -356,6 +357,47 @@ async def dispatch(
             await twamm_handler.handle_cancel_order(conn, owner, decoded[0], decoded[1])
         except Exception as e:
             log.warning("[dispatch] CancelOrder decode failed: %s", e)
+
+    elif event_name == "ERC20Transfer":
+        # Transfer(address indexed from, address indexed to, uint256 amount)
+        # Emitted by waUSDC and wRLP contracts.
+        # Update wausdc_balance or wrlp_balance for any broker that is the sender or recipient.
+        try:
+            from_addr = ("0x" + topics[1][-20:].hex()) if isinstance(topics[1], bytes) else ("0x" + topics[1][-40:])
+            to_addr   = ("0x" + topics[2][-20:].hex()) if isinstance(topics[2], bytes) else ("0x" + topics[2][-40:])
+            decoded   = w3.eth.codec.decode(["uint256"], data_bytes)
+            amount    = decoded[0]
+            from_addr = from_addr.lower()
+            to_addr   = to_addr.lower()
+            contract_lower = contract.lower()
+
+            # Determine which column to update based on which token emitted the event
+            markets = await conn.fetch("SELECT wausdc, wrlp FROM markets LIMIT 1")
+            if not markets:
+                return
+            m = markets[0]
+            wausdc = (m["wausdc"] or "").lower()
+            wrlp   = (m["wrlp"]   or "").lower()
+            col = "wausdc_balance" if contract_lower == wausdc else (
+                  "wrlp_balance"   if contract_lower == wrlp   else None)
+            if col is None:
+                return  # Not a token we care about
+
+            divisor = 1e6  # waUSDC and wRLP are 6-decimal
+            # Update sender balance (subtract)
+            await conn.execute(
+                f"UPDATE brokers SET {col} = COALESCE({col}, 0) - $1 WHERE address = $2",
+                amount / divisor, from_addr
+            )
+            # Update recipient balance (add)
+            await conn.execute(
+                f"UPDATE brokers SET {col} = COALESCE({col}, 0) + $1 WHERE address = $2",
+                amount / divisor, to_addr
+            )
+            log.debug("[ERC20Transfer] %s from=%s to=%s amount=%d col=%s",
+                      contract[:10], from_addr[:10], to_addr[:10], amount, col)
+        except Exception as e:
+            log.warning("[dispatch] ERC20Transfer decode failed: %s", e)
 
 
 # ── Stats update ───────────────────────────────────────────────────────────
