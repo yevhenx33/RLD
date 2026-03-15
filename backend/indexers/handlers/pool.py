@@ -254,26 +254,28 @@ async def handle_modify_liquidity(
     seed_t1 = None
 
     if w3 and pool_manager:
-        # Check if we already have token balances
-        has_bal = await conn.fetchrow("""
-            SELECT 1 FROM block_states
-            WHERE market_id = $1 AND token0_balance IS NOT NULL LIMIT 1
-        """, market_id)
-        if not has_bal:
-            try:
-                # Sort tokens to identify token0/token1
-                token0_addr = min(wausdc.lower(), wrlp.lower())
-                token1_addr = max(wausdc.lower(), wrlp.lower())
-                erc20_abi = [{"inputs":[{"name":"","type":"address"}],"name":"balanceOf",
-                              "outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]
-                t0_contract = w3.eth.contract(address=w3.to_checksum_address(token0_addr), abi=erc20_abi)
-                t1_contract = w3.eth.contract(address=w3.to_checksum_address(token1_addr), abi=erc20_abi)
-                pm_addr = w3.to_checksum_address(pool_manager)
-                seed_t0 = t0_contract.functions.balanceOf(pm_addr).call()
-                seed_t1 = t1_contract.functions.balanceOf(pm_addr).call()
-                log.info("[pool] Seeded token balances via RPC: t0=%d t1=%d", seed_t0, seed_t1)
-            except Exception as e:
-                log.warning("[pool] Failed to seed balances via RPC: %s", e)
+        # Always re-read balances on ModifyLiquidity — LP events change
+        # reserves in ways that can't be precisely tracked from event data alone.
+        # Read at the EXACT block being indexed to avoid future-swap contamination.
+        try:
+            # Sort tokens to identify token0/token1
+            token0_addr = min(wausdc.lower(), wrlp.lower())
+            token1_addr = max(wausdc.lower(), wrlp.lower())
+            erc20_abi = [{"inputs":[{"name":"","type":"address"}],"name":"balanceOf",
+                          "outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]
+            t0_contract = w3.eth.contract(address=w3.to_checksum_address(token0_addr), abi=erc20_abi)
+            t1_contract = w3.eth.contract(address=w3.to_checksum_address(token1_addr), abi=erc20_abi)
+            pm_addr = w3.to_checksum_address(pool_manager)
+            seed_t0 = t0_contract.functions.balanceOf(pm_addr).call(
+                block_identifier=block_number
+            )
+            seed_t1 = t1_contract.functions.balanceOf(pm_addr).call(
+                block_identifier=block_number
+            )
+            log.info("[pool] ModifyLiquidity: reset balances at block=%d t0=%d t1=%d",
+                     block_number, seed_t0, seed_t1)
+        except Exception as e:
+            log.warning("[pool] Failed to read balances via RPC: %s", e)
 
     # Build token0/1 values: use RPC seed if available, else carry-forward
     t0_val = str(seed_t0) if seed_t0 is not None else _cf('token0_balance')

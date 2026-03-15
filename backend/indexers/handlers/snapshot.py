@@ -86,21 +86,35 @@ async def materialize_snapshot(
     peg_dev = (normalized_mark - index_price) / index_price * 100 if index_price > 0 else 0
 
     funding_rate = (normalized_mark - index_price) / index_price if index_price > 0 else 0
-    # Read funding_period_sec from markets table
-    market_row = await conn.fetchrow(
-        "SELECT funding_period_sec FROM markets WHERE market_id = $1", market_id
+    # Read market config
+    mkt = await conn.fetchrow(
+        "SELECT wausdc, wrlp, pool_id, funding_period_sec FROM markets WHERE market_id = $1",
+        market_id
     )
-    funding_period = int(market_row["funding_period_sec"]) if market_row else 2_592_000
+    if not mkt:
+        return
+    funding_period = int(mkt["funding_period_sec"])
     year_sec = 365 * 86400
     ann_exp = -funding_rate * year_sec / funding_period
     ann_exp_clamped = max(-20, min(20, ann_exp))
     funding_ann_pct = (math.exp(ann_exp_clamped) - 1) * 100
+    pool_id = mkt["pool_id"]
 
-    # Pool TVL (t0 is position token, t1 is collateral in 6-dec raw)
-    # t0_balance and t1_balance are raw integers
+    # ── Pool TVL from tracked ERC20 balances ──
+    # Token order: token0 = lower address, token1 = higher address
+    wausdc = mkt["wausdc"].lower()
+    wrlp = mkt["wrlp"].lower()
+    wrlp_is_token0 = wrlp < wausdc
+
+    # t0_balance and t1_balance are raw 6-dec integers in block_states
     t0_human = t0_balance / 1e6
     t1_human = t1_balance / 1e6
-    tvl = t0_human * mark_price + t1_human
+
+    # TVL: position token * markPrice + stablecoin * 1
+    if wrlp_is_token0:
+        tvl = t0_human * mark_price + t1_human
+    else:
+        tvl = t1_human * mark_price + t0_human
 
     # ── Brokers ──
     brokers = await conn.fetch("""
