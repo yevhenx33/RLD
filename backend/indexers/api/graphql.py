@@ -6,6 +6,7 @@ Served at: /graphql  (Strawberry + FastAPI)
 Health at: /healthz
 """
 import os
+import json
 from typing import Optional, List
 import strawberry
 from strawberry.fastapi import GraphQLRouter
@@ -75,6 +76,10 @@ class PoolSnapshot:
     liquidity: Optional[str]
     normalization_factor: Optional[str]
     total_debt: Optional[float]
+    token0_balance: Optional[str]
+    token1_balance: Optional[str]
+    fee_growth_global0: Optional[str]
+    fee_growth_global1: Optional[str]
 
 
 @strawberry.type
@@ -187,20 +192,6 @@ class Query:
     async def markets(self) -> List[Market]:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM markets ORDER BY deploy_block")
-        return [_market(r) for r in rows]
-
-    @strawberry.field
-    async def market(self, market_id: str) -> Optional[Market]:
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            r = await conn.fetchrow("SELECT * FROM markets WHERE market_id=$1", market_id)
-        return _market(r) if r else None
-
-    @strawberry.field
-    async def markets(self) -> List[Market]:
-        pool = await get_pool()
-        async with pool.acquire() as conn:
             rows = await conn.fetch("SELECT * FROM markets ORDER BY deploy_timestamp DESC")
         return [_market(r) for r in rows]
 
@@ -244,7 +235,19 @@ class Query:
                    ORDER BY block_number DESC LIMIT 1)) AS total_debt,
                   COALESCE(b.index_price, (SELECT index_price FROM block_states
                    WHERE market_id=$1 AND index_price IS NOT NULL
-                   ORDER BY block_number DESC LIMIT 1)) AS index_price
+                   ORDER BY block_number DESC LIMIT 1)) AS index_price,
+                  COALESCE(b.token0_balance, (SELECT token0_balance FROM block_states
+                   WHERE market_id=$1 AND token0_balance IS NOT NULL
+                   ORDER BY block_number DESC LIMIT 1)) AS token0_balance,
+                  COALESCE(b.token1_balance, (SELECT token1_balance FROM block_states
+                   WHERE market_id=$1 AND token1_balance IS NOT NULL
+                   ORDER BY block_number DESC LIMIT 1)) AS token1_balance,
+                  COALESCE(b.fee_growth_global0, (SELECT fee_growth_global0 FROM block_states
+                   WHERE market_id=$1 AND fee_growth_global0 IS NOT NULL
+                   ORDER BY block_number DESC LIMIT 1)) AS fee_growth_global0,
+                  COALESCE(b.fee_growth_global1, (SELECT fee_growth_global1 FROM block_states
+                   WHERE market_id=$1 AND fee_growth_global1 IS NOT NULL
+                   ORDER BY block_number DESC LIMIT 1)) AS fee_growth_global1
                 FROM block_states b
                 WHERE b.market_id=$1
                 ORDER BY b.block_number DESC
@@ -263,6 +266,10 @@ class Query:
             liquidity=str(row["liquidity"]) if row["liquidity"] is not None else None,
             normalization_factor=str(row["normalization_factor"]) if row["normalization_factor"] is not None else None,
             total_debt=float(row["total_debt"]) if row["total_debt"] is not None else None,
+            token0_balance=str(row["token0_balance"]) if row["token0_balance"] is not None else None,
+            token1_balance=str(row["token1_balance"]) if row["token1_balance"] is not None else None,
+            fee_growth_global0=str(row["fee_growth_global0"]) if row["fee_growth_global0"] is not None else None,
+            fee_growth_global1=str(row["fee_growth_global1"]) if row["fee_growth_global1"] is not None else None,
         )
 
     @strawberry.field

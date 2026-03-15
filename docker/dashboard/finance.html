@@ -766,6 +766,8 @@
                   query {
                     poolSnapshot(marketId: "${mId}") {
                       blockNumber markPrice indexPrice tick totalDebt
+                      liquidity token0Balance token1Balance
+                      feeGrowthGlobal0 feeGrowthGlobal1
                     }
                     brokers(marketId: "${mId}") {
                       address wausdcBalance debtPrincipal
@@ -782,7 +784,7 @@
                  const pMarkPrice = ps.markPrice || 0;
 
                  
-                 const d = {
+                   const d = {
                    block_number: ps.blockNumber || 0,
                    market_states: [{
                      index_price: (ps.indexPrice || 0).toString(),
@@ -791,7 +793,12 @@
                    }],
                    pool_states: [{
                      mark_price: ps.markPrice || 0,
-                     tick: ps.tick || 0
+                     tick: ps.tick || 0,
+                     liquidity: ps.liquidity || null,
+                     token0_balance: ps.token0Balance || null,
+                     token1_balance: ps.token1Balance || null,
+                     fee_growth_global0: ps.feeGrowthGlobal0 || null,
+                     fee_growth_global1: ps.feeGrowthGlobal1 || null,
                    }],
                     broker_positions: br.map(b => {
                       // DB stores values already in human USDC (divided by 1e6 in handlers)
@@ -1182,6 +1189,44 @@
                 )}
               </div>
               <PriceChart data={chartData} />
+            </div>
+
+            {/* ═══ SECTION 2b: POOL LIQUIDITY ═══ */}
+            <div className="section">
+              <div className="section-header">
+                <span className="section-title">Pool Liquidity</span>
+                <Badge text={ps.liquidity ? "ACTIVE" : "NO DATA"} type={ps.liquidity ? "g" : "a"} />
+              </div>
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                gap: 2,
+              }}>
+                {[
+                  { label: "Active Liquidity", value: ps.liquidity ? fmtN(Number(ps.liquidity)) : "—", color: "var(--c)" },
+                  { label: "Token0 Balance (wRLP)", value: ps.token0_balance != null ? fmtN(Number(ps.token0_balance)) : "—", color: "var(--g)" },
+                  { label: "Token1 Balance (waUSDC)", value: ps.token1_balance != null ? fmtN(Number(ps.token1_balance)) : "—", color: "var(--p)" },
+                  { label: "Current Tick", value: ps.tick ?? "—", color: "var(--tb)" },
+                  { label: "Fee Growth G0", value: ps.fee_growth_global0 ? fmtN(Number(ps.fee_growth_global0) / 2**128, 8) : "—", color: "var(--a)" },
+                  { label: "Fee Growth G1", value: ps.fee_growth_global1 ? fmtN(Number(ps.fee_growth_global1) / 2**128, 8) : "—", color: "var(--a)" },
+                ].map((item, i) => (
+                  <div key={i} style={{
+                    background: "var(--s1)",
+                    border: "1px solid var(--bdr)",
+                    padding: "16px 20px",
+                    animation: `fadeIn 0.4s ease ${i * 40}ms both`,
+                  }}>
+                    <div style={{
+                      fontSize: 10, fontWeight: 600, letterSpacing: "1.5px",
+                      textTransform: "uppercase", color: "var(--td)", marginBottom: 6,
+                    }}>{item.label}</div>
+                    <div style={{
+                      fontSize: 20, fontWeight: 600, color: item.color,
+                      letterSpacing: "-0.5px",
+                    }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* ═══ SECTION 3: BROKER POSITIONS ═══ */}
