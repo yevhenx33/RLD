@@ -7,9 +7,11 @@ Health at: /healthz
 """
 import os
 import json
+import math
 from typing import Optional, List
 import strawberry
 from strawberry.fastapi import GraphQLRouter
+from strawberry.scalars import JSON
 from fastapi import FastAPI
 import asyncpg
 
@@ -369,6 +371,185 @@ class Query:
             block_number=r["block_number"],
             data=r["data"]
         ) for r in rows]
+
+    # ── NEW: Precomputed data resolvers ─────────────────────────────
+
+    @strawberry.field
+    async def snapshot(self) -> Optional[JSON]:
+        """Returns the precomputed global snapshot JSON. Zero computation."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval("SELECT snapshot FROM markets LIMIT 1")
+        if not val:
+            return None
+        return json.loads(val) if isinstance(val, str) else val
+
+    @strawberry.field
+    async def liquidity_distribution(self) -> Optional[JSON]:
+        """Returns pre-built liquidity bin distribution. Zero computation."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval("SELECT liquidity_bins FROM markets LIMIT 1")
+        if not val:
+            return None
+        return json.loads(val) if isinstance(val, str) else val
+
+    @strawberry.field
+    async def broker_profile(self, owner: str) -> Optional[JSON]:
+        """On-demand broker profile with LP position values and fees.
+        
+        Raw data stored in DB. Values/fees computed at query time
+        using 5N multiplications per LP position. <1ms even with 50 positions.
+        """
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Find broker by owner
+            broker = await conn.fetchrow(
+                "SELECT * FROM brokers WHERE owner = $1",
+                owner.lower()
+            )
+            if not broker:
+                return None
+
+            market_id = broker["market_id"]
+
+            # Get latest block state for current prices
+            latest = await conn.fetchrow("""
+                SELECT mark_price, tick, fee_growth_global0, fee_growth_global1,
+                       index_price
+                FROM block_states
+                WHERE market_id = $1
+                ORDER BY block_number DESC LIMIT 1
+            """, market_id)
+            if not latest:
+                return None
+
+            mark_price = float(latest["mark_price"] or 0)
+            current_tick = int(latest["tick"] or 0)
+            fg0 = int(latest["fee_growth_global0"] or "0")
+            fg1 = int(latest["fee_growth_global1"] or "0")
+            index_price = float(latest["index_price"] or 0)
+
+            # Get LP positions
+            positions = await conn.fetch("""
+                SELECT * FROM lp_positions
+                WHERE broker_address = $1 AND is_burned = FALSE
+                ORDER BY mint_block DESC
+            """, broker["address"])
+
+            lp_data = []
+            Q128 = 2**128
+            for pos in positions:
+                tick_lower = pos["tick_lower"]
+                tick_upper = pos["tick_upper"]
+                liquidity = int(pos["liquidity"])
+
+                # Compute token amounts from liquidity + current tick
+                amt0, amt1 = _liquidity_to_amounts(
+                    liquidity, tick_lower, tick_upper, current_tick
+                )
+                amt0_human = amt0 / 1e6
+                amt1_human = amt1 / 1e6
+                value_usd = amt0_human * mark_price + amt1_human
+
+                # Fee earnings (simplified: using global fee growth as upper bound)
+                # In production V4, feeGrowthInside requires per-tick tracking
+                fg_inside0 = fg0  # upper bound — TODO: track per-tick
+                fg_inside1 = fg1
+                fees0 = liquidity * fg_inside0 / Q128 / 1e6
+                fees1 = liquidity * fg_inside1 / Q128 / 1e6
+
+                in_range = tick_lower <= current_tick < tick_upper
+
+                lp_data.append({
+                    "tokenId": int(pos["token_id"]),
+                    "tickLower": tick_lower,
+                    "tickUpper": tick_upper,
+                    "liquidity": str(liquidity),
+                    "isActive": pos["is_active"],
+                    "amount0": round(amt0_human, 4),
+                    "amount1": round(amt1_human, 4),
+                    "valueUsd": round(value_usd, 2),
+                    "feesEarned0": round(fees0, 4),
+                    "feesEarned1": round(fees1, 4),
+                    "feesUsd": round(fees0 * mark_price + fees1, 2),
+                    "inRange": in_range,
+                    "entryPrice": float(pos["entry_price"]) if pos["entry_price"] else None,
+                })
+
+            debt_principal = float(broker["debt_principal"] or 0)
+            collateral_value = float(broker["wausdc_value"] or 0)
+            debt_value = debt_principal * index_price
+
+            return {
+                "address": broker["address"],
+                "owner": broker["owner"],
+                "collateral": float(broker["wausdc_balance"] or 0),
+                "debt": debt_principal,
+                "collateralValue": collateral_value,
+                "debtValue": round(debt_value, 2),
+                "healthFactor": str(broker["health_factor"] or "0"),
+                "netEquityUsd": round(collateral_value - debt_value, 2),
+                "lpPositions": lp_data,
+            }
+
+    @strawberry.field
+    async def market_info(self) -> Optional[JSON]:
+        """Static market configuration. Fetched once, cached forever."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT market_id, broker_factory, mock_oracle, twamm_hook,
+                       wausdc, wrlp, pool_id, pool_fee, tick_spacing,
+                       min_col_ratio, maintenance_margin, debt_cap,
+                       swap_router, bond_factory, basis_trade_factory, broker_executor,
+                       funding_period_sec
+                FROM markets LIMIT 1
+            """)
+        if not row:
+            return None
+        return {
+            "marketId": row["market_id"],
+            "brokerFactory": row["broker_factory"],
+            "mockOracle": row["mock_oracle"],
+            "twammHook": row["twamm_hook"],
+            "wausdc": row["wausdc"],
+            "wrlp": row["wrlp"],
+            "poolId": row["pool_id"],
+            "poolFee": row["pool_fee"],
+            "tickSpacing": row["tick_spacing"],
+            "minColRatio": str(row["min_col_ratio"]),
+            "maintenanceMargin": str(row["maintenance_margin"]),
+            "debtCap": str(row["debt_cap"]),
+            "swapRouter": row["swap_router"],
+            "bondFactory": row["bond_factory"],
+            "basisTradeFactory": row["basis_trade_factory"],
+            "brokerExecutor": row["broker_executor"],
+            "fundingPeriodSec": row["funding_period_sec"],
+        }
+
+
+# ── Uniswap V4 math for on-demand position value resolution ────────────────
+
+def _liquidity_to_amounts(
+    liquidity: int, tick_lower: int, tick_upper: int, current_tick: int
+) -> tuple:
+    """Convert LP position's liquidity to token amounts at current tick."""
+    sa = math.sqrt(1.0001 ** tick_lower)
+    sb = math.sqrt(1.0001 ** tick_upper)
+    sp = math.sqrt(1.0001 ** current_tick)
+
+    if current_tick < tick_lower:
+        amount0 = liquidity * (1/sa - 1/sb)
+        amount1 = 0
+    elif current_tick >= tick_upper:
+        amount0 = 0
+        amount1 = liquidity * (sb - sa)
+    else:
+        amount0 = liquidity * (1/sp - 1/sb)
+        amount1 = liquidity * (sp - sa)
+
+    return amount0, amount1
 
 
 # ── App factory ────────────────────────────────────────────────────────────

@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS markets (
   normalization_factor NUMERIC DEFAULT 1000000000000000000,
   total_debt_raw       NUMERIC DEFAULT 0,
   bad_debt             NUMERIC DEFAULT 0,
+  -- Precomputed data blobs
+  snapshot            JSONB,            -- materialized global state (rebuilt per block)
+  liquidity_bins      JSONB,            -- materialized tick distribution (rebuilt on ModifyLiquidity)
   created_at          TIMESTAMPTZ NOT NULL
 );
 
@@ -90,6 +93,9 @@ CREATE TABLE IF NOT EXISTS block_states (
   token1_balance        NUMERIC,
   fee_growth_global0    TEXT,
   fee_growth_global1    TEXT,
+  -- Per-block swap aggregates
+  swap_volume           NUMERIC DEFAULT 0,
+  swap_count            INT DEFAULT 0,
   PRIMARY KEY (market_id, block_number)
 );
 
@@ -145,6 +151,18 @@ CREATE TABLE IF NOT EXISTS candles (
   volume_usd  NUMERIC NOT NULL,
   swap_count  INT NOT NULL,
   PRIMARY KEY (market_id, resolution, bucket)
+);
+
+-- ── TICK LIQUIDITY NET DELTAS ────────────────────────────────────────────────
+-- Per-tick cumulative liquidity delta for the V4 pool.
+-- Updated on every ModifyLiquidity: +delta at tickLower, -delta at tickUpper.
+-- Used to rebuild the liquidity distribution bins.
+
+CREATE TABLE IF NOT EXISTS tick_liquidity_net (
+  pool_id   TEXT NOT NULL,
+  tick      INT NOT NULL,
+  net_delta NUMERIC NOT NULL DEFAULT 0,
+  PRIMARY KEY (pool_id, tick)
 );
 
 -- ── V4 LP POSITIONS ──────────────────────────────────────────────────────────

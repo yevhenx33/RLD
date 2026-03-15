@@ -10,9 +10,12 @@ Events from PoolManager (watched always, from session_start_block):
 Pool events are the source of:
   - block_states (tick, sqrtPriceX96, mark_price, liquidity, token balances, fee growth)
   - candles (all resolutions, inline upsert)
-  - volume_usd (accumulated in candles)
+  - volume_usd (accumulated in candles + block_states.swap_volume)
+  - tick_liquidity_net (per-tick liquidity deltas for distribution bins)
+  - markets.liquidity_bins (materialized JSON, rebuilt on ModifyLiquidity)
 """
 import asyncpg
+import json
 import logging
 import math
 
@@ -189,6 +192,14 @@ async def handle_swap(
          str(sqrt_price_x96), tick, mark_price, str(liquidity),
          new_t0, new_t1, str(new_fg0), str(new_fg1))
 
+    # ── Per-block swap volume accumulation ──
+    await conn.execute("""
+        UPDATE block_states
+        SET swap_volume = COALESCE(swap_volume, 0) + $1,
+            swap_count  = COALESCE(swap_count, 0) + 1
+        WHERE market_id = $2 AND block_number = $3
+    """, volume_usd, market_id, block_number)
+
     # Get current index_price for candles (read from latest block_state)
     row = await conn.fetchrow("""
         SELECT index_price FROM block_states
@@ -336,5 +347,110 @@ async def handle_modify_liquidity(
         """, market_id, block_number, block_timestamp,
              None, sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp) if sqrt_price_x96 else None)
 
+    # ── Track tick_liquidity_net deltas + rebuild bins ──
+    await _update_tick_liquidity(
+        conn, market_id, tick_lower, tick_upper, liquidity_delta
+    )
+
     log.debug("[pool] ModifyLiquidity market=%s block=%d delta=%d [%d, %d]",
               market_id, block_number, liquidity_delta, tick_lower, tick_upper)
+
+
+# ── Tick liquidity tracking + bin materialization ──────────────────────────
+
+async def _update_tick_liquidity(
+    conn: asyncpg.Connection,
+    market_id: str,
+    tick_lower: int,
+    tick_upper: int,
+    liquidity_delta: int,
+) -> None:
+    """Update tick_liquidity_net and rebuild materialized liquidity_bins."""
+    # Get pool_id for this market
+    row = await conn.fetchrow(
+        "SELECT pool_id, tick_spacing FROM markets WHERE market_id = $1", market_id
+    )
+    if not row:
+        return
+    pool_id = row["pool_id"]
+    tick_spacing = row["tick_spacing"]
+
+    # +delta at tickLower, -delta at tickUpper
+    await conn.execute("""
+        INSERT INTO tick_liquidity_net (pool_id, tick, net_delta)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (pool_id, tick) DO UPDATE SET
+            net_delta = tick_liquidity_net.net_delta + EXCLUDED.net_delta
+    """, pool_id, tick_lower, liquidity_delta)
+
+    await conn.execute("""
+        INSERT INTO tick_liquidity_net (pool_id, tick, net_delta)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (pool_id, tick) DO UPDATE SET
+            net_delta = tick_liquidity_net.net_delta + EXCLUDED.net_delta
+    """, pool_id, tick_upper, -liquidity_delta)
+
+    # Rebuild bins from tick data
+    bins = await _build_liquidity_bins(conn, pool_id, tick_spacing)
+    await conn.execute(
+        "UPDATE markets SET liquidity_bins = $1 WHERE market_id = $2",
+        json.dumps(bins), market_id
+    )
+    log.debug("[pool] Rebuilt %d liquidity bins for %s", len(bins), pool_id[:16])
+
+
+async def _build_liquidity_bins(
+    conn: asyncpg.Connection,
+    pool_id: str,
+    tick_spacing: int,
+    num_bins: int = 50,
+) -> list[dict]:
+    """Walk tick_liquidity_net to build binned distribution."""
+    rows = await conn.fetch("""
+        SELECT tick, net_delta FROM tick_liquidity_net
+        WHERE pool_id = $1 ORDER BY tick
+    """, pool_id)
+    if not rows:
+        return []
+
+    ticks = [(int(r["tick"]), float(r["net_delta"])) for r in rows]
+    min_tick = ticks[0][0]
+    max_tick = ticks[-1][0]
+    if min_tick == max_tick:
+        return [{"tickLow": min_tick, "tickHigh": max_tick, "liquidity": ticks[0][1]}]
+
+    # Walk ticks, accumulate liquidity
+    tick_liq = []
+    cumulative = 0.0
+    for tick, delta in ticks:
+        cumulative += delta
+        tick_liq.append((tick, cumulative))
+
+    # Bin into buckets
+    tick_range = max_tick - min_tick
+    bin_width = max(tick_range // num_bins, tick_spacing)
+
+    bins = []
+    for i in range(num_bins):
+        bin_low = min_tick + i * bin_width
+        bin_high = bin_low + bin_width
+
+        # Find liquidity at this bin (last entry <= bin_low)
+        liq_at_bin = 0.0
+        for tick, liq in tick_liq:
+            if tick <= bin_low:
+                liq_at_bin = liq
+            else:
+                break
+
+        bins.append({
+            "tickLow": bin_low,
+            "tickHigh": bin_high,
+            "priceLow": round(1.0001 ** bin_low, 6),
+            "priceHigh": round(1.0001 ** bin_high, 6),
+            "liquidity": liq_at_bin,
+        })
+        if bin_high >= max_tick:
+            break
+
+    return bins

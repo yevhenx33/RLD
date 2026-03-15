@@ -25,6 +25,7 @@ from handlers import broker as broker_handler
 from handlers import pool as pool_handler
 from handlers import twamm as twamm_handler
 from handlers import lp as lp_handler
+from handlers import snapshot as snapshot_handler
 
 log = logging.getLogger(__name__)
 
@@ -513,6 +514,8 @@ async def run(rpc_url: str, dsn: str) -> None:
                               total_events = EXCLUDED.total_events
                             WHERE indexer_state.last_indexed_block < EXCLUDED.last_indexed_block
                         """, mid, to_block)
+                        # Materialize global snapshot (precomputed JSON)
+                        await snapshot_handler.materialize_snapshot(conn, mid)
 
             last_block = to_block
             log.info("Indexed blocks %d→%d (%d logs)", last_block - BATCH_SIZE + 1 if last_block > BATCH_SIZE else 0,
