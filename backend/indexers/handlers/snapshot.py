@@ -123,9 +123,10 @@ async def materialize_snapshot(
         FROM brokers WHERE market_id = $1
     """, market_id)
 
-    total_col = sum(float(b["wausdc_value"] or 0) for b in brokers)
+    # waUSDC ≈ $1 stablecoin, so collateral USD ≈ wausdc_balance
+    total_col_usd = sum(float(b["wausdc_balance"] or 0) for b in brokers)
     total_debt_usd = sum(float(b["debt_principal"] or 0) * index_price for b in brokers)
-    over_collat = (total_col / total_debt_usd * 100) if total_debt_usd > 0 else 0
+    over_collat = (total_col_usd / total_debt_usd * 100) if total_debt_usd > 0 else 0
 
     def _broker_status(hf):
         try:
@@ -178,6 +179,8 @@ async def materialize_snapshot(
             "fundingRateAnnPct": round(funding_ann_pct, 4),
             "nfDriftAnnPct": 0,  # requires historical NF tracking — future
             "overCollatPct": round(over_collat, 2),
+            "totalCollateralUsd": round(total_col_usd, 2),
+            "totalDebtUsd": round(total_debt_usd, 2),
             "volume24hUsd": round(volume_24h, 2),
             "swapCount24h": swap_count_24h,
             "mark24hChangePct": round(mark_24h, 4),
@@ -191,7 +194,7 @@ async def materialize_snapshot(
                 "owner": b["owner"],
                 "collateral": float(b["wausdc_balance"] or 0),
                 "debt": float(b["debt_principal"] or 0),
-                "collateralValue": float(b["wausdc_value"] or 0),
+                "collateralValue": float(b["wausdc_balance"] or 0),
                 "debtValue": round(float(b["debt_principal"] or 0) * index_price, 2),
                 "healthFactor": str(b["health_factor"] or "0"),
             }
