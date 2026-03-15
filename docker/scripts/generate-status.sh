@@ -75,12 +75,12 @@ containers_json+="]"
 
 # ── API health + response times ──
 rates_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 http://localhost:8081/ 2>/dev/null || echo "-1")
-sim_rt=$(curl -sf -o /dev/null -w "%{time_total}" -m 3 http://localhost:8080/ 2>/dev/null) || sim_rt="-1"
+indexer_rt=$(curl -sf -o /dev/null -w "%{time_total}" -m 3 http://localhost:8080/healthz 2>/dev/null) || indexer_rt="-1"
 bot_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 http://localhost:8082/health 2>/dev/null || echo "-1")
 nginx_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 https://rld.fi/ 2>/dev/null || echo "-1")
 
 rates_ok=$([ "$rates_rt" != "-1" ] && echo "true" || echo "false")
-sim_ok=$([ "$sim_rt" != "-1" ] && echo "true" || echo "false")
+indexer_ok=$([ "$indexer_rt" != "-1" ] && echo "true" || echo "false")
 bot_ok=$([ "$bot_rt" != "-1" ] && echo "true" || echo "false")
 nginx_ok=$([ "$nginx_rt" != "-1" ] && echo "true" || echo "false")
 
@@ -204,23 +204,29 @@ except Exception as e:
 print(json.dumps(result))
 " 2>/dev/null) || DB_JSON='{}'
 
-# --- Postgres sim-indexer health ---
-PG_JSON=$(docker exec docker-postgres-1 psql -U rld -d rld_indexer -t -A -c "
+# --- Pool state from rld_indexer postgres ---
+POOL_JSON=$(docker exec docker-postgres-1 psql -U rld -d rld_indexer -t -A -c "
 SELECT json_build_object(
   'healthy', true,
-  'schemas', (SELECT json_agg(schema_name) FROM information_schema.schemata WHERE schema_name LIKE 'sim_%'),
-  'last_indexed_block', COALESCE((SELECT MAX(last_block) FROM sim_default.market_state), -1),
-  'events_rows', (SELECT COUNT(*) FROM sim_default.events),
-  'brokers_indexed', (SELECT COUNT(*) FROM sim_default.broker_state)
+  'last_indexed_block', COALESCE((SELECT last_indexed_block FROM indexer_state LIMIT 1), 0),
+  'total_events', COALESCE((SELECT total_events FROM indexer_state LIMIT 1), 0),
+  'block_states_rows', (SELECT COUNT(*) FROM block_states),
+  'events_rows', (SELECT COUNT(*) FROM events),
+  'mark_price', (SELECT ROUND(mark_price::numeric, 6) FROM block_states WHERE mark_price IS NOT NULL ORDER BY block_number DESC LIMIT 1),
+  'index_price', (SELECT ROUND(index_price::numeric, 6) FROM block_states WHERE index_price IS NOT NULL ORDER BY block_number DESC LIMIT 1),
+  'liquidity', (SELECT liquidity FROM block_states WHERE liquidity IS NOT NULL ORDER BY block_number DESC LIMIT 1),
+  'token0_balance', (SELECT token0_balance FROM block_states WHERE token0_balance IS NOT NULL ORDER BY block_number DESC LIMIT 1),
+  'token1_balance', (SELECT token1_balance FROM block_states WHERE token1_balance IS NOT NULL ORDER BY block_number DESC LIMIT 1),
+  'total_debt', (SELECT total_debt FROM block_states WHERE total_debt IS NOT NULL ORDER BY block_number DESC LIMIT 1)
 );
-" 2>/dev/null) || PG_JSON='{"healthy":false}'
+" 2>/dev/null) || POOL_JSON='{"healthy":false}'
 
-# Merge rates + postgres DB checks
+# Merge rates + pool state
 DB_JSON=$(python3 -c "
 import json, sys
 rates = json.loads('''$DB_JSON''') if '''$DB_JSON'''.strip() else {}
-pg = json.loads('''$PG_JSON''') if '''$PG_JSON'''.strip() else {'healthy': False}
-rates['sim_indexer_pg'] = pg
+pool = json.loads('''$POOL_JSON''') if '''$POOL_JSON'''.strip() else {'healthy': False}
+rates['pool_state'] = pool
 print(json.dumps(rates))
 " 2>/dev/null) || DB_JSON='{}'
 
@@ -262,7 +268,7 @@ cat > "$TMPOUT" << ENDJSON
   "services": {
     "nginx": {"healthy":$nginx_conf_ok,"response_ms":$(python3 -c "print(int(float('${nginx_rt}')*1000))" 2>/dev/null || echo -1)},
     "rates_indexer": {"healthy":$rates_ok,"response_ms":$(python3 -c "print(int(float('${rates_rt}')*1000))" 2>/dev/null || echo -1),"last_block":"$rates_block"},
-    "sim_indexer": {"healthy":$sim_ok,"response_ms":$(python3 -c "print(int(float('${sim_rt}')*1000))" 2>/dev/null || echo -1)},
+    "indexer": {"healthy":$indexer_ok,"response_ms":$(python3 -c "print(int(float('${indexer_rt}')*1000))" 2>/dev/null || echo -1)},
     "monitor_bot": {"healthy":$bot_ok,"response_ms":$(python3 -c "print(int(float('${bot_rt}')*1000))" 2>/dev/null || echo -1)},
     "anvil": {"healthy":$anvil_ok,"block":"$anvil_block"}
   },

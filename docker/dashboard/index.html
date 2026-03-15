@@ -609,14 +609,14 @@
                       cls: "ok",
                     }
                   : null,
-                j.databases?.sim_indexer_pg?.last_indexed_block > 0
+                j.databases?.pool_state?.last_indexed_block > 0
                   ? {
                       ts,
-                      msg: `sim-indexer pg block: ${fmtN(j.databases.sim_indexer_pg.last_indexed_block)} (${fmtN(j.databases.sim_indexer_pg.block_state_rows)} rows)`,
+                      msg: `indexer block: ${fmtN(j.databases.pool_state.last_indexed_block)} (${fmtN(j.databases.pool_state.events_rows)} events)`,
                       cls: "ok",
                     }
-                  : j.databases?.sim_indexer_pg?.healthy === false
-                    ? { ts, msg: "sim-indexer postgres: unreachable", cls: "err" }
+                  : j.databases?.pool_state?.healthy === false
+                    ? { ts, msg: "indexer postgres: unreachable", cls: "err" }
                     : null,
                 j.system.errors_today > 0
                   ? {
@@ -729,20 +729,20 @@
           },
           {
             n: "Sim Indexer",
-            ok: svc.sim_indexer.healthy,
-            ms: svc.sim_indexer.response_ms,
+            ok: svc.indexer?.healthy || false,
+            ms: svc.indexer?.response_ms,
             port: "8080",
-            extra: d.databases?.sim_indexer_pg?.last_indexed_block > 0
-              ? `blk ${fmtN(d.databases.sim_indexer_pg.last_indexed_block)}`
+            extra: d.databases?.pool_state?.last_indexed_block > 0
+              ? `blk ${fmtN(d.databases.pool_state.last_indexed_block)}`
               : "",
           },
           {
             n: "Postgres",
-            ok: d.databases?.sim_indexer_pg?.healthy || false,
+            ok: d.databases?.pool_state?.healthy || false,
             ms: null,
             port: "5432",
-            extra: d.databases?.sim_indexer_pg?.schemas
-              ? `${d.databases.sim_indexer_pg.schemas.length} schema(s)`
+            extra: d.databases?.pool_state?.block_states_rows
+              ? `${fmtN(d.databases.pool_state.block_states_rows)} states`
               : "",
           },
           {
@@ -1497,94 +1497,102 @@
                 </Card>
 
                 <Card
-                  title="SIM-INDEXER (POSTGRES)"
+                  title="POOL STATE"
                   badge={(() => {
-                    const pg = d.databases?.sim_indexer_pg;
-                    if (!pg || pg.error || !pg.healthy)
+                    const ps = d.databases?.pool_state;
+                    if (!ps || ps.error || !ps.healthy)
                       return <Badge text="DOWN" type="r" />;
-                    if (pg.last_indexed_block <= 0)
+                    if (!ps.mark_price || ps.last_indexed_block <= 0)
                       return <Badge text="EMPTY" type="a" />;
-                    return <Badge text="ACTIVE" type="g" />;
+                    return <Badge text="LIVE" type="g" />;
                   })()}
                   delay={10}
                 >
                   {(() => {
-                    const pg = d.databases?.sim_indexer_pg;
-                    if (!pg || !pg.healthy)
+                    const ps = d.databases?.pool_state;
+                    if (!ps || !ps.healthy)
                       return (
                         <div style={{ color: "var(--r)", fontSize: 11 }}>
                           ⚠ Postgres not reachable
                         </div>
                       );
 
+                    const blockLag = svc.anvil?.block && ps.last_indexed_block
+                      ? Number(svc.anvil.block) - ps.last_indexed_block
+                      : null;
+
+                    const MetricRow = ({ label, value, color, mono }) => (
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: 10,
+                          padding: "4px 6px",
+                          borderBottom: "1px solid rgba(255,255,255,0.02)",
+                        }}
+                      >
+                        <span>{label}</span>
+                        <span
+                          style={{
+                            fontWeight: 600,
+                            color: color || "var(--tb)",
+                            fontFamily: mono ? '"JetBrains Mono", monospace' : undefined,
+                          }}
+                        >
+                          {value}
+                        </span>
+                      </div>
+                    );
+
                     return (
                       <div
                         style={{
                           display: "flex",
                           flexDirection: "column",
-                          gap: 8,
+                          gap: 2,
                         }}
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            fontSize: 10,
-                            padding: "4px 6px",
-                            borderBottom: "1px solid rgba(255,255,255,0.02)",
-                          }}
-                        >
-                          <span>last indexed block</span>
-                          <span
-                            style={{
-                              color: pg.last_indexed_block > 0 ? "var(--g)" : "var(--td)",
-                              fontWeight: 600,
-                            }}
-                          >
-                            {pg.last_indexed_block > 0 ? fmtN(pg.last_indexed_block) : "—"}
-                          </span>
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            fontSize: 10,
-                            padding: "4px 6px",
-                            borderBottom: "1px solid rgba(255,255,255,0.02)",
-                          }}
-                        >
-                          <span>block_state rows</span>
-                          <span style={{ fontWeight: 600 }}>
-                            {fmtN(pg.block_state_rows)}
-                          </span>
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            fontSize: 10,
-                            padding: "4px 6px",
-                            borderBottom: "1px solid rgba(255,255,255,0.02)",
-                          }}
-                        >
-                          <span>events rows</span>
-                          <span style={{ fontWeight: 600 }}>
-                            {fmtN(pg.events_rows)}
-                          </span>
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            fontSize: 10,
-                            padding: "4px 6px",
-                            borderBottom: "1px solid rgba(255,255,255,0.02)",
-                          }}
-                        >
-                          <span>schemas</span>
-                          <span style={{ fontWeight: 600, color: "var(--c)" }}>
-                            {pg.schemas ? pg.schemas.join(", ") : "none"}
-                          </span>
+                        <MetricRow
+                          label="mark price"
+                          value={ps.mark_price ? `$${Number(ps.mark_price).toFixed(6)}` : "—"}
+                          color="var(--g)"
+                        />
+                        <MetricRow
+                          label="index price"
+                          value={ps.index_price ? `$${Number(ps.index_price).toFixed(6)}` : "—"}
+                          color="var(--c)"
+                        />
+                        <MetricRow
+                          label="liquidity"
+                          value={ps.liquidity ? fmtN(ps.liquidity) : "—"}
+                        />
+                        <MetricRow
+                          label="token0 bal (wRLP)"
+                          value={ps.token0_balance != null ? fmtN(ps.token0_balance) : "—"}
+                        />
+                        <MetricRow
+                          label="token1 bal (waUSDC)"
+                          value={ps.token1_balance != null ? fmtN(ps.token1_balance) : "—"}
+                        />
+                        <div style={{ borderTop: "1px solid var(--bdr)", marginTop: 4, paddingTop: 4 }}>
+                          <MetricRow
+                            label="indexed block"
+                            value={ps.last_indexed_block > 0 ? fmtN(ps.last_indexed_block) : "—"}
+                            color={ps.last_indexed_block > 0 ? "var(--g)" : "var(--td)"}
+                          />
+                          <MetricRow
+                            label="block lag"
+                            value={blockLag != null ? blockLag : "—"}
+                            color={blockLag !== null ? (blockLag < 10 ? "var(--g)" : blockLag < 50 ? "var(--a)" : "var(--r)") : "var(--td)"}
+                          />
+                          <MetricRow
+                            label="events"
+                            value={fmtN(ps.events_rows)}
+                          />
+                          <MetricRow
+                            label="block states"
+                            value={fmtN(ps.block_states_rows)}
+                          />
                         </div>
                       </div>
                     );
