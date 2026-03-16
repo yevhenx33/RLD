@@ -57,9 +57,9 @@ function formatTimeLeft(seconds) {
 // ── GraphQL query replaces getLogs scanning ────────────────────────
 
 const TWAMM_ORDERS_QUERY = `
-  query TwammPositions($owner: String!) {
-    twammOrders(owner: $owner) {
-      orderId owner amountIn sellRate
+  query TwammPositions($marketId: String!, $owner: String) {
+    twammOrders(marketId: $marketId, owner: $owner) {
+      orderId owner amountIn
       expiration startEpoch zeroForOne
       blockNumber txHash isCancelled
     }
@@ -105,8 +105,8 @@ export function useTwammPositions(
 
   // ── Fetch base orders via GraphQL (SWR with dedup) ──────────────
   const { data: gqlData, mutate: refreshGql } = useSWR(
-    brokerAddress && hookAddr
-      ? [GQL_URL, TWAMM_ORDERS_QUERY, { owner: brokerAddress }]
+    brokerAddress && hookAddr && marketInfo?.marketId
+      ? [GQL_URL, TWAMM_ORDERS_QUERY, { marketId: marketInfo.marketId, owner: brokerAddress }]
       : null,
     gqlFetcher,
     {

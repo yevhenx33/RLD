@@ -328,15 +328,19 @@ class Query:
 
     @strawberry.field
     async def twamm_orders(
-        self, market_id: str, active_only: bool = True
+        self, market_id: str, owner: str | None = None, active_only: bool = True
     ) -> List[TwammOrder]:
         pool = await get_pool()
         async with pool.acquire() as conn:
             q = "SELECT * FROM twamm_orders WHERE market_id=$1"
+            args: list = [market_id]
+            if owner:
+                args.append(owner.lower())
+                q += f" AND owner=${len(args)}"
             if active_only:
                 q += " AND is_cancelled=FALSE"
             q += " ORDER BY block_number DESC"
-            rows = await conn.fetch(q, market_id)
+            rows = await conn.fetch(q, *args)
         return [TwammOrder(
             order_id=r["order_id"], market_id=r["market_id"],
             owner=r["owner"], expiration=r["expiration"],
