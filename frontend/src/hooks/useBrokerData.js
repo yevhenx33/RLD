@@ -407,7 +407,9 @@ export function useBrokerData(account, marketInfo) {
 
       // ── Phase 4: ONE atomic setState ────────────────────────────
       if (mountedRef.current) {
-        setData({
+        setData((prev) => ({
+          ...prev,
+
           // Broker account
           hasBroker: profile !== null,
           brokerAddress: profile?.address || null,
@@ -443,7 +445,7 @@ export function useBrokerData(account, marketInfo) {
 
           // Raw profile for modals
           _profile: profile,
-        });
+        }));
       }
     } catch (e) {
       console.warn("[BrokerData] fetchAll failed:", e);
