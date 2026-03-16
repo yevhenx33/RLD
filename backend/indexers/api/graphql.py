@@ -128,7 +128,6 @@ class TwammOrder:
     block_number: int
     start_epoch: int
     tx_hash: str
-    sell_rate: str
 
 
 @strawberry.type
@@ -345,7 +344,6 @@ class Query:
             amount_in=str(r["amount_in"]),
             is_cancelled=r["is_cancelled"], block_number=r["block_number"],
             start_epoch=r["start_epoch"], tx_hash=r["tx_hash"],
-            sell_rate=str(r["sell_rate"]),
         ) for r in rows]
 
     @strawberry.field

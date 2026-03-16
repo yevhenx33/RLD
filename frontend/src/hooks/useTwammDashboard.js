@@ -62,7 +62,7 @@ function shortenAddress(addr) {
 const TWAMM_QUERY = `
   query TwammDashboard($marketId: String!) {
     twammOrders(marketId: $marketId) {
-      orderId owner amountIn sellRate
+      orderId owner amountIn
       expiration startEpoch zeroForOne
       blockNumber txHash isCancelled
     }
