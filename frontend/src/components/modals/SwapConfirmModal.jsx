@@ -22,6 +22,10 @@ export default function SwapConfirmModal({
   executing,
   executionStep,
   executionError,
+  // Debt repayment mode (wRLP direct)
+  repayMode = false,
+  repayAmount,
+  currentDebt,
 }) {
   if (!isOpen) return null;
 
@@ -36,20 +40,24 @@ export default function SwapConfirmModal({
   const payLabel = isCloseShort ? "waUSDC" : isClose ? "wRLP" : "waUSDC";
   const receiveLabel = isCloseShort ? "wRLP" : isClose ? "waUSDC" : "wRLP";
   const rateLabel = "AVG_Rate";
-  const headerLabel = isCloseShort
-    ? "Close_Short"
-    : isOpenShort
-      ? "Confirm_Short"
-      : isClose
-        ? `Close_${tradeSide}`
-        : `Confirm_${tradeSide}`;
-  const confirmLabel = isCloseShort
-    ? "Close Short"
-    : isOpenShort
-      ? "Open Short"
-      : isClose
-        ? `Close ${tradeSide}`
-        : `Confirm ${tradeSide}`;
+  const headerLabel = repayMode
+    ? "Repay_Debt"
+    : isCloseShort
+      ? "Close_Short"
+      : isOpenShort
+        ? "Confirm_Short"
+        : isClose
+          ? `Close_${tradeSide}`
+          : `Confirm_${tradeSide}`;
+  const confirmLabel = repayMode
+    ? "Repay Debt"
+    : isCloseShort
+      ? "Close Short"
+      : isOpenShort
+        ? "Open Short"
+        : isClose
+          ? `Close ${tradeSide}`
+          : `Confirm ${tradeSide}`;
 
   const _rows = isOpenShort
     ? [
@@ -145,7 +153,91 @@ export default function SwapConfirmModal({
 
         {/* Trade Summary */}
         <div className="p-6 flex flex-col gap-0">
-          {isOpenShort ? (
+          {repayMode ? (
+            <>
+              {/* REPAY DEBT: wRLP burn layout */}
+              <div className="border border-white/10 bg-white/[0.02] p-4">
+                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">
+                  Burn from Balance
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-2xl font-light text-white tracking-tight">
+                    {Number(repayAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                  </span>
+                  <span className="text-xs text-gray-500 uppercase tracking-widest">
+                    wRLP
+                  </span>
+                </div>
+              </div>
+
+              {/* Arrow */}
+              <div className="flex justify-center -my-2 relative z-10">
+                <div className="w-8 h-8 flex items-center justify-center bg-[#080808] border border-white/10 text-green-400">
+                  <ArrowDown size={14} />
+                </div>
+              </div>
+
+              {/* Debt Reduction */}
+              <div className="border border-white/10 bg-white/[0.02] p-4">
+                <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-2">
+                  Debt Reduced
+                </div>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-2xl font-light tracking-tight text-green-400">
+                    {Number(repayAmount || 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                  </span>
+                  <span className="text-xs text-gray-500 uppercase tracking-widest">
+                    wRLP
+                  </span>
+                </div>
+              </div>
+
+              {/* Detail rows */}
+              <div className="mt-4 border border-white/10 bg-white/[0.02] divide-y divide-white/5">
+                {[
+                  {
+                    label: "Current_Debt",
+                    value: currentDebt
+                      ? `${Number(currentDebt).toLocaleString(undefined, { maximumFractionDigits: 4 })} wRLP`
+                      : "—",
+                  },
+                  {
+                    label: "After_Repay",
+                    value: currentDebt
+                      ? `${Math.max(0, Number(currentDebt) - Number(repayAmount || 0)).toLocaleString(undefined, { maximumFractionDigits: 4 })} wRLP`
+                      : "—",
+                    color: "text-green-400",
+                  },
+                  {
+                    label: "Method",
+                    value: "DIRECT BURN",
+                    color: "text-gray-400",
+                  },
+                  {
+                    label: "Swap_Fee",
+                    value: "$0.00 (no swap)",
+                    color: "text-gray-600",
+                  },
+                ].map((row) => (
+                  <div
+                    key={row.label}
+                    className="flex justify-between items-center px-4 py-2.5"
+                  >
+                    <span className="text-[11px] text-gray-500 uppercase tracking-widest font-mono">
+                      {row.label}
+                    </span>
+                    <span
+                      className={`text-[12px] font-mono ${
+                        row.color || "text-gray-300"
+                      }`}
+                    >
+                      {row.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : isOpenShort ? (
             <>
               {/* SHORT: Collateral + Debt Amount */}
               <div className="border border-white/10 bg-white/[0.02] p-4">

@@ -1834,6 +1834,9 @@ export default function SimulationTerminal() {
         executing={swapExecuting}
         executionStep={swapStep}
         executionError={swapError}
+        repayMode={tradeAction === "CLOSE" && tradeSide === "SHORT" && closeShortRepayMode === "wRLP"}
+        repayAmount={parseFloat(closeShortDebt) || 0}
+        currentDebt={brokerState?.trueDebt || 0}
       />
 
       {/* ── Collateral registration confirmation modal ── */}
