@@ -103,11 +103,17 @@ async def enrich_tick_range(
     Called from ModifyLiquidity dispatch to fill in tick range and pool_id
     for an LP position that was just created.
     The salt field of ModifyLiquidity = bytes32(tokenId).
+    
+    Uses UPSERT because ModifyLiquidity often fires BEFORE LiquidityAdded
+    in the same transaction (lower log_index), so the row may not exist yet.
     """
     await conn.execute("""
-        UPDATE lp_positions
-        SET tick_lower = $1, tick_upper = $2, pool_id = COALESCE($3, pool_id)
-        WHERE token_id = $4
-    """, tick_lower, tick_upper, pool_id, str(token_id))
+        INSERT INTO lp_positions (token_id, tick_lower, tick_upper, pool_id, owner, liquidity, mint_block)
+        VALUES ($1, $2, $3, $4, '', '0', 0)
+        ON CONFLICT (token_id) DO UPDATE SET
+          tick_lower = COALESCE($2, lp_positions.tick_lower),
+          tick_upper = COALESCE($3, lp_positions.tick_upper),
+          pool_id = COALESCE($4, lp_positions.pool_id)
+    """, str(token_id), tick_lower, tick_upper, pool_id)
     log.debug("[lp] Enriched tick range tokenId=%d ticks=[%d,%d] pool=%s",
               token_id, tick_lower, tick_upper, pool_id)

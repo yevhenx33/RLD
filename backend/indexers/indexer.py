@@ -337,34 +337,35 @@ async def dispatch(
 
     elif event_name == "ModifyLiquidity" and market_id:
         try:
-            pool_id = market_id
-            market_info = await conn.fetchrow(
-                "SELECT market_id, wausdc, wrlp FROM markets WHERE pool_id = $1", pool_id
-            )
-            if not market_info:
-                return
-                
-            real_market_id = market_info["market_id"]
-            wausdc = market_info["wausdc"]
-            wrlp = market_info["wrlp"]
+            pool_id = market_id  # topics[1] = V4 pool_id
 
+            # Always decode tick data and enrich LP position first
             decoded = w3.eth.codec.decode(
                 ["int24", "int24", "int256", "bytes32"],
                 data_bytes
             )
-            await pool_handler.handle_modify_liquidity(
-                conn, real_market_id, block_number, block_timestamp,
-                tick_lower=decoded[0], tick_upper=decoded[1],
-                liquidity_delta=decoded[2], sqrt_price_x96=0,
-                wausdc=wausdc, wrlp=wrlp,
-                w3=w3, pool_manager=global_cfg.get("v4_pool_manager", "")
-            )
-            # Enrich LP position tick range from ModifyLiquidity salt = bytes32(tokenId)
-            salt = decoded[3]
+            tick_lower, tick_upper, liquidity_delta, salt = decoded
+
+            # Enrich LP position tick range from salt = bytes32(tokenId)
             token_id = int.from_bytes(salt, 'big')
             if token_id > 0:
                 await lp_handler.enrich_tick_range(
-                    conn, token_id, decoded[0], decoded[1], pool_id=pool_id
+                    conn, token_id, tick_lower, tick_upper, pool_id=pool_id
+                )
+                log.info("[dispatch] ModifyLiquidity enriched tokenId=%d ticks=[%d,%d] pool=%s",
+                         token_id, tick_lower, tick_upper, pool_id[:18])
+
+            # Optionally update pool snapshot if we can resolve the market
+            market_info = await conn.fetchrow(
+                "SELECT market_id, wausdc, wrlp FROM markets WHERE pool_id = $1", pool_id
+            )
+            if market_info:
+                await pool_handler.handle_modify_liquidity(
+                    conn, market_info["market_id"], block_number, block_timestamp,
+                    tick_lower=tick_lower, tick_upper=tick_upper,
+                    liquidity_delta=liquidity_delta, sqrt_price_x96=0,
+                    wausdc=market_info["wausdc"], wrlp=market_info["wrlp"],
+                    w3=w3, pool_manager=global_cfg.get("v4_pool_manager", "")
                 )
         except Exception as e:
             log.warning("[dispatch] ModifyLiquidity decode failed block=%d: %s", block_number, e)
