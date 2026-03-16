@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS markets (
   basis_trade_factory TEXT,
   broker_executor     TEXT,
   v4_quoter           TEXT,
+  broker_router       TEXT,
   -- Tokens
   wausdc              TEXT NOT NULL,
   wausdc_symbol       TEXT NOT NULL,
