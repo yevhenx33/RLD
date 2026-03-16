@@ -4,8 +4,10 @@ indexer.py — Main event indexing loop.
 Architecture:
   - Single async process. One writer at a time. No workers.
   - Every block batch wrapped in one transaction.
-  - Watch set rebuilt from DB every poll cycle (catches new markets + brokers).
-  - eth_getLogs across all watched addresses — one RPC call per poll.
+  - Two-pass hybrid log filter per poll:
+    Pass 1 (topic-only): Custom events from our contracts — no address filter.
+    Pass 2 (address-filtered): ERC20 Transfer events — address filter on watched tokens.
+  - Logs are merged, deduplicated, and sorted before dispatch.
 """
 import asyncio
 import json
@@ -31,8 +33,19 @@ from handlers import snapshot as snapshot_handler
 log = logging.getLogger(__name__)
 
 # ── ABI signatures for event topic0 hashes ────────────────────────────────
+#
+# Split into two groups for the two-pass hybrid filter:
+#   CUSTOM_TOPICS — events emitted only by our deployed contracts.
+#     → Fetched with topic-only filter (no address restriction).
+#     → Guarantees we never miss events from new/unknown broker addresses.
+#
+#   EXTERNAL_TOPICS — events with generic signatures (e.g. ERC20 Transfer)
+#     that fire on many unrelated contracts.
+#     → Fetched with address filter (only from watched token contracts).
+#
+# The combined TOPICS dict is the union, used by dispatch().
 
-TOPICS = {
+CUSTOM_TOPICS = {
     # RLDCore
     Web3.keccak(text="FundingApplied(bytes32,uint256,uint256,int256,uint256)").hex():
         "FundingApplied",
@@ -81,9 +94,6 @@ TOPICS = {
         "SubmitOrder",
     Web3.keccak(text="CancelOrder(bytes32,bytes32,address,uint256)").hex():
         "CancelOrder",
-    # waUSDC / wRLP — ERC20 Transfer events track token balances
-    Web3.keccak(text="Transfer(address,address,uint256)").hex():
-        "ERC20Transfer",
     # BondFactory
     Web3.keccak(text="BondMinted(address,address,uint256,uint256,uint256)").hex():
         "BondMinted",
@@ -107,31 +117,36 @@ TOPICS = {
         "Deposited",
 }
 
+EXTERNAL_TOPICS = {
+    # ERC20 Transfer — generic signature, needs address filter
+    Web3.keccak(text="Transfer(address,address,uint256)").hex():
+        "ERC20Transfer",
+}
+
+# Combined lookup for dispatch()
+TOPICS = {**CUSTOM_TOPICS, **EXTERNAL_TOPICS}
+
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "100"))  # max blocks per getLogs call
 
 
-# ── Watch set ──────────────────────────────────────────────────────────────
+# ── Watch set (Pass 2 — address filter for external events) ───────────────
 
-async def build_watch_set(conn: asyncpg.Connection, global_cfg: dict) -> set[str]:
-    """Rebuild the address filter from DB. Called every poll cycle."""
-    markets = await conn.fetch("SELECT * FROM markets")
-    brokers = await conn.fetch("SELECT address FROM brokers")
+async def build_external_watch_set(conn: asyncpg.Connection, global_cfg: dict) -> set[str]:
+    """Build the address filter for Pass 2 (ERC20 Transfer events).
+    Only includes token contracts and the V4 PositionManager (ERC721)."""
+    markets = await conn.fetch("SELECT wausdc, wrlp FROM markets")
 
     watched = set()
-    # Global addresses from deployment config
-    for key in ("rld_core", "v4_pool_manager", "v4_position_manager"):
-        addr = global_cfg.get(key)
-        if addr:
-            watched.add(addr.lower())
-    # Per-market addresses from DB — broker_factory, oracle, twamm hook, bond_factory, basis_trade_factory
+    # V4 PositionManager — ERC721 Transfer for LP NFTs
+    posm = global_cfg.get("v4_position_manager")
+    if posm:
+        watched.add(posm.lower())
+    # Token contracts — waUSDC and wRLP
     for m in markets:
-        for col in ("broker_factory", "mock_oracle", "twamm_hook", "wausdc", "wrlp",
-                     "bond_factory", "basis_trade_factory", "broker_router"):
+        for col in ("wausdc", "wrlp"):
             if m.get(col):
                 watched.add(m[col].lower())
-    for b in brokers:
-        watched.add(b["address"].lower())
 
     return watched
 
@@ -660,27 +675,45 @@ async def run(rpc_url: str, dsn: str) -> None:
             to_block = min(latest, last_block + BATCH_SIZE)
 
             async with db.pool.acquire() as conn:
-                # Rebuild watch set and address→market map — zero RPC
-                watched = await build_watch_set(conn, global_cfg)
+                # Rebuild address→market map — zero RPC
                 addr_market_map = await build_address_market_map(conn)
 
-                if not watched:
-                    log.debug("No addresses to watch yet, waiting for first market deployment")
-                    last_block = to_block
-                    await asyncio.sleep(POLL_INTERVAL)
-                    continue
+                from_block = last_block + 1
 
-                # Fetch all logs in [last_block+1 .. to_block] for watched addresses
-                # web3.py requires checksum addresses for the filter; internally we use lowercase
-                # Filter out empty or invalid addresses to prevent Web3 Checksum errors
-                valid_watched = [a for a in watched if isinstance(a, str) and a.startswith("0x") and len(a) == 42]
-                watched_cs = [Web3.to_checksum_address(a) for a in valid_watched]
-                logs = w3.eth.get_logs({
-                    "fromBlock": last_block + 1,
+                # ── Pass 1: Topic-only — custom contract events ──────
+                custom_topic_list = [bytes.fromhex(t) for t in CUSTOM_TOPICS.keys()]
+                logs_pass1 = w3.eth.get_logs({
+                    "fromBlock": from_block,
                     "toBlock": to_block,
-                    "address": watched_cs,
+                    "topics": [custom_topic_list],
                 })
 
+                # ── Pass 2: Address-filtered — ERC20 Transfer events ─
+                ext_watched = await build_external_watch_set(conn, global_cfg)
+                logs_pass2 = []
+                if ext_watched:
+                    valid = [a for a in ext_watched if isinstance(a, str) and a.startswith("0x") and len(a) == 42]
+                    watched_cs = [Web3.to_checksum_address(a) for a in valid]
+                    ext_topic_list = [bytes.fromhex(t) for t in EXTERNAL_TOPICS.keys()]
+                    logs_pass2 = w3.eth.get_logs({
+                        "fromBlock": from_block,
+                        "toBlock": to_block,
+                        "address": watched_cs,
+                        "topics": [ext_topic_list],
+                    })
+
+                # ── Merge & deduplicate ──────────────────────────────
+                seen = set()
+                merged = []
+                for entry in list(logs_pass1) + list(logs_pass2):
+                    key = (entry["transactionHash"], entry["logIndex"])
+                    if key not in seen:
+                        seen.add(key)
+                        merged.append(entry)
+                # Sort by (blockNumber, logIndex) for correct event ordering
+                merged.sort(key=lambda e: (e["blockNumber"], e["logIndex"]))
+
+                logs = merged
                 if logs:
                     # Enrich logs with block timestamps (batch blocks)
                     enriched_logs = []
