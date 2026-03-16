@@ -60,8 +60,8 @@ function shortenAddress(addr) {
 // ── GraphQL query replaces getLogs scanning ─────────────────────────
 
 const TWAMM_QUERY = `
-  query TwammDashboard {
-    twammOrders {
+  query TwammDashboard($marketId: String!) {
+    twammOrders(marketId: $marketId) {
       orderId owner amountIn sellRate
       expiration startEpoch zeroForOne
       blockNumber txHash isCancelled
@@ -69,14 +69,17 @@ const TWAMM_QUERY = `
   }
 `;
 
-const gqlFetcher = ([url, query]) =>
+const gqlFetcher = ([url, query, variables]) =>
   fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, variables }),
   })
     .then((r) => r.json())
-    .then((r) => r.data);
+    .then((r) => {
+      if (r.errors) console.error("GraphQL Errors:", r.errors);
+      return r.data;
+    });
 
 // ── Hook ────────────────────────────────────────────────────────────
 
@@ -104,7 +107,7 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
 
   // ── Fetch base orders via GraphQL (SWR with dedup) ──────────────
   const { data: gqlData, mutate: refreshGql } = useSWR(
-    hookAddr ? [GQL_URL, TWAMM_QUERY] : null,
+    hookAddr && marketInfo?.marketId ? [GQL_URL, TWAMM_QUERY, { marketId: marketInfo.marketId }] : null,
     gqlFetcher,
     {
       refreshInterval: pollInterval,
