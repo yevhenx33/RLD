@@ -61,7 +61,9 @@ function _remapMarketInfo(mi) {
     },
     risk_params: mi.riskParams || {
       min_col_ratio: mi.minColRatio || 0,
+      min_col_ratio_pct: mi.minColRatio ? `${(parseFloat(mi.minColRatio) / 1e16).toFixed(0)}%` : "—",
       maintenance_margin: mi.maintenanceMargin || 0,
+      maintenance_margin_pct: mi.maintenanceMargin ? `${(parseFloat(mi.maintenanceMargin) / 1e16).toFixed(0)}%` : "—",
       liq_close_factor: mi.liqCloseFactor || 0,
       funding_period_sec: mi.fundingPeriodSec || 0,
       debt_cap: mi.debtCap || 0,
@@ -337,7 +339,7 @@ export function useSimulation({
   const oracleChange24h = useMemo(() => {
     if (!market || !chartData?.length) return null;
     const nowPrice = market.indexPrice;
-    const earliest = chartData[chartData.length - 1];
+    const earliest = chartData[0];
     if (!earliest || !earliest.indexPrice) return null;
     const oldPrice = earliest.indexPrice;
     if (oldPrice === 0) return null;
