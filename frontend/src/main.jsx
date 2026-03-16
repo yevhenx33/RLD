@@ -21,6 +21,7 @@ const TwammOrders = lazy(() => import("./components/twamm/TwammOrders"));
 const Vaults = lazy(() => import("./components/common/Vaults"));
 const VaultDetail = lazy(() => import("./components/common/VaultDetail"));
 const BasisTrade = lazy(() => import("./components/basis-trade/BasisTrade"));
+const BrokersDashboard = lazy(() => import("./components/brokers/BrokersDashboard"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -74,6 +75,14 @@ ReactDOM.createRoot(document.getElementById("root")).render(
               }
             />
             <Route element={<Layout />}>
+              <Route
+                path="/brokers"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <BrokersDashboard />
+                  </Suspense>
+                }
+              />
 
               <Route
                 path="/bonds"
