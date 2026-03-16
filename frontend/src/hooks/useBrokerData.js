@@ -289,11 +289,13 @@ export function useBrokerData(account, marketInfo) {
       }
 
       // ── Phase 3: Client-side NAV math ───────────────────────────
-      // All balances from broker_profile are already in human units (÷1e6)
-      // The resolver returns them as floats.
-      const collateral = profile?.collateral || 0; // waUSDC balance (human)
-      const wrlpBalance = profile?.wrlpBalance || 0; // wRLP balance (human)
-      const debtPrincipal = profile?.debt || 0;
+      // Balances are raw uint256 strings from the indexer DB (6 decimals).
+      // Convert to human-readable floats for client math.
+      const toHuman = (raw) => Number(raw || "0") / 1e6;
+
+      const collateral = toHuman(profile?.wausdcBalance);   // waUSDC balance (human)
+      const wrlpBalance = toHuman(profile?.wrlpBalance);    // wRLP balance (human)
+      const debtPrincipal = toHuman(profile?.debtPrincipal); // debt principal (human)
 
       // True debt = principal × normalizationFactor (wRLP units)
       const trueDebt = debtPrincipal * normFactor;
@@ -343,7 +345,7 @@ export function useBrokerData(account, marketInfo) {
           // Broker account
           hasBroker: profile !== null,
           brokerAddress: profile?.address || null,
-          brokerBalance: profile?.collateral || 0,
+          brokerBalance: collateral,
 
           // Broker state (from GQL + client math)
           collateralBalance: collateral,
