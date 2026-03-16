@@ -87,7 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_brokers_owner  ON brokers(owner);
 -- INSERT on active=true, DELETE on active=false.
 
 CREATE TABLE IF NOT EXISTS broker_operators (
-  broker_address  TEXT NOT NULL REFERENCES brokers(address) ON DELETE CASCADE,
+  broker_address  TEXT NOT NULL,
   operator        TEXT NOT NULL,
   PRIMARY KEY (broker_address, operator)
 );

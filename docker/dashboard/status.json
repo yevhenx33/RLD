@@ -1,27 +1,27 @@
 {
-  "timestamp": "2026-03-16T15:20:01Z",
+  "timestamp": "2026-03-16T15:39:01Z",
   "system": {
-    "uptime_secs": 86685,
-    "load": [3.23, 3.00, 2.77],
+    "uptime_secs": 87825,
+    "load": [3.82, 3.50, 3.04],
     "cpu_cores": 8,
-    "disk": {"total_gb":193,"used_gb":111,"free_gb":83,"percent":58},
-    "memory": {"total_mb":23463,"used_mb":20059,"available_mb":3403},
-    "swap": {"total_mb":20479,"used_mb":2648},
-    "connections": {"established":85,"listening":29},
+    "disk": {"total_gb":193,"used_gb":111,"free_gb":82,"percent":58},
+    "memory": {"total_mb":23463,"used_mb":19896,"available_mb":3566},
+    "swap": {"total_mb":20479,"used_mb":2527},
+    "connections": {"established":77,"listening":27},
     "errors_today": 0
   },
-  "containers": [{"name":"docker-indexer-1","status":"healthy","uptime":"Up 23 seconds","cpu":1.18,"memory":"66.96MiB / 22.91GiB","network":"263kB / 179kB","restarts":0,"started":"2026-03-16T15:19:39","ports":"0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp"},{"name":"docker-monitor-bot-1","status":"healthy","uptime":"Up 23 hours","cpu":0.01,"memory":"13.51MiB / 22.91GiB","network":"126MB / 49.7MB","restarts":0,"started":"2026-03-15T16:35:33","ports":"0.0.0.0:8082->8080/tcp, [::]:8082->8080/tcp"},{"name":"docker-frontend-1","status":"healthy","uptime":"Up 23 hours","cpu":0.00,"memory":"8.582MiB / 22.91GiB","network":"445kB / 728kB","restarts":0,"started":"2026-03-15T16:35:22","ports":"0.0.0.0:3000->80/tcp, [::]:3000->80/tcp"},{"name":"docker-mm-daemon-1","status":"healthy","uptime":"Up 24 hours","cpu":0.81,"memory":"15.37MiB / 22.91GiB","network":"314MB / 281MB","restarts":0,"started":"2026-03-15T15:22:40","ports":""},{"name":"docker-chaos-trader-1","status":"healthy","uptime":"Up 24 hours","cpu":0.00,"memory":"14.46MiB / 22.91GiB","network":"88.1MB / 80.4MB","restarts":0,"started":"2026-03-15T15:22:40","ports":""},{"name":"docker-postgres-1","status":"healthy","uptime":"Up 24 hours","cpu":0.49,"memory":"94.02MiB / 22.91GiB","network":"439MB / 765MB","restarts":0,"started":"2026-03-15T15:22:29","ports":"0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp"},{"name":"docker-rates-indexer-1","status":"healthy","uptime":"Up 22 hours","cpu":0.20,"memory":"40.78MiB / 22.91GiB","network":"161MB / 59.5MB","restarts":0,"started":"2026-03-15T17:11:22","ports":"0.0.0.0:8081->8080/tcp, [::]:8081->8080/tcp"},{"name":"docker-deployer-1","status":"stopped","uptime":"Exited (0) 24 hours ago","cpu":0,"memory":"0B / 0B","network":"0B / 0B","restarts":0,"started":"","ports":""}],
+  "containers": [{"name":"docker-monitor-bot-1","status":"healthy","uptime":"Up 23 hours","cpu":0.01,"memory":"13.51MiB / 22.91GiB","network":"128MB / 50.4MB","restarts":0,"started":"2026-03-15T16:35:33","ports":"0.0.0.0:8082->8080/tcp, [::]:8082->8080/tcp"},{"name":"docker-frontend-1","status":"healthy","uptime":"Up 23 hours","cpu":0.00,"memory":"8.586MiB / 22.91GiB","network":"447kB / 728kB","restarts":0,"started":"2026-03-15T16:35:22","ports":"0.0.0.0:3000->80/tcp, [::]:3000->80/tcp"},{"name":"docker-mm-daemon-1","status":"healthy","uptime":"Up 24 hours","cpu":0.00,"memory":"15.37MiB / 22.91GiB","network":"319MB / 286MB","restarts":0,"started":"2026-03-15T15:22:40","ports":""},{"name":"docker-chaos-trader-1","status":"healthy","uptime":"Up 24 hours","cpu":0.00,"memory":"14.47MiB / 22.91GiB","network":"89.2MB / 81.4MB","restarts":0,"started":"2026-03-15T15:22:40","ports":""},{"name":"docker-postgres-1","status":"healthy","uptime":"Up 24 hours","cpu":0.12,"memory":"77.69MiB / 22.91GiB","network":"616MB / 853MB","restarts":0,"started":"2026-03-15T15:22:29","ports":"0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp"},{"name":"docker-rates-indexer-1","status":"healthy","uptime":"Up 22 hours","cpu":0.23,"memory":"39.55MiB / 22.91GiB","network":"163MB / 60.3MB","restarts":0,"started":"2026-03-15T17:11:22","ports":"0.0.0.0:8081->8080/tcp, [::]:8081->8080/tcp"},{"name":"docker-indexer-1","status":"stopped","uptime":"Exited (137) 2 minutes ago","cpu":0,"memory":"0B / 0B","network":"0B / 0B","restarts":0,"started":"","ports":""},{"name":"docker-deployer-1","status":"stopped","uptime":"Exited (0) 24 hours ago","cpu":0,"memory":"0B / 0B","network":"0B / 0B","restarts":0,"started":"","ports":""}],
   "services": {
-    "nginx": {"healthy":true,"response_ms":53},
-    "rates_indexer": {"healthy":true,"response_ms":6,"last_block":"24670913"},
-    "indexer": {"healthy":true,"response_ms":3},
-    "monitor_bot": {"healthy":true,"response_ms":2},
-    "anvil": {"healthy":true,"block":"24745867"}
+    "nginx": {"healthy":true,"response_ms":50},
+    "rates_indexer": {"healthy":true,"response_ms":6,"last_block":"24671008"},
+    "indexer": {"healthy":false,"response_ms":-1000},
+    "monitor_bot": {"healthy":true,"response_ms":1},
+    "anvil": {"healthy":true,"block":"24746994"}
   },
-  "ssl": {"expiry":"2026-05-10","days_remaining":55},
-  "git": {"commit":"435456c8","message":"Fixes NaN formatting and Debt Value math bugs in useBrokerData.js and Simulation","time":"2026-03-16T11:51:31+00:00","author":"Yevhen VPS"},
-  "docker": {"dangling_images":29,"images_size":"3.752GB","active":19,"total":48},
-  "databases": {"aave_rates": {"size_mb": 8.3, "tables": {"rates": {"rows": 70496, "latest_age_secs": 18}, "eth_prices": {"rows": 69417, "latest_age_secs": 18}, "rates_dai": {"rows": 70699, "latest_age_secs": 18}, "rates_usdt": {"rows": 70699, "latest_age_secs": 18}}, "corrupt_rows": 0}, "clean_rates": {"size_mb": 1.6, "freshness_secs": 1205, "rows_24h": 24, "nulls_7d": {"eth_price": 0, "usdc_rate": 0, "dai_rate": 0, "usdt_rate": 0}, "missing_hours_7d": 0, "sync_age_secs": 57}, "pool_state": {"healthy": true, "last_indexed_block": 24745866, "total_events": 1172, "block_states_rows": 2767, "events_rows": 7067, "mark_price": 3.0063, "index_price": 3.003781, "liquidity": "14046581338334", "token0_balance": 17141180043, "token1_balance": 11456198464, "total_debt": 6835887}},
+  "ssl": {"expiry":"2026-05-10","days_remaining":54},
+  "git": {"commit":"?","message":"?","time":"","author":"?"},
+  "docker": {"dangling_images":30,"images_size":"3.752GB","active":19,"total":49},
+  "databases": {"aave_rates": {"size_mb": 8.3, "tables": {"rates": {"rows": 70591, "latest_age_secs": 18}, "eth_prices": {"rows": 69512, "latest_age_secs": 18}, "rates_dai": {"rows": 70794, "latest_age_secs": 18}, "rates_usdt": {"rows": 70794, "latest_age_secs": 18}}, "corrupt_rows": 0}, "clean_rates": {"size_mb": 1.6, "freshness_secs": 2345, "rows_24h": 24, "nulls_7d": {"eth_price": 0, "usdc_rate": 0, "dai_rate": 0, "usdt_rate": 0}, "missing_hours_7d": 0, "sync_age_secs": 9}, "pool_state": {"healthy": true, "last_indexed_block": 24746851, "total_events": 48453, "block_states_rows": 13960, "events_rows": 48453, "mark_price": 3.033328, "index_price": 3.003871, "liquidity": "14046581338334", "token0_balance": 12844070115, "token1_balance": 491799774934, "total_debt": 6835909.535163}},
   "backups": {
   "timestamp": "2026-03-16T03:00:03Z",
   "date": "2026-03-16",
@@ -33,5 +33,5 @@
   "retained": 9,
   "deleted": 1
 },
-  "history": {"load": [2.74, 2.47, 2.47, 2.29, 2.29, 2.86, 2.54, 2.35, 2.35, 2.54, 2.2, 2.2, 2.59, 2.59, 2.41, 2.62, 2.62, 2.43, 2.37, 2.37, 2.93, 2.37, 2.4, 2.4, 2.99, 2.99, 2.41, 2.41, 2.76, 2.76, 2.51, 2.51, 2.76, 3.55, 3.55, 3.02, 2.95, 2.95, 2.72, 2.48, 2.48, 2.26, 2.26, 2.79, 2.54, 2.54, 2.45, 2.6, 2.6, 2.6, 2.6, 3.0, 3.0, 3.47, 3.47, 3.11, 3.11, 2.89, 3.23, 3.23], "mem": [84.7, 84.7, 84.7, 85.2, 85.2, 84.6, 84.0, 84.8, 84.8, 84.3, 85.7, 85.7, 85.5, 85.5, 85.6, 85.0, 85.0, 85.7, 86.7, 86.7, 85.6, 86.4, 85.2, 85.2, 85.4, 85.4, 86.0, 86.0, 84.8, 84.8, 85.9, 85.9, 85.7, 85.2, 85.2, 85.4, 85.7, 85.7, 85.7, 85.0, 85.0, 84.8, 84.8, 85.8, 85.6, 85.6, 84.8, 84.4, 84.4, 85.4, 85.4, 85.2, 85.3, 84.2, 84.2, 85.7, 85.7, 85.6, 85.5, 85.5], "disk": [57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 57, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58], "block": [24670733, 24670738, 24670738, 24670743, 24670743, 24670748, 24670754, 24670758, 24670758, 24670763, 24670768, 24670768, 24670773, 24670773, 24670778, 24670784, 24670784, 24670789, 24670793, 24670793, 24670798, 24670803, 24670808, 24670808, 24670814, 24670814, 24670819, 24670819, 24670823, 24670823, 24670828, 24670828, 24670833, 24670838, 24670838, 24670843, 24670849, 24670849, 24670853, 24670858, 24670858, 24670864, 24670864, 24670868, 24670873, 24670873, 24670878, 24670883, 24670883, 24670888, 24670888, 24670893, 24670893, 24670899, 24670899, 24670903, 24670903, 24670908, 24670913, 24670913]}
+  "history": {"load": [3.02, 2.95, 2.95, 2.72, 2.48, 2.48, 2.26, 2.26, 2.79, 2.54, 2.54, 2.45, 2.6, 2.6, 2.6, 2.6, 3.0, 3.0, 3.47, 3.47, 3.11, 3.11, 2.89, 3.23, 3.23, 2.5, 2.5, 2.69, 3.0, 3.0, 2.82, 2.59, 2.59, 3.05, 3.05, 2.38, 2.38, 2.41, 2.41, 2.88, 2.88, 2.53, 2.53, 2.38, 2.38, 2.19, 2.19, 2.39, 2.39, 3.47, 3.47, 3.71, 3.71, 3.11, 4.12, 4.12, 4.49, 4.49, 3.82, 3.82], "mem": [85.4, 85.7, 85.7, 85.7, 85.0, 85.0, 84.8, 84.8, 85.8, 85.6, 85.6, 84.8, 84.4, 84.4, 85.4, 85.4, 85.2, 85.3, 84.2, 84.2, 85.7, 85.7, 85.6, 85.5, 85.5, 86.2, 86.2, 87.0, 86.3, 86.3, 86.2, 85.5, 85.5, 86.8, 86.8, 86.2, 86.2, 86.4, 86.4, 85.7, 85.7, 84.9, 84.9, 84.0, 84.0, 85.4, 85.4, 86.3, 86.3, 86.4, 85.4, 86.2, 86.2, 85.1, 85.6, 85.6, 85.7, 85.7, 84.8, 84.8], "disk": [58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58, 58], "block": [24670843, 24670849, 24670849, 24670853, 24670858, 24670858, 24670864, 24670864, 24670868, 24670873, 24670873, 24670878, 24670883, 24670883, 24670888, 24670888, 24670893, 24670893, 24670899, 24670899, 24670903, 24670903, 24670908, 24670913, 24670913, 24670918, 24670918, 24670924, 24670929, 24670929, 24670934, 24670938, 24670938, 24670943, 24670943, 24670948, 24670948, 24670953, 24670953, 24670958, 24670958, 24670964, 24670964, 24670968, 24670968, 24670973, 24670973, 24670978, 24670978, 24670983, 24670983, 24670988, 24670988, 24670994, 24670999, 24670999, 24671003, 24671003, 24671008, 24671008]}
 }
