@@ -69,8 +69,10 @@ TOPICS = {
     Web3.keccak(text="ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)").hex():
         "ModifyLiquidity",
     # TWAMM Hook
-    Web3.keccak(text="SubmitOrder(address,uint160,bool,uint256)").hex():
+    Web3.keccak(text="SubmitOrder(bytes32,bytes32,address,uint256,uint160,bool,uint256,uint256,uint256)").hex():
         "SubmitOrder",
+    Web3.keccak(text="CancelOrder(bytes32,bytes32,address,uint256)").hex():
+        "CancelOrder",
     # waUSDC / wRLP — ERC20 Transfer events track collateral deposits/withdrawals
     Web3.keccak(text="Transfer(address,address,uint256)").hex():
         "ERC20Transfer",
@@ -354,24 +356,40 @@ async def dispatch(
             log.warning("[dispatch] ActiveTokenSet decode failed: %s", e)
 
     elif event_name == "SubmitOrder" and market_id:
-        # topics: [sig, owner(indexed)]  data: (expiration, zeroForOne, amountIn)  OR all in data
+        # SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner,
+        #             uint256 amountIn, uint160 expiration, bool zeroForOne,
+        #             uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch)
+        # topics: [sig, poolId, orderId]  data: (owner, amountIn, expiration, zeroForOne, sellRate, earningsFactorLast, startEpoch)
         try:
-            owner = "0x" + (topics[1][-20:].hex() if isinstance(topics[1], bytes) else topics[1][-40:])
-            decoded = w3.eth.codec.decode(["uint160", "bool", "uint256"], data_bytes)
+            decoded = w3.eth.codec.decode(
+                ["address", "uint256", "uint160", "bool", "uint256", "uint256", "uint256"],
+                data_bytes
+            )
+            owner = decoded[0]
+            amount_in = decoded[1]
+            expiration = decoded[2]
+            zero_for_one = decoded[3]
+            start_epoch = decoded[6]  # startEpoch is the last field
             await twamm_handler.handle_submit_order(
                 conn, market_id, owner,
-                expiration=decoded[0], start_epoch=block_timestamp,
-                zero_for_one=decoded[1], amount_in=decoded[2],
+                expiration=expiration, start_epoch=start_epoch,
+                zero_for_one=zero_for_one, amount_in=amount_in,
                 block_number=block_number, tx_hash=tx_hash
             )
         except Exception as e:
             log.warning("[dispatch] SubmitOrder decode failed: %s", e)
 
     elif event_name == "CancelOrder":
+        # CancelOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 sellTokensRefund)
         try:
-            owner = "0x" + (topics[1][-20:].hex() if isinstance(topics[1], bytes) else topics[1][-40:])
-            decoded = w3.eth.codec.decode(["uint160", "bool"], data_bytes)
-            await twamm_handler.handle_cancel_order(conn, owner, decoded[0], decoded[1])
+            decoded = w3.eth.codec.decode(["address", "uint256"], data_bytes)
+            owner = decoded[0]
+            # We need expiration + zeroForOne to build order_id, but CancelOrder doesn't have them
+            # Instead use the indexed orderId from topics[2]
+            order_id_bytes = topics[2] if isinstance(topics[2], bytes) else bytes.fromhex(topics[2].replace('0x', ''))
+            order_id = "0x" + order_id_bytes.hex()
+            await conn.execute("UPDATE twamm_orders SET is_cancelled = TRUE WHERE order_id = $1", order_id)
+            log.info("[twamm] CancelOrder orderId=%s", order_id)
         except Exception as e:
             log.warning("[dispatch] CancelOrder decode failed: %s", e)
 
