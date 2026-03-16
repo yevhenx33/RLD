@@ -95,9 +95,7 @@ async def materialize_snapshot(
         return
     funding_period = int(mkt["funding_period_sec"])
     year_sec = 365 * 86400
-    ann_exp = -funding_rate * year_sec / funding_period
-    ann_exp_clamped = max(-20, min(20, ann_exp))
-    funding_ann_pct = (math.exp(ann_exp_clamped) - 1) * 100
+    funding_ann_pct = funding_rate * (year_sec / funding_period) * 100
     pool_id = mkt["pool_id"]
 
     # ── Pool TVL from tracked ERC20 balances ──

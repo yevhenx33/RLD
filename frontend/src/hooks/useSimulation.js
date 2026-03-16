@@ -245,16 +245,11 @@ export function useSimulation({
     // fundingRate as per contract (WAD-equivalent but in float)
     const fundingRate = spread / index;
 
-    // Annualize: in the contract, rate is applied as exp(-rate * 365d / period)
-    // Over 1 year (365 days), the NF multiplier would be exp(-rate * 365*86400 / period)
-    // The annualized percentage change = (exp(-rate * 365*86400 / period) - 1) × 100
+    // Simple linear annualization (industry standard for display):
+    // annualizedPct = fundingRate × (periodsPerYear) × 100
     const fundingPeriod = marketInfo?.risk_params?.funding_period_sec || 2_592_000;
     const yearSec = 365 * 86400;
-    const annExponent = -fundingRate * yearSec / fundingPeriod;
-
-    // Clamp exponent to avoid Infinity
-    const clampedExp = Math.max(-20, Math.min(20, annExponent));
-    const annPct = (Math.exp(clampedExp) - 1) * 100;
+    const annPct = fundingRate * (yearSec / fundingPeriod) * 100;
 
     return {
       spread,

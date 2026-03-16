@@ -148,7 +148,7 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 $9, 500, 5,
                 $10, $11, $12, $13,
                 '1500000000000000000', '1250000000000000000', '500000000000000000',
-                28800, '1000000000000000000000000', NOW()
+                2592000, '1000000000000000000000000', NOW()
             )
             ON CONFLICT (market_id) DO UPDATE SET
                 wausdc              = COALESCE(NULLIF(EXCLUDED.wausdc, ''),              markets.wausdc),
