@@ -44,7 +44,7 @@ function _remapMarketInfo(mi) {
     position_token: mi.positionToken || mi.position_token || { name: "wRLP", symbol: "wRLP", address: mi.wrlp || "" },
     broker_factory: mi.brokerFactory || mi.broker_factory || "",
     infrastructure: {
-      broker_router: mi.infrastructure?.brokerRouter || mi.infrastructure?.broker_router || mi.swapRouter || "",
+      broker_router: mi.infrastructure?.brokerRouter || mi.infrastructure?.broker_router || mi.brokerRouter || mi.swapRouter || "",
       broker_executor: mi.infrastructure?.brokerExecutor || mi.infrastructure?.broker_executor || mi.brokerExecutor || "",
       twamm_hook: mi.infrastructure?.twammHook || mi.infrastructure?.twamm_hook || mi.twammHook || "",
       bond_factory: mi.infrastructure?.bondFactory || mi.infrastructure?.bond_factory || mi.bondFactory || "",
