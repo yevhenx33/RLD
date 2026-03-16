@@ -128,6 +128,7 @@ class TwammOrder:
     block_number: int
     start_epoch: int
     tx_hash: str
+    sell_rate: str
 
 
 @strawberry.type
