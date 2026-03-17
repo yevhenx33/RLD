@@ -14,7 +14,7 @@ const PRIME_BROKER_ABI = [
 ];
 
 /* ── Mint Form ────────────────────────────────────────────────── */
-function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account, addToast, onStateChange }) {
+function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account, addToast, onStateChange, txPauseRef }) {
   const [collateral, setCollateral] = useState("");
   const [mintAmount, setMintAmount] = useState("");
   const [executing, setExecuting] = useState(false);
@@ -48,6 +48,7 @@ function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account
 
     try {
       setExecuting(true);
+      if (txPauseRef) txPauseRef.current = true;
 
       // Get MetaMask signer (handles Anvil chainId sync)
       const signer = await getAnvilSigner();
@@ -97,6 +98,7 @@ function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account
     } finally {
       await restoreAnvilChainId();
       setExecuting(false);
+      if (txPauseRef) txPauseRef.current = false;
     }
   };
 
@@ -162,7 +164,7 @@ const DURATION_PRESETS = [
   { label: "7D", hours: 168 },
 ];
 
-function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh }) {
+function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh, txPauseRef }) {
   const [amount, setAmount] = useState("");
   const [durationHours, setDurationHours] = useState("");
   const [direction, setDirection] = useState("BUY");
@@ -183,6 +185,11 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh
     collateralAddr,
     positionAddr,
   );
+
+  // Sync executing flag into txPauseRef to pause block-driven data updates
+  useEffect(() => {
+    if (txPauseRef) txPauseRef.current = !!executing;
+  }, [executing, txPauseRef]);
 
   // BUY wRLP = sell waUSDC → zeroForOne matches ZERO_FOR_ONE_LONG
   // SELL wRLP = sell wRLP → zeroForOne is opposite
@@ -415,7 +422,7 @@ function computeTokenSplit(deposit, minP, maxP, currentP, depositMode) {
   }
 }
 
-function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onStateChange }) {
+function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onStateChange, txPauseRef }) {
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [depositAmount, setDepositAmount] = useState("");
@@ -501,6 +508,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
   const executeAtomicLP = useCallback(async () => {
     if (!canAdd) return;
     setLpExecuting(true);
+    if (txPauseRef) txPauseRef.current = true;
     setLpError(null);
     setLpStep("Computing token split...");
 
@@ -618,6 +626,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
     } finally {
       await restoreAnvilChainId();
       setLpExecuting(false);
+      if (txPauseRef) txPauseRef.current = false;
     }
   }, [canAdd, infrastructure, brokerAddress, collateralToken, positionToken, minPrice, maxPrice, split, price, token0IsPosition, depositMode, addToast, refreshPosition, onStateChange]);
 
@@ -872,11 +881,11 @@ function BatchForm() {
 }
 
 /* ── ActionForm Router ────────────────────────────────────────── */
-export default function ActionForm({ type, brokerBalance, currentRate, brokerAddress, marketId, account, addToast, marketInfo, onStateChange, onTwammRefresh }) {
+export default function ActionForm({ type, brokerBalance, currentRate, brokerAddress, marketId, account, addToast, marketInfo, onStateChange, onTwammRefresh, txPauseRef }) {
   const forms = {
-    mint: <MintForm brokerBalance={brokerBalance} currentRate={currentRate} brokerAddress={brokerAddress} marketId={marketId} account={account} addToast={addToast} onStateChange={onStateChange} />,
-    twap: <TwapForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} onTwammRefresh={onTwammRefresh} />,
-    lp: <LpForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} currentRate={currentRate} onStateChange={onStateChange} />,
+    mint: <MintForm brokerBalance={brokerBalance} currentRate={currentRate} brokerAddress={brokerAddress} marketId={marketId} account={account} addToast={addToast} onStateChange={onStateChange} txPauseRef={txPauseRef} />,
+    twap: <TwapForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} onTwammRefresh={onTwammRefresh} txPauseRef={txPauseRef} />,
+    lp: <LpForm brokerAddress={brokerAddress} marketInfo={marketInfo} account={account} addToast={addToast} currentRate={currentRate} onStateChange={onStateChange} txPauseRef={txPauseRef} />,
     loop: <LoopForm />,
     batch: <BatchForm />,
   };

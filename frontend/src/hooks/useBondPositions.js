@@ -33,7 +33,7 @@ const gqlFetcher = async ([url, query, variables]) => {
  * @param {string}  bondFactoryAddr Optional bond factory address filter
  * @param {number}  pollInterval   Polling ms (default 15000)
  */
-export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterval = 15000) {
+export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterval = 15000, paused = false) {
   const swrKey = account
     ? [GQL_URL, BONDS_QUERY, { owner: account.toLowerCase() }]
     : null;
@@ -42,7 +42,7 @@ export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterv
     swrKey,
     gqlFetcher,
     {
-      refreshInterval: pollInterval,
+      refreshInterval: paused ? 0 : pollInterval, // 0 = no polling while TX executes
       revalidateOnFocus: false,
       dedupingInterval: 2000,
       keepPreviousData: true,
@@ -66,19 +66,20 @@ export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterv
         // Block time ~2s on Anvil fork — no exact timestamp available
         const elapsedDays = 0;
 
-        const rate = entryRate || 0;
-        const accrued = notionalUsd * (rate / 100) * (elapsedDays / 365);
-
-        // Read entry-time borrow rate from localStorage
-        let entryBorrowRate = rate;
-        try {
-          const meta = JSON.parse(
-            localStorage.getItem(`rld_bond_${b.broker_address.toLowerCase()}`) || "null",
-          );
-          if (meta?.borrowRateAPY) entryBorrowRate = meta.borrowRateAPY;
-        } catch {
-          /* ignore */
+        // Entry rate: use indexed mark_price at mint_block (from block_states)
+        // Priority: indexed entry_rate → localStorage borrowRateAPY → current market rate
+        let rate = b.entry_rate || null;
+        if (!rate) {
+          try {
+            const meta = JSON.parse(
+              localStorage.getItem(`rld_bond_${b.broker_address.toLowerCase()}`) || "null",
+            );
+            if (meta?.borrowRateAPY) rate = meta.borrowRateAPY;
+          } catch { /* ignore */ }
         }
+        if (!rate) rate = entryRate || 0;
+        const entryBorrowRate = rate;
+        const accrued = notionalUsd * (rate / 100) * (elapsedDays / 365);
 
         return {
           id: parseInt(b.broker_address.slice(-4), 16) % 10000,

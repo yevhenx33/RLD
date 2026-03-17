@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ethers } from "ethers";
 import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
 import { TrendingUp, Terminal, AlertTriangle, ChevronDown, Layers } from "lucide-react";
@@ -116,6 +116,7 @@ export default function BasisTradePage() {
   const [timeHorizon, setTimeHorizon] = useState("365");
   const [capital, setCapital] = useState("10000");
   const tokenDropdownRef = useRef(null);
+  const bondExecutingRef = useRef(false);
   
   const { account, connectWallet } = useWallet();
   const { toasts, addToast, removeToast } = useToast();
@@ -143,36 +144,48 @@ export default function BasisTradePage() {
   const [susdeAllowance, setSusdeAllowance] = useState(0);
   const [usdcAllowance, setUsdcAllowance] = useState(0);
 
-  useEffect(() => {
+  const refreshBalances = useCallback(async (force = false) => {
     if (!account || !marketInfo?.infrastructure) return;
     const basisTradeFactory = marketInfo.infrastructure?.basis_trade_factory;
     // Fallback: if basis_trade_factory isn't available yet, use broker_factory for allowance checks
     const spender = basisTradeFactory || marketInfo.broker_factory;
     if (!spender) return;
-    const fetchBal = async () => {
-      try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
-        const abi = ["function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)"];
-        
-        const susde = new ethers.Contract(SUSDE_ADDRESS, abi, provider);
-        const sBal = await susde.balanceOf(account);
-        const sAllow = await susde.allowance(account, spender);
-        setSusdeBalance(Number(ethers.formatUnits(sBal, 18)));
-        setSusdeAllowance(Number(ethers.formatUnits(sAllow, 18)));
 
-        const usdc = new ethers.Contract(USDC_ADDRESS, abi, provider);
-        const uBal = await usdc.balanceOf(account);
-        const uAllow = await usdc.allowance(account, spender);
-        setUsdcBalance(Number(ethers.formatUnits(uBal, 6)));
-        setUsdcAllowance(Number(ethers.formatUnits(uAllow, 6)));
-      } catch (e) {
-        console.warn("[BasisTrade] balance fetch error:", e);
-      }
-    };
-    fetchBal();
-    const id = setInterval(fetchBal, 10000);
-    return () => clearInterval(id);
+    if (!force && bondExecutingRef.current) return; // Guard 1
+
+    try {
+      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const abi = ["function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)"];
+      
+      const susde = new ethers.Contract(SUSDE_ADDRESS, abi, provider);
+      const sBal = await susde.balanceOf(account);
+      const sAllow = await susde.allowance(account, spender);
+
+      if (!force && bondExecutingRef.current) return; // Guard 2
+
+      setSusdeBalance(Number(ethers.formatUnits(sBal, 18)));
+      setSusdeAllowance(Number(ethers.formatUnits(sAllow, 18)));
+
+      const usdc = new ethers.Contract(USDC_ADDRESS, abi, provider);
+      const uBal = await usdc.balanceOf(account);
+      const uAllow = await usdc.allowance(account, spender);
+
+      if (!force && bondExecutingRef.current) return; // Guard 3
+
+      setUsdcBalance(Number(ethers.formatUnits(uBal, 6)));
+      setUsdcAllowance(Number(ethers.formatUnits(uAllow, 6)));
+    } catch (e) {
+      console.warn("[BasisTrade] balance fetch error:", e);
+    }
   }, [account, marketInfo, SUSDE_ADDRESS, USDC_ADDRESS]);
+
+  useEffect(() => {
+    refreshBalances();
+    const id = setInterval(() => {
+      if (!bondExecutingRef.current) refreshBalances();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [refreshBalances]);
   const walletBalance = selectedToken === "USDC" ? (usdcBalance ?? 0) : (susdeBalance ?? 0);
 
   useEffect(() => {
@@ -226,7 +239,9 @@ export default function BasisTradePage() {
   const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(
     account, 
     basisApy,
-    marketInfo?.infrastructure?.basis_trade_factory
+    marketInfo?.infrastructure?.basis_trade_factory,
+    15000,
+    bondExecutingRef.current
   );
 
   const {
@@ -242,7 +257,7 @@ export default function BasisTradePage() {
     marketInfo?.collateral?.address,
     marketInfo?.position_token?.address,
     marketInfo?.external_contracts,
-    { onRefreshComplete: [refreshBonds] },
+    { onRefreshComplete: [refreshBonds, () => refreshBalances(true)], pauseRef: bondExecutingRef },
   );
 
   const {
@@ -612,13 +627,13 @@ export default function BasisTradePage() {
 
       <OpenTradeModal
         isOpen={showBondModal}
-        onClose={() => setShowBondModal(false)}
+        onClose={() => { if (!bondExecuting) setShowBondModal(false); }}
         onConfirm={() => {
-          setShowBondModal(false);
           const lev = Number(leverage) || 1;
           const days = Number(timeHorizon) || 90;
           const borrowRate = usdcCost || 2.9;
           createBasisTrade(Number(capital) || 0, lev, days, borrowRate, (receipt) => {
+            setShowBondModal(false);
             addToast({ type: "success", title: "Position Opened", message: `${Number(capital).toLocaleString()} ${selectedToken} position created — tx ${receipt.hash.slice(0, 10)}…` });
             if (receipt.brokerAddress) optimisticCreate(receipt.brokerAddress, Number(capital) || 0, days * 24);
             else refreshBonds();

@@ -168,18 +168,21 @@ contract BondFactory is ReentrancyGuard {
 
     /* =========================== MINT BOND ================================ */
 
-    /// @notice Mint a bond in a single transaction.
+    /// @notice Mint a bond in a single transaction (self-funding flow).
     ///
     /// @dev Flow:
     ///   1. Create fresh broker (NFT → this contract)
-    ///   2. Pull waUSDC from user → broker
-    ///   3. Execute short via BrokerRouter (we are NFT owner → authorized)
-    ///   4. Submit TWAMM buy-back order (we are owner → authorized)
-    ///   5. Freeze broker (we are owner → passes onlyOwner)
-    ///   6. Track ownership in bondOwner mapping
+    ///   2. Pull ONLY notional from user → broker (no separate hedge)
+    ///   3. Deposit collateral + mint wRLP debt via modifyPosition
+    ///   4. Withdraw minted wRLP → swap on V4 → waUSDC proceeds
+    ///   5. Send proceeds to broker → submit TWAMM buy-back order
+    ///   6. Freeze broker, track ownership
+    ///
+    /// The TWAMM hedge is entirely funded by the short's own swap proceeds.
+    /// User pays exactly `notional` — nothing more.
     ///
     /// @param notional       Collateral for the short position (waUSDC, 6 decimals)
-    /// @param hedgeAmount    Amount to allocate for TWAMM buy-back (waUSDC, 6 decimals)
+    /// @param debtAmount     Amount of wRLP debt to mint (determines TWAMM size)
     /// @param duration       TWAMM order duration in seconds
     /// @param poolKey        The Uniswap V4 pool key (wRLP/waUSDC)
     /// @param useUnderlying If true, pull underlying (e.g. USDC) from user and
@@ -188,62 +191,56 @@ contract BondFactory is ReentrancyGuard {
     /// @return broker        The deployed broker address (also the NFT token)
     function mintBond(
         uint256 notional,
-        uint256 hedgeAmount,
+        uint256 debtAmount,
         uint256 duration,
         PoolKey calldata poolKey,
         bool useUnderlying
     ) external nonReentrant returns (address broker) {
         require(notional > 0, "Zero notional");
+        require(debtAmount > 0, "Zero debt");
         require(duration > 0, "Zero duration");
 
         // ── 1. Create fresh broker ──────────────────────────────────────
         bytes32 salt = keccak256(abi.encodePacked(address(this), msg.sender, nonce++));
         broker = BROKER_FACTORY.createBroker(salt);
 
-        // ── 2. Fund broker with collateral ──────────────────────────────
-        uint256 total = notional + hedgeAmount;
-
+        // ── 2. Fund broker with ONLY notional ───────────────────────────
         if (useUnderlying) {
-            // Pull underlying (USDC) → wrap → send waUSDC to broker
-            _wrapAndSend(total, broker);
+            _wrapAndSend(notional, broker);
         } else {
-            // Pull waUSDC directly from user → broker
-            IERC20(COLLATERAL).transferFrom(msg.sender, broker, total);
+            IERC20(COLLATERAL).transferFrom(msg.sender, broker, notional);
         }
 
-        // ── 3. Execute short ────────────────────────────────────────────
-        (bool ok, bytes memory ret) = ROUTER.call(
-            abi.encodeWithSignature(
-                "executeShort(address,uint256,uint256,(address,address,uint24,int24,address))",
-                broker,
-                notional,
-                hedgeAmount,
-                poolKey
-            )
-        );
-        require(ok, _getRevertMsg(ret));
-
-        // ── 4. Submit TWAMM buy-back order ──────────────────────────────
+        // ── 3. Deposit collateral + mint wRLP debt ──────────────────────
         PrimeBroker pb = PrimeBroker(payable(broker));
-        // Determine direction: selling COLLATERAL (waUSDC) → buying position token (wRLP)
-        // zeroForOne = true when COLLATERAL is currency0 (lower address)
-        bool sellCollateral = Currency.unwrap(poolKey.currency0) == COLLATERAL;
+        bytes32 rawMarketId = MarketId.unwrap(pb.marketId());
+        pb.modifyPosition(rawMarketId, int256(notional), int256(debtAmount));
 
+        // ── 4. Withdraw minted wRLP → swap → waUSDC proceeds ───────────
+        address positionToken = pb.positionToken();
+        pb.withdrawPositionToken(address(this), debtAmount);
+        uint256 proceeds = _swapExactInput(
+            positionToken, COLLATERAL, debtAmount, poolKey
+        );
+
+        // ── 5. Send proceeds to broker → TWAMM buy-back order ──────────
+        IERC20(COLLATERAL).transfer(broker, proceeds);
+
+        bool sellCollateral = Currency.unwrap(poolKey.currency0) == COLLATERAL;
         IJTM.SubmitOrderParams memory params = IJTM.SubmitOrderParams({
             key: poolKey,
             zeroForOne: sellCollateral,
             duration: duration,
-            amountIn: hedgeAmount
+            amountIn: proceeds
         });
         pb.submitTwammOrder(TWAMM_HOOK, params);
 
-        // ── 5. Freeze broker ────────────────────────────────────────────
+        // ── 6. Freeze broker + track ownership ──────────────────────────
         pb.freeze();
-
-        // ── 6. Track ownership (NFT stays on BondFactory) ────────────────
         bondOwner[broker] = msg.sender;
 
-        emit BondMinted(msg.sender, broker, notional, hedgeAmount, duration);
+        // hedge field = proceeds (for entry rate indexing: proceeds/debtAmount)
+        emit BondMinted(msg.sender, broker, notional, proceeds, duration);
     }
 
     /* =========================== CLOSE BOND ============================== */

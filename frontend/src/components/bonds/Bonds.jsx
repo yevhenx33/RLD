@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ethers } from "ethers";
 import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
 import { Shield, Terminal, AlertTriangle, ChevronDown, Wallet } from "lucide-react";
@@ -10,7 +10,6 @@ import { useToast } from "../../hooks/useToast";
 import { ToastContainer } from "../common/Toast";
 
 // Hooks
-import { useMarketData } from "../../hooks/useMarketData";
 import { useTradeLogic } from "../../hooks/useTradeLogic";
 import { useSim } from "../../context/SimulationContext";
 import { useWealthProjection } from "../../hooks/useWealthProjection";
@@ -40,17 +39,15 @@ export default function BondsPage() {
   const tokenDropdownRef = useRef(null);
   const { account, connectWallet, usdcBalance: _usdcBalance } = useWallet();
   const { toasts, addToast, removeToast } = useToast();
-  const {
-    rates,
-    error,
-    isLoading,
-    dailyChange,
-    latest,
-    isCappedRaw: _isCappedRaw,
-  } = useMarketData();
 
-  // Live simulation data for stats panel + infrastructure addresses
-  const { poolTVL, protocolStats, marketInfo } = useSim();
+  // Live simulation data — replaces useMarketData (no rates-indexer dependency)
+  const sim = useSim();
+  const { poolTVL, protocolStats, marketInfo, pool, oracleChange24h } = sim;
+  const isLoading = sim.loading;
+  const error = !sim.connected && !sim.loading ? "disconnected" : null;
+  const latest = { apy: pool?.markPrice || 0 };
+  const dailyChange = oracleChange24h?.pctChange || 0;
+  const rates = pool ? [latest] : null; // minimal array for loading check
   const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
 
   // Wallet balance & allowance
@@ -58,42 +55,55 @@ export default function BondsPage() {
   const [usdcWalletBalance, setUsdcWalletBalance] = useState(null);
   const [waUsdcAllowance, setWaUsdcAllowance] = useState(0);
   const [usdcAllowance, setUsdcAllowance] = useState(0);
+  // Track whether a bond TX is executing (declared later but ref'd here)
+  const bondExecutingRef = useRef(false);
 
+  const refreshBalances = useCallback(async (force = false) => {
+    if (!account || !marketInfo?.collateral?.address || !marketInfo?.infrastructure?.bond_factory) return;
+    try {
+      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const balABI = ["function balanceOf(address) view returns (uint256)", "function allowance(address, address) view returns (uint256)"];
+      const bondFactory = marketInfo.infrastructure.bond_factory;
+
+      const waToken = new ethers.Contract(marketInfo.collateral.address, balABI, provider);
+      const waBal = await waToken.balanceOf(account);
+      const waAllow = await waToken.allowance(account, bondFactory);
+
+      // Guard: if a TX started while we were fetching, discard stale results
+      if (!force && bondExecutingRef.current) return;
+
+      setWalletBalance(Number(ethers.formatUnits(waBal, 6)));
+      setWaUsdcAllowance(Number(ethers.formatUnits(waAllow, 6)));
+
+      try {
+        const wrapABI = ["function aToken() view returns (address)"];
+        const aTokenABI = ["function UNDERLYING_ASSET_ADDRESS() view returns (address)"];
+        const wrapper = new ethers.Contract(marketInfo.collateral.address, wrapABI, provider);
+        const aTokenAddr = await wrapper.aToken();
+        const aToken = new ethers.Contract(aTokenAddr, aTokenABI, provider);
+        const usdcAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
+        const usdcToken = new ethers.Contract(usdcAddr, balABI, provider);
+        const uBal = await usdcToken.balanceOf(account);
+        const uAllow = await usdcToken.allowance(account, bondFactory);
+
+        // Guard again after second batch of RPC calls
+        if (!force && bondExecutingRef.current) return;
+
+        setUsdcWalletBalance(Number(ethers.formatUnits(uBal, 6)));
+        setUsdcAllowance(Number(ethers.formatUnits(uAllow, 6)));
+      } catch { /* ignore USDC balance fetch errors */ }
+    } catch { /* ignore balance fetch errors */ }
+  }, [account, marketInfo]);
+
+  // Interval-based balance polling — paused during TX execution
   useEffect(() => {
     if (!account || !marketInfo?.collateral?.address || !marketInfo?.infrastructure?.bond_factory) return;
-    const fetchBal = async () => {
-      try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
-        const balABI = ["function balanceOf(address) view returns (uint256)", "function allowance(address, address) view returns (uint256)"];
-        const bondFactory = marketInfo.infrastructure.bond_factory;
-
-        // waUSDC balance & allowance
-        const waToken = new ethers.Contract(marketInfo.collateral.address, balABI, provider);
-        const waBal = await waToken.balanceOf(account);
-        const waAllow = await waToken.allowance(account, bondFactory);
-        setWalletBalance(Number(ethers.formatUnits(waBal, 6)));
-        setWaUsdcAllowance(Number(ethers.formatUnits(waAllow, 6)));
-
-        // Derive USDC address and fetch balance & allowance
-        try {
-          const wrapABI = ["function aToken() view returns (address)"];
-          const aTokenABI = ["function UNDERLYING_ASSET_ADDRESS() view returns (address)"];
-          const wrapper = new ethers.Contract(marketInfo.collateral.address, wrapABI, provider);
-          const aTokenAddr = await wrapper.aToken();
-          const aToken = new ethers.Contract(aTokenAddr, aTokenABI, provider);
-          const usdcAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
-          const usdcToken = new ethers.Contract(usdcAddr, balABI, provider);
-          const uBal = await usdcToken.balanceOf(account);
-          const uAllow = await usdcToken.allowance(account, bondFactory);
-          setUsdcWalletBalance(Number(ethers.formatUnits(uBal, 6)));
-          setUsdcAllowance(Number(ethers.formatUnits(uAllow, 6)));
-        } catch { /* ignore USDC balance fetch errors */ }
-      } catch { /* ignore balance fetch errors */ }
-    };
-    fetchBal();
-    const id = setInterval(fetchBal, 10000);
+    refreshBalances();
+    const id = setInterval(() => {
+      if (!bondExecutingRef.current) refreshBalances();
+    }, 10000);
     return () => clearInterval(id);
-  }, [account, marketInfo]);
+  }, [account, marketInfo, refreshBalances]);
 
   // Close token dropdown on outside click
   useEffect(() => {
@@ -164,14 +174,18 @@ export default function BondsPage() {
       : undefined,
     marketInfo?.collateral?.address,
     marketInfo?.position_token?.address,
+    { pauseRef: bondExecutingRef },
   );
+
   const tradeLogic = useTradeLogic(latest.apy);
 
-  // Real on-chain bond positions (all bond broker NFTs owned by account)
+  // Real on-chain bond positions — paused during TX execution
   const { bonds: userBonds, refresh: refreshBonds, optimisticClose, optimisticCreate } = useBondPositions(
     account,
     latest?.apy,
-    marketInfo?.infrastructure?.bond_factory
+    marketInfo?.infrastructure?.bond_factory,
+    15000,
+    bondExecuting, // pause SWR polling during TX
   );
 
   const {
@@ -205,7 +219,7 @@ export default function BondsPage() {
 
   const notionalAmount = Number(notional) || 0;
   const hedgeAmount = hedgeInfo.hedge || 0;
-  const totalRequired = notionalAmount + hedgeAmount;
+  const totalRequired = notionalAmount;
   const currentAllowance = selectedToken === "USDC" ? usdcAllowance : waUsdcAllowance;
   const needsApproval = currentAllowance < totalRequired;
 
@@ -454,10 +468,7 @@ export default function BondsPage() {
                     label="Entry_Rate"
                     value={`${formatNum(latest.apy)}%`}
                   />
-                  <SummaryRow
-                    label="Hedge_Size"
-                    value={`${hedgeInfo.hedge.toFixed(2)} wRLP`}
-                  />
+
                   <SummaryRow
                     label="Initial_LTV"
                     value={`${hedgeInfo.ltv.toFixed(1)}%`}
@@ -703,10 +714,10 @@ export default function BondsPage() {
       {/* Create Bond Confirmation Modal */}
       <CreateBondModal
         isOpen={showBondModal}
-        onClose={() => setShowBondModal(false)}
+        onClose={() => { if (!bondExecuting) setShowBondModal(false); }}
         onConfirm={() => {
-          setShowBondModal(false);
           createBond(notional, maturityHours, latest.apy, (receipt) => {
+            setShowBondModal(false);
             console.log("[Bond] Created:", receipt.hash, "Broker:", receipt.brokerAddress);
             addToast({
               type: "success",
@@ -719,14 +730,17 @@ export default function BondsPage() {
             } else {
               refreshBonds();
             }
+            refreshBalances(true); // Update wallet balance atomically with toast
           }, { useUnderlying: selectedToken === "USDC" });
         }}
         notional={notional}
         maturityDays={maturityDays}
         maturityDate={epochs.endDisplay}
         entryRate={latest.apy}
-        hedgeSize={hedgeInfo.hedge}
         initialLTV={hedgeInfo.ltv}
+        executing={bondExecuting}
+        executionStep={bondStep}
+        executionError={bondError}
       />
 
       {/* Close Bond Confirmation Modal */}
@@ -746,6 +760,7 @@ export default function BondsPage() {
             });
             // Optimistic: remove closed bond instantly from UI
             optimisticClose(bond.brokerAddress);
+            refreshBalances(true); // Update wallet balance atomically with toast
           }, { useUnderlying: selectedToken === "USDC" });
         }}
         bond={selectedBond ? userBonds.find(b => b.id === selectedBond) : null}

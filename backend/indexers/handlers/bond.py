@@ -22,16 +22,26 @@ async def handle_bond_minted(
     tx_hash: str,
     factory_address: str = "",
 ) -> None:
-    """Insert a new bond row. notional/hedge are raw 6-decimal ints."""
+    """Insert a new bond row. notional/hedge are raw 6-decimal ints.
+    entry_rate is looked up from block_states.mark_price at mint_block.
+    """
+    # Look up mark price at mint block for entry rate
+    entry_rate = await conn.fetchval(
+        "SELECT mark_price FROM block_states WHERE block_number = $1",
+        block_number,
+    )
+
     await conn.execute("""
         INSERT INTO bonds (broker_address, market_id, owner, notional, hedge,
-                           duration, mint_block, mint_tx, status, factory_address)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9)
+                           duration, mint_block, mint_tx, status, factory_address,
+                           entry_rate)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10)
         ON CONFLICT (broker_address) DO NOTHING
     """, broker.lower(), market_id, owner.lower(),
-       notional, hedge, duration, block_number, tx_hash, factory_address.lower())
-    log.info("[bond] BondMinted owner=%s broker=%s notional=%d hedge=%d dur=%d block=%d",
-             owner[:10], broker[:10], notional, hedge, duration, block_number)
+       notional, hedge, duration, block_number, tx_hash, factory_address.lower(),
+       entry_rate)
+    log.info("[bond] BondMinted owner=%s broker=%s notional=%d hedge=%d rate=%.4f dur=%d block=%d",
+             owner[:10], broker[:10], notional, hedge, entry_rate or 0, duration, block_number)
 
 
 async def handle_bond_closed(

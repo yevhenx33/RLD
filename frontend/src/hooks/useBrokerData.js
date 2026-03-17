@@ -105,7 +105,7 @@ async function gqlFetch(query, variables) {
 // ── The hook ────────────────────────────────────────────────────────
 
 /**
- * useBrokerData — Single hook for ALL perps page data.
+ * useBrokerData — Single hook for ALL perps page data (Pattern A).
  *
  * Architecture:
  *   1. ONE GQL query → broker profile, TWAMM orders, pool snapshot, operations
@@ -113,11 +113,17 @@ async function gqlFetch(query, variables) {
  *   3. Client math  → sellRate, NAV, colRatio, isSolvent
  *   4. ONE setState → atomic UI update
  *
- * @param {string}  account    Connected wallet address
- * @param {object}  marketInfo Market config from useSim
- * @returns {{ data, refresh, executing, execStep, execError }}
+ * Updates are block-driven: refreshes when blockNumber changes (from useSim).
+ * After user operations, call refresh() which waits 500ms then fetches.
+ *
+ * @param {string}       account        Connected wallet address
+ * @param {object}       marketInfo     Market config from useSim
+ * @param {number}       blockNumber    Current block from useSim (drives refresh)
+ * @param {number}       blockTimestamp Current block timestamp from useSim
+ * @param {React.RefObject} pauseRef    When .current is truthy, block updates are paused
+ * @returns {{ data, refresh }}
  */
-export function useBrokerData(account, marketInfo) {
+export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, pauseRef) {
   const [data, setData] = useState(null);
   const mountedRef = useRef(true);
   const fetchingRef = useRef(false);
@@ -128,20 +134,19 @@ export function useBrokerData(account, marketInfo) {
   const positionAddr = marketInfo?.positionToken?.address || marketInfo?.position_token?.address;
 
   // ── Core fetch: GQL + minimal RPC → single setState ───────────
-  const fetchAll = useCallback(async () => {
-    console.log("[BrokerData] fetchAll triggered. account:", account, "marketId:", marketId);
+  const fetchAll = useCallback(async (force = false) => {
     if (!account || !marketId) return;
+    // Skip block-driven updates while TX is executing (unless forced by refresh())
+    if (!force && pauseRef?.current) return;
     if (fetchingRef.current) return;
     fetchingRef.current = true;
 
     try {
-      console.log("[BrokerData] Fetching GQL from:", GQL_URL);
       // ── Phase 1: One GQL round-trip ─────────────────────────────
       const gql = await gqlFetch(BROKER_DATA_QUERY, {
         owner: account,
         marketId,
       });
-      console.log("[BrokerData] GQL response:", gql);
 
       const profile = gql.brokerProfile; // null if no broker
       // TWAMM orders are nested inside brokerProfile (status-based, not isCancelled)
@@ -173,36 +178,19 @@ export function useBrokerData(account, marketInfo) {
         collateralAddr &&
         positionAddr
       ) {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
-        const block = await provider.getBlock("latest");
-        const now = block.timestamp;
+        const now = blockTimestamp || Math.floor(Date.now() / 1000);
         const poolKey = buildPoolKey(
           marketInfo.infrastructure,
           collateralAddr,
           positionAddr,
         );
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
         const hook = new ethers.Contract(hookAddr, JTM_VIEW_ABI, provider);
 
-        // Read tracked TWAMM order ID from broker
-        let trackedOrderId = null;
-        try {
-          const broker = new ethers.Contract(
-            profile.address,
-            [
-              "function activeTwammOrder() view returns (address, address, uint24, int24, address, address, uint160, bool, uint256, bytes32)",
-            ],
-            provider,
-          );
-          const result = await broker.activeTwammOrder();
-          trackedOrderId = result[9];
-          if (
-            trackedOrderId ===
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-          )
-            trackedOrderId = null;
-        } catch {
-          // No active order
-        }
+        // Read tracked TWAMM order ID from GQL response (no RPC needed)
+        let trackedOrderId = profile?.activeTwammOrderId || null;
+        if (trackedOrderId === "" || trackedOrderId === "0x" + "0".repeat(64))
+          trackedOrderId = null;
 
         enrichedOrders = await Promise.all(
           activeTwamm.map(async (evt) => {
@@ -457,24 +445,22 @@ export function useBrokerData(account, marketInfo) {
     } finally {
       fetchingRef.current = false;
     }
-  }, [account, marketId, hookAddr, collateralAddr, positionAddr, marketInfo]);
+  }, [account, marketId, hookAddr, collateralAddr, positionAddr, marketInfo, blockTimestamp]);
 
-  // ── Polling: single interval ──────────────────────────────────
+  // ── Block-driven: refresh when new block arrives ──────────────
   useEffect(() => {
     mountedRef.current = true;
-    fetchAll();
-    const interval = setInterval(fetchAll, 15_000);
+    if (blockNumber && account && marketId) fetchAll();
     return () => {
       mountedRef.current = false;
-      clearInterval(interval);
     };
-  }, [fetchAll]);
+  }, [blockNumber, fetchAll, account, marketId]);
 
   // ── refresh(): call after any transaction ─────────────────────
   const refresh = useCallback(async () => {
     // Small delay to let chain state settle after TX confirmation
     await new Promise((r) => setTimeout(r, 500));
-    await fetchAll();
+    await fetchAll(true); // force=true bypasses executing pause
   }, [fetchAll]);
 
   return { data, refresh };

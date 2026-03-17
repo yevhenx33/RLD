@@ -1,5 +1,5 @@
 import React from "react";
-import { X, ArrowRight, Loader2, AlertTriangle } from "lucide-react";
+import { X, ArrowDown, Loader2, AlertTriangle } from "lucide-react";
 import { formatNum } from "../../utils/helpers";
 
 /**
@@ -15,7 +15,7 @@ export default function CreateBondModal({
   maturityDays,
   maturityDate,
   entryRate,
-  hedgeSize = 0,
+
   initialLTV = 0,
   executing,
   executionStep,
@@ -43,11 +43,7 @@ export default function CreateBondModal({
       label: "Maturity_Date",
       value: maturityDate,
     },
-    {
-      label: "Hedge_Size",
-      value: `${formatNum(hedgeSize, 2)} wRLP`,
-      color: "text-yellow-400",
-    },
+
     {
       label: "Initial_LTV",
       value: `${formatNum(initialLTV, 1)}%`,
@@ -107,7 +103,7 @@ export default function CreateBondModal({
           {/* Arrow */}
           <div className="flex justify-center -my-2 relative z-10">
             <div className="w-8 h-8 flex items-center justify-center bg-[#080808] border border-white/10 text-cyan-400">
-              <ArrowRight size={14} />
+              <ArrowDown size={14} />
             </div>
           </div>
 

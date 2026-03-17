@@ -187,8 +187,12 @@ export default function SimulationTerminal() {
   const { account, connectWallet } = useWallet();
 
   // ── Broker Data (single GQL + minimal RPC) ─────────────────
-  // ONE hook for ALL data. Returns null until first fetch completes.
-  const { data, refresh } = useBrokerData(account, marketInfo);
+  // ONE hook for ALL data. Block-driven: refreshes when block changes.
+  // txPauseRef pauses block updates while any TX is executing.
+  const txPauseRef = useRef(false);
+  const { data, refresh } = useBrokerData(
+    account, marketInfo, sim.blockNumber, sim.market?.blockTimestamp, txPauseRef,
+  );
 
   // Convenience aliases from the data object
   const hasBroker = data?.hasBroker ?? null;
@@ -233,6 +237,10 @@ export default function SimulationTerminal() {
     executionError: lpError,
     clearError: clearLpError,
   } = usePoolLiquidity(brokerAddress, marketInfo);
+
+  // Sync all executing flags into the pause ref so useBrokerData
+  // skips block-driven fetches while any TX is pending.
+  // This runs after hooks are declared but before the next render's fetch.
 
   // Trading State (must be declared before swap hooks that reference tradeSide/collateral)
   const [tradeSide, setTradeSide] = useState("LONG");
@@ -352,6 +360,13 @@ export default function SimulationTerminal() {
     enrichedMarketInfo?.infrastructure?.swap_collateral,
     enrichedMarketInfo?.infrastructure?.swap_position_token,
   );
+
+  // ── Pause block-driven data updates while any TX is executing ──
+  // Updates resume automatically when all executing flags clear.
+  // The explicit refresh() after TX completion bypasses the pause.
+  useEffect(() => {
+    txPauseRef.current = !!(swapExecuting || cancellingTwamm || lpExecuting);
+  }, [swapExecuting, cancellingTwamm, lpExecuting]);
 
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [positionDropdown, setPositionDropdown] = useState(null);
@@ -1646,6 +1661,7 @@ export default function SimulationTerminal() {
                         addToast={addToast}
                         marketInfo={marketInfo}
                         onStateChange={refresh}
+                        txPauseRef={txPauseRef}
                         onTwammRefresh={refresh}
                       />
                     )}

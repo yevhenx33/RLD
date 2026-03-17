@@ -1,5 +1,5 @@
 import React from "react";
-import { X, ArrowRight, Loader2, AlertTriangle, Lock } from "lucide-react";
+import { X, ArrowDown, Loader2, AlertTriangle, Lock } from "lucide-react";
 import { formatNum } from "../../utils/helpers";
 
 /**
@@ -79,7 +79,7 @@ export default function OpenTradeModal({
           {/* Arrow */}
           <div className="flex justify-center -my-2 relative z-10">
             <div className="w-8 h-8 flex items-center justify-center bg-[#080808] border border-white/10 text-pink-400">
-              <ArrowRight size={14} />
+              <ArrowDown size={14} />
             </div>
           </div>
 

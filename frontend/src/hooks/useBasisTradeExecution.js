@@ -88,7 +88,7 @@ export function useBasisTradeExecution(
   collateralAddr,
   positionAddr,
   externalContracts,
-  { onRefreshComplete = [] } = {},
+  { onRefreshComplete = [], pauseRef } = {},
 ) {
   const SUSDE_ADDRESS = externalContracts?.susde || "0x9D39A5DE30e57443BfF2A8307A4256c8797A3497";
   const USDC_ADDRESS = externalContracts?.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
@@ -105,8 +105,9 @@ export function useBasisTradeExecution(
     await new Promise((r) => setTimeout(r, 500));
     await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
     setStep(successStep);
+    if (pauseRef) pauseRef.current = false;
     if (onSuccess) onSuccess(result);
-  }, [onRefreshComplete]);
+  }, [onRefreshComplete, pauseRef]);
 
   /**
    * Open a basis trade in a single atomic transaction (flash loan).
@@ -137,6 +138,7 @@ export function useBasisTradeExecution(
       }
 
       setExecuting(true);
+      if (pauseRef) pauseRef.current = true;
       setError(null);
       setStep("Computing strategy...");
 
@@ -334,6 +336,7 @@ export function useBasisTradeExecution(
         setStep("");
       } finally {
         setExecuting(false);
+        if (pauseRef) pauseRef.current = false;
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
@@ -366,6 +369,7 @@ export function useBasisTradeExecution(
       }
 
       setExecuting(true);
+      if (pauseRef) pauseRef.current = true;
       setError(null);
       setStep("Preparing...");
 
@@ -470,6 +474,7 @@ export function useBasisTradeExecution(
         setStep("");
       } finally {
         setExecuting(false);
+        if (pauseRef) pauseRef.current = false;
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },

@@ -481,7 +481,7 @@ class Query:
             rows = await conn.fetch("""
                 SELECT broker_address, market_id, owner, notional, hedge,
                        duration, mint_block, mint_tx, status, close_block, close_tx,
-                       factory_address
+                       factory_address, entry_rate
                 FROM bonds WHERE owner = $1
                 ORDER BY mint_block DESC
             """, owner.lower())
@@ -491,7 +491,7 @@ class Query:
         for r in rows:
             d = dict(r)
             # Convert Decimal → float for JSON serialization
-            for k in ("notional", "hedge"):
+            for k in ("notional", "hedge", "entry_rate"):
                 if d.get(k) is not None:
                     d[k] = float(d[k])
             result.append(d)

@@ -50,7 +50,7 @@ export function useBondExecution(
   infrastructure,
   collateralAddr,
   positionAddr,
-  { onRefreshComplete = [] } = {},
+  { onRefreshComplete = [], pauseRef = null } = {},
 ) {
   const [executing, setExecuting] = useState(false);
   const [error, setError] = useState(null);
@@ -93,6 +93,7 @@ export function useBondExecution(
       }
 
       setExecuting(true);
+      if (pauseRef) pauseRef.current = true;
       setError(null);
       setStep("Preparing...");
 
@@ -112,19 +113,23 @@ export function useBondExecution(
           hooks: infrastructure.twamm_hook,
         };
 
-        // ── Compute amounts ─────────────────────────────────────
-        // Hedge amount = notional × rate × duration / 8760
-        // Minimum: max(1% of notional, $1) to avoid TWAMM sell rate underflow
-        const hedgeUSD = Math.max(
-          notionalUSD * (ratePercent / 100) * (durationHours / 8760),
-          notionalUSD * 0.01,  // at least 1% of notional
-          1.0,                 // at least $1
+        // ── Compute debt amount (wRLP tokens to mint) ────────────
+        // 1. Yield in USD = notional × rate × pro-rata duration
+        // 2. wRLP tokens = yield / markPrice  (markPrice ≈ ratePercent in RLD)
+        // Floor: at least 0.5 wRLP to avoid dust amounts
+        const markPrice = ratePercent;  // In RLD, mark price ≈ APY%
+        const yieldUSD = notionalUSD * (ratePercent / 100) * (durationHours / 8760);
+        const debtWRLP = Math.max(
+          yieldUSD / markPrice,
+          0.5,  // minimum 0.5 wRLP
         );
         const notionalWei = ethers.parseUnits(notionalUSD.toString(), 6);
-        const hedgeWei = ethers.parseUnits(hedgeUSD.toFixed(6), 6);
-        const totalWei = notionalWei + hedgeWei;
+        const debtWei = ethers.parseUnits(debtWRLP.toFixed(6), 6);
+        // Self-funding: user pays only notional (swap proceeds fund TWAMM)
+        const totalWei = notionalWei;
 
-        console.log("[Bond] Notional:", notionalUSD, "Hedge:", hedgeUSD.toFixed(6));
+        console.log("[Bond] Notional:", notionalUSD, "Yield:", yieldUSD.toFixed(2),
+                     "Debt:", debtWRLP.toFixed(6), "wRLP (mark:", markPrice, ")");
 
         // ── Determine which token to approve ─────────────────────
         let approveTokenAddr = collateralAddr; // default: waUSDC
@@ -194,14 +199,14 @@ export function useBondExecution(
 
         console.log("[Bond] mintBond params:", {
           notionalWei: notionalWei.toString(),
-          hedgeWei: hedgeWei.toString(),
+          debtWei: debtWei.toString(),
           durationSec,
           poolKey,
         });
 
         const tx = await bondFactory.mintBond(
           notionalWei,
-          hedgeWei,
+          debtWei,
           durationSec,
           [
             poolKey.currency0,
@@ -281,6 +286,7 @@ export function useBondExecution(
         setStep("");
       } finally {
         setExecuting(false);
+        if (pauseRef) pauseRef.current = false;
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
@@ -317,6 +323,7 @@ export function useBondExecution(
       }
 
       setExecuting(true);
+      if (pauseRef) pauseRef.current = true;
       setError(null);
       setStep("Preparing...");
 
@@ -396,6 +403,7 @@ export function useBondExecution(
         setStep("");
       } finally {
         setExecuting(false);
+        if (pauseRef) pauseRef.current = false;
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
