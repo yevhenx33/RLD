@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS twamm_orders (
   expiration      BIGINT NOT NULL,
   start_epoch     BIGINT,                  -- from JTM SubmitOrder data
   sell_rate        TEXT,                    -- raw uint256 from JTM SubmitOrder data
+  nonce           BIGINT,                   -- order nonce from OrderKey
   zero_for_one    BOOLEAN NOT NULL,
   block_number    BIGINT NOT NULL,
   tx_hash         TEXT NOT NULL,

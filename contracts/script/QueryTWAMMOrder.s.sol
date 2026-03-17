@@ -42,7 +42,7 @@ contract QueryTWAMMOrder is Script {
         });
 
         // Build order key
-        IJTM.OrderKey memory orderKey = IJTM.OrderKey({owner: owner, expiration: expiration, zeroForOne: true});
+        IJTM.OrderKey memory orderKey = IJTM.OrderKey({owner: owner, expiration: expiration, zeroForOne: true, nonce: 0});
 
         console.log("");
         console.log("=== ORDER STATE ===");

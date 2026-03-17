@@ -239,7 +239,8 @@ contract ValuationModuleTests is LiquidationTwammBase {
         IJTM.OrderKey memory fakeKey = IJTM.OrderKey({
             owner: address(0xdead),
             expiration: uint160(block.timestamp - 3600), // in the past
-            zeroForOne: true
+            zeroForOne: true,
+            nonce: 0
         });
 
         uint256 val = twammBrokerModule.getValue(_encodeTwammParams(fakeKey));
@@ -253,7 +254,7 @@ contract ValuationModuleTests is LiquidationTwammBase {
             hook: address(twammHook),
             key: marketTwammKey,
             orderKey: IJTM.OrderKey({
-                owner: address(0xdead), expiration: uint160(block.timestamp - 3600), zeroForOne: true
+                owner: address(0xdead), expiration: uint160(block.timestamp - 3600), zeroForOne: true, nonce: 0
             }),
             oracle: address(testOracle),
             valuationToken: address(0x1111), // Unknown token

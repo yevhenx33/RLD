@@ -122,6 +122,9 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
     mapping(PoolId => PendingSettle) internal _pendingSettle0;
     mapping(PoolId => PendingSettle) internal _pendingSettle1;
 
+    /// @notice Per-owner auto-incrementing nonce for unique order IDs
+    mapping(address => uint256) public orderNonces;
+
     /* ======================================================================== */
     /*                           CONSTRUCTOR                                    */
     /* ======================================================================== */
@@ -474,7 +477,8 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         orderKey = OrderKey({
             owner: msg.sender,
             expiration: (nextEpoch + params.duration).toUint160(),
-            zeroForOne: params.zeroForOne
+            zeroForOne: params.zeroForOne,
+            nonce: orderNonces[msg.sender]++
         });
 
         if (orderKey.expiration <= block.timestamp) {
@@ -499,9 +503,6 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
 
         JITState storage state = poolStates[poolId];
         if (state.lastUpdateTimestamp == 0) revert NotInitialized();
-        if (state.orders[orderId].sellRate != 0) {
-            revert OrderAlreadyExists(orderKey);
-        }
 
         // Update aggregate stream state
         StreamPool storage stream = params.zeroForOne
@@ -542,7 +543,8 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
             params.zeroForOne,
             scaledSellRate / RATE_SCALER,
             earningsFactorLast,
-            nextEpoch
+            nextEpoch,
+            orderKey.nonce
         );
     }
 
@@ -690,7 +692,8 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
                 OrderKey(
                     orderKey.owner,
                     orderKey.expiration,
-                    orderKey.zeroForOne
+                    orderKey.zeroForOne,
+                    orderKey.nonce
                 )
             );
         }
@@ -923,11 +926,27 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
 
         // Compute refund for remaining time
         if (state.lastUpdateTimestamp < orderKey.expiration) {
-            uint256 remainingSeconds = orderKey.expiration -
-                state.lastUpdateTimestamp;
-            sellTokensRefund =
-                (order.sellRate * remainingSeconds) /
-                RATE_SCALER;
+            // Find the order's start epoch by scanning backwards
+            uint256 ep = orderKey.expiration - expirationInterval;
+            while (ep > 0) {
+                if (stream.sellRateStartingAtInterval[ep] >= order.sellRate) break;
+                if (ep < expirationInterval) break;
+                ep -= expirationInterval;
+            }
+            uint256 startEpoch = ep;
+
+            if (state.lastUpdateTimestamp >= startEpoch) {
+                // Active order: refund from lastUpdate to expiration
+                uint256 remainingSeconds = orderKey.expiration -
+                    state.lastUpdateTimestamp;
+                sellTokensRefund =
+                    (order.sellRate * remainingSeconds) /
+                    RATE_SCALER;
+            } else {
+                // Pending order: refund = full deposit (sellRate × duration)
+                uint256 duration = orderKey.expiration - startEpoch;
+                sellTokensRefund = (order.sellRate * duration) / RATE_SCALER;
+            }
         }
     }
 

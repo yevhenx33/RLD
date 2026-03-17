@@ -127,7 +127,12 @@ class TwammOrder:
     is_registered: bool
     block_number: int
     start_epoch: Optional[int]
+    nonce: Optional[int]
     tx_hash: str
+
+    @strawberry.field
+    def is_cancelled(self) -> bool:
+        return self.status == "cancelled"
 
 
 @strawberry.type
@@ -348,7 +353,9 @@ class Query:
             status=r["status"],
             is_registered=r["is_registered"],
             block_number=r["block_number"],
-            start_epoch=r.get("start_epoch"), tx_hash=r["tx_hash"],
+            start_epoch=r.get("start_epoch"),
+            nonce=r.get("nonce"),
+            tx_hash=r["tx_hash"],
         ) for r in rows]
 
     @strawberry.field
@@ -592,6 +599,7 @@ class Query:
                     "startEpoch": o.get("start_epoch"),
                     "sellRate": o.get("sell_rate"),
                     "zeroForOne": o["zero_for_one"],
+                    "nonce": o.get("nonce"),
                     "status": o["status"],
                     "isRegistered": o["is_registered"],
                     "buyTokensOut": o.get("buy_tokens_out", "0"),

@@ -129,11 +129,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         broker.setActiveTwammOrder(
             IPrimeBroker.TwammOrderInfo({
                 key: marketTwammKey,
-                orderKey: IJTM.OrderKey({
-                    owner: orderKey.owner,
-                    expiration: orderKey.expiration,
-                    zeroForOne: orderKey.zeroForOne
-                }),
+                orderKey: orderKey,
                 orderId: orderId
             })
         );

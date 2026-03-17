@@ -484,10 +484,11 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         _submitOrder0For1(INTERVAL, INTERVAL - 1);
     }
 
-    function test_Submit_Revert_DuplicateOrder() public {
-        _submitOrder0For1(INTERVAL, 3600e6);
-        vm.expectRevert();
-        _submitOrder0For1(INTERVAL, 3600e6); // same owner+exp+direction
+    function test_Submit_DuplicateOrder_Succeeds_WithNonce() public {
+        (bytes32 id1, IJTM.OrderKey memory key1) = _submitOrder0For1(INTERVAL, 3600e6);
+        (bytes32 id2, IJTM.OrderKey memory key2) = _submitOrder0For1(INTERVAL, 3600e6); // same params, different nonce
+        assertTrue(id1 != id2, "different orderIds");
+        assertTrue(key1.nonce != key2.nonce, "different nonces");
     }
 
     function test_Submit_Revert_ExpirationNotOnInterval() public {
@@ -627,7 +628,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         IJTM.OrderKey memory fakeKey = IJTM.OrderKey({
             owner: address(this),
             expiration: uint160(block.timestamp + INTERVAL),
-            zeroForOne: true
+            zeroForOne: true,
+            nonce: 0
         });
         vm.expectRevert();
         twammHook.cancelOrder(twammPoolKey, fakeKey);
@@ -714,7 +716,8 @@ contract JitTwammParanoidTest is JITRLDIntegrationBase {
         IJTM.OrderKey memory fakeKey = IJTM.OrderKey({
             owner: address(this),
             expiration: uint160(block.timestamp + INTERVAL),
-            zeroForOne: true
+            zeroForOne: true,
+            nonce: 0
         });
         vm.expectRevert();
         twammHook.sync(IJTM.SyncParams({key: twammPoolKey, orderKey: fakeKey}));

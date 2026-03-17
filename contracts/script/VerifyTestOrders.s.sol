@@ -191,7 +191,8 @@ contract VerifyTestOrders is Script {
         IJTM.OrderKey memory orderKey = IJTM.OrderKey({
             owner: owner,
             expiration: expiration,
-            zeroForOne: zeroForOne
+            zeroForOne: zeroForOne,
+            nonce: 0
         });
 
         // Get order state

@@ -79,6 +79,7 @@ interface IJTM {
         address owner;
         uint160 expiration;
         bool zeroForOne;
+        uint256 nonce;
     }
 
     /// @notice Parameters for submitting a new order
@@ -106,7 +107,8 @@ interface IJTM {
         bool zeroForOne,
         uint256 sellRate,
         uint256 earningsFactorLast,
-        uint256 startEpoch
+        uint256 startEpoch,
+        uint256 nonce
     );
 
     event CancelOrder(

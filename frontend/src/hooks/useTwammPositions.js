@@ -9,15 +9,15 @@ const GQL_URL = `${SIM_API}/graphql`;
 // ── ABI: only view functions (no event scanning) ──────────────────
 
 const JTM_VIEW_ABI = [
-  "function getOrder((address,address,uint24,int24,address) key, (address,uint160,bool) orderKey) view returns (uint256 sellRate, uint256 earningsFactorLast)",
-  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
+  "function getOrder((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 sellRate, uint256 earningsFactorLast)",
+  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
 ];
 
 const BROKER_ACTIVE_ORDER_ABI = [
   // Solidity auto-getter flattens TwammOrderInfo { PoolKey key; OrderKey orderKey; bytes32 orderId }
   // PoolKey = (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)
-  // OrderKey = (address owner, uint160 expiration, bool zeroForOne)
-  "function activeTwammOrder() view returns (address, address, uint24, int24, address, address, uint160, bool, bytes32)",
+  // OrderKey = (address owner, uint160 expiration, bool zeroForOne, uint256 nonce)
+  "function activeTwammOrder() view returns (address, address, uint24, int24, address, address, uint160, bool, uint256, bytes32)",
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -59,7 +59,7 @@ function formatTimeLeft(seconds) {
 const TWAMM_ORDERS_QUERY = `
   query TwammPositions($marketId: String!, $owner: String) {
     twammOrders(marketId: $marketId, owner: $owner) {
-      orderId owner amountIn
+      orderId owner amountIn nonce
       expiration startEpoch zeroForOne
       blockNumber txHash isCancelled
     }
@@ -160,7 +160,7 @@ export function useTwammPositions(
           provider,
         );
         const result = await broker.activeTwammOrder();
-        trackedOrderId = result[8]; // orderId is the 9th return value (index 8)
+        trackedOrderId = result[9]; // orderId is the 10th return value (index 9)
         if (
           trackedOrderId ===
           "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -185,6 +185,7 @@ export function useTwammPositions(
             evt.owner,
             parseInt(evt.expiration),
             evt.zeroForOne,
+            parseInt(evt.nonce || "0"),
           ];
 
           let sellRate = 0n;

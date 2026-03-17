@@ -144,7 +144,7 @@ contract ExtensiveTWAMMTest is Script {
             console.log("--- Order", i + 1, "---");
 
             IJTM.OrderKey memory orderKey =
-                IJTM.OrderKey({owner: user, expiration: uint160(results[i].expiration), zeroForOne: true});
+                IJTM.OrderKey({owner: user, expiration: uint160(results[i].expiration), zeroForOne: true, nonce: 0});
 
             (uint256 buyOwed, uint256 sellRefund) = twamm.getCancelOrderState(poolKey, orderKey);
 

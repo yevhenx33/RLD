@@ -184,7 +184,8 @@ contract BrokerPositionTracking is LiquidationTwammBase {
                 orderKey: IJTM.OrderKey({
                     owner: orderKey.owner,
                     expiration: orderKey.expiration,
-                    zeroForOne: orderKey.zeroForOne
+                    zeroForOne: orderKey.zeroForOne,
+                    nonce: orderKey.nonce
                 }),
                 orderId: orderId
             })
@@ -241,7 +242,8 @@ contract BrokerPositionTracking is LiquidationTwammBase {
                 orderKey: IJTM.OrderKey({
                     owner: address(0),
                     expiration: 0,
-                    zeroForOne: false
+                    zeroForOne: false,
+                    nonce: 0
                 }),
                 orderId: bytes32(0)
             })
@@ -280,7 +282,8 @@ contract BrokerPositionTracking is LiquidationTwammBase {
                 orderKey: IJTM.OrderKey({
                     owner: address(0),
                     expiration: 0,
-                    zeroForOne: false
+                    zeroForOne: false,
+                    nonce: 0
                 }),
                 orderId: bytes32(0)
             })

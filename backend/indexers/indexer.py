@@ -93,7 +93,7 @@ CUSTOM_TOPICS = {
     Web3.keccak(text="Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)").hex():
         "Initialize",
     # TWAMM Hook (JTM)
-    Web3.keccak(text="SubmitOrder(bytes32,bytes32,address,uint256,uint160,bool,uint256,uint256,uint256)").hex():
+    Web3.keccak(text="SubmitOrder(bytes32,bytes32,address,uint256,uint160,bool,uint256,uint256,uint256,uint256)").hex():
         "SubmitOrder",
     Web3.keccak(text="CancelOrder(bytes32,bytes32,address,uint256)").hex():
         "CancelOrder",
@@ -502,21 +502,21 @@ async def dispatch(
     elif event_name == "SubmitOrder" and market_id:
         # JTM Hook: SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner,
         #             uint256 amountIn, uint160 expiration, bool zeroForOne,
-        #             uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch)
+        #             uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch, uint256 nonce)
         try:
             pool_id_bytes = topics[1] if isinstance(topics[1], bytes) else bytes.fromhex(topics[1].replace('0x', ''))
             order_id_bytes = topics[2] if isinstance(topics[2], bytes) else bytes.fromhex(topics[2].replace('0x', ''))
             pool_id = "0x" + pool_id_bytes.hex()
             order_id = "0x" + order_id_bytes.hex()
             decoded = w3.eth.codec.decode(
-                ["address", "uint256", "uint160", "bool", "uint256", "uint256", "uint256"],
+                ["address", "uint256", "uint160", "bool", "uint256", "uint256", "uint256", "uint256"],
                 data_bytes
             )
             await twamm_handler.handle_submit_order(
                 conn, pool_id=pool_id, order_id=order_id, owner=decoded[0],
                 amount_in=decoded[1], expiration=decoded[2],
                 zero_for_one=decoded[3], sell_rate=decoded[4],
-                start_epoch=decoded[6],
+                start_epoch=decoded[6], nonce=decoded[7],
                 block_number=block_number, tx_hash=tx_hash
             )
         except Exception as e:

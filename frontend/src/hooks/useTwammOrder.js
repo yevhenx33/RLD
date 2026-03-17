@@ -34,6 +34,7 @@ const ORDER_KEY_TUPLE = {
     { name: "owner", type: "address" },
     { name: "expiration", type: "uint160" },
     { name: "zeroForOne", type: "bool" },
+    { name: "nonce", type: "uint256" },
   ],
 };
 

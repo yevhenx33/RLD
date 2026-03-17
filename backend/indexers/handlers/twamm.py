@@ -4,7 +4,8 @@ handlers/twamm.py — Handles JTM hook + PrimeBroker TWAMM order events.
 JTM Hook events (watched at twamm_hook address):
   - SubmitOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner,
                 uint256 amountIn, uint160 expiration, bool zeroForOne,
-                uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch)
+                uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch,
+                uint256 nonce)
   - CancelOrder(bytes32 indexed poolId, bytes32 indexed orderId, address owner, uint256 sellTokensRefund)
 
 PrimeBroker events (watched at broker address):
@@ -30,28 +31,31 @@ async def handle_submit_order(
     zero_for_one: bool,
     sell_rate: int | None,
     start_epoch: int | None,
+    nonce: int | None,
     block_number: int,
     tx_hash: str,
 ) -> None:
     """
     JTM hook SubmitOrder — primary source for order creation.
-    Has all fields including sell_rate and start_epoch.
+    Has all fields including sell_rate, start_epoch, and nonce.
     """
     await conn.execute("""
         INSERT INTO twamm_orders
           (order_id, pool_id, owner, amount_in, expiration, start_epoch,
-           sell_rate, zero_for_one, block_number, tx_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           sell_rate, nonce, zero_for_one, block_number, tx_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (order_id) DO UPDATE SET
           sell_rate = COALESCE(EXCLUDED.sell_rate, twamm_orders.sell_rate),
           start_epoch = COALESCE(EXCLUDED.start_epoch, twamm_orders.start_epoch),
+          nonce = COALESCE(EXCLUDED.nonce, twamm_orders.nonce),
           pool_id = COALESCE(EXCLUDED.pool_id, twamm_orders.pool_id)
     """, order_id, pool_id, owner.lower(),
          str(amount_in), expiration, start_epoch,
          str(sell_rate) if sell_rate else None,
+         nonce,
          zero_for_one, block_number, tx_hash)
-    log.info("[twamm] SubmitOrder orderId=%s owner=%s amount=%d expiry=%d",
-             order_id[:18], owner, amount_in, expiration)
+    log.info("[twamm] SubmitOrder orderId=%s owner=%s amount=%d expiry=%d nonce=%s",
+             order_id[:18], owner, amount_in, expiration, nonce)
 
 
 async def handle_twamm_order_submitted(

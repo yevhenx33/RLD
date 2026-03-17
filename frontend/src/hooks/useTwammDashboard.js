@@ -9,8 +9,8 @@ const GQL_URL = `${SIM_API}/graphql`;
 // ── ABI: only view functions needed for enrichment (no event scanning) ──
 
 const JTM_VIEW_ABI = [
-  "function getOrder((address,address,uint24,int24,address) key, (address,uint160,bool) orderKey) view returns (uint256 sellRate, uint256 earningsFactorLast)",
-  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
+  "function getOrder((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 sellRate, uint256 earningsFactorLast)",
+  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
   "function getStreamState((address,address,uint24,int24,address) key) view returns (uint256 accrued0, uint256 accrued1, uint256 discountBps, uint256 timeSinceClear)",
   "function getStreamPool((address,address,uint24,int24,address) key, bool zeroForOne) view returns (uint256 sellRate, uint256 earningsFactor)",
   "function discountRateScaled() view returns (uint256)",
@@ -62,7 +62,7 @@ function shortenAddress(addr) {
 const TWAMM_QUERY = `
   query TwammDashboard($marketId: String!) {
     twammOrders(marketId: $marketId) {
-      orderId owner amountIn
+      orderId owner amountIn nonce
       expiration startEpoch zeroForOne
       blockNumber txHash isCancelled
     }
@@ -203,6 +203,7 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
             evt.owner,
             parseInt(evt.expiration),
             evt.zeroForOne,
+            parseInt(evt.nonce || "0"),
           ];
 
           let sellRate = 0n;

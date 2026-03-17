@@ -7,7 +7,7 @@ const GQL_URL = `${SIM_API}/graphql`;
 
 // ── Minimal ABI for TWAMM enrichment only ───────────────────────────
 const JTM_VIEW_ABI = [
-  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
+  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -189,12 +189,12 @@ export function useBrokerData(account, marketInfo) {
           const broker = new ethers.Contract(
             profile.address,
             [
-              "function activeTwammOrder() view returns (address, address, uint24, int24, address, address, uint160, bool, bytes32)",
+              "function activeTwammOrder() view returns (address, address, uint24, int24, address, address, uint160, bool, uint256, bytes32)",
             ],
             provider,
           );
           const result = await broker.activeTwammOrder();
-          trackedOrderId = result[8];
+          trackedOrderId = result[9];
           if (
             trackedOrderId ===
             "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -210,6 +210,7 @@ export function useBrokerData(account, marketInfo) {
               evt.owner,
               parseInt(evt.expiration),
               evt.zeroForOne,
+              parseInt(evt.nonce || "0"),
             ];
 
             let buyTokensOwed = 0n;
