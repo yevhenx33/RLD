@@ -146,8 +146,7 @@ export function useSimulation({
     },
   );
 
-  // ── Rates: fetched separately by useMarketData.js via rates-indexer ──
-  const ratesGqlData = null;
+
 
   // ── Tier 3: Chart SWR (GQL, resolution-specific, 30s poll) ──────
   // marketId from snapshot (needed for candles resolver)
@@ -173,8 +172,7 @@ export function useSimulation({
   // ── Extract data from indexer's JSON scalar response ────────
   const snapshot = gqlData?.snapshot;
   const eventsRaw = gqlData?.events;
-  const volumeRaw = snapshot?.derived ? { volumeUsd: snapshot.derived.volume24hUsd || 0, swapCount: snapshot.derived.swapCount24h || 0 } : null;
-  const volumeHistoryRaw = null; // volume history not available from snapshot scalar
+  const volumeRaw = useMemo(() => snapshot?.derived ? { volumeUsd: snapshot.derived.volume24hUsd || 0, swapCount: snapshot.derived.swapCount24h || 0 } : null, [snapshot]);
   const marketInfo = useMemo(() => _remapMarketInfo(gqlData?.marketInfo), [gqlData?.marketInfo]);
 
   const statusData = useMemo(() => {
@@ -392,7 +390,7 @@ export function useSimulation({
   const latestRate = useMemo(() => {
     // ratesGqlData is null — rates handled by useMarketData.js
     return null;
-  }, [ratesGqlData]);
+  }, []);
 
   // ── Derived: account bonds (from Tier 2 ACCOUNT_QUERY) ──────────
   const bonds = useMemo(() => {

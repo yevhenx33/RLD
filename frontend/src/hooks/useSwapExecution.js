@@ -141,12 +141,13 @@ export function useSwapExecution(
   const [txHash, setTxHash] = useState(null);
 
   // Atomic refresh: await all data refreshes before firing onSuccess
-  const _syncAndNotify = async (successStep, onSuccess, receipt) => {
+   
+  const _syncAndNotify = useCallback(async (successStep, onSuccess, receipt) => {
     setStep("Syncing...");
     await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
     setStep(successStep);
     if (onSuccess) onSuccess(receipt);
-  };
+  }, [onRefreshComplete]);
 
   const executeLong = useCallback(
     async (amountIn, onSuccess) => {
@@ -219,7 +220,7 @@ export function useSwapExecution(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
+    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   /**
@@ -277,7 +278,7 @@ export function useSwapExecution(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
+    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   /**
@@ -352,7 +353,7 @@ export function useSwapExecution(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
+    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   /**
@@ -415,7 +416,7 @@ export function useSwapExecution(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
+    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   /**
@@ -477,7 +478,7 @@ export function useSwapExecution(
         setExecuting(false);
       }
     },
-    [account, brokerAddress],
+    [account, brokerAddress, _syncAndNotify],
   );
 
   return {

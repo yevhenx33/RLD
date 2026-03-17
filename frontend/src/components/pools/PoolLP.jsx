@@ -292,7 +292,7 @@ export default function PoolLP() {
     fundingFromNF: _fundingFromNF,
     volumeData,
     marketInfo,
-    simShared,
+    simShared: _simShared,
 
     account,
 
@@ -320,13 +320,13 @@ export default function PoolLP() {
 
     liquidityBins,
     liqDistPrice,
-    buildLocalBins,
+    buildLocalBins: _buildLocalBins,
 
-    refreshAll,
+    refreshAll: _refreshAll,
   } = usePoolData();
 
   const { toasts, addToast, removeToast } = useToast();
-  const { appliedStart, appliedEnd, resolution } = chartControls;
+  const { appliedStart: _appliedStart, appliedEnd: _appliedEnd, resolution } = chartControls;
 
   // ── Local UI state ──────────────────────────────────────────
   const [activeTab, setActiveTab] = useState("ADD");

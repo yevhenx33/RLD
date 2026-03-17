@@ -138,12 +138,13 @@ export function useTwammOrder(
   const [step, setStep] = useState("");
   const [txHash, setTxHash] = useState(null);
 
-  const _syncAndNotify = async (successStep, onSuccess, receipt) => {
+   
+  const _syncAndNotify = useCallback(async (successStep, onSuccess, receipt) => {
     setStep("Syncing...");
     await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
     setStep(successStep);
     if (onSuccess) onSuccess(receipt);
-  };
+  }, [onRefreshComplete]);
 
   /**
    * Submit a TWAMM streaming order via PrimeBroker.
@@ -247,7 +248,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
+    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   /**
@@ -312,7 +313,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress],
+    [account, brokerAddress, _syncAndNotify],
   );
 
   /**
@@ -378,7 +379,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress],
+    [account, brokerAddress, _syncAndNotify],
   );
 
   /**
@@ -439,7 +440,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr],
+    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   /**
@@ -504,7 +505,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure],
+    [account, brokerAddress, infrastructure, _syncAndNotify],
   );
 
   return {

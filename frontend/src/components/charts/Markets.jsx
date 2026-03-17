@@ -256,7 +256,6 @@ export default function Markets() {
     defaultRange: "1Y",
     defaultDays: 365,
     defaultResolution: "1D",
-    deploymentDate: "2023-03-01",  // rates-indexer has data from March 2023
   });
   const { appliedStart, appliedEnd, resolution } = controls;
 
@@ -305,7 +304,7 @@ export default function Markets() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  query: `{ rates(symbol: "${asset.symbol}", limit: 1) { apy } }`,
+                  query: `{ rates(symbol: "${asset.symbol}", limit: 1, resolution: "1H") { apy } }`,
                 }),
               });
               const gqlData = await gqlRes.json();
@@ -364,7 +363,7 @@ export default function Markets() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              query: `{ rates(symbol: "${sym}", resolution: "${resolution}", startDate: "${appliedStart}", endDate: "${appliedEnd}") { timestamp apy } }`,
+              query: `{ rates(symbol: "${sym}", limit: 10000, resolution: "${resolution}", startDate: "${appliedStart}", endDate: "${appliedEnd}") { timestamp apy ethPrice } }`,
             }),
           });
           const json = await res.json();
@@ -374,7 +373,7 @@ export default function Markets() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            query: `{ ethPrices(resolution: "${resolution}") { timestamp price } }`,
+            query: `{ ethPrices(limit: 10000, resolution: "${resolution}") { timestamp price } }`,
           }),
         }).then(r => r.json()).then(j => j?.data?.ethPrices || []),
       ]);

@@ -63,11 +63,8 @@ export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterv
         const durationDays = durationSec / 86400;
 
         // Estimate elapsed from mint_block (approximate)
-        // Block time ~2s on Anvil fork
-        const mintBlock = Number(b.mint_block);
-        const nowApprox = Date.now() / 1000;
-        const mintApprox = mintBlock; // We don't have exact timestamp, use block as approx
-        const elapsedDays = 0; // Can't compute without block timestamp
+        // Block time ~2s on Anvil fork — no exact timestamp available
+        const elapsedDays = 0;
 
         const rate = entryRate || 0;
         const accrued = notionalUsd * (rate / 100) * (elapsedDays / 365);

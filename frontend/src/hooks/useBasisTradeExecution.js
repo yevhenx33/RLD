@@ -98,14 +98,15 @@ export function useBasisTradeExecution(
   const [step, setStep] = useState("");
   const [txHash, setTxHash] = useState(null);
 
-  const _syncAndNotify = async (successStep, onSuccess, result) => {
+   
+  const _syncAndNotify = useCallback(async (successStep, onSuccess, result) => {
     setStep("Syncing...");
     // Small delay to let indexer process the new block
     await new Promise((r) => setTimeout(r, 500));
     await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
     setStep(successStep);
     if (onSuccess) onSuccess(result);
-  };
+  }, [onRefreshComplete]);
 
   /**
    * Open a basis trade in a single atomic transaction (flash loan).
@@ -336,7 +337,7 @@ export function useBasisTradeExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr, USDC_ADDRESS, SUSDE_TOKEN_ADDRESS],
+    [account, infrastructure, collateralAddr, positionAddr, USDC_ADDRESS, SUSDE_TOKEN_ADDRESS, _syncAndNotify],
   );
 
   /**
@@ -472,7 +473,7 @@ export function useBasisTradeExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr, SUSDE_ADDRESS],
+    [account, infrastructure, collateralAddr, positionAddr, SUSDE_ADDRESS, _syncAndNotify],
   );
 
   return {

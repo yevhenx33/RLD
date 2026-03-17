@@ -89,6 +89,9 @@ CUSTOM_TOPICS = {
         "Swap",
     Web3.keccak(text="ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)").hex():
         "ModifyLiquidity",
+    # V4 PoolManager — pool initialization
+    Web3.keccak(text="Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)").hex():
+        "Initialize",
     # TWAMM Hook (JTM)
     Web3.keccak(text="SubmitOrder(bytes32,bytes32,address,uint256,uint160,bool,uint256,uint256,uint256)").hex():
         "SubmitOrder",
@@ -335,6 +338,30 @@ async def dispatch(
         except Exception as e:
             log.warning("[dispatch] Swap decode failed block=%d: %s", block_number, e)
 
+    elif event_name == "Initialize":
+        # Initialize(bytes32 indexed id, address indexed currency0, address indexed currency1,
+        #            uint24 fee, int24 tickSpacing, address hooks, uint160 sqrtPriceX96, int24 tick)
+        # Topics: [sig, poolId, currency0, currency1]  Data: (fee, tickSpacing, hooks, sqrtPriceX96, tick)
+        try:
+            pool_id_topic = topics[1].hex() if isinstance(topics[1], bytes) else topics[1]
+            pool_id = "0x" + pool_id_topic if not pool_id_topic.startswith("0x") else pool_id_topic
+            market_info = await conn.fetchrow(
+                "SELECT market_id, wausdc, wrlp FROM markets WHERE pool_id = $1", pool_id
+            )
+            if not market_info:
+                return
+            decoded = w3.eth.codec.decode(
+                ["uint24", "int24", "address", "uint160", "int24"],
+                data_bytes
+            )
+            await pool_handler.handle_initialize(
+                conn, market_info["market_id"], block_number, block_timestamp,
+                sqrt_price_x96=decoded[3], tick=decoded[4], liquidity=0,
+                wausdc=market_info["wausdc"], wrlp=market_info["wrlp"],
+            )
+        except Exception as e:
+            log.warning("[dispatch] Initialize decode failed block=%d: %s", block_number, e)
+
     elif event_name == "ModifyLiquidity" and market_id:
         try:
             pool_id = market_id  # topics[1] = V4 pool_id
@@ -363,9 +390,10 @@ async def dispatch(
                 await pool_handler.handle_modify_liquidity(
                     conn, market_info["market_id"], block_number, block_timestamp,
                     tick_lower=tick_lower, tick_upper=tick_upper,
-                    liquidity_delta=liquidity_delta, sqrt_price_x96=0,
+                    liquidity_delta=liquidity_delta,
+                    sqrt_price_x96=0,  # no sqrtPrice in ModifyLiquidity event
                     wausdc=market_info["wausdc"], wrlp=market_info["wrlp"],
-                    w3=w3, pool_manager=global_cfg.get("v4_pool_manager", "")
+                    w3=w3, pool_manager=global_cfg.get("v4_pool_manager", ""),
                 )
         except Exception as e:
             log.warning("[dispatch] ModifyLiquidity decode failed block=%d: %s", block_number, e)
@@ -543,6 +571,35 @@ async def dispatch(
                   "wrlp_balance"   if contract_lower == wrlp   else None)
             if col is None:
                 return  # Not a token we care about
+
+            # ── Pool-level balance tracking (PoolManager) ──────────────
+            # Track ERC20 transfers to/from PoolManager as the single source
+            # of truth for pool token balances (covers swaps, LP, TWAMM).
+            pool_mgr = (global_cfg.get("v4_pool_manager") or "").lower()
+            if pool_mgr and (to_addr == pool_mgr or from_addr == pool_mgr):
+                # Determine which pool token column to update
+                token0_addr = min(wausdc, wrlp)  # lower address = token0
+                pool_col = "token0_balance" if contract_lower == token0_addr else "token1_balance"
+
+                # Read current balance
+                prev_row = await conn.fetchrow(
+                    f"SELECT {pool_col} FROM block_states WHERE market_id = $1 ORDER BY block_number DESC LIMIT 1",
+                    mkt_id
+                )
+                prev_bal = int(prev_row[pool_col] or 0) if prev_row and prev_row[pool_col] is not None else 0
+
+                if to_addr == pool_mgr:
+                    new_bal = prev_bal + amount
+                else:
+                    new_bal = prev_bal - amount
+
+                await pool_handler.update_pool_balance(
+                    conn, mkt_id, block_number, block_timestamp, pool_col, new_bal
+                )
+
+                log.debug("[ERC20Transfer] Pool %s %s: %+d → %d (block=%d)",
+                          pool_col, "IN" if to_addr == pool_mgr else "OUT",
+                          amount if to_addr == pool_mgr else -amount, new_bal, block_number)
 
             # Market-level counter column
             mkt_col = "total_broker_wausdc" if contract_lower == wausdc else "total_broker_wrlp"

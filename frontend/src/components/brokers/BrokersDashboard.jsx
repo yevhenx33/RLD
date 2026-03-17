@@ -112,7 +112,7 @@ export default function BrokersDashboard() {
 
   // Stats
   const totalCollateral = brokers.reduce((s, b) => s + raw(b.wausdcBalance), 0n);
-  const totalWrlp = brokers.reduce((s, b) => s + raw(b.wrlpBalance), 0n);
+  const _totalWrlp = brokers.reduce((s, b) => s + raw(b.wrlpBalance), 0n);
   const totalDebt = brokers.reduce((s, b) => s + raw(b.debtPrincipal), 0n);
   const frozenCount = brokers.filter((b) => b.isFrozen).length;
   const activeCount = brokers.filter((b) => !b.isFrozen && !b.isLiquidated).length;

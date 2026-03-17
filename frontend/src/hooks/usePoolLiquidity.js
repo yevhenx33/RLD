@@ -177,12 +177,13 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
   const [allPositions, setAllPositions] = useState([]);
   const [positionsLoaded, setPositionsLoaded] = useState(false);
 
-  const _syncAndNotify = async (successStep, onSuccess, result) => {
+   
+  const _syncAndNotify = useCallback(async (successStep, onSuccess, result) => {
     setExecutionStep("Syncing...");
     await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
     setExecutionStep(successStep);
     if (onSuccess) onSuccess(result);
-  };
+  }, [onRefreshComplete]);
 
   const twammHook = marketInfo?.infrastructure?.twamm_hook;
   const tickSpacing = marketInfo?.infrastructure?.tick_spacing || 5;
@@ -517,7 +518,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         setExecuting(false);
       }
     },
-    [brokerAddress, twammHook, tickSpacing, refreshPosition],
+    [brokerAddress, twammHook, tickSpacing, refreshPosition, _syncAndNotify],
   );
 
   // ── Remove Liquidity ──────────────────────────────────────────
@@ -572,7 +573,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         setExecuting(false);
       }
     },
-    [brokerAddress, posmAddr, refreshPosition],
+    [brokerAddress, posmAddr, refreshPosition, _syncAndNotify],
   );
   /**
    * Track a V4 LP position as collateral.
@@ -615,7 +616,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         setExecuting(false);
       }
     },
-    [brokerAddress, refreshPosition],
+    [brokerAddress, refreshPosition, _syncAndNotify],
   );
 
   /**
@@ -658,7 +659,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         setExecuting(false);
       }
     },
-    [brokerAddress, refreshPosition],
+    [brokerAddress, refreshPosition, _syncAndNotify],
   );
 
   /**
@@ -725,7 +726,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         setExecuting(false);
       }
     },
-    [brokerAddress, refreshPosition],
+    [brokerAddress, refreshPosition, _syncAndNotify],
   );
 
   return {

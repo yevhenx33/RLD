@@ -57,12 +57,13 @@ export function useBondExecution(
   const [step, setStep] = useState("");
   const [txHash, setTxHash] = useState(null);
 
-  const _syncAndNotify = async (successStep, onSuccess, result) => {
+   
+  const _syncAndNotify = useCallback(async (successStep, onSuccess, result) => {
     setStep("Syncing...");
     await Promise.all(onRefreshComplete.map(fn => fn?.()).filter(Boolean));
     setStep(successStep);
     if (onSuccess) onSuccess(result);
-  };
+  }, [onRefreshComplete]);
 
   /**
    * Create a bond in a single transaction.
@@ -283,7 +284,7 @@ export function useBondExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr],
+    [account, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   /**
@@ -398,7 +399,7 @@ export function useBondExecution(
         try { await restoreAnvilChainId(); } catch { /* ignore */ }
       }
     },
-    [account, infrastructure, collateralAddr, positionAddr],
+    [account, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   return {

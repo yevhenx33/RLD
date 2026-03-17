@@ -418,6 +418,7 @@ export function useBrokerData(account, marketInfo) {
           // Broker state (from GQL + client math)
           collateralBalance: collateral,
           positionBalance: positionValue,
+          wrlpTokenBalance: wrlpBalance,
           debtPrincipal,
           trueDebt,
           debtValue,

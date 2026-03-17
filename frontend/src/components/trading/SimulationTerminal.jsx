@@ -147,7 +147,7 @@ export default function SimulationTerminal() {
   const sim = useSim();
   const {
     connected,
-    loading,
+    loading: _loading,
     error,
     market,
     pool,
@@ -200,10 +200,10 @@ export default function SimulationTerminal() {
 
   // ── Action hooks (TX execution only — no data fetching) ─────
   const {
-    creating: brokerCreating,
-    createBroker,
-    depositFunds,
-    fetchBrokerBalance,
+    creating: _brokerCreating,
+    createBroker: _createBroker,
+    depositFunds: _depositFunds,
+    fetchBrokerBalance: _fetchBrokerBalance,
     checkBroker,
   } = useBrokerAccount(
     account,
@@ -1258,7 +1258,7 @@ export default function SimulationTerminal() {
                           <div className="space-y-1">
                             {[
                               { name: "waUSDC", value: brokerState ? `$${brokerState.collateralBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
-                              { name: "wRLP", value: brokerState ? `${brokerState.positionBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
+                              { name: "wRLP", value: brokerState ? `${(brokerState.wrlpTokenBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
                             ].map((t) => (
                               <div key={t.name} className="relative">
                                 <button
