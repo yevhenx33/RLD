@@ -127,12 +127,6 @@ interface IAavePool {
         address onBehalfOf,
         uint16 referralCode
     ) external;
-
-    function withdraw(
-        address asset,
-        uint256 amount,
-        address to
-    ) external returns (uint256);
 }
 
 /// @dev ERC4626 vault interface (for sUSDe staking)
@@ -449,12 +443,7 @@ contract BasisTradeFactory is ReentrancyGuard {
         {
             uint256 waUsdcBal = ERC20(COLLATERAL).balanceOf(address(this));
             if (waUsdcBal > 0) {
-                uint256 aUsdcBal = IWrappedAToken(COLLATERAL).unwrap(waUsdcBal);
-                
-                address aTokenAddr = IWrappedAToken(COLLATERAL).aToken();
-                address pool = IAToken(aTokenAddr).POOL();
-                
-                IAavePool(pool).withdraw(USDC, aUsdcBal, address(this));
+                IWrappedAToken(COLLATERAL).unwrap(waUsdcBal);
             }
         }
 
