@@ -24,7 +24,8 @@ const STRATEGIES = [
     route: "/bonds",
     name: "Fixed Yield",
     headline: "Lock in a guaranteed rate",
-    description: "Synthetic bonds: Earn a predictable, fixed return on your USDC.",
+    description:
+      "Synthetic bonds: Earn a predictable, fixed return on your USDC.",
     apy: 8.4,
     tvl: 12_500_000,
     asset: "USDC",
@@ -42,7 +43,8 @@ const STRATEGIES = [
     slug: "delta-neutral",
     name: "Delta Neutral",
     headline: "Capitalize on market volatility",
-    description: "Cointegration: wstETH + short interest rate to capture funding rate spreads.",
+    description:
+      "Cointegration: wstETH + short interest rate to capture funding rate spreads.",
     apy: 14.2,
     tvl: 8_200_000,
     asset: "USDC",
@@ -55,12 +57,13 @@ const STRATEGIES = [
     linked: false,
     features: ["Market neutral", "Funding arbitrage", "Auto-rebalancing"],
   },
-    {
+  {
     id: "003",
     slug: "basis-trade",
     name: "Basis Trade",
     headline: "Leveraged carry trade",
-    description: "High-yield carry strategy using sUSDe collateral with built-in rate hedging.",
+    description:
+      "High-yield carry strategy using sUSDe collateral with built-in rate hedging.",
     apy: 22.1,
     tvl: 3_100_000,
     asset: "sUSDe",
@@ -78,7 +81,8 @@ const STRATEGIES = [
     slug: "rate-arbitrage",
     name: "Rate Arbitrage",
     headline: "Earn delta-neutral yield from rate arbitrage.",
-    description: "Automatically captures yield spreads between lending protocols when rates diverge.",
+    description:
+      "Captures yield spreads between lending protocols when rates diverge.",
     apy: 18.7,
     tvl: 4_800_000,
     asset: "USDC",
@@ -89,7 +93,7 @@ const STRATEGIES = [
 
     icon: Zap,
     linked: false,
-    features: ["Cross-protocol", "Automated execution", "Spread capture"],
+    features: ["Arbitrage", "Spread capture"],
   },
   {
     id: "005",
@@ -114,7 +118,8 @@ const STRATEGIES = [
 // ── ASSET LOGOS ───────────────────────────────────────────────
 const ASSET_LOGOS = {
   USDC: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png",
-  sUSDe: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x9D39A5DE30e57443BfF2A8307A4256c8797A3497/logo.png",
+  sUSDe:
+    "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x9D39A5DE30e57443BfF2A8307A4256c8797A3497/logo.png",
   DAI: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x6B175474E89094C44Da98b954EedeAC495271d0F/logo.png",
   USDT: "https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png",
 };
@@ -123,25 +128,33 @@ const ASSET_LOGOS = {
 // Conservative (LOW) = green, Balanced (MEDIUM) = cyan, Aggressive (HIGH) = pink
 const riskAccent = {
   LOW: {
-    text: "text-green-400", dot: "bg-green-500",
-    bg: "bg-green-500/[0.06]", border: "border-green-500/20",
+    text: "text-green-400",
+    dot: "bg-green-500",
+    bg: "bg-green-500/[0.06]",
+    border: "border-green-500/20",
     tag: "text-green-400 bg-green-500/10 border-green-500/20",
   },
   MEDIUM: {
-    text: "text-cyan-400", dot: "bg-cyan-400",
-    bg: "bg-cyan-500/[0.06]", border: "border-cyan-500/20",
+    text: "text-cyan-400",
+    dot: "bg-cyan-400",
+    bg: "bg-cyan-500/[0.06]",
+    border: "border-cyan-500/20",
     tag: "text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
   },
   HIGH: {
-    text: "text-pink-400", dot: "bg-pink-500",
-    bg: "bg-pink-500/[0.06]", border: "border-pink-500/20",
+    text: "text-pink-400",
+    dot: "bg-pink-500",
+    bg: "bg-pink-500/[0.06]",
+    border: "border-pink-500/20",
     tag: "text-pink-400 bg-pink-500/10 border-pink-500/20",
   },
 };
 
 const grayAccent = {
-  text: "text-gray-500", dot: "bg-gray-600",
-  bg: "bg-white/[0.02]", border: "border-white/10",
+  text: "text-gray-500",
+  dot: "bg-gray-600",
+  bg: "bg-white/[0.02]",
+  border: "border-white/10",
   tag: "text-gray-500 bg-white/5 border-white/10",
 };
 
@@ -155,13 +168,13 @@ function formatTVL(val) {
 // ── MAIN COMPONENT ────────────────────────────────────────────
 export default function Vaults() {
   const totalTVL = STRATEGIES.reduce((sum, v) => sum + v.tvl, 0);
-  const avgAPY = STRATEGIES.reduce((sum, v) => sum + v.apy, 0) / STRATEGIES.length;
+  const avgAPY =
+    STRATEGIES.reduce((sum, v) => sum + v.apy, 0) / STRATEGIES.length;
   const activeCount = STRATEGIES.filter((v) => v.status === "ACTIVE").length;
 
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
       <div className="max-w-[1800px] mx-auto w-full px-6 flex-1 flex flex-col gap-6 pt-0 pb-12">
-
         {/* ── Header Metrics ── */}
         <div className="border border-white/10 grid grid-cols-1 lg:grid-cols-12">
           {/* Branding */}
@@ -209,9 +222,21 @@ export default function Vaults() {
         {/* ── Strategy Columns by Risk Level ── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {[
-            { risk: "LOW", label: "Conservative", sublabel: "Lower risk, stable returns" },
-            { risk: "MEDIUM", label: "Balanced", sublabel: "Moderate risk, higher yield" },
-            { risk: "HIGH", label: "Aggressive", sublabel: "Higher risk, maximum yield" },
+            {
+              risk: "LOW",
+              label: "Conservative",
+              sublabel: "Lower risk, stable returns",
+            },
+            {
+              risk: "MEDIUM",
+              label: "Balanced",
+              sublabel: "Moderate risk, higher yield",
+            },
+            {
+              risk: "HIGH",
+              label: "Aggressive",
+              sublabel: "Higher risk, maximum yield",
+            },
           ].map((col) => {
             const c = riskAccent[col.risk];
             const items = STRATEGIES.filter((s) => s.risk === col.risk);
@@ -219,11 +244,15 @@ export default function Vaults() {
             return (
               <div key={col.risk} className="flex flex-col gap-4">
                 {/* Column Header */}
-                <div className={`px-4 py-3 border ${c.border} ${c.bg} flex items-center justify-between`}>
+                <div
+                  className={`px-4 py-3 border ${c.border} ${c.bg} flex items-center justify-between`}
+                >
                   <div className="flex items-center gap-2.5">
                     <div className={`w-2 h-2 ${c.dot}`} />
                     <div>
-                      <span className={`text-[11px] font-bold uppercase tracking-widest ${c.text}`}>
+                      <span
+                        className={`text-[11px] font-bold uppercase tracking-widest ${c.text}`}
+                      >
                         {col.label}
                       </span>
                       <p className="text-[9px] text-gray-600 uppercase tracking-widest mt-0.5">
@@ -242,7 +271,9 @@ export default function Vaults() {
                   const isActive = s.status === "ACTIVE";
                   const sc = isActive ? c : grayAccent;
                   const Wrapper = s.linked ? Link : "div";
-                  const wrapperProps = s.linked ? { to: s.route || `/strategies/${s.slug}` } : {};
+                  const wrapperProps = s.linked
+                    ? { to: s.route || `/strategies/${s.slug}` }
+                    : {};
 
                   return (
                     <Wrapper
@@ -253,16 +284,22 @@ export default function Vaults() {
                       {/* Coming Soon tooltip (Homepage-style) */}
                       {!isActive && (
                         <div className="absolute -top-10 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none z-20">
-                          <div className={`px-3 py-1.5 bg-[#0a0a0a] border ${sc.border} text-[9px] font-mono font-bold uppercase tracking-[0.25em] ${sc.text} whitespace-nowrap`}>
+                          <div
+                            className={`px-3 py-1.5 bg-[#0a0a0a] border ${sc.border} text-[9px] font-mono font-bold uppercase tracking-[0.25em] ${sc.text} whitespace-nowrap`}
+                          >
                             Coming Soon
                           </div>
                         </div>
                       )}
                       {/* ── APY Hero ── */}
-                      <div className={`px-5 pt-5 pb-4 border-b border-white/5 ${sc.bg}`}>
+                      <div
+                        className={`px-5 pt-5 pb-4 border-b border-white/5 ${sc.bg}`}
+                      >
                         <div className="flex items-start justify-between mb-3">
                           <div className="flex items-center gap-2.5">
-                            <div className={`w-9 h-9 border ${sc.border} flex items-center justify-center bg-[#080808]`}>
+                            <div
+                              className={`w-9 h-9 border ${sc.border} flex items-center justify-center bg-[#080808]`}
+                            >
                               <Icon size={18} className={sc.text} />
                             </div>
                             <div>
@@ -285,7 +322,9 @@ export default function Vaults() {
                             <div className="text-[10px] text-gray-500 uppercase tracking-widest mb-0.5">
                               Projected APY
                             </div>
-                            <div className={`text-3xl font-mono font-light tracking-tight ${sc.text}`}>
+                            <div
+                              className={`text-3xl font-mono font-light tracking-tight ${sc.text}`}
+                            >
                               {isActive ? `${s.apy.toFixed(1)}%` : "—"}
                             </div>
                           </div>
@@ -319,12 +358,18 @@ export default function Vaults() {
                           ))}
                         </div>
                         <div className="mt-auto flex items-center justify-between">
-                          <span className={`text-[10px] font-bold uppercase tracking-widest ${sc.text} ${sc.bg} border ${sc.border} px-2 py-0.5`}>
+                          <span
+                            className={`text-[10px] font-bold uppercase tracking-widest ${sc.text} ${sc.bg} border ${sc.border} px-2 py-0.5`}
+                          >
                             {s.riskLabel}
                           </span>
                           <div className="flex items-center gap-1.5">
-                            <div className={`w-1.5 h-1.5 ${isActive ? "bg-green-500 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.5)]" : "bg-gray-600"}`} />
-                            <span className={`text-[10px] uppercase tracking-widest ${isActive ? "text-green-400" : "text-gray-600"}`}>
+                            <div
+                              className={`w-1.5 h-1.5 ${isActive ? "bg-green-500 animate-pulse shadow-[0_0_6px_rgba(34,197,94,0.5)]" : "bg-gray-600"}`}
+                            />
+                            <span
+                              className={`text-[10px] uppercase tracking-widest ${isActive ? "text-green-400" : "text-gray-600"}`}
+                            >
                               {isActive ? "Live" : "Coming Soon"}
                             </span>
                           </div>
@@ -341,7 +386,10 @@ export default function Vaults() {
                             <span className="text-[10px] font-bold uppercase tracking-[0.2em]">
                               View Strategy
                             </span>
-                            <ArrowRight size={12} className="group-hover:translate-x-0.5 transition-transform" />
+                            <ArrowRight
+                              size={12}
+                              className="group-hover:translate-x-0.5 transition-transform"
+                            />
                           </div>
                         ) : (
                           <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-700">
