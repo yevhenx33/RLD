@@ -1,0 +1,99 @@
+# ═══════════════════════════════════════════════════════════════
+# RLD Simulation Stack (Reth Mode)
+# ═══════════════════════════════════════════════════════════════
+# Reth runs EXTERNALLY. Genesis contains all deployed contracts.
+# NO DEPLOYER NEEDED — everything is baked into genesis.json.
+#
+#  Usage:
+#    1. Generate genesis:  ./docker/reth/00_warmup.sh
+#    2. Run:               ./docker/reth/restart-reth.sh
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─── POSTGRES ───────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    volumes:
+      - postgres-data-reth:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=rld
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-rld_dev_password}
+      - POSTGRES_DB=rld_indexer
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rld -d rld_indexer"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── INDEXER ─────────────────────────────────────────────────
+  indexer:
+    build:
+      context: ../..
+      dockerfile: docker/indexer/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
+      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - DEPLOYMENT_JSON=/config/deployment.json
+      - POLL_INTERVAL=${POLL_INTERVAL:-2}
+      - BATCH_SIZE=${BATCH_SIZE:-100}
+    volumes:
+      - ../deployment.json:/config/deployment.json:ro
+    ports:
+      - "${INDEXER_PORT:-8080}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  # ─── MM DAEMON ───────────────────────────────────────────────
+  mm-daemon:
+    build:
+      context: ../..
+      dockerfile: docker/daemons/Dockerfile
+    command: ["python", "services/combined_daemon.py"]
+    depends_on:
+      indexer:
+        condition: service_healthy
+    environment:
+      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - INDEXER_URL=http://indexer:8080
+      - PRIVATE_KEY=${MM_KEY}
+      - MM_KEY=${MM_KEY}
+      - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
+      - API_URL=${API_URL:-http://rates-indexer:8080}
+      - API_KEY=${API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ─── CHAOS TRADER ────────────────────────────────────────────
+  chaos-trader:
+    build:
+      context: ../..
+      dockerfile: docker/daemons/Dockerfile
+    command: ["python", "tools/chaos_daemon.py"]
+    depends_on:
+      indexer:
+        condition: service_healthy
+    environment:
+      - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - INDEXER_URL=http://indexer:8080
+      - PRIVATE_KEY=${CHAOS_KEY}
+      - CHAOS_KEY=${CHAOS_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  postgres-data-reth:

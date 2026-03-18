@@ -2,48 +2,33 @@ import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 
 /**
- * One-click Anvil faucet: provisions ETH + USDC + waUSDC to the connected wallet.
+ * Universal faucet hook — auto-detects Anvil vs Reth mode.
  *
- * Flow (all via Anvil admin RPCs — zero MetaMask popups):
- *   1. anvil_setBalance → 100 ETH for gas
- *   2. Impersonate USDC whale → transfer USDC to user
- *   3. Impersonate user → approve + supply to Aave → aUSDC
- *   4. Impersonate user → approve + wrap aUSDC → waUSDC
+ * Anvil mode (Docker Anvil):
+ *   Uses anvil_setStorageAt to directly set USDC + waUSDC balances.
+ *   Zero MetaMask popups, instant.
  *
- * @param {string} account            Connected wallet address
- * @param {string} waUsdcAddress       Live waUSDC contract address (from indexer)
- * @param {object} externalContracts   { usdc, ausdc, aave_pool, susde, usdc_whale } from marketInfo
+ * Reth mode (persistent fork):
+ *   POST /api/faucet → faucet_server.py → SimFunder.fund()
+ *   Atomic: USDC → Aave → aUSDC → wrap → waUSDC in one tx.
+ *
+ * Detection: try anvil_nodeInfo — if it succeeds, we're on Anvil.
  */
 
 const RPC_URL = `${window.location.origin}/rpc`;
+const FAUCET_API = `${window.location.origin}/api/faucet`;
 
-// Amount to fund: 100k USDC (6 decimals)
-const FUND_AMOUNT = "100000000000"; // 100,000 USDC as string to avoid BigInt issues
-// Amount of USDC to keep liquid (not wrapped): 10k
-const USDC_KEEP = "10000000000"; // 10,000 USDC
-// Amount to send to Aave for wrapping: 90k
-const AAVE_AMOUNT = "90000000000"; // 90,000 USDC
-
-// Minimal ABIs for the calls we need
-const ERC20_ABI = [
-  "function transfer(address to, uint256 amount) returns (bool)",
-  "function approve(address spender, uint256 amount) returns (bool)",
-  "function balanceOf(address owner) view returns (uint256)",
-];
-const AAVE_POOL_ABI = [
-  "function supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode)",
-];
 const WAUSDC_ABI = [
-  "function wrap(uint256 aTokenAmount) returns (uint256 shares)",
   "function balanceOf(address owner) view returns (uint256)",
 ];
-
+const ERC20_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+];
 
 /**
- * Call an Anvil admin RPC method (e.g. anvil_setBalance).
+ * Call an Anvil admin RPC method.
  */
 async function anvilRpc(rpcUrl, method, params = []) {
-  console.log(`[faucet] RPC: ${method}`);
   const res = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -56,25 +41,95 @@ async function anvilRpc(rpcUrl, method, params = []) {
 }
 
 /**
- * Wait for a transaction to be mined.
+ * Detect if we're running on Anvil (vs Reth).
+ * Anvil supports anvil_nodeInfo; Reth doesn't.
  */
+async function detectAnvil(rpcUrl) {
+  try {
+    await anvilRpc(rpcUrl, "anvil_nodeInfo");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Anvil faucet: directly sets storage slots (instant, no tx needed).
+ */
+async function faucetAnvil(rpcUrl, user, waUsdcAddress, usdc) {
+  console.log("[faucet] Using Anvil mode (storage manipulation)");
+
+  // 1. Set ETH balance
+  await anvilRpc(rpcUrl, "anvil_setBalance", [
+    user,
+    "0x56BC75E2D63100000", // 100 ETH
+  ]);
+
+  // 2. Set USDC + waUSDC via storage slots
+  const coder = new ethers.AbiCoder();
+  const amountPerToken = BigInt("50000000000"); // 50,000 * 10^6
+  const hexBalance = "0x" + amountPerToken.toString(16).padStart(64, "0");
+
+  // USDC: mainnet proxy uses slot 9
+  const usdcSlot = ethers.keccak256(
+    coder.encode(["address", "uint256"], [user, 9]),
+  );
+  await anvilRpc(rpcUrl, "anvil_setStorageAt", [usdc, usdcSlot, hexBalance]);
+
+  // waUSDC: solmate ERC20 uses slot 3
+  const waUsdcSlot = ethers.keccak256(
+    coder.encode(["address", "uint256"], [user, 3]),
+  );
+  await anvilRpc(rpcUrl, "anvil_setStorageAt", [
+    waUsdcAddress,
+    waUsdcSlot,
+    hexBalance,
+  ]);
+
+  console.log("[faucet] ✓ Anvil: balances set via storage");
+  return { success: true, mode: "anvil" };
+}
+
+/**
+ * Reth faucet: POST /api/faucet → SimFunder.fund() (atomic on-chain tx).
+ */
+async function faucetReth(apiUrl, user, setStep) {
+  console.log("[faucet] Using Reth mode (SimFunder.fund)");
+
+  setStep("Sending transaction...");
+  const res = await fetch(apiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ address: user }),
+  });
+
+  const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `Faucet failed (HTTP ${res.status})`);
+  }
+  setStep("Transaction confirmed!");
+
+  console.log("[faucet] ✓ Reth: SimFunder funded user", data);
+  return { success: true, mode: "reth", ...data };
+}
 
 export function useFaucet(account, waUsdcAddress, externalContracts) {
-  const USDC = externalContracts?.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+  const USDC =
+    externalContracts?.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [step, setStep] = useState(""); // Current step description
+  const [step, setStep] = useState("");
   const [waUsdcBalance, setWaUsdcBalance] = useState(null);
   const [usdcBalance, setUsdcBalance] = useState(null);
+  const [ethBalance, setEthBalance] = useState(null);
 
-  // ── Fetch balances for any address ───────────────────────
+  // ── Fetch balances ───────────────────────────────────────
   const fetchBalance = useCallback(
     async (addr) => {
       if (!addr || !waUsdcAddress) return;
       try {
         const provider = new ethers.JsonRpcProvider(RPC_URL);
-        
-        // Fetch waUSDC
+
         const waUsdcContract = new ethers.Contract(
           waUsdcAddress,
           WAUSDC_ABI,
@@ -83,15 +138,12 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
         const waBal = await waUsdcContract.balanceOf(addr);
         setWaUsdcBalance(ethers.formatUnits(waBal, 6));
 
-        // Fetch USDC
-        const usdcContract = new ethers.Contract(
-          USDC,
-          ERC20_ABI,
-          provider,
-        );
+        const usdcContract = new ethers.Contract(USDC, ERC20_ABI, provider);
         const uBal = await usdcContract.balanceOf(addr);
         setUsdcBalance(ethers.formatUnits(uBal, 6));
 
+        const ethBal = await provider.getBalance(addr);
+        setEthBalance(ethers.formatEther(ethBal));
       } catch (e) {
         console.warn("Failed to fetch balances:", e);
       }
@@ -99,11 +151,11 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
     [waUsdcAddress, USDC],
   );
 
-  // Auto-fetch balance when account connects or waUSDC address changes
   useEffect(() => {
     if (account && waUsdcAddress) fetchBalance(account);
   }, [account, waUsdcAddress, fetchBalance]);
 
+  // ── Main faucet request ──────────────────────────────────
   const requestFaucet = useCallback(
     async (userAddress) => {
       if (!userAddress) throw new Error("No wallet connected");
@@ -114,57 +166,48 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
 
       try {
         const user = userAddress.toLowerCase();
-        console.log(`[faucet] Starting for ${user}, waUSDC=${waUsdcAddress}`);
+        console.log(`[faucet] Starting for ${user}`);
 
-        // ── Step 1: Set ETH balance (100 ETH for gas) ────────────────
-        setStep("Setting ETH balance...");
-        await anvilRpc(RPC_URL, "anvil_setBalance", [
-          user,
-          "0x56BC75E2D63100000", // 100 ETH in hex wei
-        ]);
-        console.log("[faucet] ✓ ETH balance set");
+        // Auto-detect Anvil vs Reth
+        setStep("Detecting environment...");
+        const isAnvil = await detectAnvil(RPC_URL);
 
-        // ── Step 2: Directly manipulate USDC & waUSDC storage slots ────────
-        setStep("Funding wallets...");
-        
-        const coder = new ethers.AbiCoder();
-        
-        // The user asked for a 50:50 split.
-        // We will fund 50,000 USDC and 50,000 waUSDC (each token has 6 decimals)
-        const amountPerToken = BigInt("50000000000"); // 50,000 * 10^6
-        const hexBalance = "0x" + amountPerToken.toString(16).padStart(64, '0');
+        if (isAnvil) {
+          setStep("Funding via Anvil...");
+          await faucetAnvil(RPC_URL, user, waUsdcAddress, USDC);
+        } else {
+          await faucetReth(FAUCET_API, user, setStep);
+        }
 
-        // FUND USDC (Mainnet proxy contract uses slot 9 for balances)
-        const usdcSlot = ethers.keccak256(coder.encode(["address", "uint256"], [user, 9]));
-        await anvilRpc(RPC_URL, "anvil_setStorageAt", [
-          USDC,
-          usdcSlot,
-          hexBalance
-        ]);
-        
-        // FUND waUSDC (WrappedAToken uses solmate standard slot 3 for balances)
-        const waUsdcSlot = ethers.keccak256(coder.encode(["address", "uint256"], [user, 3]));
-        await anvilRpc(RPC_URL, "anvil_setStorageAt", [
-          waUsdcAddress,
-          waUsdcSlot,
-          hexBalance
-        ]);
-        
-        console.log("[faucet] ✓ USDC and waUSDC balances set directly in storage");
+        // Poll until balances actually update on-chain
+        setStep("Confirming balances...");
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const waC = new ethers.Contract(waUsdcAddress, WAUSDC_ABI, provider);
+        const uC = new ethers.Contract(USDC, ERC20_ABI, provider);
 
-        // ── Read final balances ──────────────────────────────────────
+        let newWa, newUsdc, newEth;
+        for (let i = 0; i < 10; i++) {
+          newWa = await waC.balanceOf(user);
+          newUsdc = await uC.balanceOf(user);
+          newEth = await provider.getBalance(user);
+          if (newWa > 0n || newUsdc > 0n) break;
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+
+        // Atomic state update — all balances + step flip together
+        const formattedWa = ethers.formatUnits(newWa, 6);
+        const formattedUsdc = ethers.formatUnits(newUsdc, 6);
+        const formattedEth = ethers.formatEther(newEth);
+        setWaUsdcBalance(formattedWa);
+        setUsdcBalance(formattedUsdc);
+        setEthBalance(formattedEth);
         setStep("Done!");
-        await fetchBalance(user);
-        console.log("[faucet] ✓ Complete");
 
-        return { success: true };
+        console.log(`[faucet] ✓ Complete: waUSDC=${formattedWa}, USDC=${formattedUsdc}, ETH=${formattedEth}`);
+        return { success: true, waUsdcBalance: formattedWa, usdcBalance: formattedUsdc, ethBalance: formattedEth };
       } catch (err) {
         console.error("Faucet error:", err);
         setError(err.message || "Faucet failed");
-        // Try to clean up impersonation
-        try {
-          await anvilRpc(RPC_URL, "anvil_stopImpersonatingAccount", [userAddress.toLowerCase()]);
-        } catch { /* ignore cleanup errors */ }
         return { success: false, error: err.message };
       } finally {
         setLoading(false);
@@ -180,6 +223,7 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
     step,
     waUsdcBalance,
     usdcBalance,
+    ethBalance,
     refreshBalance: () => fetchBalance(account),
   };
 }
