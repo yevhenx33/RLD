@@ -85,7 +85,7 @@ class V4SwapExecutor:
             ).build_transaction({
                 'from': account.address,
                 'nonce': nonce,
-                'gas': 500000,
+                'gas': 1000000,
                 'maxFeePerGas': self.w3.to_wei('2', 'gwei'),
                 'maxPriorityFeePerGas': self.w3.to_wei('1', 'gwei'),
             })

@@ -22,8 +22,10 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
   const { 
     requestFaucet, 
     loading: faucetLoading,
+    step: faucetStep,
     usdcBalance,
-    waUsdcBalance
+    waUsdcBalance,
+    ethBalance: faucetEthBalance
   } = useFaucet(
     account,
     waUsdcAddr,
@@ -32,13 +34,19 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
 
   const handleFaucetClick = async () => {
     try {
-      await requestFaucet(account);
-      addToast({
-        type: "faucet",
-        title: "Simulation Funded",
-        message: "Your wallet has been credited with USDC and waUSDC.",
-        duration: 5000,
-      });
+      const result = await requestFaucet(account);
+      if (result?.success) {
+        const waAmt = parseFloat(result.waUsdcBalance || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+        const usdcAmt = parseFloat(result.usdcBalance || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+        // Open wallet modal so user sees updated balances
+        setIsModalOpen(true);
+        addToast({
+          type: "faucet",
+          title: "Wallet Funded ✓",
+          message: `${waAmt} waUSDC + ${usdcAmt} USDC`,
+          duration: 5000,
+        });
+      }
     } catch (err) {
       addToast({
         type: "error",
@@ -331,6 +339,8 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
         waUsdcBalance={waUsdcBalance}
         onFaucet={handleFaucetClick}
         faucetLoading={faucetLoading}
+        faucetStep={faucetStep}
+        ethBalance={faucetEthBalance}
         disconnect={() => {
           disconnect();
           setIsModalOpen(false);

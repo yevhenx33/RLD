@@ -113,6 +113,10 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     proxy: {
+      "/graphql": {
+        target: "http://127.0.0.1:8080",
+        changeOrigin: true,
+      },
       "/rpc": {
         target: "http://127.0.0.1:8545",
         changeOrigin: true,
@@ -129,11 +133,12 @@ export default defineConfig({
         ws: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },
-      "/api": {
-        target: "http://127.0.0.1:8080",
+      "/api/faucet": {
+        target: "http://127.0.0.1:8088",
         changeOrigin: true,
+        rewrite: () => "/faucet",
       },
-      "/graphql": {
+      "/api": {
         target: "http://127.0.0.1:8080",
         changeOrigin: true,
       },

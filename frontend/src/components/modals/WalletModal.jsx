@@ -8,8 +8,10 @@ export default function WalletModal({
   onClose, 
   onFaucet, 
   faucetLoading,
+  faucetStep,
   usdcBalance,
-  waUsdcBalance
+  waUsdcBalance,
+  ethBalance
 }) {
   const { account, disconnect, chainId, switchNetwork, balance } = useWallet();
   const [copied, setCopied] = useState(false);
@@ -85,7 +87,7 @@ export default function WalletModal({
             <div className="px-2.5 py-3 border border-white/10 bg-white/[0.02]">
               <div className="text-[9px] text-gray-600 uppercase tracking-widest mb-1">ETH</div>
               <div className="text-sm text-white font-mono font-light tracking-tight truncate">
-                {formatNum(parseFloat(balance), 4)}
+                {formatNum(parseFloat(ethBalance || balance), 4)}
               </div>
             </div>
           </div>
@@ -113,7 +115,7 @@ export default function WalletModal({
                   ? <Loader2 size={13} className="animate-spin" />
                   : <Droplets size={13} />
                 }
-                {faucetLoading ? "Requesting…" : "Request Faucet"}
+                {faucetLoading ? (faucetStep || "Requesting…") : "Request Faucet"}
               </button>
             )}
 
