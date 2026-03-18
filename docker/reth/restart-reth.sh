@@ -391,8 +391,8 @@ header "STEP 4: LAUNCH SERVICES"
 BUILD_FLAG=""
 [ "$NO_BUILD" = false ] && BUILD_FLAG="--build"
 
-step "4a" "Starting docker compose (indexer + daemons)..."
-docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG 2>&1 | tail -5
+step "4a" "Starting indexer + postgres..."
+docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG postgres indexer 2>&1 | tail -5
 
 step "4b" "Waiting for indexer health..."
 INDEXER_URL="http://localhost:${INDEXER_PORT:-8080}"
@@ -537,11 +537,16 @@ fi
 
 # ── 4f. Optional user setup (brokers, LP, swaps) ─────────────
 if [ "$WITH_USERS" = true ]; then
-    step "4f" "Running Reth-native user setup (--with-users)..."
-    source "$SCRIPT_DIR/05_setup_users_reth.sh"
+    step "4f" "Running simulation user setup (--with-users)..."
+    python3 "$SCRIPT_DIR/setup_simulation.py"
 else
     info "User setup skipped (use --with-users to create brokers/LP on Reth)"
 fi
+
+# ── 4g. Start trading bots (after users are funded) ───────────
+step "4g" "Starting mm-daemon + chaos-trader..."
+docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG mm-daemon chaos-trader 2>&1 | tail -5
+ok "Trading bots started"
 
 # ═════════════════════════════════════════════════════════════
 # STATUS REPORT
