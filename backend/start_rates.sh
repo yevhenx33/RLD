@@ -22,6 +22,19 @@ python3 rates/daemon.py &
 DAEMON_PID=$!
 echo "   Daemon PID: $DAEMON_PID"
 
+# Background sync loop: re-sync clean_rates.db every 60s
+# This ensures hourly_stats stays populated even if the initial sync ran before data was available.
+(
+    sleep 30  # Wait for daemon to index some blocks first
+    while true; do
+        python3 rates/sync_clean_db.py --full >/dev/null 2>&1
+        sleep 60
+    done
+) &
+SYNC_PID=$!
+echo "   Sync loop PID: $SYNC_PID"
+echo "   Daemon PID: $DAEMON_PID"
+
 # Trap signals for graceful shutdown
 cleanup() {
     echo ""

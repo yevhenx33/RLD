@@ -194,11 +194,11 @@ async def materialize_snapshot(
                 "wrlpBalance": int(b.get("wrlp_balance") or "0") / 1e6,
                 "debt": int(b["debt_principal"] or "0") / 1e6,
                 "collateralValue": int(b["wausdc_balance"] or "0") / 1e6 + int(b.get("wrlp_balance") or "0") / 1e6 * index_price,
-                "debtValue": round(int(b["debt_principal"] or "0") / 1e6 * index_price, 2),
+                "debtValue": round(int(b["debt_principal"] or "0") / 1e6 * index_price, 2) if index_price > 0 else 0,
                 "healthFactor": round(
                     (int(b["wausdc_balance"] or "0") / 1e6 + int(b.get("wrlp_balance") or "0") / 1e6 * index_price)
                     / (int(b["debt_principal"] or "0") / 1e6 * index_price)
-                    if int(b["debt_principal"] or "0") > 0 else 0, 4
+                    if int(b["debt_principal"] or "0") > 0 and index_price > 0 else 0, 4
                 ),
             }
             for b in brokers

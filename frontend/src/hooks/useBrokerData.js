@@ -231,6 +231,14 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
               totalDuration > 0 ? amountInNum / totalDuration : 0;
 
             const isPending = now < startTs;
+
+            // DEFERRED-START FIX: pending orders cannot have earnings.
+            // getCancelOrderState may return phantom buyTokensOwed from
+            // earningsFactor drift between submit and start epoch.
+            if (isPending) {
+              buyTokensOwed = 0n;
+              sellTokensRefund = BigInt(evt.amountIn);
+            }
             const timeLeftSec = Math.max(0, expTs - now);
             const isExpired = timeLeftSec === 0;
             // isDone: expired OR fully consumed (no refund + no rate)

@@ -188,6 +188,7 @@ async def dispatch(
     global_cfg: dict,
     addr_market_map: dict[str, str],
     w3: Web3,
+    batch_ctx: dict | None = None,
 ) -> None:
     """Route one decoded log entry to the appropriate handler."""
     topics = log_entry.get("topics", [])
@@ -547,17 +548,22 @@ async def dispatch(
             to_addr   = to_addr.lower()
             contract_lower = contract.lower()
 
-            # Determine which column to update based on which token emitted the event
-            markets = await conn.fetch("SELECT market_id, wausdc, wrlp FROM markets LIMIT 1")
-            if not markets:
-                return
-            m = markets[0]
-            mkt_id = m["market_id"]
-            wausdc = (m["wausdc"] or "").lower()
-            wrlp   = (m["wrlp"]   or "").lower()
+            # Use cached market config (Step 2: no per-event DB query)
+            ctx = batch_ctx or {}
+            mkt_id = ctx.get("market_id")
+            wausdc = ctx.get("wausdc", "")
+            wrlp   = ctx.get("wrlp", "")
+            if not mkt_id:
+                # Fallback: query DB (should not happen if batch_ctx is set)
+                m = await conn.fetchrow("SELECT market_id, wausdc, wrlp FROM markets LIMIT 1")
+                if not m:
+                    return
+                mkt_id = m["market_id"]
+                wausdc = (m["wausdc"] or "").lower()
+                wrlp   = (m["wrlp"]   or "").lower()
 
             # Also check if this is an ERC721 Transfer on V4 PositionManager
-            v4_posm = (global_cfg.get("v4_position_manager") or "").lower()
+            v4_posm = ctx.get("v4_posm", (global_cfg.get("v4_position_manager") or "").lower())
             if contract_lower == v4_posm:
                 # ERC721 Transfer — route to LP handler
                 token_id = amount  # For ERC721, the uint256 IS the tokenId
@@ -573,11 +579,8 @@ async def dispatch(
                 return  # Not a token we care about
 
             # ── Pool-level balance tracking (PoolManager) ──────────────
-            # Track ERC20 transfers to/from PoolManager as the single source
-            # of truth for pool token balances (covers swaps, LP, TWAMM).
-            pool_mgr = (global_cfg.get("v4_pool_manager") or "").lower()
+            pool_mgr = ctx.get("pool_mgr", (global_cfg.get("v4_pool_manager") or "").lower())
             if pool_mgr and (to_addr == pool_mgr or from_addr == pool_mgr):
-                # Determine which pool token column to update
                 token0_addr = min(wausdc, wrlp)  # lower address = token0
                 pool_col = "token0_balance" if contract_lower == token0_addr else "token1_balance"
 
@@ -604,38 +607,27 @@ async def dispatch(
             # Market-level counter column
             mkt_col = "total_broker_wausdc" if contract_lower == wausdc else "total_broker_wrlp"
 
-            # Raw uint256 arithmetic: read current, add/subtract, write back
-            # Update sender balance (subtract)
-            from_row = await conn.fetchrow(
-                f"SELECT {col} FROM brokers WHERE address = $1", from_addr
+            # Step 6: Atomic UPDATE arithmetic — no SELECT round-trips
+            # Sender: subtract (floor at 0)
+            from_result = await conn.execute(
+                f"UPDATE brokers SET {col} = CAST(GREATEST(0, CAST({col} AS NUMERIC) - $1) AS TEXT) WHERE address = $2",
+                amount, from_addr
             )
-            if from_row:
-                current = int(from_row[col] or "0")
-                new_val = max(0, current - amount)
-                await conn.execute(
-                    f"UPDATE brokers SET {col} = $1 WHERE address = $2",
-                    str(new_val), from_addr
-                )
+            sender_is_broker = from_result and from_result != "UPDATE 0"
 
-            # Update recipient balance (add)
-            to_row = await conn.fetchrow(
-                f"SELECT {col} FROM brokers WHERE address = $1", to_addr
+            # Recipient: add
+            to_result = await conn.execute(
+                f"UPDATE brokers SET {col} = CAST(CAST({col} AS NUMERIC) + $1 AS TEXT) WHERE address = $2",
+                amount, to_addr
             )
-            if to_row:
-                current = int(to_row[col] or "0")
-                new_val = current + amount
-                await conn.execute(
-                    f"UPDATE brokers SET {col} = $1 WHERE address = $2",
-                    str(new_val), to_addr
-                )
+            recipient_is_broker = to_result and to_result != "UPDATE 0"
 
             # Update market-level running counter
-            divisor = 1e6  # for human-readable counter
-            human_amount = amount / divisor
+            human_amount = amount / 1e6
             delta = 0.0
-            if to_row:
+            if recipient_is_broker:
                 delta += human_amount
-            if from_row:
+            if sender_is_broker:
                 delta -= human_amount
             if delta != 0:
                 await conn.execute(
@@ -736,6 +728,18 @@ async def run(rpc_url: str, dsn: str) -> None:
                 # Rebuild address→market map — zero RPC
                 addr_market_map = await build_address_market_map(conn)
 
+                # Step 2: Cache market config once per batch (not per-event)
+                _mkt = await conn.fetchrow("SELECT market_id, wausdc, wrlp FROM markets LIMIT 1")
+                batch_ctx = {}
+                if _mkt:
+                    batch_ctx = {
+                        "market_id": _mkt["market_id"],
+                        "wausdc": (_mkt["wausdc"] or "").lower(),
+                        "wrlp": (_mkt["wrlp"] or "").lower(),
+                        "pool_mgr": (global_cfg.get("v4_pool_manager") or "").lower(),
+                        "v4_posm": (global_cfg.get("v4_position_manager") or "").lower(),
+                    }
+
                 from_block = last_block + 1
 
                 # ── Pass 1: Topic-only — custom contract events ──────
@@ -787,29 +791,32 @@ async def run(rpc_url: str, dsn: str) -> None:
                     logs = enriched_logs
 
                 # ── Single transaction per batch ────────────────────────
+                batch_t0 = time.monotonic()
                 async with conn.transaction():
                     if logs:
                         for log_entry in logs:
-                            await dispatch(log_entry, conn, global_cfg, addr_market_map, w3)
+                            await dispatch(log_entry, conn, global_cfg, addr_market_map, w3, batch_ctx)
 
                     # Advance progress for ALL tracked markets
+                    # Step 1: removed COUNT(*) — was causing full table scans
                     all_market_ids = set(addr_market_map.values()) - {None}
                     for mid in all_market_ids:
                         await conn.execute("""
                             INSERT INTO indexer_state (market_id, last_indexed_block, last_indexed_at, total_events)
-                            VALUES ($1, $2, NOW(), (SELECT COUNT(*) FROM events WHERE market_id = $1))
+                            VALUES ($1, $2, NOW(), 0)
                             ON CONFLICT (market_id) DO UPDATE SET
                               last_indexed_block = EXCLUDED.last_indexed_block,
-                              last_indexed_at = EXCLUDED.last_indexed_at,
-                              total_events = EXCLUDED.total_events
+                              last_indexed_at = EXCLUDED.last_indexed_at
                             WHERE indexer_state.last_indexed_block < EXCLUDED.last_indexed_block
                         """, mid, to_block)
-                        # Materialize global snapshot (precomputed JSON)
-                        await snapshot_handler.materialize_snapshot(conn, mid)
+                        # Step 5: Only materialize snapshot when batch had events
+                        if logs:
+                            await snapshot_handler.materialize_snapshot(conn, mid)
+                batch_ms = (time.monotonic() - batch_t0) * 1000
 
             last_block = to_block
-            log.info("Indexed blocks %d→%d (%d logs)", last_block - BATCH_SIZE + 1 if last_block > BATCH_SIZE else 0,
-                     to_block, len(logs) if logs else 0)
+            log.info("Indexed blocks %d→%d (%d logs, %.1fms)", last_block - BATCH_SIZE + 1 if last_block > BATCH_SIZE else 0,
+                     to_block, len(logs) if logs else 0, batch_ms)
 
         except Exception as e:
             log.error("Poll cycle error (will retry): %s", e, exc_info=True)

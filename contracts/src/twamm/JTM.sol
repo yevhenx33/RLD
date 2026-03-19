@@ -713,7 +713,32 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
                 effectiveEF = snap;
             }
         }
-        uint256 earningsFactorDelta = effectiveEF - order.earningsFactorLast;
+
+        // DEFERRED-START FIX: Use the earningsFactorAtInterval snapshot from
+        // the order's startEpoch as a floor for earningsFactorLast. This
+        // prevents crediting earnings that accrued between submit and start.
+        uint256 effectiveEFL = order.earningsFactorLast;
+        bool orderStarted = stream.sellRateCurrent >= order.sellRate;
+        if (!orderStarted) {
+            // Order hasn't started — zero earnings
+            effectiveEFL = effectiveEF;
+        } else {
+            // Find startEpoch and use its snapshot as floor
+            uint256 ep = orderKey.expiration - expirationInterval;
+            while (ep > 0) {
+                if (stream.sellRateStartingAtInterval[ep] >= order.sellRate) break;
+                if (ep < expirationInterval) break;
+                ep -= expirationInterval;
+            }
+            uint256 startSnap = stream.earningsFactorAtInterval[ep];
+            if (startSnap > effectiveEFL) {
+                effectiveEFL = startSnap;
+            }
+        }
+
+        uint256 earningsFactorDelta = effectiveEF > effectiveEFL
+            ? effectiveEF - effectiveEFL
+            : 0;
         if (earningsFactorDelta > 0) {
             earningsAmount = Math.mulDiv(
                 order.sellRate,
@@ -915,7 +940,30 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
                 effectiveEF = snap;
             }
         }
-        uint256 earningsFactorDelta = effectiveEF - order.earningsFactorLast;
+
+        // DEFERRED-START FIX: use startEpoch snapshot as floor for earningsFactorLast
+        uint256 effectiveEFL = order.earningsFactorLast;
+        bool orderStarted = stream.sellRateCurrent >= order.sellRate;
+        if (!orderStarted) {
+            // Order hasn't started — zero earnings
+            effectiveEFL = effectiveEF;
+        } else {
+            // startEpoch is found below (line ~936); preview it here for EFL floor
+            uint256 epScan = orderKey.expiration - expirationInterval;
+            while (epScan > 0) {
+                if (stream.sellRateStartingAtInterval[epScan] >= order.sellRate) break;
+                if (epScan < expirationInterval) break;
+                epScan -= expirationInterval;
+            }
+            uint256 startSnap = stream.earningsFactorAtInterval[epScan];
+            if (startSnap > effectiveEFL) {
+                effectiveEFL = startSnap;
+            }
+        }
+
+        uint256 earningsFactorDelta = effectiveEF > effectiveEFL
+            ? effectiveEF - effectiveEFL
+            : 0;
         if (earningsFactorDelta > 0) {
             buyTokensOwed = Math.mulDiv(
                 order.sellRate,
@@ -1250,6 +1298,10 @@ contract JTM is BaseHook, Owned, ReentrancyGuard, IJTM {
         // Option E: activate deferred sell rates that start at this epoch
         uint256 starting = stream.sellRateStartingAtInterval[epoch];
         if (starting > 0) {
+            // DEFERRED-START FIX: snapshot EF at activation so deferred orders
+            // use this as their earnings baseline instead of submit-time snapshot
+            stream.earningsFactorAtInterval[epoch] = stream
+                .earningsFactorCurrent;
             stream.sellRateCurrent += starting;
         }
 

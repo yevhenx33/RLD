@@ -340,13 +340,13 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
 
             const { tickLower, tickUpper } = decoded;
 
-            // Entry price from mint block (non-blocking, we'll set it later)
-            let entryPrice = null;
-            const mintBlock = mintBlockMap.get(tokenId);
+            // Entry price: derive from tick range midpoint (no API call needed)
+            const midTick = (tickLower + tickUpper) / 2;
+            const entryPrice = Math.pow(1.0001, midTick);
 
-            // Fee computation — runs in parallel with nothing to wait for
+            // Fee computation
             let feesEarned0 = "0", feesEarned1 = "0";
-            const feePromise = stateView ? (async () => {
+            if (stateView) {
               try {
                 const salt = ethers.zeroPadValue(ethers.toBeHex(tokenId), 32);
                 const [posInfo, feeInside] = await Promise.all([
@@ -361,21 +361,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
               } catch (e) {
                 console.warn(`[LP] Fee calc failed for tokenId ${tokenId}:`, e.message);
               }
-            })() : Promise.resolve();
-
-            // Entry price fetch — parallel with fee computation
-            const pricePromise = mintBlock ? (async () => {
-              try {
-                const res = await fetch(`/api/block/${mintBlock}`);
-                if (res.ok) {
-                  const data = await res.json();
-                  entryPrice = data.pool?.markPrice ?? data.pool_states?.[0]?.mark_price ?? null;
-                }
-              } catch { /* ignore */ }
-            })() : Promise.resolve();
-
-            // Wait for both to finish
-            await Promise.all([feePromise, pricePromise]);
+            }
 
             return {
               tokenId, liquidity, tickLower, tickUpper, entryPrice,

@@ -205,7 +205,16 @@ print(json.dumps(result))
 " 2>/dev/null) || DB_JSON='{}'
 
 # --- Pool state from rld_indexer postgres ---
-POOL_JSON=$(docker exec docker-postgres-1 psql -U rld -d rld_indexer -t -A -c "
+# Try reth-postgres-1 (Reth mode) first, fallback to docker-postgres-1 (Anvil mode)
+PG_CONTAINER=""
+for pg_name in reth-postgres-1 docker-postgres-1; do
+  if docker inspect "$pg_name" >/dev/null 2>&1; then
+    PG_CONTAINER="$pg_name"
+    break
+  fi
+done
+if [ -n "$PG_CONTAINER" ]; then
+POOL_JSON=$(docker exec "$PG_CONTAINER" psql -U rld -d rld_indexer -t -A -c "
 SELECT json_build_object(
   'healthy', true,
   'last_indexed_block', COALESCE((SELECT last_indexed_block FROM indexer_state LIMIT 1), 0),
@@ -220,6 +229,9 @@ SELECT json_build_object(
   'total_debt', (SELECT total_debt FROM block_states WHERE total_debt IS NOT NULL ORDER BY block_number DESC LIMIT 1)
 );
 " 2>/dev/null) || POOL_JSON='{"healthy":false}'
+else
+  POOL_JSON='{"healthy":false}'
+fi
 
 # Merge rates + pool state
 DB_JSON=$(python3 -c "

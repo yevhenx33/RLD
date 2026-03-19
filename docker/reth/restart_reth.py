@@ -36,6 +36,7 @@ RLD_ROOT = DOCKER_DIR.parent
 
 COMPOSE_ANVIL = DOCKER_DIR / "docker-compose.yml"
 COMPOSE_RETH  = SCRIPT_DIR / "docker-compose.reth.yml"
+COMPOSE_RATES = DOCKER_DIR / "docker-compose.rates.yml"
 ENV_FILE      = DOCKER_DIR / ".env"
 DEPLOY_JSON   = DOCKER_DIR / "deployment.json"
 GENESIS_FILE  = SCRIPT_DIR / "genesis.json"
@@ -108,12 +109,15 @@ def run(cmd, check=True, capture=False, **kwargs):
     """Run a shell command. Returns CompletedProcess."""
     if isinstance(cmd, str):
         cmd = cmd.split()
-    return subprocess.run(cmd, capture_output=capture, text=True, check=check, **kwargs)
+    # start_new_session prevents child from receiving signals meant for our process group
+    return subprocess.run(cmd, capture_output=capture, text=True, check=check,
+                          start_new_session=True, **kwargs)
 
 def run_quiet(cmd, **kwargs):
     """Run silently, swallow errors."""
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, check=False, **kwargs)
+        return subprocess.run(cmd, capture_output=True, text=True, check=False,
+                              start_new_session=True, **kwargs)
     except Exception:
         return None
 
@@ -134,7 +138,10 @@ def cast_rpc(method, *params, rpc_url=None) -> str:
 def docker_compose(compose_file, *args, check=True):
     """Run docker compose with the given compose file."""
     cmd = ["docker", "compose", "-f", str(compose_file), "--env-file", str(ENV_FILE)] + list(args)
-    return subprocess.run(cmd, capture_output=True, text=True, check=check)
+    # start_new_session: docker compose down sends SIGTERM to its process group;
+    # without this, it kills the parent Python script (exit 0, no error).
+    return subprocess.run(cmd, capture_output=True, text=True, check=check,
+                          start_new_session=True)
 
 def wait_for_rpc(url, timeout=60, label="RPC"):
     """Wait for an RPC endpoint to respond."""
@@ -198,9 +205,15 @@ def load_deploy() -> dict:
 def teardown(fresh: bool):
     header("STEP 1: TEAR DOWN")
 
+    # Ignore SIGTERM during teardown — docker compose down and pkill
+    # can send stray signals that kill this orchestrator script.
+    original_sigterm = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
     step("1a", "Stopping all stacks...")
     docker_compose(COMPOSE_RETH, "down", "-v", check=False)
     docker_compose(COMPOSE_ANVIL, "down", "-v", check=False)
+    docker_compose(COMPOSE_RATES, "down", "-v", check=False)
     ok("Docker stacks stopped")
 
     step("1b", "Killing Reth/Anvil/faucet processes...")
@@ -209,6 +222,9 @@ def teardown(fresh: bool):
     run_quiet(["pkill", "-f", "faucet_server.py"])
     time.sleep(2)
     ok("Processes killed")
+
+    # Restore default SIGTERM handler
+    signal.signal(signal.SIGTERM, original_sigterm)
 
     step("1c", "Clearing deployment.json...")
     DEPLOY_JSON.write_text("{}")
@@ -257,6 +273,17 @@ def generate_genesis(env: dict, no_build: bool):
         ok(f"Anvil ready at block {block} (PID: {anvil_pid})")
 
         cast_rpc("anvil_setChainId", "31337", rpc_url=ANVIL_RPC)
+
+        # 2a½. Start rates-indexer early (independent service — scrapes Aave from mainnet)
+        # Needed in 2b so the deployer can prime the oracle with live rates.
+        step("2a½", "Starting rates-indexer for live Aave rates...")
+        rates_build = ["up", "-d"]
+        if not no_build:
+            rates_build.append("--build")
+        docker_compose(COMPOSE_RATES, *rates_build, check=False)
+        # Give it a moment to start
+        time.sleep(3)
+        ok("Rates-indexer started")
 
         # 2b. Deploy protocol
         step("2b", "Deploying protocol on Anvil (via docker compose)...")
@@ -604,7 +631,18 @@ def launch_services(no_build: bool, with_users: bool):
     docker_compose(COMPOSE_RETH, *bot_args)
     ok("Trading bots started")
 
-    # 4h. Start faucet server
+    # 4h. Start rates-indexer (standalone — scrapes live Aave rates from mainnet)
+    step("4h", "Starting rates-indexer...")
+    rates_args = ["up", "-d"]
+    if not no_build:
+        rates_args.append("--build")
+    docker_compose(COMPOSE_RATES, *rates_args)
+    # Bridge rates-indexer to the reth network so bots can reach it
+    run_quiet(["docker", "network", "connect", "reth_default",
+               "docker-rates-indexer-1", "--alias", "rates-indexer"])
+    ok("Rates-indexer started (port 8081, bridged to reth network)")
+
+    # 4i. Start faucet server
     start_faucet(deploy)
 
 # ═══════════════════════════════════════════════════════════════

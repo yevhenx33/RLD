@@ -217,8 +217,26 @@ JTM_HOOK_ABI = [
 
 
 def fetch_latest_rate():
-    """Fetch latest USDC borrow rate — tries API first, falls back to on-chain Aave."""
-    # Try API first (production)
+    """Fetch latest USDC borrow rate — tries GraphQL first, REST second, on-chain fallback."""
+    # 1. Try GraphQL latestRates (most reliable — single query)
+    try:
+        gql_query = '{"query":"{ latestRates { usdc } }"}'
+        response = requests.post(
+            f"{API_URL}/graphql",
+            data=gql_query,
+            headers={"Content-Type": "application/json"},
+            timeout=5,
+        )
+        response.raise_for_status()
+        data = response.json()
+        usdc_rate = data.get("data", {}).get("latestRates", {}).get("usdc")
+        if usdc_rate:
+            logger.info(f"📡 Live USDC rate from indexer (GraphQL): {usdc_rate:.4f}%")
+            return usdc_rate
+    except Exception:
+        pass
+
+    # 2. Try REST /rates endpoint
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         response = requests.get(f"{API_URL}/rates?limit=1&symbol=USDC", headers=headers, timeout=5)
@@ -227,16 +245,16 @@ def fetch_latest_rate():
         if data and len(data) > 0:
             apy = data[0].get("apy", 0)
             if apy:
+                logger.info(f"📡 Live USDC rate from indexer (REST): {apy:.4f}%")
                 return apy
     except Exception:
-        pass  # Fall through to on-chain
+        pass
 
-    # Fallback: read rate directly from Aave V3 on-chain
+    # 3. Fallback: read rate directly from Aave V3 on-chain (STALE on Reth fork!)
     try:
         w3 = Web3(Web3.HTTPProvider(RPC_URL))
         AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
         USDC_ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-        # getReserveData returns a tuple; index 4 is currentVariableBorrowRate (RAY)
         POOL_ABI = [{"inputs": [{"name": "asset", "type": "address"}],
                      "name": "getReserveData",
                      "outputs": [{"components": [
@@ -259,12 +277,12 @@ def fetch_latest_rate():
                      "stateMutability": "view", "type": "function"}]
         pool = w3.eth.contract(address=Web3.to_checksum_address(AAVE_POOL), abi=POOL_ABI)
         reserve_data = pool.functions.getReserveData(Web3.to_checksum_address(USDC_ADDR)).call()
-        variable_borrow_rate_ray = reserve_data[4]  # currentVariableBorrowRate in RAY
-        apy_percent = variable_borrow_rate_ray / 1e25  # RAY to percent
-        logger.info(f"📡 On-chain Aave USDC rate: {apy_percent:.4f}%")
+        variable_borrow_rate_ray = reserve_data[4]
+        apy_percent = variable_borrow_rate_ray / 1e25
+        logger.warning(f"⚠️ Using STALE on-chain Aave rate: {apy_percent:.4f}% (indexer unavailable)")
         return apy_percent
     except Exception as e:
-        logger.error(f"On-chain rate fetch failed: {e}")
+        logger.error(f"All rate sources failed: {e}")
         return None
 
 
@@ -394,14 +412,15 @@ class CombinedDaemon:
                     self.account.address, hook_addr
                 ).call()
                 if allowance < 10**24:  # Re-approve if low
-                    nonce = self.w3.eth.get_transaction_count(self.account.address)
+                    nonce = self.w3.eth.get_transaction_count(self.account.address, 'pending')
+                    base_fee = self.w3.eth.gas_price or 1_000_000_000
                     tx = token_contract.functions.approve(
                         hook_addr, MAX_UINT
                     ).build_transaction({
                         'from': self.account.address, 'nonce': nonce,
                         'gas': 60000,
-                        'maxFeePerGas': self.w3.to_wei('2', 'gwei'),
-                        'maxPriorityFeePerGas': self.w3.to_wei('1', 'gwei'),
+                        'maxFeePerGas': max(base_fee * 10, self.w3.to_wei('10', 'gwei')),
+                        'maxPriorityFeePerGas': self.w3.to_wei('2', 'gwei'),
                     })
                     signed = self.w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
                     tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -470,10 +489,10 @@ class CombinedDaemon:
                     self.pool_key, zfo, accrued, MIN_DISCOUNT_BPS
                 ).build_transaction({
                     'from': self.account.address,
-                    'nonce': self.w3.eth.get_transaction_count(self.account.address),
+                    'nonce': self.w3.eth.get_transaction_count(self.account.address, 'pending'),
                     'gas': MAX_CLEAR_GAS,
-                    'maxFeePerGas': self.w3.to_wei('3', 'gwei'),
-                    'maxPriorityFeePerGas': self.w3.to_wei('1', 'gwei'),
+                    'maxFeePerGas': max((self.w3.eth.gas_price or 1_000_000_000) * 10, self.w3.to_wei('10', 'gwei')),
+                    'maxPriorityFeePerGas': self.w3.to_wei('2', 'gwei'),
                 })
                 signed = self.w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
                 tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -519,13 +538,13 @@ class CombinedDaemon:
     def update_oracle(self, rate_ray: int) -> bool:
         """Update oracle rate using oracle admin account."""
         try:
-            nonce = self.w3.eth.get_transaction_count(self.oracle_admin_account.address)
+            nonce = self.w3.eth.get_transaction_count(self.oracle_admin_account.address, 'pending')
             tx = self.oracle.functions.setRate(rate_ray).build_transaction({
                 'from': self.oracle_admin_account.address,
                 'nonce': nonce,
                 'gas': 100000,
-                'maxFeePerGas': self.w3.to_wei('2', 'gwei'),
-                'maxPriorityFeePerGas': self.w3.to_wei('1', 'gwei'),
+                'maxFeePerGas': max((self.w3.eth.gas_price or 1_000_000_000) * 10, self.w3.to_wei('10', 'gwei')),
+                'maxPriorityFeePerGas': self.w3.to_wei('2', 'gwei'),
             })
             signed = self.w3.eth.account.sign_transaction(tx, ORACLE_ADMIN_KEY)
             tx_hash = self.w3.eth.send_raw_transaction(signed.raw_transaction)
