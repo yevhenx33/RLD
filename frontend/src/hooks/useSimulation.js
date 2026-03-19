@@ -233,15 +233,14 @@ export function useSimulation({
   const funding = useMemo(() => {
     if (!market || !pool) return null;
 
-    const nf = market.normalizationFactor || 1;
-    const normalizedMark = pool.markPrice / nf;
+    const mark = pool.markPrice;
     const index = market.indexPrice;
     if (index <= 0) return null;
 
-    const spread = normalizedMark - index;
+    const spread = mark - index;
     const spreadPct = (spread / index) * 100;
 
-    // fundingRate as per contract (WAD-equivalent but in float)
+    // fundingRate based on raw mark vs index (no NF normalization for display)
     const fundingRate = spread / index;
 
     // Simple linear annualization (industry standard for display):

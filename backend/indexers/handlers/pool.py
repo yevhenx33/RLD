@@ -45,6 +45,22 @@ def _cf(col: str) -> str:
     return _CF.format(col=col)
 
 
+# Step 4: Read-once helper — replaces correlated subselects
+async def fetch_latest_state(conn, market_id: str) -> dict:
+    """Read latest block_state row once, return as dict with defaults."""
+    row = await conn.fetchrow("""
+        SELECT sqrt_price_x96, tick, mark_price, liquidity,
+               index_price, normalization_factor, total_debt,
+               token0_balance, token1_balance,
+               fee_growth_global0, fee_growth_global1
+        FROM block_states WHERE market_id = $1
+        ORDER BY block_number DESC LIMIT 1
+    """, market_id)
+    if not row:
+        return {}
+    return dict(row)
+
+
 def sqrt_price_x96_to_price(sqrt_price_x96: int, wausdc: str, wrlp: str) -> float:
     """
     Convert Uniswap V4 sqrtPriceX96 to a standardized Mark Price (wRLP/waUSDC).
@@ -83,7 +99,10 @@ async def handle_initialize(
     """Handle pool Initialize event — seeds sqrtPriceX96, tick, mark_price."""
     mark_price = sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp)
 
-    await conn.execute(f"""
+    # Step 4: read-once carry-forward
+    prev = await fetch_latest_state(conn, market_id)
+
+    await conn.execute("""
         INSERT INTO block_states
           (market_id, block_number, block_timestamp,
            sqrt_price_x96, tick, mark_price, liquidity,
@@ -91,16 +110,16 @@ async def handle_initialize(
            fee_growth_global0, fee_growth_global1,
            index_price, normalization_factor, total_debt)
         VALUES ($1, $2, $3, $4, $5, $6, '0',
-                0, 0, '0', '0',
-                {_cf('index_price')},
-                {_cf('normalization_factor')},
-                {_cf('total_debt')})
+                0, 0, '0', '0', $7, $8, $9)
         ON CONFLICT (market_id, block_number) DO UPDATE SET
           sqrt_price_x96 = EXCLUDED.sqrt_price_x96,
           tick           = EXCLUDED.tick,
           mark_price     = EXCLUDED.mark_price
     """, market_id, block_number, block_timestamp,
-         str(sqrt_price_x96), tick, mark_price)
+         str(sqrt_price_x96), tick, mark_price,
+         prev.get("index_price"),
+         prev.get("normalization_factor"),
+         prev.get("total_debt"))
 
     log.info("[pool] Initialize market=%s block=%d tick=%d price=%.6f sqrtP=%d",
              market_id, block_number, tick, mark_price, sqrt_price_x96)
@@ -116,20 +135,27 @@ async def update_pool_balance(
 ) -> None:
     """Upsert a single pool token balance (token0_balance or token1_balance).
     Called from the ERC20Transfer handler when tokens flow to/from PoolManager."""
+    # Step 4: read-once carry-forward
+    prev = await fetch_latest_state(conn, market_id)
+    other_col = "token1_balance" if pool_col == "token0_balance" else "token0_balance"
+
     await conn.execute(f"""
         INSERT INTO block_states
           (market_id, block_number, block_timestamp,
-           {pool_col},
+           {pool_col}, {other_col},
            sqrt_price_x96, tick, mark_price, liquidity,
            index_price, normalization_factor, total_debt,
            fee_growth_global0, fee_growth_global1)
-        VALUES ($1, $2, $3, $4,
-                {_cf('sqrt_price_x96')}, {_cf('tick')}, {_cf('mark_price')}, {_cf('liquidity')},
-                {_cf('index_price')}, {_cf('normalization_factor')}, {_cf('total_debt')},
-                {_cf('fee_growth_global0')}, {_cf('fee_growth_global1')})
+        VALUES ($1, $2, $3, $4, $5,
+                $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (market_id, block_number) DO UPDATE SET
           {pool_col} = $4
-    """, market_id, block_number, block_timestamp, new_balance)
+    """, market_id, block_number, block_timestamp,
+         new_balance,
+         prev.get(other_col),
+         prev.get("sqrt_price_x96"), prev.get("tick"), prev.get("mark_price"), prev.get("liquidity"),
+         prev.get("index_price"), prev.get("normalization_factor"), prev.get("total_debt"),
+         prev.get("fee_growth_global0"), prev.get("fee_growth_global1"))
 
 
 # ── Fee growth computation (integer-precise SqrtPriceMath) ─────────────────
@@ -197,32 +223,24 @@ async def handle_swap(
 ) -> None:
     mark_price = sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp)
 
-    # Volume: absolute value of the USDC side (amount1 for wRLP/waUSDC pools where token1=waUSDC)
+    # Volume: absolute value of the USDC side
     volume_usd = abs(amount1) / 1e6
 
-    # ── Read previous state for running accumulators ──
-    prev = await conn.fetchrow("""
-        SELECT sqrt_price_x96, token0_balance, token1_balance,
-               fee_growth_global0, fee_growth_global1, liquidity
-        FROM block_states
-        WHERE market_id = $1
-        ORDER BY block_number DESC LIMIT 1
-    """, market_id)
+    # Step 4: read-once — replaces both the explicit SELECT and _cf() subselects
+    prev = await fetch_latest_state(conn, market_id)
 
-    prev_sqrt = int(prev["sqrt_price_x96"]) if prev and prev["sqrt_price_x96"] else 0
-    prev_fg0 = int(prev["fee_growth_global0"]) if prev and prev["fee_growth_global0"] else 0
-    prev_fg1 = int(prev["fee_growth_global1"]) if prev and prev["fee_growth_global1"] else 0
-    active_liq = int(prev["liquidity"]) if prev and prev["liquidity"] else liquidity
+    prev_sqrt = int(prev.get("sqrt_price_x96") or 0)
+    prev_fg0 = int(prev.get("fee_growth_global0") or 0)
+    prev_fg1 = int(prev.get("fee_growth_global1") or 0)
+    active_liq = int(prev.get("liquidity") or 0) or liquidity
 
     # Fee growth: compute from price diff + liquidity (integer-precise)
-    # prev_sqrt=0 means first swap after reset — skip fee growth for this swap
     new_fg0, new_fg1 = compute_fee_growth(
         prev_sqrt, sqrt_price_x96, active_liq, prev_fg0, prev_fg1
     )
 
-    # Upsert block_states — carry forward token balances from ERC20 Transfer tracking
-    # (token balances are maintained by the ERC20Transfer handler, not swap amounts)
-    await conn.execute(f"""
+    # Upsert block_states with literal values (no subselects)
+    await conn.execute("""
         INSERT INTO block_states
           (market_id, block_number, block_timestamp,
            sqrt_price_x96, tick, mark_price, liquidity,
@@ -230,11 +248,7 @@ async def handle_swap(
            fee_growth_global0, fee_growth_global1,
            index_price, normalization_factor, total_debt)
         VALUES ($1, $2, $3, $4, $5, $6, $7,
-                {_cf('token0_balance')}, {_cf('token1_balance')},
-                $8, $9,
-                {_cf('index_price')},
-                {_cf('normalization_factor')},
-                {_cf('total_debt')})
+                $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (market_id, block_number) DO UPDATE SET
           sqrt_price_x96      = EXCLUDED.sqrt_price_x96,
           tick                = EXCLUDED.tick,
@@ -247,9 +261,11 @@ async def handle_swap(
           total_debt          = COALESCE(block_states.total_debt,          EXCLUDED.total_debt)
     """, market_id, block_number, block_timestamp,
          str(sqrt_price_x96), tick, mark_price, str(liquidity),
-         str(new_fg0), str(new_fg1))
+         prev.get("token0_balance"), prev.get("token1_balance"),
+         str(new_fg0), str(new_fg1),
+         prev.get("index_price"), prev.get("normalization_factor"), prev.get("total_debt"))
 
-    # ── Per-block swap volume accumulation ──
+    # Per-block swap volume accumulation
     await conn.execute("""
         UPDATE block_states
         SET swap_volume = COALESCE(swap_volume, 0) + $1,
@@ -257,34 +273,32 @@ async def handle_swap(
         WHERE market_id = $2 AND block_number = $3
     """, volume_usd, market_id, block_number)
 
-    # Get current index_price for candles (read from latest block_state)
-    row = await conn.fetchrow("""
-        SELECT index_price FROM block_states
-        WHERE market_id = $1 AND index_price IS NOT NULL
-        ORDER BY block_number DESC LIMIT 1
-    """, market_id)
-    index_price = float(row["index_price"]) if row and row["index_price"] else mark_price
+    # Get index_price for candles (already fetched in prev)
+    index_price = float(prev.get("index_price") or 0) or mark_price
 
-    # Inline candle upsert for all resolutions — all in this transaction
-    for res, secs in RESOLUTIONS.items():
-        bucket = (block_timestamp // secs) * secs
-        await conn.execute("""
-            INSERT INTO candles
-              (market_id, resolution, bucket,
-               mark_open, mark_high, mark_low, mark_close,
-               index_open, index_high, index_low, index_close,
-               volume_usd, swap_count)
-            VALUES ($1, $2, $3, $4, $4, $4, $4, $5, $5, $5, $5, $6, 1)
-            ON CONFLICT (market_id, resolution, bucket) DO UPDATE SET
-              mark_high   = GREATEST(candles.mark_high,  EXCLUDED.mark_high),
-              mark_low    = LEAST(candles.mark_low,    EXCLUDED.mark_low),
-              mark_close  = EXCLUDED.mark_close,
-              index_high  = GREATEST(candles.index_high, EXCLUDED.index_high),
-              index_low   = LEAST(candles.index_low,   EXCLUDED.index_low),
-              index_close = EXCLUDED.index_close,
-              volume_usd  = candles.volume_usd + EXCLUDED.volume_usd,
-              swap_count  = candles.swap_count + 1
-        """, market_id, res, bucket, mark_price, index_price, volume_usd)
+    # Step 3: Batch candle upserts — 6 resolutions in 1 executemany call
+    candle_rows = [
+        (market_id, res, (block_timestamp // secs) * secs,
+         mark_price, index_price, volume_usd)
+        for res, secs in RESOLUTIONS.items()
+    ]
+    await conn.executemany("""
+        INSERT INTO candles
+          (market_id, resolution, bucket,
+           mark_open, mark_high, mark_low, mark_close,
+           index_open, index_high, index_low, index_close,
+           volume_usd, swap_count)
+        VALUES ($1, $2, $3, $4, $4, $4, $4, $5, $5, $5, $5, $6, 1)
+        ON CONFLICT (market_id, resolution, bucket) DO UPDATE SET
+          mark_high   = GREATEST(candles.mark_high,  EXCLUDED.mark_high),
+          mark_low    = LEAST(candles.mark_low,    EXCLUDED.mark_low),
+          mark_close  = EXCLUDED.mark_close,
+          index_high  = GREATEST(candles.index_high, EXCLUDED.index_high),
+          index_low   = LEAST(candles.index_low,   EXCLUDED.index_low),
+          index_close = EXCLUDED.index_close,
+          volume_usd  = candles.volume_usd + EXCLUDED.volume_usd,
+          swap_count  = candles.swap_count + 1
+    """, candle_rows)
 
     log.debug("[pool] Swap market=%s block=%d tick=%d price=%.6f vol=%.2f",
               market_id, block_number, tick, mark_price, volume_usd)
@@ -306,9 +320,11 @@ async def handle_modify_liquidity(
 ) -> None:
     """Handle ModifyLiquidity event. Token balances are tracked by
     ERC20 Transfer events, so this handler only carry-forwards columns."""
-    # Carry-forward all columns — token balances are updated separately
-    # by the ERC20Transfer handler when tokens flow to/from PoolManager.
-    await conn.execute(f"""
+    # Step 4: read-once carry-forward
+    prev = await fetch_latest_state(conn, market_id)
+    mp = sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp) if sqrt_price_x96 else prev.get("mark_price")
+
+    await conn.execute("""
         INSERT INTO block_states
           (market_id, block_number, block_timestamp,
            tick, mark_price,
@@ -317,15 +333,7 @@ async def handle_modify_liquidity(
            token0_balance, token1_balance,
            fee_growth_global0, fee_growth_global1)
         VALUES ($1, $2, $3, $4, $5,
-                {_cf('index_price')},
-                {_cf('sqrt_price_x96')},
-                {_cf('liquidity')},
-                {_cf('normalization_factor')},
-                {_cf('total_debt')},
-                {_cf('token0_balance')},
-                {_cf('token1_balance')},
-                {_cf('fee_growth_global0')},
-                {_cf('fee_growth_global1')})
+                $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (market_id, block_number) DO UPDATE SET
           tick                = COALESCE(block_states.tick,                EXCLUDED.tick),
           mark_price          = COALESCE(block_states.mark_price,          EXCLUDED.mark_price),
@@ -339,7 +347,11 @@ async def handle_modify_liquidity(
           fee_growth_global0  = COALESCE(block_states.fee_growth_global0,  EXCLUDED.fee_growth_global0),
           fee_growth_global1  = COALESCE(block_states.fee_growth_global1,  EXCLUDED.fee_growth_global1)
     """, market_id, block_number, block_timestamp,
-         None, sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp) if sqrt_price_x96 else None)
+         prev.get("tick"), mp,
+         prev.get("index_price"), prev.get("sqrt_price_x96"), prev.get("liquidity"),
+         prev.get("normalization_factor"), prev.get("total_debt"),
+         prev.get("token0_balance"), prev.get("token1_balance"),
+         prev.get("fee_growth_global0"), prev.get("fee_growth_global1"))
 
     log.info("[pool] ModifyLiquidity block=%d liquidityDelta=%d",
              block_number, liquidity_delta)

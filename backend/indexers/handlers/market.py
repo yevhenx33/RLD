@@ -14,11 +14,8 @@ import logging
 
 log = logging.getLogger(__name__)
 
-# ── Carry-forward subselect helper ────────────────────────────────────────
-_CF = "(SELECT {col} FROM block_states WHERE market_id=$1 AND {col} IS NOT NULL ORDER BY block_number DESC LIMIT 1)"
-
-def _cf(col: str) -> str:
-    return _CF.format(col=col)
+# Step 4: import read-once helper from pool handler
+from handlers.pool import fetch_latest_state
 
 
 async def handle_funding_applied(
@@ -29,23 +26,15 @@ async def handle_funding_applied(
     new_factor: int,
     funding_rate: int,
 ) -> None:
-    await conn.execute(f"""
+    prev = await fetch_latest_state(conn, market_id)
+    await conn.execute("""
         INSERT INTO block_states
           (market_id, block_number, block_timestamp,
            normalization_factor,
            index_price, mark_price, tick, sqrt_price_x96, liquidity, total_debt,
            token0_balance, token1_balance, fee_growth_global0, fee_growth_global1)
         VALUES ($1, $2, $3, $4,
-                {_cf('index_price')},
-                {_cf('mark_price')},
-                {_cf('tick')},
-                {_cf('sqrt_price_x96')},
-                {_cf('liquidity')},
-                {_cf('total_debt')},
-                {_cf('token0_balance')},
-                {_cf('token1_balance')},
-                {_cf('fee_growth_global0')},
-                {_cf('fee_growth_global1')})
+                $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (market_id, block_number) DO UPDATE SET
           normalization_factor = EXCLUDED.normalization_factor,
           index_price         = COALESCE(block_states.index_price,         EXCLUDED.index_price),
@@ -58,7 +47,11 @@ async def handle_funding_applied(
           token1_balance      = COALESCE(block_states.token1_balance,      EXCLUDED.token1_balance),
           fee_growth_global0  = COALESCE(block_states.fee_growth_global0,  EXCLUDED.fee_growth_global0),
           fee_growth_global1  = COALESCE(block_states.fee_growth_global1,  EXCLUDED.fee_growth_global1)
-    """, market_id, block_number, block_timestamp, new_factor / 1e18)
+    """, market_id, block_number, block_timestamp, new_factor / 1e18,
+         prev.get("index_price"), prev.get("mark_price"),
+         prev.get("tick"), prev.get("sqrt_price_x96"), prev.get("liquidity"),
+         prev.get("total_debt"), prev.get("token0_balance"), prev.get("token1_balance"),
+         prev.get("fee_growth_global0"), prev.get("fee_growth_global1"))
     log.debug("[market] Funding applied market=%s block=%d nf=%s rate=%s", market_id, block_number, new_factor, funding_rate)
 
 
@@ -70,22 +63,15 @@ async def handle_market_state_updated(
     normalization_factor: int,
     total_debt: int,
 ) -> None:
-    await conn.execute(f"""
+    prev = await fetch_latest_state(conn, market_id)
+    await conn.execute("""
         INSERT INTO block_states
           (market_id, block_number, block_timestamp,
            normalization_factor, total_debt,
            index_price, mark_price, tick, sqrt_price_x96, liquidity,
            token0_balance, token1_balance, fee_growth_global0, fee_growth_global1)
         VALUES ($1, $2, $3, $4, $5,
-                {_cf('index_price')},
-                {_cf('mark_price')},
-                {_cf('tick')},
-                {_cf('sqrt_price_x96')},
-                {_cf('liquidity')},
-                {_cf('token0_balance')},
-                {_cf('token1_balance')},
-                {_cf('fee_growth_global0')},
-                {_cf('fee_growth_global1')})
+                $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (market_id, block_number) DO UPDATE SET
           normalization_factor = EXCLUDED.normalization_factor,
           total_debt          = EXCLUDED.total_debt,
@@ -98,7 +84,12 @@ async def handle_market_state_updated(
           token1_balance      = COALESCE(block_states.token1_balance,      EXCLUDED.token1_balance),
           fee_growth_global0  = COALESCE(block_states.fee_growth_global0,  EXCLUDED.fee_growth_global0),
           fee_growth_global1  = COALESCE(block_states.fee_growth_global1,  EXCLUDED.fee_growth_global1)
-    """, market_id, block_number, block_timestamp, normalization_factor / 1e18, total_debt / 1e6)
+    """, market_id, block_number, block_timestamp,
+         normalization_factor / 1e18, total_debt / 1e6,
+         prev.get("index_price"), prev.get("mark_price"),
+         prev.get("tick"), prev.get("sqrt_price_x96"), prev.get("liquidity"),
+         prev.get("token0_balance"), prev.get("token1_balance"),
+         prev.get("fee_growth_global0"), prev.get("fee_growth_global1"))
     log.debug("[market] state updated market=%s block=%d nf=%s debt=%s", market_id, block_number, normalization_factor, total_debt)
 
 
@@ -109,23 +100,15 @@ async def handle_rate_updated(
     block_timestamp: int,
     index_price: int,
 ) -> None:
-    await conn.execute(f"""
+    prev = await fetch_latest_state(conn, market_id)
+    await conn.execute("""
         INSERT INTO block_states
           (market_id, block_number, block_timestamp,
            index_price,
            mark_price, tick, sqrt_price_x96, liquidity, normalization_factor, total_debt,
            token0_balance, token1_balance, fee_growth_global0, fee_growth_global1)
         VALUES ($1, $2, $3, $4,
-                {_cf('mark_price')},
-                {_cf('tick')},
-                {_cf('sqrt_price_x96')},
-                {_cf('liquidity')},
-                {_cf('normalization_factor')},
-                {_cf('total_debt')},
-                {_cf('token0_balance')},
-                {_cf('token1_balance')},
-                {_cf('fee_growth_global0')},
-                {_cf('fee_growth_global1')})
+                $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (market_id, block_number) DO UPDATE SET
           index_price         = EXCLUDED.index_price,
           mark_price          = COALESCE(block_states.mark_price,          EXCLUDED.mark_price),
@@ -138,7 +121,12 @@ async def handle_rate_updated(
           token1_balance      = COALESCE(block_states.token1_balance,      EXCLUDED.token1_balance),
           fee_growth_global0  = COALESCE(block_states.fee_growth_global0,  EXCLUDED.fee_growth_global0),
           fee_growth_global1  = COALESCE(block_states.fee_growth_global1,  EXCLUDED.fee_growth_global1)
-    """, market_id, block_number, block_timestamp, index_price / 1e18)
+    """, market_id, block_number, block_timestamp, index_price / 1e18,
+         prev.get("mark_price"), prev.get("tick"),
+         prev.get("sqrt_price_x96"), prev.get("liquidity"),
+         prev.get("normalization_factor"), prev.get("total_debt"),
+         prev.get("token0_balance"), prev.get("token1_balance"),
+         prev.get("fee_growth_global0"), prev.get("fee_growth_global1"))
     log.debug("[market] index_price updated market=%s block=%d price=%s", market_id, block_number, index_price)
 
 async def handle_bad_debt_registered(

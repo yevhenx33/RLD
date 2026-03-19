@@ -73,7 +73,11 @@ class V4SwapExecutor:
         """
         try:
             account = Account.from_key(private_key)
-            nonce = self.w3.eth.get_transaction_count(account.address)
+            nonce = self.w3.eth.get_transaction_count(account.address, 'pending')
+            
+            # Aggressive gas pricing: 10x base fee, minimum 10 gwei
+            base_fee = self.w3.eth.gas_price or 1_000_000_000
+            max_fee = max(base_fee * 10, self.w3.to_wei('10', 'gwei'))
             
             # Negative amountSpecified = exact input
             amount_specified = -amount
@@ -86,8 +90,8 @@ class V4SwapExecutor:
                 'from': account.address,
                 'nonce': nonce,
                 'gas': 1000000,
-                'maxFeePerGas': self.w3.to_wei('2', 'gwei'),
-                'maxPriorityFeePerGas': self.w3.to_wei('1', 'gwei'),
+                'maxFeePerGas': max_fee,
+                'maxPriorityFeePerGas': self.w3.to_wei('2', 'gwei'),
             })
             
             signed = self.w3.eth.account.sign_transaction(tx, private_key)

@@ -132,13 +132,19 @@ def send_tx(w3: Web3, to: str, calldata: str, private_key: str,
     Uses legacy (type-0) transactions for Reth dev compatibility.
     """
     account = Account.from_key(private_key)
-    nonce = w3.eth.get_transaction_count(account.address)
+    # Use 'pending' to include in-flight txs and avoid nonce collisions
+    nonce = w3.eth.get_transaction_count(account.address, 'pending')
+
+    # Aggressive gas pricing: 10x base fee, minimum 10 gwei.
+    # Prevents "replacement transaction underpriced" when bots are active.
+    base_price = w3.eth.gas_price or 1_000_000_000
+    aggressive_price = max(base_price * 10, 10_000_000_000)  # 10x or 10 gwei
 
     tx = {
         'to': Web3.to_checksum_address(to),
         'data': calldata,
         'gas': gas,
-        'gasPrice': max(w3.eth.gas_price, 1_000_000_000),  # at least 1 gwei
+        'gasPrice': aggressive_price,
         'nonce': nonce,
         'value': value,
         'chainId': w3.eth.chain_id,
