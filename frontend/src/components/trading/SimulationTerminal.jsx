@@ -34,6 +34,8 @@ import AccountModal from "../modals/AccountModal";
 import SwapConfirmModal from "../modals/SwapConfirmModal";
 import ClaimFeesModal from "../modals/ClaimFeesModal";
 import WithdrawModal from "../modals/WithdrawModal";
+import DepositModal from "../modals/DepositModal";
+import BrokerWithdrawModal from "../modals/BrokerWithdrawModal";
 import { ToastContainer } from "../common/Toast";
 import { useToast } from "../../hooks/useToast";
 import RLDPerformanceChart from "../charts/RLDChart";
@@ -253,6 +255,8 @@ export default function SimulationTerminal() {
   // LP fee claim / withdraw modals (use same components as Pool page)
   const [claimFeesLp, setClaimFeesLp] = useState(null);
   const [withdrawLp, setWithdrawLp] = useState(null);
+  const [depositToken, setDepositToken] = useState(null);   // "waUSDC" | "wRLP" | null
+  const [withdrawToken, setWithdrawToken] = useState(null); // "waUSDC" | "wRLP" | null
   const [actionsHeight, setActionsHeight] = useState(null);
   const actionsRef = useRef(null);
 
@@ -1292,14 +1296,20 @@ export default function SimulationTerminal() {
                                 {positionDropdown === `tk-${t.name}` && (
                                   <div className="border border-white/10 bg-[#0a0a0a] mb-1">
                                     <button
-                                      onClick={() => setPositionDropdown(null)}
-                                      className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white/5 transition-colors"
+                                      onClick={() => {
+                                        setPositionDropdown(null);
+                                        setDepositToken(t.name);
+                                      }}
+                                      className="w-full text-left px-4 py-2 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors"
                                     >
                                       Deposit
                                     </button>
                                     <button
-                                      onClick={() => setPositionDropdown(null)}
-                                      className="w-full text-left px-4 py-2 text-sm font-mono text-white hover:bg-white/5 transition-colors border-t border-white/5"
+                                      onClick={() => {
+                                        setPositionDropdown(null);
+                                        setWithdrawToken(t.name);
+                                      }}
+                                      className="w-full text-left px-4 py-2 text-sm font-mono text-orange-400 hover:bg-orange-500/5 transition-colors border-t border-white/5"
                                     >
                                       Withdraw
                                     </button>
@@ -1974,6 +1984,43 @@ export default function SimulationTerminal() {
         executing={lpExecuting}
         executionStep={lpStep}
         executionError={lpError}
+      />
+
+      {/* Deposit Modal */}
+      <DepositModal
+        isOpen={!!depositToken}
+        onClose={() => setDepositToken(null)}
+        brokerAddress={brokerAddress}
+        tokenAddress={
+          depositToken === "waUSDC"
+            ? marketInfo?.collateral?.address
+            : enrichedMarketInfo?.position_token?.address
+        }
+        tokenSymbol={depositToken || "waUSDC"}
+        tokenDecimals={6}
+        txPauseRef={txPauseRef}
+        onSuccess={() => {
+          refresh();
+          addToast({ type: "success", title: `${depositToken} Deposited`, message: "Tokens transferred to broker" });
+        }}
+      />
+
+      {/* Broker Withdraw Modal */}
+      <BrokerWithdrawModal
+        isOpen={!!withdrawToken}
+        onClose={() => setWithdrawToken(null)}
+        brokerAddress={brokerAddress}
+        tokenSymbol={withdrawToken || "waUSDC"}
+        brokerTokenBalance={
+          withdrawToken === "waUSDC"
+            ? parseFloat(brokerBalance || 0)
+            : brokerWrlpBalance ?? 0
+        }
+        txPauseRef={txPauseRef}
+        onSuccess={() => {
+          refresh();
+          addToast({ type: "success", title: `${withdrawToken} Withdrawn`, message: "Tokens sent to your wallet" });
+        }}
       />
     </>
   );

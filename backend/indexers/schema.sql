@@ -241,6 +241,7 @@ CREATE TABLE IF NOT EXISTS bonds (
   mint_tx         TEXT NOT NULL,
   status          TEXT NOT NULL DEFAULT 'active',
   factory_address TEXT,
+  entry_rate      DOUBLE PRECISION,
   close_block     BIGINT,
   close_tx        TEXT
 );
