@@ -584,6 +584,15 @@ if __name__ == "__main__":
 
     preflight(w3, deploy, keys)
     sim_funder = setup_simfunder(w3, deploy, keys)
+
+    # Persist sim_funder to deployment files so faucet_server can find it
+    for path in [DEPLOY_JSON, SNAPSHOT_JSON]:
+        if path.exists():
+            data = json.loads(path.read_text())
+            data["sim_funder"] = sim_funder
+            path.write_text(json.dumps(data, indent=2))
+    ok(f"sim_funder persisted to deployment files")
+
     fund_users(w3, deploy, sim_funder)
     lp_broker = setup_lp(w3, deploy, keys)
     mm_broker = setup_mm(w3, deploy, keys)

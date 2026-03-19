@@ -203,9 +203,10 @@ def teardown(fresh: bool):
     docker_compose(COMPOSE_ANVIL, "down", "-v", check=False)
     ok("Docker stacks stopped")
 
-    step("1b", "Killing Reth/Anvil processes...")
+    step("1b", "Killing Reth/Anvil/faucet processes...")
     run_quiet(["pkill", "-f", "reth.*--dev"])
     run_quiet(["pkill", "-f", "anvil"])
+    run_quiet(["pkill", "-f", "faucet_server.py"])
     time.sleep(2)
     ok("Processes killed")
 
@@ -429,6 +430,106 @@ def start_reth(skip_genesis: bool):
             fail(f"Contract at {verify_addr} has no code — genesis incomplete")
 
 # ═══════════════════════════════════════════════════════════════
+# FAUCET SERVER
+# ═══════════════════════════════════════════════════════════════
+WHALE_KEY = "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6"
+USDC_ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+AUSDC_ADDR = "0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c"
+AAVE_POOL_ADDR = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+FAUCET_FUND = 1_000_000_000 * 10**6   # $1B USDC for faucet SimFunder
+
+def start_faucet(deploy: dict):
+    """Deploy SimFunder (if needed), fund with $1B, and start faucet_server.py."""
+    step("4h", "Starting faucet server...")
+
+    wausdc = deploy.get("wausdc", "")
+    sim_funder_addr = deploy.get("sim_funder", "")
+
+    # Deploy SimFunder if missing or no code
+    if sim_funder_addr:
+        code = cast("code", sim_funder_addr)
+        if len(code) <= 4:
+            warn(f"SimFunder at {sim_funder_addr} has no code — redeploying")
+            sim_funder_addr = ""
+
+    if not sim_funder_addr:
+        info("Deploying SimFunder...")
+        env = load_env()
+        deployer_key = env.get("DEPLOYER_KEY", "")
+        if not deployer_key:
+            warn("No DEPLOYER_KEY — cannot deploy SimFunder, skipping faucet")
+            return
+        result = subprocess.run(
+            ["forge", "create", "src/periphery/SimFunder.sol:SimFunder",
+             "--private-key", deployer_key,
+             "--rpc-url", RETH_RPC,
+             "--broadcast", "--legacy",
+             "--constructor-args", USDC_ADDR, AUSDC_ADDR, wausdc, AAVE_POOL_ADDR],
+            cwd=str(RLD_ROOT / "contracts"),
+            capture_output=True, text=True
+        )
+        for line in result.stdout.split('\n'):
+            if 'Deployed to:' in line:
+                sim_funder_addr = line.split('Deployed to:')[1].strip()
+                break
+        if not sim_funder_addr:
+            warn(f"SimFunder deploy failed: {result.stderr[-200:]}")
+            return
+        ok(f"SimFunder deployed: {sim_funder_addr}")
+
+        # Persist to deployment files
+        for path in [DEPLOY_JSON, DEPLOY_SNAPSHOT]:
+            if path.exists():
+                data = json.loads(path.read_text())
+                data["sim_funder"] = sim_funder_addr
+                path.write_text(json.dumps(data, indent=2))
+
+    # Fund SimFunder with $1B USDC from whale (idempotent — tops up if needed)
+    try:
+        bal_raw = cast("call", USDC_ADDR, "balanceOf(address)(uint256)", sim_funder_addr)
+        current_bal = int(bal_raw.split()[0])
+        if current_bal < FAUCET_FUND:
+            top_up = FAUCET_FUND - current_bal
+            info(f"Funding SimFunder with ${top_up / 10**6:,.0f} USDC (current: ${current_bal / 10**6:,.0f})...")
+            result = subprocess.run(
+                ["cast", "send", "--legacy", "--json",
+                 USDC_ADDR, "transfer(address,uint256)", sim_funder_addr, str(top_up),
+                 "--private-key", WHALE_KEY, "--rpc-url", RETH_RPC],
+                capture_output=True, text=True, check=True
+            )
+            receipt = json.loads(result.stdout)
+            if receipt.get("status") != "0x1":
+                warn("SimFunder USDC funding tx failed")
+            else:
+                ok(f"SimFunder funded: ${FAUCET_FUND / 10**6:,.0f} USDC")
+        else:
+            ok(f"SimFunder already funded: ${current_bal / 10**6:,.0f} USDC")
+    except Exception as e:
+        warn(f"Could not fund SimFunder: {e}")
+
+    # Kill existing faucet processes
+    run_quiet(["pkill", "-f", "faucet_server.py"])
+    time.sleep(1)
+
+    # Start faucet server
+    faucet_env = {**os.environ, "WHALE_KEY": WHALE_KEY}
+    subprocess.Popen(
+        ["python3", str(SCRIPT_DIR / "faucet_server.py")],
+        stdout=open("/tmp/faucet_server.log", "w"),
+        stderr=subprocess.STDOUT,
+        env=faucet_env,
+    )
+
+    # Verify health
+    for i in range(1, 16):
+        if http_get("http://localhost:8088/health") == 200:
+            ok("Faucet server healthy on :8088")
+            return
+        time.sleep(1)
+    warn("Faucet server did not respond to /health within 15s — check /tmp/faucet_server.log")
+
+
+# ═══════════════════════════════════════════════════════════════
 # STEP 4: LAUNCH SERVICES
 # ═══════════════════════════════════════════════════════════════
 def launch_services(no_build: bool, with_users: bool):
@@ -502,6 +603,9 @@ def launch_services(no_build: bool, with_users: bool):
     bot_args += ["mm-daemon", "chaos-trader"]
     docker_compose(COMPOSE_RETH, *bot_args)
     ok("Trading bots started")
+
+    # 4h. Start faucet server
+    start_faucet(deploy)
 
 # ═══════════════════════════════════════════════════════════════
 # POOL STATE SEEDING

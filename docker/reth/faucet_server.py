@@ -117,6 +117,12 @@ def init():
         logger.error("SIM_FUNDER not set and not in deployment-snapshot.json")
         sys.exit(1)
 
+    # Poka-Yoke: verify SimFunder has deployed code (catches stale Anvil addresses)
+    code = w3.eth.get_code(Web3.to_checksum_address(sim_funder_addr))
+    if code == b'' or code == b'\x00':
+        logger.error(f"SimFunder at {sim_funder_addr} has NO deployed code — stale address?")
+        sys.exit(1)
+
     wausdc_addr = deployment.get("wausdc")
     usdc_addr = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
@@ -179,13 +185,18 @@ def fund_address(address: str) -> dict:
         tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
 
-        if receipt['status'] == 1:
-            results['wausdc'] = f'{WAUSDC_FUND / 10**6:,.0f} waUSDC funded'
-            results['txHash'] = receipt['transactionHash'].hex()
-            logger.info(f"  ✅ Funded {WAUSDC_FUND / 10**6:,.0f} waUSDC to {address}")
-        else:
+        if receipt['status'] != 1:
             results['wausdc_error'] = 'SimFunder.fund() reverted'
             logger.error("  ❌ SimFunder.fund() reverted")
+        elif len(receipt.get('logs', [])) == 0:
+            # Poka-Yoke: 0 Transfer logs means the call was a no-op
+            # (e.g. calling a codeless address — EVM treats as plain ETH transfer)
+            results['wausdc_error'] = 'SimFunder.fund() produced 0 events — contract may have no code'
+            logger.error(f"  ❌ SimFunder.fund() tx succeeded but produced 0 logs — no tokens moved")
+        else:
+            results['wausdc'] = f'{WAUSDC_FUND / 10**6:,.0f} waUSDC funded'
+            results['txHash'] = receipt['transactionHash'].hex()
+            logger.info(f"  ✅ Funded {WAUSDC_FUND / 10**6:,.0f} waUSDC to {address} ({len(receipt['logs'])} events)")
     except Exception as e:
         results['wausdc_error'] = str(e)
         logger.error(f"  ❌ SimFunder.fund() failed: {e}")
