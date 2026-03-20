@@ -79,8 +79,6 @@ export default function BrokerWithdrawModal({
     }
   };
 
-  const accentColor =
-    tokenSymbol === "waUSDC" ? "text-orange-400" : "text-orange-400";
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">

@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Reset & Base ──────────────────────────────── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background: #050505;
+  color: #e5e5e5;
+  font-family: "JetBrains Mono", "IBM Plex Mono", "Courier New", monospace;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.12);
+}

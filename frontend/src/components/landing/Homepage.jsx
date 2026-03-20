@@ -125,71 +125,20 @@ function HeroSection() {
 }
 
 /* ════════════════════════════════════════════════════
-   USE CASES — Synthetic Bonds
+   USE CASES — Synthetic Bonds  (v2 design)
 ════════════════════════════════════════════════════ */
-
-function Metric({ label, value }) {
-  return (
-    <div className="flex items-baseline justify-between border-b border-[#141414] py-3">
-      <span className="font-jbm text-[10px] tracking-[0.18em] uppercase text-[#555]">{label}</span>
-      <span className="font-jbm text-[12px] text-[#999]">{value}</span>
-    </div>
-  )
-}
-
-function UseCase({ title, subtitle, description, metrics, cta, ctaTo, delay = 0 }) {
-  const [ref, inView] = useInView()
-  return (
-    <div
-      ref={ref}
-      className="relative border border-[#141414] bg-[#111] flex flex-col transition-all duration-700"
-      style={{
-        transitionDelay: `${delay}ms`,
-        opacity: inView ? 1 : 0,
-        transform: inView ? 'translateY(0)' : 'translateY(20px)',
-      }}
-    >
-      {/* Corner marks */}
-      <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#222]" />
-      <span className="absolute top-0 right-0 w-2 h-2 border-t border-r border-[#222]" />
-      <span className="absolute bottom-0 left-0 w-2 h-2 border-b border-l border-[#222]" />
-      <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#222]" />
-
-      <div className="px-8 pt-8 pb-6 flex-1">
-        <h3
-          className="font-['Space_Grotesk'] font-light text-white leading-[1.15] tracking-[-0.02em] mb-2"
-          style={{ fontSize: 'clamp(22px, 2.8vw, 34px)' }}
-        >
-          {title}
-        </h3>
-        <p className="font-jbm text-[11px] tracking-[0.08em] text-[#666] mb-8">{subtitle}</p>
-        <p className="text-[12px] leading-[1.9] text-[#666] mb-10 max-w-[480px]">{description}</p>
-        <div className="mb-10">
-          {metrics.map((m) => <Metric key={m.label} {...m} />)}
-        </div>
-      </div>
-
-      <div className="px-8 pb-8">
-        <Link
-          to={ctaTo}
-          className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
-                     font-jbm text-[10px] tracking-[0.22em] uppercase text-white
-                     hover:bg-white hover:text-black transition-all duration-200"
-        >
-          {cta}
-        </Link>
-      </div>
-    </div>
-  )
-}
 
 function UseCasesSection() {
   const [labelRef, labelInView] = useInView(0.05)
+  const [bodyRef, bodyInView] = useInView(0.05)
+  const [cardsRef, cardsInView] = useInView(0.05)
+
   return (
     <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
       <Grain />
       <div className="relative z-10 max-w-[1100px] mx-auto w-full">
 
+        {/* Section label */}
         <div
           ref={labelRef}
           className="flex items-center gap-3 mb-14 transition-all duration-500"
@@ -200,43 +149,104 @@ function UseCasesSection() {
           <span className="flex-1 h-px bg-[#141414]" />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <UseCase
-            title="Fixed Yield"
-            subtitle="Lock in your rate for any maturity"
-            description={
-              'Deposit into an RLD pool and take the fixed-rate side of an interest rate swap. ' +
-              'Your yield is locked at entry — regardless of how floating rates move. '
-            }
-            metrics={[
-              { label: 'Underlying Yield', value: 'Lending protocols & T-bills' },
-              { label: 'Maturity', value: 'Any — from 1 hour to 1 year' },
-              { label: 'Deposit token', value: 'USDC / USDT / SOFR rates' },
-              { label: 'Settlement', value: 'Instant, on-chain' },
-              { label: 'Exit', value: 'Permissionless, no lockup' },
-            ]}
-            cta="Explore Fixed Yields ↗"
-            ctaTo="/bonds"
-            delay={0}
-          />
-          <UseCase
-            title="Fixed-Rate Leverage"
-            subtitle="Trade the spread. Hedge the rate."
-            description={
-              "Running a delta-neutral basis trade? RLD lets you fix your borrow cost, " +
-              "so you can receive bull market funding while paying a predictable rate."
-            }
-            metrics={[
-              { label: 'Mechanism', value: 'Long interest rates perps' },
-              { label: 'Maturity', value: 'Any — from 1 hour to 1 year' },
-              { label: 'Collateral', value: 'USDC, USDT, stETH' },
-              { label: 'Risk Removed', value: 'Rate spike → P&L compression' },
-              { label: 'Capital', value: 'Collateral-funded, no upfront cost' },
-            ]}
-            cta="Explore Basis Trading ↗"
-            ctaTo="/strategies/basis-trade"
-            delay={80}
-          />
+        {/* Two-column: copy + metrics */}
+        <div
+          ref={bodyRef}
+          className="grid grid-cols-1 lg:grid-cols-2 gap-16 mb-16 transition-all duration-[600ms]"
+          style={{ opacity: bodyInView ? 1 : 0, transform: bodyInView ? 'translateY(0)' : 'translateY(16px)' }}
+        >
+          {/* Left — headline + body */}
+          <div>
+            <h2
+              className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-6"
+              style={{ fontSize: 'clamp(28px, 3.5vw, 46px)' }}
+            >
+              Fix Your Yield.<br />
+              <span className="text-[#555]">Any Maturity. One Pool.</span>
+            </h2>
+            <p className="text-[12px] leading-[1.9] text-[#666] max-w-[460px] mb-6">
+              Deposit into an RLD pool and take the fixed-rate side of an interest rate swap.
+              Your yield is locked at entry — regardless of how floating rates move.
+              No liquidity fragmentation, no roll risk, permissionless exit.
+            </p>
+            <Link
+              to="/bonds"
+              className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
+                         font-jbm text-[10px] tracking-[0.22em] uppercase text-white
+                         hover:bg-white hover:text-black transition-all duration-200"
+            >
+              Explore Bonds ↗
+            </Link>
+          </div>
+
+          {/* Right — metrics */}
+          <div className="flex flex-col justify-center">
+            <div className="border border-[#141414] divide-y divide-[#141414]">
+              {[
+                ['Underlying Yield', 'Lending protocols & T-bills'],
+                ['Maturity', 'Any — from 1 hour to 1 year'],
+                ['Deposit Token', 'Stablecoins / Tokenized Treasuries'],
+                ['Settlement', 'Instant, on-chain'],
+                ['Exit', 'Permissionless, no lockup'],
+                ['Roll Risk', 'None — single pool design'],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-baseline justify-between px-6 py-4">
+                  <span className="font-jbm text-[10px] tracking-[0.18em] uppercase text-[#444]">{label}</span>
+                  <span className="font-jbm text-[12px] text-[#888]">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Use-case cards */}
+        <div ref={cardsRef} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Fixed Yield */}
+          <div
+            className="relative border border-[#141414] bg-[#111] p-8 transition-all duration-700"
+            style={{ opacity: cardsInView ? 1 : 0, transform: cardsInView ? 'translateY(0)' : 'translateY(20px)' }}
+          >
+            <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#222]" />
+            <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#222]" />
+            <div className="flex items-center gap-3 mb-5">
+              <span className="font-jbm text-[9px] tracking-[0.28em] text-[#333]">01</span>
+              <span className="font-jbm text-[9px] tracking-[0.22em] uppercase text-[#666] border border-[#1e1e1e] px-2 py-[2px]">Yield</span>
+            </div>
+            <h3
+              className="font-['Space_Grotesk'] font-light text-white leading-[1.15] tracking-[-0.01em] mb-3"
+              style={{ fontSize: 'clamp(18px, 2vw, 24px)' }}
+            >
+              Fixed Yield
+            </h3>
+            <p className="text-[11px] leading-[1.85] text-[#666]">
+              Lock in a predictable return on stablecoins. Deposit USDC, receive a fixed rate
+              for your chosen maturity. No lockups, no rebalancing, no governance risk.
+            </p>
+          </div>
+
+          {/* Fixed-Rate Leverage */}
+          <div
+            className="relative border border-[#141414] bg-[#111] p-8 transition-all duration-700"
+            style={{ transitionDelay: '80ms', opacity: cardsInView ? 1 : 0, transform: cardsInView ? 'translateY(0)' : 'translateY(20px)' }}
+          >
+            <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#222]" />
+            <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#222]" />
+            <div className="flex items-center gap-3 mb-5">
+              <span className="font-jbm text-[9px] tracking-[0.28em] text-[#333]">02</span>
+              <span className="font-jbm text-[9px] tracking-[0.22em] uppercase text-[#666] border border-[#1e1e1e] px-2 py-[2px]">Leverage</span>
+            </div>
+            <h3
+              className="font-['Space_Grotesk'] font-light text-white leading-[1.15] tracking-[-0.01em] mb-3"
+              style={{ fontSize: 'clamp(18px, 2vw, 24px)' }}
+            >
+              Fixed-Rate Leverage
+            </h3>
+            <p className="text-[11px] leading-[1.85] text-[#666]">
+              Running a delta-neutral basis trade? Fix your borrow cost so you can
+              receive bull-market funding while paying a predictable rate.
+              Eliminates rate-spike risk that compresses P&L.
+            </p>
+          </div>
         </div>
       </div>
     </section>
@@ -390,7 +400,7 @@ function RateChart({ inView }) {
           <line key={y} x1="0" y1={y} x2="320" y2={y} stroke="#161616" strokeWidth="1" />
         ))}
         <line x1="0" y1="115" x2="320" y2="115" stroke="#222" strokeWidth="1" strokeDasharray="4 4" />
-        <text x="6" y="111" fill="#444444" fontSize="7" fontFamily="monospace">FED FLOOR</text>
+        <text x="3" y="125" fill="#444444" fontSize="7" fontFamily="monospace">FED FLOOR</text>
         <polyline
           points="0,110 40,108 70,105 90,95 100,60 110,30 120,15 135,22 150,45 170,80 190,90 220,100 250,108 280,110 320,110"
           fill="none" stroke="#333" strokeWidth="1.5" strokeLinejoin="round"
@@ -420,16 +430,18 @@ function RateChart({ inView }) {
 function Feature({ index, label, title, body, inView, delay }) {
   return (
     <div
-      className="border-t border-[#141414] pt-6 transition-all duration-[600ms]"
+      className="relative border border-[#141414] bg-[#111] p-8 transition-all duration-[600ms]"
       style={{
         transitionDelay: `${delay}ms`,
         opacity: inView ? 1 : 0,
         transform: inView ? 'translateY(0)' : 'translateY(14px)',
       }}
     >
-      <div className="flex items-center gap-3 mb-4">
-        <span className="font-jbm text-[9px] tracking-[0.28em] text-[#999]">0{index}</span>
-        <span className="font-jbm text-[9px] tracking-[0.22em] uppercase text-[#999] border border-[#1a1a1a] px-2 py-[2px]">
+      <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#222]" />
+      <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#222]" />
+      <div className="flex items-center gap-3 mb-5">
+        <span className="font-jbm text-[9px] tracking-[0.28em] text-[#333]">0{index}</span>
+        <span className="font-jbm text-[9px] tracking-[0.22em] uppercase text-[#666] border border-[#1e1e1e] px-2 py-[2px]">
           {label}
         </span>
       </div>
@@ -439,7 +451,7 @@ function Feature({ index, label, title, body, inView, delay }) {
       >
         {title}
       </h3>
-      <p className="text-[11px] leading-[1.9] text-[#666]">{body}</p>
+      <p className="text-[11px] leading-[1.85] text-[#666]">{body}</p>
     </div>
   )
 }
@@ -496,7 +508,7 @@ function RatePerpsSection() {
           <RateChart inView={topInView} />
         </div>
 
-        <div ref={featRef} className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div ref={featRef} className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Feature index={1} inView={featInView} delay={0}
             label="Asymmetry"
             title="Floored by policy, spiked by demand"
@@ -512,6 +524,139 @@ function RatePerpsSection() {
             title="Rates co-move with market sentiment"
             body="High correlation between interest rates and market sentiment. Traders can go long rates ahead of bull markets or short when they believe the market is overheated and rates will revert."
           />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ════════════════════════════════════════════════════
+   HOW IT WORKS
+════════════════════════════════════════════════════ */
+
+function HowItWorksSection() {
+  const [labelRef, labelInView] = useInView(0.05)
+  const [headRef, headInView] = useInView(0.05)
+  const [stepsRef, stepsInView] = useInView(0.05)
+
+  const steps = [
+    { step: '01', title: 'Open a Broker', body: 'Create a PrimeBroker account — your unified margin hub. One account manages all positions, collateral, and orders.' },
+    { step: '02', title: 'Deposit Collateral', body: 'Fund with USDC, USDT, or any whitelisted ERC20. Your collateral is cross-margined across all products automatically.' },
+    { step: '03', title: 'Choose a Product', body: 'Mint a bond for fixed yield, open a perp for rate exposure, buy CDS for solvency insurance, or LP for trading fees.' },
+    { step: '04', title: 'Manage & Exit', body: 'Monitor positions in real-time. Close any position permissionlessly at any time. Withdraw collateral instantly.' },
+  ]
+
+  return (
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+      <Grain />
+      <div className="relative z-10 max-w-[1100px] mx-auto w-full">
+
+        <div
+          ref={labelRef}
+          className="flex items-center gap-3 mb-14 transition-all duration-500"
+          style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
+        >
+          <span className="font-jbm text-[#333] text-[11px]">|—</span>
+          <span className="font-jbm text-[12px] tracking-[0.28em] uppercase text-[#333]">How It Works</span>
+          <span className="flex-1 h-px bg-[#141414]" />
+        </div>
+
+        <h2
+          ref={headRef}
+          className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-16 max-w-[600px] transition-all duration-[600ms]"
+          style={{ fontSize: 'clamp(28px, 3.5vw, 46px)', opacity: headInView ? 1 : 0, transform: headInView ? 'translateY(0)' : 'translateY(14px)' }}
+        >
+          Four Steps.<br />
+          <span className="text-[#555]">Fully On-Chain.</span>
+        </h2>
+
+        <div ref={stepsRef} className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          {steps.map((s, i) => (
+            <div
+              key={s.step}
+              className="relative border border-[#141414] bg-[#111] p-8 flex flex-col transition-all duration-700"
+              style={{ transitionDelay: `${i * 80}ms`, opacity: stepsInView ? 1 : 0, transform: stepsInView ? 'translateY(0)' : 'translateY(16px)' }}
+            >
+              <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#222]" />
+              <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#222]" />
+              {i < 3 && (
+                <div className="hidden md:block absolute top-1/2 -right-px w-6 h-px bg-[#333] z-10" />
+              )}
+              <div className="flex items-center gap-3 mb-6">
+                <span className="flex items-center justify-center w-8 h-8 border border-[#333] font-jbm text-[10px] tracking-[0.1em] text-[#666]">
+                  {s.step}
+                </span>
+              </div>
+              <h3 className="font-['Space_Grotesk'] font-light text-white text-[18px] leading-tight tracking-[-0.01em] mb-3">
+                {s.title}
+              </h3>
+              <p className="text-[11px] leading-[1.85] text-[#666] flex-1">{s.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ════════════════════════════════════════════════════
+   BENEFITS — WHY RLD
+════════════════════════════════════════════════════ */
+
+function BenefitsSection() {
+  const [labelRef, labelInView] = useInView(0.05)
+  const [headRef, headInView] = useInView(0.05)
+  const [gridRef, gridInView] = useInView(0.05)
+
+  const benefits = [
+    { num: '01', title: 'Single Pool Design', body: 'All maturities share one liquidity pool. No fragmentation, no thin order books, no roll risk. Deeper liquidity for every participant.' },
+    { num: '02', title: 'On-Chain Settlement', body: 'Every bond, swap, and CDS settles trustlessly against live oracle rates. No counterparty risk beyond the smart contract itself.' },
+    { num: '03', title: 'Cross-Margin Efficiency', body: 'One PrimeBroker account for all positions. ERC20 collateral, LP positions, limit orders, and TWAP — unified margin across everything.' },
+    { num: '04', title: 'No Governance Risk', body: 'No multi-sig, no admin keys, no upgrade proxy. Protocol parameters are immutable at deployment.' },
+    { num: '05', title: 'Permissionless Exit', body: 'Close any bonds, perps or CDS position at any time. No lock-ups, no withdrawal queues, no cooldown periods. Your capital is always accessible.' },
+    { num: '06', title: 'Oracle-Native Pricing', body: 'Index prices from Symbiotic network and on-chain rate feeds. Price execution strictly via TWAP from Uniswap V4.' },
+  ]
+
+  return (
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+      <Grain />
+      <div className="relative z-10 max-w-[1100px] mx-auto w-full">
+
+        <div
+          ref={labelRef}
+          className="flex items-center gap-3 mb-14 transition-all duration-500"
+          style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
+        >
+          <span className="font-jbm text-[#333] text-[11px]">|—</span>
+          <span className="font-jbm text-[12px] tracking-[0.28em] uppercase text-[#333]">Why RLD</span>
+          <span className="flex-1 h-px bg-[#141414]" />
+        </div>
+
+        <h2
+          ref={headRef}
+          className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-16 max-w-[600px] transition-all duration-[600ms]"
+          style={{ fontSize: 'clamp(28px, 3.5vw, 46px)', opacity: headInView ? 1 : 0, transform: headInView ? 'translateY(0)' : 'translateY(14px)' }}
+        >
+          Built Different.<br />
+          <span className="text-[#555]">By Design.</span>
+        </h2>
+
+        <div ref={gridRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {benefits.map((b, i) => (
+            <div
+              key={b.num}
+              className="relative border border-[#141414] bg-[#111] p-8 flex flex-col gap-4 transition-all duration-700"
+              style={{ transitionDelay: `${i * 60}ms`, opacity: gridInView ? 1 : 0, transform: gridInView ? 'translateY(0)' : 'translateY(16px)' }}
+            >
+              <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#222]" />
+              <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#222]" />
+              <span className="font-jbm text-[9px] tracking-[0.3em] text-[#333]">{b.num}</span>
+              <h3 className="font-['Space_Grotesk'] font-light text-white text-[18px] leading-tight tracking-[-0.01em]">
+                {b.title}
+              </h3>
+              <p className="text-[11px] leading-[1.85] text-[#666]">{b.body}</p>
+            </div>
+          ))}
         </div>
       </div>
     </section>
@@ -636,6 +781,8 @@ export default function Homepage() {
       <UseCasesSection />
       <SolvencyInsuranceSection />
       <RatePerpsSection />
+      <HowItWorksSection />
+      <BenefitsSection />
       <CoreArchitectureSection />
     </div>
   )

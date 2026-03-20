@@ -213,7 +213,7 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
         setLoading(false);
       }
     },
-    [fetchBalance, waUsdcAddress, USDC],
+    [waUsdcAddress, USDC],
   );
 
   return {

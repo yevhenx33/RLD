@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { useSimulation } from "../../hooks/useSimulation";
 import {
   Loader2,
   Terminal,
@@ -39,8 +40,8 @@ import BrokerWithdrawModal from "../modals/BrokerWithdrawModal";
 import { ToastContainer } from "../common/Toast";
 import { useToast } from "../../hooks/useToast";
 import RLDPerformanceChart from "../charts/RLDChart";
-import ChartControlBar from "../charts/ChartControlBar";
-import ControlCell from "../common/ControlCell";
+import ComboChart from "../charts/ComboChart";
+
 import PnlCalculatorModal from "../modals/PnlCalculatorModal";
 
 import BrokerPositions from "./BrokerPositions";
@@ -160,7 +161,7 @@ export default function SimulationTerminal() {
     protocolStats,
     marketInfo,
     brokers: _brokers,
-    chartData,
+    chartData: _sharedChartData,
     events: _events,
     blockChanged: _blockChanged,
     blockNumber: _blockNumber,
@@ -376,6 +377,7 @@ export default function SimulationTerminal() {
   const [positionDropdown, setPositionDropdown] = useState(null);
   const [accountDropdown, setAccountDropdown] = useState(false);
   const [showSwapConfirm, setShowSwapConfirm] = useState(false);
+  const [chartDropdown, setChartDropdown] = useState(null);
 
   // Toast notifications
   const { toasts, addToast, removeToast } = useToast();
@@ -401,10 +403,44 @@ export default function SimulationTerminal() {
     defaultDays: 9999,
     defaultResolution: "5M",
   });
-  const { resolution } = controls;
+  const { resolution, appliedStart, appliedEnd } = controls;
+
+  // Sim block timestamp for chart time anchoring (same as pools page)
+  const [simBlockTs, setSimBlockTs] = useState(null);
+  useEffect(() => {
+    if (simBlockTs) return;
+    const ts = market?.blockTimestamp;
+    if (ts) setSimBlockTs(ts);
+  }, [market?.blockTimestamp, simBlockTs]);
+
+  const chartStartTime = useMemo(() => {
+    if (!simBlockTs || !appliedStart) return null;
+    const wallNow = Math.floor(Date.now() / 1000);
+    const wallStart = Math.floor(new Date(appliedStart).getTime() / 1000);
+    return simBlockTs - (wallNow - wallStart);
+  }, [appliedStart, simBlockTs]);
+
+  const chartEndTime = useMemo(() => {
+    if (!simBlockTs || !appliedEnd) return null;
+    const wallNow = Math.floor(Date.now() / 1000);
+    const wallEnd = Math.floor(new Date(appliedEnd + "T23:59:59Z").getTime() / 1000);
+    return simBlockTs - (wallNow - wallEnd);
+  }, [appliedEnd, simBlockTs]);
+
+  // Separate useSimulation for chart data (resolution/timeframe-specific)
+  const simChart = useSimulation({
+    pollInterval: 2000,
+    chartResolution: resolution,
+    chartStartTime,
+    chartEndTime,
+  });
+  const { chartData } = simChart;
 
   // PnL Modal State
   const [pnlModalOpen, setPnlModalOpen] = useState(false);
+
+  // Chart view tabs (Price / Liquidity / Volume)
+  const [chartView, setChartView] = useState("PRICE");
 
   // Chart series visibility
   const [hiddenSeries, setHiddenSeries] = useState([]);
@@ -414,40 +450,94 @@ export default function SimulationTerminal() {
     );
   };
 
-  // Chart stats
-  const chartStats = useMemo(() => {
-    if (!chartData.length) return null;
-    const indexes = chartData
-      .filter((d) => d.indexPrice != null)
-      .map((d) => d.indexPrice);
-    const marks = chartData
-      .filter((d) => d.markPrice != null)
-      .map((d) => d.markPrice);
-
-    if (indexes.length === 0) return null;
-    const mean = indexes.reduce((a, b) => a + b, 0) / indexes.length;
-    const min = Math.min(...indexes);
-    const max = Math.max(...indexes);
-    const variance =
-      indexes.reduce((s, v) => s + (v - mean) ** 2, 0) / indexes.length;
-    return {
-      mean,
-      min,
-      max,
-      vol: Math.sqrt(variance),
-      markMean:
-        marks.length > 0 ? marks.reduce((a, b) => a + b, 0) / marks.length : 0,
-    };
-  }, [chartData]);
-
-  const areas = useMemo(
-    () =>
-      [
-        { key: "indexPrice", name: "Index Price", color: "#22d3ee" },
-        { key: "markPrice", name: "Mark Price", color: "#ec4899" },
-      ].filter((a) => !hiddenSeries.includes(a.key)),
-    [hiddenSeries],
+  // Chart views config (matches pools page)
+  const CHART_VIEWS = useMemo(
+    () => ({
+      PRICE: {
+        label: "Price",
+        areas: [
+          { key: "indexPrice", name: "Index Price", color: "#22d3ee" },
+          { key: "markPrice", name: "Mark Price", color: "#ec4899" },
+        ],
+      },
+      LIQUIDITY: {
+        label: "Liquidity",
+        areas: [
+          { key: "liquidity", name: "Active Liq", color: "#a855f7" },
+        ],
+      },
+      VOLUME: {
+        label: "Volume",
+        areas: [
+          { key: "volume", name: "Volume", color: "#22c55e", format: "dollar" },
+        ],
+      },
+    }),
+    [],
   );
+
+  const activeChartConfig = CHART_VIEWS[chartView];
+  const areas = useMemo(
+    () => activeChartConfig.areas.filter((a) => !hiddenSeries.includes(a.key)),
+    [activeChartConfig, hiddenSeries],
+  );
+
+  // ── Liquidity distribution bins (same GQL as pools page) ────
+  const [liquidityBins, setLiquidityBins] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchDistribution() {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const res = await fetch(`/graphql`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: `query { liquidityDistribution }` }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+          const rawBins = json?.data?.liquidityDistribution;
+          if (!cancelled && rawBins?.length) {
+            const curPrice = pool?.markPrice || 1;
+            const bins = rawBins
+              .filter((b) => b.priceHigh >= 1 && b.priceLow <= 10)
+              .map((b) => {
+                const priceFrom = b.priceLow;
+                const priceTo = b.priceHigh;
+                const midPrice = (priceFrom + priceTo) / 2;
+                const liq = b.liquidity || 0;
+                const sa = Math.sqrt(priceFrom), sb = Math.sqrt(priceTo);
+                const sp = Math.max(sa, Math.min(Math.sqrt(curPrice), sb));
+                const a0 = sp < sb ? liq * (1 / sp - 1 / sb) / 1e6 : 0;
+                const a1 = sp > sa ? liq * (sp - sa) / 1e6 : 0;
+                return {
+                  price: midPrice.toFixed(3),
+                  priceFrom, priceTo, liquidity: liq,
+                  amount0: Math.max(0, a0), amount1: Math.max(0, a1),
+                };
+              });
+            setLiquidityBins(bins);
+            return;
+          }
+        } catch (err) {
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          console.warn("[Perps] liquidityDistribution unavailable:", err.message);
+        }
+      }
+    }
+    fetchDistribution();
+    return () => { cancelled = true; };
+  }, [pool?.markPrice]);
+
+  // ── Volume history (derived from chartData, same as pools) ──
+  const volumeHistory = useMemo(
+    () => chartData.map((c) => ({ timestamp: c.timestamp, volume: c.volume, swapCount: c.swapCount })),
+    [chartData],
+  );
+
 
   // ── Trading calculations ────────────────────────────────────
   const currentRate = market?.indexPrice || 0;
@@ -683,83 +773,216 @@ export default function SimulationTerminal() {
                 </div>
               </div>
 
-              {/* 2. CONTROLS */}
-              <ChartControlBar
-                controls={controls}
-                resolutions={["5M", "1H", "4H", "1D"]}
-                extraControls={
-                  <ControlCell
-                    label="PNL_CALCULATOR"
-                    className="pr-0 hidden xl:flex"
-                  >
-                    <div className="flex items-center justify-end h-[30px] w-full min-w-0">
-                      <button
-                        onClick={() => setPnlModalOpen(true)}
-                        className="flex items-center gap-2 px-4 h-full bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors text-sm font-mono tracking-widest uppercase w-full justify-center min-w-0 overflow-hidden"
-                      >
-                        <Calculator size={14} className="flex-shrink-0" />
-                        <span className="truncate">Open</span>
-                      </button>
-                    </div>
-                  </ControlCell>
-                }
-              />
+              {/* 2. CHART (with inline controls — pools style) */}
+              <div className="relative flex-1 min-h-[350px] md:min-h-[400px] border border-white/10">
 
-              {/* 3. CHART */}
-              <div className="relative flex-1 min-h-[350px] md:min-h-[400px]">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-4 px-1 gap-3 md:gap-0">
-                  <div className="flex gap-4 md:gap-8 flex-wrap">
-                    {[
-                      {
-                        key: "indexPrice",
-                        label: "Index_Price",
-                        bg: "bg-cyan-400",
-                      },
-                      {
-                        key: "markPrice",
-                        label: "Mark_Price",
-                        bg: "bg-pink-500",
-                      },
-                    ].map((s) => (
+                {/* ── Desktop controls (lg+): single row ── */}
+                <div className="hidden lg:flex items-stretch border-b border-white/10">
+                  {/* View switcher */}
+                  <div className="flex items-center gap-1 px-4 py-2 border-r border-white/10">
+                    {Object.entries(CHART_VIEWS).map(([key, view]) => (
+                      <button
+                        key={key}
+                        onClick={() => { setChartView(key); setHiddenSeries([]); }}
+                        className={`px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
+                          chartView === key
+                            ? "text-white bg-white/10"
+                            : "text-gray-600 hover:text-gray-400"
+                        }`}
+                      >
+                        {view.label}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Resolution dropdown */}
+                  <div className="relative flex items-center px-4 py-2 border-r border-white/10">
+                    <button
+                      onClick={() => setChartDropdown(chartDropdown === 'resolution' ? null : 'resolution')}
+                      className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-widest text-gray-600 hover:text-gray-400 transition-colors"
+                    >
+                      Resolution: <span className="text-white">{resolution}</span>
+                      <ChevronDown size={10} className={`transition-transform ${chartDropdown === 'resolution' ? 'rotate-180' : ''}`} />
+                    </button>
+                    {chartDropdown === 'resolution' && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setChartDropdown(null)} />
+                        <div className="absolute left-0 top-full mt-0 z-50 bg-[#0a0a0a] border border-white/10">
+                          {["5M", "1H", "4H", "1D"].map((res) => (
+                            <button
+                              key={res}
+                              onClick={() => { controls.setResolution(res); setChartDropdown(null); }}
+                              className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
+                                resolution === res
+                                  ? "text-white bg-white/10"
+                                  : "text-gray-600 hover:text-gray-400"
+                              }`}
+                            >
+                              {res}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Timeframe dropdown */}
+                  <div className="relative flex items-center px-4 py-2 border-r border-white/10">
+                    <button
+                      onClick={() => setChartDropdown(chartDropdown === 'timeframe' ? null : 'timeframe')}
+                      className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-widest text-gray-600 hover:text-gray-400 transition-colors"
+                    >
+                      Timeframe: <span className="text-white">{controls.activeRange}</span>
+                      <ChevronDown size={10} className={`transition-transform ${chartDropdown === 'timeframe' ? 'rotate-180' : ''}`} />
+                    </button>
+                    {chartDropdown === 'timeframe' && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setChartDropdown(null)} />
+                        <div className="absolute left-0 top-full mt-0 z-50 bg-[#0a0a0a] border border-white/10">
+                          {[
+                            { l: "1D", d: 1 },
+                            { l: "1W", d: 7 },
+                            { l: "1M", d: 30 },
+                            { l: "3M", d: 90 },
+                            { l: "ALL", d: 9999 },
+                          ].map((btn) => (
+                            <button
+                              key={btn.l}
+                              onClick={() => { controls.handleQuickRange(btn.d, btn.l); setChartDropdown(null); }}
+                              className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
+                                controls.activeRange === btn.l
+                                  ? "text-white bg-white/10"
+                                  : "text-gray-600 hover:text-gray-400"
+                              }`}
+                            >
+                              {btn.l}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* PnL Calculator */}
+                  <div className="flex items-center px-4 py-2 border-r border-white/10">
+                    <button
+                      onClick={() => setPnlModalOpen(true)}
+                      className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-widest text-gray-600 hover:text-gray-400 transition-colors"
+                    >
+                      <Calculator size={14} />
+                      PnL
+                    </button>
+                  </div>
+
+                  {/* Series legend (with toggle) */}
+                  <div className="flex items-center gap-5 px-4 py-2 ml-auto">
+                    {activeChartConfig.areas.map((s) => (
                       <div
                         key={s.key}
                         className={`flex items-center gap-2 cursor-pointer transition-all ${
                           hiddenSeries.includes(s.key)
-                            ? "opacity-50 line-through"
+                            ? "opacity-40 line-through"
                             : "opacity-100 hover:opacity-80"
                         }`}
                         onClick={() => toggleSeries(s.key)}
                       >
-                        <div className={`w-2 h-2 ${s.bg}`}></div>
-                        <span className="text-sm uppercase tracking-widest">
-                          {s.label}
-                        </span>
+                        <div className="w-2 h-2" style={{ backgroundColor: s.color }} />
+                        <span className="text-sm uppercase tracking-widest text-gray-400">{s.name}</span>
                       </div>
                     ))}
                   </div>
-
-                  {/* Period stats */}
-                  {chartStats && (
-                    <div className="text-sm font-mono text-gray-500 uppercase tracking-widest flex items-center gap-4">
-                      <span>
-                        Range:{" "}
-                        <span className="text-white">
-                          {chartStats.min.toFixed(2)} –{" "}
-                          {chartStats.max.toFixed(2)}
-                        </span>
-                      </span>
-                      <span>
-                        Vol:{" "}
-                        <span className="text-white">
-                          ±{chartStats.vol.toFixed(3)}
-                        </span>
-                      </span>
-                    </div>
-                  )}
                 </div>
 
-                <div className="h-[350px] md:h-[500px] w-full border border-white/10 p-4 bg-[#050505]">
-                  {chartData.length === 0 ? (
+                {/* ── Mobile controls (<lg): multi-row ── */}
+                {/* Row 1: View tabs */}
+                <div className="lg:hidden flex items-center gap-1 px-3 py-2 border-b border-white/10">
+                  {Object.entries(CHART_VIEWS).map(([key, view]) => (
+                    <button
+                      key={key}
+                      onClick={() => { setChartView(key); setHiddenSeries([]); }}
+                      className={`flex-1 px-2 py-1.5 text-xs font-semibold uppercase tracking-widest text-center transition-colors ${
+                        chartView === key
+                          ? "text-white bg-white/10"
+                          : "text-gray-600 hover:text-gray-400"
+                      }`}
+                    >
+                      {view.label}
+                    </button>
+                  ))}
+                </div>
+                {/* Row 2: Resolution + Timeframe */}
+                <div className="lg:hidden flex items-center border-b border-white/10">
+                  <div className="flex-1 flex items-center gap-1 px-3 py-2 border-r border-white/10 overflow-x-auto">
+                    {["5M", "1H", "4H", "1D"].map((res) => (
+                      <button
+                        key={res}
+                        onClick={() => controls.setResolution(res)}
+                        className={`px-2 py-1 text-xs font-semibold uppercase tracking-widest transition-colors ${
+                          resolution === res
+                            ? "text-white bg-white/10"
+                            : "text-gray-600 hover:text-gray-400"
+                        }`}
+                      >
+                        {res}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex-1 flex items-center gap-1 px-3 py-2 overflow-x-auto">
+                    {[
+                      { l: "1D", d: 1 },
+                      { l: "1W", d: 7 },
+                      { l: "1M", d: 30 },
+                      { l: "ALL", d: 9999 },
+                    ].map((btn) => (
+                      <button
+                        key={btn.l}
+                        onClick={() => controls.handleQuickRange(btn.d, btn.l)}
+                        className={`px-2 py-1 text-xs font-semibold uppercase tracking-widest transition-colors ${
+                          controls.activeRange === btn.l
+                            ? "text-white bg-white/10"
+                            : "text-gray-600 hover:text-gray-400"
+                        }`}
+                      >
+                        {btn.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Row 3: Series legend */}
+                <div className="lg:hidden flex items-center justify-center gap-5 px-3 py-2 border-b border-white/10">
+                  {activeChartConfig.areas.map((s) => (
+                    <div
+                      key={s.key}
+                      className={`flex items-center gap-2 cursor-pointer transition-all ${
+                        hiddenSeries.includes(s.key) ? "opacity-40 line-through" : "opacity-100"
+                      }`}
+                      onClick={() => toggleSeries(s.key)}
+                    >
+                      <div className="w-2 h-2" style={{ backgroundColor: s.color }} />
+                      <span className="text-xs uppercase tracking-widest text-gray-400">{s.name}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Chart body */}
+                <div className="h-[350px] md:h-[500px] w-full p-4 bg-[#050505]">
+                  {chartView === "LIQUIDITY" ? (
+                    <ComboChart
+                      bins={liquidityBins}
+                      currentPrice={pool?.markPrice || 0}
+                    />
+                  ) : chartView === "VOLUME" ? (
+                    volumeHistory.length === 0 ? (
+                      <div className="h-full flex items-center justify-center">
+                        <Loader2 className="animate-spin text-gray-700" />
+                      </div>
+                    ) : (
+                      <RLDPerformanceChart
+                        data={volumeHistory}
+                        areas={activeChartConfig.areas}
+                        resolution={resolution}
+                      />
+                    )
+                  ) : chartData.length === 0 ? (
                     <div className="h-full flex items-center justify-center">
                       <Loader2 className="animate-spin text-gray-700" />
                     </div>
