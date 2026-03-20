@@ -86,13 +86,60 @@ nginx_ok=$([ "$nginx_rt" != "-1" ] && echo "true" || echo "false")
 
 rates_block=$(curl -sf -m 2 http://localhost:8081/ 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('last_indexed_block',''))" 2>/dev/null || echo "")
 
-# ── Anvil ──
+# ── Reth (sim chain) ──
 anvil_ok="false"
 anvil_block=""
-anvil_resp=$(curl -sf -m 2 -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' http://localhost:8545 2>/dev/null || true)
-if [ -n "$anvil_resp" ]; then
+reth_mem_mb=0
+reth_uptime=""
+reth_db_mb=0
+reth_chain_id=""
+reth_gas_price=""
+reth_block_ts=0
+reth_txpool_pending=0
+reth_txpool_queued=0
+
+# Single JSON-RPC batch call (replaces 5 sequential curls)
+reth_batch=$(curl -sf -m 3 -X POST -H "Content-Type: application/json" -d '[
+  {"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1},
+  {"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":2},
+  {"jsonrpc":"2.0","method":"eth_gasPrice","params":[],"id":3},
+  {"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":4},
+  {"jsonrpc":"2.0","method":"txpool_status","params":[],"id":5}
+]' http://localhost:8545 2>/dev/null || true)
+
+if [ -n "$reth_batch" ]; then
   anvil_ok="true"
-  anvil_block=$(echo "$anvil_resp" | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))" 2>/dev/null || echo "")
+  eval $(echo "$reth_batch" | python3 -c "
+import sys, json
+try:
+    results = {r['id']: r.get('result') for r in json.load(sys.stdin)}
+    block = int(results[1], 16) if results.get(1) else 0
+    chain = int(results[2], 16) if results.get(2) else 0
+    gas = round(int(results[3], 16) / 1e9, 2) if results.get(3) else 0
+    blk = results.get(4, {})
+    ts = int(blk['timestamp'], 16) if blk and 'timestamp' in blk else 0
+    tp = results.get(5, {})
+    pending = int(tp.get('pending', '0x0'), 16) if tp else 0
+    queued = int(tp.get('queued', '0x0'), 16) if tp else 0
+    print(f'anvil_block={block}')
+    print(f'reth_chain_id={chain}')
+    print(f'reth_gas_price={gas}')
+    print(f'reth_block_ts={ts}')
+    print(f'reth_txpool_pending={pending}')
+    print(f'reth_txpool_queued={queued}')
+except:
+    print('anvil_block=0')
+" 2>/dev/null)
+
+  # Process metrics (bare-metal, no network calls)
+  reth_pid=$(pgrep -x reth 2>/dev/null || echo "")
+  if [ -n "$reth_pid" ]; then
+    reth_mem_mb=$(ps -p "$reth_pid" -o rss --no-headers 2>/dev/null | awk '{printf "%.0f", $1/1024}' || echo 0)
+    reth_uptime=$(ps -p "$reth_pid" -o etime --no-headers 2>/dev/null | xargs || echo "")
+  fi
+
+  # DB size (local, fast)
+  reth_db_mb=$(du -sm /home/ubuntu/.local/share/reth-dev/ 2>/dev/null | awk '{print $1}' || echo 0)
 fi
 
 # ── SSL (read cert file directly — instant and deterministic) ──
@@ -282,7 +329,7 @@ cat > "$TMPOUT" << ENDJSON
     "rates_indexer": {"healthy":$rates_ok,"response_ms":$(python3 -c "print(int(float('${rates_rt}')*1000))" 2>/dev/null || echo -1),"last_block":"$rates_block"},
     "indexer": {"healthy":$indexer_ok,"response_ms":$(python3 -c "print(int(float('${indexer_rt}')*1000))" 2>/dev/null || echo -1)},
     "monitor_bot": {"healthy":$bot_ok,"response_ms":$(python3 -c "print(int(float('${bot_rt}')*1000))" 2>/dev/null || echo -1)},
-    "anvil": {"healthy":$anvil_ok,"block":"$anvil_block"}
+    "anvil": {"healthy":$anvil_ok,"block":"$anvil_block","mem_mb":${reth_mem_mb:-0},"uptime":"$reth_uptime","db_mb":${reth_db_mb:-0},"chain_id":"${reth_chain_id}","gas_gwei":"${reth_gas_price}","block_ts":${reth_block_ts:-0},"txpool_pending":${reth_txpool_pending:-0},"txpool_queued":${reth_txpool_queued:-0}}
   },
   "ssl": {"expiry":"$SSL_EXPIRY","days_remaining":${SSL_DAYS:-0}},
   "git": {"commit":"$GIT_COMMIT","message":"$GIT_MSG","time":"$GIT_TIME","author":"$GIT_AUTHOR"},
