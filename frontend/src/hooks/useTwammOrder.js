@@ -73,6 +73,20 @@ const PRIME_BROKER_TWAMM_ABI = [
     ],
   },
   {
+    name: "claimExpiredTwammOrderWithKey",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "twammHook", type: "address" },
+      POOL_KEY_TUPLE,
+      ORDER_KEY_TUPLE,
+    ],
+    outputs: [
+      { name: "claimed0", type: "uint256" },
+      { name: "claimed1", type: "uint256" },
+    ],
+  },
+  {
     name: "setActiveTwammOrder",
     type: "function",
     stateMutability: "nonpayable",
@@ -319,12 +333,17 @@ export function useTwammOrder(
 
   /**
    * Claim tokens from an expired TWAMM order via PrimeBroker.
-   * Uses claimExpiredTwammOrder() which calls JTM.syncAndClaimTokens().
    *
+   * If the order is currently tracked (activeTwammOrder), uses the simpler
+   * claimExpiredTwammOrder() which reads from storage.
+   * If untracked, uses claimExpiredTwammOrderWithKey(hook, key, orderKey)
+   * which can claim any order owned by this broker.
+   *
+   * @param {object}   order     Enriched order object (needs .tracked, .expiration, .zeroForOne)
    * @param {Function} onSuccess Called with tx receipt on success
    */
   const claimExpiredOrder = useCallback(
-    async (onSuccess) => {
+    async (order, onSuccess) => {
       if (!account || !brokerAddress) {
         setError("Missing required addresses");
         return;
@@ -347,8 +366,38 @@ export function useTwammOrder(
           signer,
         );
 
+        let tx;
         setStep("Confirm claim in wallet...");
-        const tx = await broker.claimExpiredTwammOrder({ gasLimit: 1_000_000n });
+
+        if (order?.tracked) {
+          // Tracked order: use parameterless version (reads activeTwammOrder from storage)
+          tx = await broker.claimExpiredTwammOrder({ gasLimit: 1_000_000n });
+        } else {
+          // Untracked order: must pass explicit key data
+          if (!infrastructure?.twamm_hook || !collateralAddr || !positionAddr) {
+            setError("Missing pool/hook addresses for untracked claim");
+            setExecuting(false);
+            return;
+          }
+          const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
+          const orderKey = {
+            owner: brokerAddress,
+            expiration: BigInt(order.expiration),
+            zeroForOne: order.zeroForOne,
+            nonce: BigInt(order.nonce ?? 0),
+          };
+          console.log("[TWAMM] claimWithKey params:", {
+            hook: infrastructure.twamm_hook,
+            poolKey,
+            orderKey: { ...orderKey, expiration: orderKey.expiration.toString(), nonce: orderKey.nonce.toString() },
+          });
+          tx = await broker.claimExpiredTwammOrderWithKey(
+            infrastructure.twamm_hook,
+            poolKey,
+            orderKey,
+            { gasLimit: 1_000_000n },
+          );
+        }
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -380,7 +429,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, _syncAndNotify],
+    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
   );
 
   /**

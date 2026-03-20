@@ -295,6 +295,7 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
               startEpoch: startTs,
               expiration: expTs,
               zeroForOne: evt.zeroForOne,
+              nonce: parseInt(evt.nonce || "0"),
               txHash: evt.txHash,
             };
           }),
