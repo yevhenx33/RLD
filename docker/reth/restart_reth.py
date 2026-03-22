@@ -210,11 +210,12 @@ def teardown(fresh: bool):
     original_sigterm = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
-    step("1a", "Stopping all stacks...")
+    step("1a", "Stopping simulation stacks (rates-indexer untouched)...")
     docker_compose(COMPOSE_RETH, "down", "-v", check=False)
     docker_compose(COMPOSE_ANVIL, "down", "-v", check=False)
-    docker_compose(COMPOSE_RATES, "down", "-v", check=False)
-    ok("Docker stacks stopped")
+    # NOTE: rates-indexer is intentionally NOT touched here.
+    # It is an independent persistent service with its own data volume.
+    ok("Simulation stacks stopped (rates-indexer preserved)")
 
     step("1b", "Killing Reth/Anvil/faucet processes...")
     run_quiet(["pkill", "-f", "reth.*--dev"])
@@ -274,16 +275,18 @@ def generate_genesis(env: dict, no_build: bool):
 
         cast_rpc("anvil_setChainId", "31337", rpc_url=ANVIL_RPC)
 
-        # 2a½. Start rates-indexer early (independent service — scrapes Aave from mainnet)
+        # 2a½. Ensure rates-indexer is running (independent service — scrapes Aave from mainnet)
         # Needed in 2b so the deployer can prime the oracle with live rates.
-        step("2a½", "Starting rates-indexer for live Aave rates...")
-        rates_build = ["up", "-d"]
-        if not no_build:
-            rates_build.append("--build")
-        docker_compose(COMPOSE_RATES, *rates_build, check=False)
-        # Give it a moment to start
-        time.sleep(3)
-        ok("Rates-indexer started")
+        step("2a½", "Ensuring rates-indexer is running...")
+        rates_check = run_quiet(["docker", "inspect", "--format", "{{.State.Status}}",
+                                 "docker-rates-indexer-1"])
+        if rates_check and rates_check.stdout.strip() == "running":
+            ok("Rates-indexer already running (preserved from previous session)")
+        else:
+            info("Rates-indexer not running — starting it...")
+            docker_compose(COMPOSE_RATES, "up", "-d", check=False)
+            time.sleep(3)
+            ok("Rates-indexer started")
 
         # 2b. Deploy protocol
         step("2b", "Deploying protocol on Anvil (via docker compose)...")
@@ -631,16 +634,18 @@ def launch_services(no_build: bool, with_users: bool):
     docker_compose(COMPOSE_RETH, *bot_args)
     ok("Trading bots started")
 
-    # 4h. Start rates-indexer (standalone — scrapes live Aave rates from mainnet)
-    step("4h", "Starting rates-indexer...")
-    rates_args = ["up", "-d"]
-    if not no_build:
-        rates_args.append("--build")
-    docker_compose(COMPOSE_RATES, *rates_args)
+    # 4h. Ensure rates-indexer is running and bridged (standalone — scrapes live Aave rates)
+    step("4h", "Ensuring rates-indexer is running...")
+    rates_check = run_quiet(["docker", "inspect", "--format", "{{.State.Status}}",
+                              "docker-rates-indexer-1"])
+    if not (rates_check and rates_check.stdout.strip() == "running"):
+        info("Rates-indexer not running — starting it...")
+        docker_compose(COMPOSE_RATES, "up", "-d", check=False)
+        time.sleep(3)
     # Bridge rates-indexer to the reth network so bots can reach it
     run_quiet(["docker", "network", "connect", "reth_default",
                "docker-rates-indexer-1", "--alias", "rates-indexer"])
-    ok("Rates-indexer started (port 8081, bridged to reth network)")
+    ok("Rates-indexer running (port 8081, bridged to reth network)")
 
     # 4i. Start faucet server
     start_faucet(deploy)
