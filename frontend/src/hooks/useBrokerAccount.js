@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
 import { rpcProvider } from "../utils/provider";
 
 // ── Minimal ABIs ───────────────────────────────────────────────────
