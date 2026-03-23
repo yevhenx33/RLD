@@ -534,16 +534,30 @@ function RatePerpsSection() {
    HOW IT WORKS
 ════════════════════════════════════════════════════ */
 
-function HowItWorksSection() {
+function AgentNativeSection() {
   const [labelRef, labelInView] = useInView(0.05)
-  const [headRef, headInView] = useInView(0.05)
-  const [stepsRef, stepsInView] = useInView(0.05)
+  const [bodyRef, bodyInView] = useInView(0.05)
+  const [cardsRef, cardsInView] = useInView(0.05)
 
-  const steps = [
-    { step: '01', title: 'Open a Broker', body: 'Create a PrimeBroker account — your unified margin hub. One account manages all positions, collateral, and orders.' },
-    { step: '02', title: 'Deposit Collateral', body: 'Fund with USDC, USDT, or any whitelisted ERC20. Your collateral is cross-margined across all products automatically.' },
-    { step: '03', title: 'Choose a Product', body: 'Mint a bond for fixed yield, open a perp for rate exposure, buy CDS for solvency insurance, or LP for trading fees.' },
-    { step: '04', title: 'Manage & Exit', body: 'Monitor positions in real-time. Close any position permissionlessly at any time. Withdraw collateral instantly.' },
+  const pillars = [
+    {
+      num: '01',
+      tag: 'Signing',
+      title: 'Off-Chain Gasless Operations',
+      body: 'Sign trades, deposits, and delegations off-chain via Permit2. No approval transactions, no gas required from the signer. The protocol submits and settles — your agent just signs.',
+    },
+    {
+      num: '02',
+      tag: 'Delegation',
+      title: 'Segregated Account Control',
+      body: 'Each margin account is an NFT with on-chain operator permissions. Authorize execution agents without transferring custody. Revoke in one transaction. Ownership and execution are fully separated.',
+    },
+    {
+      num: '03',
+      tag: 'Data',
+      title: 'Open Market Data Infrastructure',
+      body: 'Real-time and historical rate data across lending protocols — GraphQL and WebSocket. No API keys, no rate limits, no vendor lock-in. Free infrastructure for agents and institutions alike.',
+    },
   ]
 
   return (
@@ -557,40 +571,82 @@ function HowItWorksSection() {
           style={{ opacity: labelInView ? 1 : 0, transform: labelInView ? 'translateY(0)' : 'translateY(10px)' }}
         >
           <span className="font-jbm text-[#333] text-[11px]">|—</span>
-          <span className="font-jbm text-[12px] tracking-[0.28em] uppercase text-[#333]">How It Works</span>
+          <span className="font-jbm text-[12px] tracking-[0.28em] uppercase text-[#333]">Programmable Infrastructure</span>
           <span className="flex-1 h-px bg-[#141414]" />
         </div>
 
-        <h2
-          ref={headRef}
-          className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-16 max-w-[600px] transition-all duration-[600ms]"
-          style={{ fontSize: 'clamp(28px, 3.5vw, 46px)', opacity: headInView ? 1 : 0, transform: headInView ? 'translateY(0)' : 'translateY(14px)' }}
+        <div
+          ref={bodyRef}
+          className="grid grid-cols-1 lg:grid-cols-2 gap-12 mb-16 transition-all duration-[600ms]"
+          style={{ opacity: bodyInView ? 1 : 0, transform: bodyInView ? 'translateY(0)' : 'translateY(16px)' }}
         >
-          Four Steps.<br />
-          <span className="text-[#555]">Fully On-Chain.</span>
-        </h2>
+          <div>
+            <h2
+              className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-6"
+              style={{ fontSize: 'clamp(28px, 3.5vw, 46px)' }}
+            >
+              Zero-Gas<br />
+              <span className="text-[#555]">Agent Execution.</span>
+            </h2>
+            <p className="text-[12px] leading-[1.9] text-[#666] max-w-[460px] mb-8">
+              Sign operations off-chain. The protocol handles submission
+              and settlement. Deployed on Tempo — sub-cent fees,
+              500ms finality, and fee sponsorship so your agents
+              never need to hold gas tokens.
+            </p>
+            <a
+              href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
+                         font-jbm text-[10px] tracking-[0.22em] uppercase text-white
+                         hover:bg-white hover:text-black transition-all duration-200"
+            >
+              Documentation <span className="text-[#555]">↗</span>
+            </a>
+          </div>
 
-        <div ref={stepsRef} className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {steps.map((s, i) => (
+          <div className="flex flex-col justify-center">
+            <div className="border border-[#141414] divide-y divide-[#141414]">
+              {[
+                ['Signing', 'Off-chain via Permit2 — gasless'],
+                ['Finality', '500ms — deterministic'],
+                ['Fees', 'Sub-cent — sponsorable'],
+                ['Accounts', 'NFT — segregated, portable'],
+                ['Delegation', 'Operator access — revocable'],
+                ['Market Data', 'GraphQL + WebSocket — open'],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-baseline justify-between px-6 py-4">
+                  <span className="font-jbm text-[10px] tracking-[0.18em] uppercase text-[#444]">{label}</span>
+                  <span className="font-jbm text-[12px] text-[#888]">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div ref={cardsRef} className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {pillars.map((p, i) => (
             <div
-              key={s.step}
-              className="relative border border-[#141414] bg-[#111] p-8 flex flex-col transition-all duration-700"
-              style={{ transitionDelay: `${i * 80}ms`, opacity: stepsInView ? 1 : 0, transform: stepsInView ? 'translateY(0)' : 'translateY(16px)' }}
+              key={p.num}
+              className="relative border border-[#141414] bg-[#111] p-8 flex flex-col gap-4 transition-all duration-700"
+              style={{ transitionDelay: `${i * 80}ms`, opacity: cardsInView ? 1 : 0, transform: cardsInView ? 'translateY(0)' : 'translateY(16px)' }}
             >
               <span className="absolute top-0 left-0 w-2 h-2 border-t border-l border-[#222]" />
               <span className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-[#222]" />
-              {i < 3 && (
-                <div className="hidden md:block absolute top-1/2 -right-px w-6 h-px bg-[#333] z-10" />
-              )}
-              <div className="flex items-center gap-3 mb-6">
-                <span className="flex items-center justify-center w-8 h-8 border border-[#333] font-jbm text-[10px] tracking-[0.1em] text-[#666]">
-                  {s.step}
+              <div className="flex items-center gap-3 mb-2">
+                <span className="font-jbm text-[9px] tracking-[0.28em] text-[#333]">{p.num}</span>
+                <span className="font-jbm text-[9px] tracking-[0.22em] uppercase text-[#666] border border-[#1e1e1e] px-2 py-[2px]">
+                  {p.tag}
                 </span>
               </div>
-              <h3 className="font-['Space_Grotesk'] font-light text-white text-[18px] leading-tight tracking-[-0.01em] mb-3">
-                {s.title}
+              <h3
+                className="font-['Space_Grotesk'] font-light text-white leading-[1.15] tracking-[-0.01em]"
+                style={{ fontSize: 'clamp(18px, 2vw, 24px)' }}
+              >
+                {p.title}
               </h3>
-              <p className="text-[11px] leading-[1.85] text-[#666] flex-1">{s.body}</p>
+              <p className="text-[11px] leading-[1.85] text-[#666]">{p.body}</p>
             </div>
           ))}
         </div>
@@ -609,12 +665,12 @@ function BenefitsSection() {
   const [gridRef, gridInView] = useInView(0.05)
 
   const benefits = [
-    { num: '01', title: 'Single Pool Design', body: 'All maturities share one liquidity pool. No fragmentation, no thin order books, no roll risk. Deeper liquidity for every participant.' },
-    { num: '02', title: 'On-Chain Settlement', body: 'Every bond, swap, and CDS settles trustlessly against live oracle rates. No counterparty risk beyond the smart contract itself.' },
-    { num: '03', title: 'Cross-Margin Efficiency', body: 'One PrimeBroker account for all positions. ERC20 collateral, LP positions, limit orders, and TWAP — unified margin across everything.' },
-    { num: '04', title: 'No Governance Risk', body: 'No multi-sig, no admin keys, no upgrade proxy. Protocol parameters are immutable at deployment.' },
-    { num: '05', title: 'Permissionless Exit', body: 'Close any bonds, perps or CDS position at any time. No lock-ups, no withdrawal queues, no cooldown periods. Your capital is always accessible.' },
-    { num: '06', title: 'Oracle-Native Pricing', body: 'Index prices from Symbiotic network and on-chain rate feeds. Price execution strictly via TWAP from Uniswap V4.' },
+    { num: '01', title: 'One Pool, Any Maturity', body: 'All bond maturities share a single liquidity pool. No fragmentation, no thin order books, no roll risk. Enter and exit any duration without moving markets.' },
+    { num: '02', title: 'Rate Convexity', body: 'Interest rates have a structural floor but no ceiling. 5–10× spikes during leverage demand surges create an asymmetric payoff profile that no other on-chain asset offers.' },
+    { num: '03', title: 'On-Chain Credit Default Swaps', body: 'The first trustless, parametric solvency insurance in DeFi. 100% payout on trigger. No claims process, no counterparty risk. A market that doesn\u0027t exist anywhere else.' },
+    { num: '04', title: 'Unified Cross-Margin', body: 'One account for all positions — bonds, perps, LP, and TWAP orders. Collateral is cross-margined automatically. No fragmented balances across products.' },
+    { num: '05', title: 'Gasless Execution', body: 'Sign operations off-chain via Permit2. No gas tokens required. Deployed on Tempo instant 500ms finality, and full fee sponsorship for frictionless onboarding and execution.' },
+    { num: '06', title: 'Permissionless Exit', body: 'Close any position at any time. No lock-ups, no withdrawal queues, no cooldown periods. Your capital is always accessible — one transaction to exit.' },
   ]
 
   return (
@@ -637,8 +693,8 @@ function BenefitsSection() {
           className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-16 max-w-[600px] transition-all duration-[600ms]"
           style={{ fontSize: 'clamp(28px, 3.5vw, 46px)', opacity: headInView ? 1 : 0, transform: headInView ? 'translateY(0)' : 'translateY(14px)' }}
         >
-          Built Different.<br />
-          <span className="text-[#555]">By Design.</span>
+          The Stability Layer<br />
+          <span className="text-[#555]">for DeFi.</span>
         </h2>
 
         <div ref={gridRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -683,7 +739,7 @@ function CoreArchitectureSection() {
           className="font-['Space_Grotesk'] font-light text-white leading-[1.1] tracking-[-0.02em] mb-4"
           style={{ fontSize: 'clamp(28px, 4vw, 52px)' }}
         >
-          Start Trading Rates
+          Enter the RLD Ecosystem
         </h2>
         <p className="font-jbm text-[12px] text-[#666] tracking-[0.06em] mb-10 max-w-[400px]">
           Testnet is live. Fix yields, trade rate movements, and insure
@@ -781,7 +837,7 @@ export default function Homepage() {
       <UseCasesSection />
       <SolvencyInsuranceSection />
       <RatePerpsSection />
-      <HowItWorksSection />
+      <AgentNativeSection />
       <BenefitsSection />
       <CoreArchitectureSection />
     </div>
