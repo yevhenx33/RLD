@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ethers } from "ethers";
-import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { rpcProvider } from "../../utils/provider";
 import { TrendingUp, Terminal, AlertTriangle, ChevronDown, Layers } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
 import { formatNum } from "../../utils/helpers";
@@ -154,7 +155,7 @@ export default function BasisTradePage() {
     if (!force && bondExecutingRef.current) return; // Guard 1
 
     try {
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
       const abi = ["function balanceOf(address) view returns (uint256)", "function allowance(address,address) view returns (uint256)"];
       
       const susde = new ethers.Contract(SUSDE_ADDRESS, abi, provider);

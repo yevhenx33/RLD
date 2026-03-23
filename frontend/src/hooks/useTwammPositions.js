@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { ethers } from "ethers";
 import { ZERO_FOR_ONE_LONG, SIM_API } from "../config/simulationConfig";
-
-const RPC_URL = `${window.location.origin}/rpc`;
+import { rpcProvider } from "../utils/provider";
 const GQL_URL = `${SIM_API}/graphql`;
 
 // ── ABI: only view functions (no event scanning) ──────────────────
@@ -147,7 +146,7 @@ export function useTwammPositions(
         return;
       }
 
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
       const block = await provider.getBlock("latest");
       const now = block.timestamp;
 

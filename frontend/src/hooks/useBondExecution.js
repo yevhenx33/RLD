@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { rpcProvider } from "../utils/provider";
 
 // ── ABI fragments ─────────────────────────────────────────────────
 
@@ -101,7 +102,7 @@ export function useBondExecution(
         // ── Direct RPC provider for read-only calls ─────────────
         // Uses the Vite-proxied RPC (/rpc → Anvil) to avoid MetaMask
         // RPC issues after simulation restarts.
-        const readProvider = new ethers.JsonRpcProvider(RPC_URL);
+        const readProvider = rpcProvider;
 
         // ── Build pool key ──────────────────────────────────────
         const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();

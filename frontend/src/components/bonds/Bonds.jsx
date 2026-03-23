@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ethers } from "ethers";
-import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { rpcProvider } from "../../utils/provider";
 import { Shield, Terminal, AlertTriangle, ChevronDown, Wallet } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
 import Header from "../layout/Header";
@@ -61,7 +62,7 @@ export default function BondsPage() {
   const refreshBalances = useCallback(async (force = false) => {
     if (!account || !marketInfo?.collateral?.address || !marketInfo?.infrastructure?.bond_factory) return;
     try {
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
       const balABI = ["function balanceOf(address) view returns (uint256)", "function allowance(address, address) view returns (uint256)"];
       const bondFactory = marketInfo.infrastructure.bond_factory;
 
@@ -124,7 +125,7 @@ export default function BondsPage() {
       setIsApproving(true);
       const signer = await getAnvilSigner();
       
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
       let approveTokenAddr = marketInfo.collateral.address;
       if (selectedToken === "USDC") {
         const wrapABI = ["function aToken() view returns (address)"];

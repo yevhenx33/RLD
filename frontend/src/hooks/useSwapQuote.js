@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ethers } from "ethers";
-
-const RPC_URL = `${window.location.origin}/rpc`;
+import { rpcProvider } from "../utils/provider";
 
 // Mainnet V4 Quoter ABI — quoteExactInputSingle(QuoteExactSingleParams)
 // Uses struct-wrapped params matching the deployed Quoter at 0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203
@@ -78,7 +77,7 @@ export function useSwapQuote(
     setError(null);
 
     try {
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
       const quoter = new ethers.Contract(
         infrastructure.v4_quoter,
         QUOTER_ABI,

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
+import { rpcProvider } from "../utils/provider";
 
 /**
  * Universal faucet hook — auto-detects Anvil vs Reth mode.
@@ -128,7 +129,7 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
     async (addr) => {
       if (!addr || !waUsdcAddress) return;
       try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = rpcProvider;
 
         const waUsdcContract = new ethers.Contract(
           waUsdcAddress,
@@ -181,7 +182,7 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
 
         // Poll until balances actually update on-chain
         setStep("Confirming balances...");
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = rpcProvider;
         const waC = new ethers.Contract(waUsdcAddress, WAUSDC_ABI, provider);
         const uC = new ethers.Contract(USDC, ERC20_ABI, provider);
 

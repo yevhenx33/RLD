@@ -1,8 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ethers } from "ethers";
 import { ZERO_FOR_ONE_LONG, SIM_API } from "../config/simulationConfig";
-
-const RPC_URL = `${window.location.origin}/rpc`;
+import { rpcProvider } from "../utils/provider";
 const GQL_URL = `${SIM_API}/graphql`;
 
 // ── Minimal ABI for TWAMM enrichment only ───────────────────────────
@@ -184,7 +183,7 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
           collateralAddr,
           positionAddr,
         );
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = rpcProvider;
         const hook = new ethers.Contract(hookAddr, JTM_VIEW_ABI, provider);
 
         // Read tracked TWAMM order ID from GQL response (no RPC needed)

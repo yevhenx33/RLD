@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { rpcProvider } from "../utils/provider";
 
 // ── PrimeBroker LP ABI ────────────────────────────────────────────
 const BROKER_LP_ABI = [
@@ -232,7 +233,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         // Compute unclaimed fees from V4 StateView
         if (stateViewAddr && twammHook && positionToken && collateralToken) {
           try {
-            const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = rpcProvider;
             const stateView = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
             const [c0, c1] = positionToken.toLowerCase() < collateralToken.toLowerCase()
               ? [positionToken, collateralToken]
@@ -282,7 +283,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
     // --- Fallback: RPC chain scan ---
     try {
       console.time("[LP] RPC fallback");
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
       const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, provider);
       const posm = new ethers.Contract(posmAddr, POSM_ABI, provider);
 
@@ -521,7 +522,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
       try {
         // Read current liquidity
         setExecutionStep("Reading position...");
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = rpcProvider;
         const posm = new ethers.Contract(posmAddr, POSM_ABI, provider);
         const currentLiquidity = await posm.getPositionLiquidity(tokenId);
 
@@ -669,7 +670,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, signer);
 
         // Read current activeTokenId to restore later
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = rpcProvider;
         const brokerRead = new ethers.Contract(brokerAddress, BROKER_LP_ABI, provider);
         const currentActive = await brokerRead.activeTokenId();
 

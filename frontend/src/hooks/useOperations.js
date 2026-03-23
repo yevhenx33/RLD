@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
-
-const RPC_URL = `${window.location.origin}/rpc`;
+import { rpcProvider } from "../utils/provider";
 
 // BrokerRouter event ABIs
 const EVENTS_ABI = [
@@ -64,7 +63,7 @@ export function useOperations(
 
     try {
       if (!initialLoadDone.current) setLoading(true);
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
 
       // Build topic filter: any of our 4 event types
       const eventTopics = Object.values(EVENT_TOPICS);

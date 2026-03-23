@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { X, ArrowDown, Loader2, AlertTriangle } from "lucide-react";
 import { ethers } from "ethers";
 import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { rpcProvider } from "../../utils/provider";
 
 /**
  * Deposit token modal — transfers ERC-20 from user wallet to broker.
@@ -29,9 +30,7 @@ export default function DepositModal({
     if (!isOpen || !tokenAddress) return;
     (async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(
-          `${window.location.origin}/rpc`,
-        );
+        const provider = rpcProvider;
         const signer = await getAnvilSigner();
         const token = new ethers.Contract(
           tokenAddress,

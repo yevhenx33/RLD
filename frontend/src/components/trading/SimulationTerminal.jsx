@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { ethers } from "ethers";
 import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { rpcProvider } from "../../utils/provider";
 import { useSimulation } from "../../hooks/useSimulation";
 import {
   Loader2,
@@ -306,7 +307,7 @@ export default function SimulationTerminal() {
     if (!brokerAddress || !enrichedMarketInfo?.position_token?.address) return;
     const fetchWrlp = async () => {
       try {
-        const provider = new ethers.JsonRpcProvider(`${window.location.origin}/rpc`);
+        const provider = rpcProvider;
         const token = new ethers.Contract(
           enrichedMarketInfo.position_token.address,
           ["function balanceOf(address) view returns (uint256)"],

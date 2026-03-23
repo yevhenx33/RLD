@@ -26,7 +26,7 @@ import AddLiquidityModal from "../modals/AddLiquidityModal";
 import AccountModal from "../modals/AccountModal";
 import { ToastContainer } from "../common/Toast";
 
-const RPC_URL = `${window.location.origin}/rpc`;
+import { rpcProvider } from "../../utils/provider";
 const ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
 
 
@@ -126,7 +126,7 @@ export default function PoolLP() {
       return;
     }
     try {
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
       const t0 = new ethers.Contract(token0Addr, ERC20_BALANCE_ABI, provider);
       const t1 = new ethers.Contract(token1Addr, ERC20_BALANCE_ABI, provider);
       const [b0, b1] = await Promise.all([

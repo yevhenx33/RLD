@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { rpcProvider } from "../utils/provider";
 
 // ── Minimal ABIs ───────────────────────────────────────────────────
 const FACTORY_ABI = [
@@ -78,7 +79,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
     async (brokerAddr) => {
       if (!brokerAddr || !waUsdcAddr) return;
       try {
-        const provider = new ethers.JsonRpcProvider(RPC_URL);
+        const provider = rpcProvider;
         const token = new ethers.Contract(waUsdcAddr, ERC20_ABI, provider);
         const bal = await token.balanceOf(brokerAddr);
         // waUSDC has 6 decimals
@@ -98,7 +99,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       return;
     }
     try {
-      const provider = new ethers.JsonRpcProvider(RPC_URL);
+      const provider = rpcProvider;
       const factory = new ethers.Contract(
         brokerFactoryAddr,
         FACTORY_ABI,

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { rpcProvider } from "../utils/provider";
 
 // BrokerRouter ABI (executeLong + closeLong)
 const POOL_KEY_TUPLE = {
@@ -94,7 +95,6 @@ function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
  * Uses getAnvilSigner for the approval tx if needed.
  */
 async function ensureOperator(brokerAddress, routerAddress, setStep) {
-  const rpcProvider = new ethers.JsonRpcProvider(RPC_URL);
   const broker = new ethers.Contract(brokerAddress, BROKER_ABI, rpcProvider);
   const isOperator = await broker.operators(routerAddress);
 
