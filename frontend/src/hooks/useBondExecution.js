@@ -217,7 +217,7 @@ export function useBondExecution(
             poolKey.hooks,
           ],
           useUnderlying,
-          { gasLimit: 10_000_000 },
+          { gasLimit: 30_000_000 },
         );
         setTxHash(tx.hash);
 

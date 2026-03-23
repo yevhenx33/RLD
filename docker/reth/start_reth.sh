@@ -78,6 +78,7 @@ RETH_CMD=(
     --http.port "$PORT"
     --http.api "eth,net,web3,debug,trace,txpool"
     --http.corsdomain "*"
+    --gpo.maxprice 1000000
     --log.stdout.filter "info"
 )
 

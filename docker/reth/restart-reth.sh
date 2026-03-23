@@ -32,8 +32,6 @@ DEPLOY_SNAPSHOT="$SCRIPT_DIR/deployment-snapshot.json"
 
 RETH_PORT="${RETH_PORT:-8545}"
 RETH_RPC="http://localhost:$RETH_PORT"
-RETH_DATADIR="${RETH_DATADIR:-$HOME/.local/share/reth-dev}"
-RETH_LOG="/tmp/reth.log"
 
 ANVIL_PORT=8545
 ANVIL_RPC="http://localhost:$ANVIL_PORT"
@@ -126,11 +124,12 @@ fi
 header "STEP 1: TEAR DOWN"
 
 step "1a" "Stopping all stacks..."
-docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" down -v 2>/dev/null || true
+# Stop services but preserve reth-datadir volume (use 'down' without -v for reth data)
+docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" down 2>/dev/null || true
 docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" down -v 2>/dev/null || true
 ok "Docker stacks stopped"
 
-step "1b" "Killing Reth/Anvil processes..."
+step "1b" "Killing stale bare-metal processes..."
 pkill -f "reth.*--dev" 2>/dev/null || true
 pkill -f "anvil" 2>/dev/null || true
 sleep 2
@@ -141,9 +140,11 @@ echo '{}' > "$DEPLOY_JSON"
 ok "deployment.json cleared"
 
 if [ "$FRESH" = true ]; then
-    step "1d" "Wiping Reth datadir (--fresh)..."
-    rm -rf "$RETH_DATADIR" "$GENESIS_FILE" "$DEPLOY_SNAPSHOT"
-    ok "Clean slate"
+    step "1d" "Wiping Reth data (--fresh)..."
+    # Remove postgres volume too for a fully clean state
+    docker volume rm reth_reth-datadir reth_postgres-data-reth 2>/dev/null || true
+    rm -f "$GENESIS_FILE" "$DEPLOY_SNAPSHOT"
+    ok "Clean slate (Docker volumes + genesis removed)"
 fi
 
 # ═════════════════════════════════════════════════════════════
@@ -350,28 +351,40 @@ else
 fi
 
 # ═════════════════════════════════════════════════════════════
-# STEP 3: START RETH
+# STEP 3: START RETH (Docker)
 # ═════════════════════════════════════════════════════════════
 header "STEP 3: START RETH"
 
-# Wipe old datadir if genesis was just regenerated
+# Wipe reth datadir volume if genesis was just regenerated
 if [ "$SKIP_GENESIS" = false ]; then
-    rm -rf "$RETH_DATADIR"
+    docker volume rm reth_reth-datadir 2>/dev/null || true
 fi
 
-step "3a" "Starting Reth node..."
-bash "$SCRIPT_DIR/start_reth.sh" --background
+step "3a" "Starting Reth container..."
+docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d reth 2>&1 | tail -5
+
+# Wait for Reth to be ready (healthcheck + RPC verification)
+step "3b" "Waiting for Reth RPC..."
+for i in $(seq 1 60); do
+    if cast block-number --rpc-url "$RETH_RPC" > /dev/null 2>&1; then
+        BLOCK=$(cast block-number --rpc-url "$RETH_RPC")
+        ok "Reth ready at block $BLOCK (took ${i}s)"
+        break
+    fi
+    if [ $((i % 10)) -eq 0 ]; then
+        dim "Waiting... (${i}/60s)"
+    fi
+    sleep 1
+done
 
 if ! cast block-number --rpc-url "$RETH_RPC" > /dev/null 2>&1; then
-    fail "Reth failed to start"
-    tail -20 "$RETH_LOG" 2>/dev/null || true
+    fail "Reth failed to start after 60s"
+    docker compose -f "$COMPOSE_RETH" logs reth --tail 30 2>&1
     exit 1
 fi
-BLOCK=$(cast block-number --rpc-url "$RETH_RPC")
-ok "Reth ready at block $BLOCK"
 
 # Verify deployed contracts
-step "3b" "Verifying protocol contracts..."
+step "3c" "Verifying protocol contracts..."
 VERIFY_ADDR=$(jq -r '.twamm_hook // .rld_core // empty' "$DEPLOY_JSON")
 if [ -n "$VERIFY_ADDR" ]; then
     CODE_LEN=$(cast code "$VERIFY_ADDR" --rpc-url "$RETH_RPC" 2>/dev/null | wc -c)
@@ -554,17 +567,13 @@ ok "Trading bots started"
 header "STATUS REPORT"
 
 RETH_BLOCK=$(cast block-number --rpc-url "$RETH_RPC" 2>/dev/null || echo "?")
-RETH_PID=$(pgrep -f "reth.*--dev" || echo "?")
-RETH_MEM=$(ps -o rss= -p "$RETH_PID" 2>/dev/null | awk '{printf "%.0f", $1/1024}')
 
 echo -e "${MAGENTA}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${MAGENTA}║           RLD SIMULATION — RETH MODE 🦀                  ║${NC}"
-echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
-printf "${MAGENTA}║${NC}  %-8s  %-5s  %-36s${MAGENTA}║${NC}\n" "Reth" "✅" "Block: $RETH_BLOCK  PID: $RETH_PID  RSS: ${RETH_MEM:-?}MB"
+echo -e "${MAGENTA}║           RLD SIMULATION — RETH MODE 🦀 (Docker)         ║${NC}"
 echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
 
-docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | while IFS= read -r line; do
-    echo "$line" | grep -q "NAMES" && continue
+docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null | while IFS= read -r line; do
+    echo "$line" | grep -q "NAME" && continue
     NAME=$(echo "$line" | awk '{print $1}')
     STATUS_TEXT=$(echo "$line" | cut -d' ' -f2-)
     ICON="✅"
@@ -572,14 +581,16 @@ docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null | while IFS= read
     printf "${MAGENTA}║${NC}  %-28s %s %-22s${MAGENTA}║${NC}\n" "$NAME" "$ICON" "$STATUS_TEXT"
 done
 
+echo -e "${MAGENTA}╠═══════════════════════════════════════════════════════════╣${NC}"
+printf "${MAGENTA}║${NC}  %-8s  %-5s  %-36s${MAGENTA}║${NC}\n" "Block" "" "$RETH_BLOCK"
 echo -e "${MAGENTA}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${GREEN}✅ All systems operational! (RSS: ${RETH_MEM:-?} MB — no memory leaks)${NC}"
+echo -e "${GREEN}✅ All systems operational (Docker-managed, auto-restart enabled)${NC}"
 echo ""
 echo -e "${DIM}Commands:${NC}"
-echo "  Logs:     docker compose -f $COMPOSE_RETH logs -f"
-echo "  Stop:     docker compose -f $COMPOSE_RETH down -v && pkill -f 'reth.*--dev'"
+echo "  Logs:     docker compose -f $COMPOSE_RETH --env-file $ENV_FILE logs -f"
+echo "  Reth log: docker compose -f $COMPOSE_RETH --env-file $ENV_FILE logs -f reth"
+echo "  Stop:     docker compose -f $COMPOSE_RETH --env-file $ENV_FILE down"
 echo "  Restart:  $0 --skip-genesis   (fast, reuses genesis)"
 echo "  Rebuild:  $0 --fresh          (full fresh genesis)"
-echo "  Reth log: tail -f $RETH_LOG"
 echo "  Anvil:    ./docker/restart.sh (switch back)"
