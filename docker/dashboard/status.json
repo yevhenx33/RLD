@@ -1,37 +1,37 @@
 {
-  "timestamp": "2026-03-24T14:11:01Z",
+  "timestamp": "2026-03-29T17:44:01Z",
   "system": {
-    "uptime_secs": 773745,
-    "load": [5.20, 4.85, 4.72],
+    "uptime_secs": 59232,
+    "load": [0.41, 0.32, 0.35],
     "cpu_cores": 8,
-    "disk": {"total_gb":193,"used_gb":103,"free_gb":91,"percent":54},
-    "memory": {"total_mb":23463,"used_mb":8446,"available_mb":15017},
-    "swap": {"total_mb":20479,"used_mb":550},
-    "connections": {"established":41,"listening":29},
+    "disk": {"total_gb":193,"used_gb":105,"free_gb":89,"percent":55},
+    "memory": {"total_mb":23463,"used_mb":4344,"available_mb":19119},
+    "swap": {"total_mb":20479,"used_mb":0},
+    "connections": {"established":42,"listening":30},
     "errors_today": 0
   },
-  "containers": [{"name":"docker-frontend-1","status":"healthy","uptime":"Up 22 hours","cpu":0.00,"memory":"8.008MiB / 22.91GiB","network":"2.48MB / 643kB","restarts":0,"started":"2026-03-23T16:17:31","ports":"0.0.0.0:3000->80/tcp, [::]:3000->80/tcp"},{"name":"reth-reth-1","status":"healthy","uptime":"Up 27 hours","cpu":2.74,"memory":"452.4MiB / 22.91GiB","network":"705MB / 869MB","restarts":0,"started":"2026-03-23T10:41:44","ports":"8546/tcp, 9001/tcp, 0.0.0.0:8545->8545/tcp, [::]:8545->8545/tcp, 30303/tcp, 30303/udp"},{"name":"reth-chaos-trader-1","status":"running","uptime":"Up 28 hours","cpu":3.46,"memory":"45.54MiB / 22.91GiB","network":"104MB / 105MB","restarts":0,"started":"2026-03-23T10:40:20","ports":""},{"name":"reth-mm-daemon-1","status":"running","uptime":"Up 28 hours","cpu":0.00,"memory":"47.81MiB / 22.91GiB","network":"326MB / 264MB","restarts":0,"started":"2026-03-23T10:40:20","ports":""},{"name":"reth-indexer-1","status":"healthy","uptime":"Up 28 hours","cpu":15.94,"memory":"80.95MiB / 22.91GiB","network":"1.53GB / 804MB","restarts":0,"started":"2026-03-23T10:40:14","ports":"0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp"},{"name":"reth-postgres-1","status":"healthy","uptime":"Up 2 days","cpu":0.16,"memory":"139.5MiB / 22.91GiB","network":"433MB / 1.65GB","restarts":0,"started":"2026-03-22T12:51:01","ports":"0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp"},{"name":"docker-rates-indexer-1","status":"healthy","uptime":"Up 2 days","cpu":0.19,"memory":"92.18MiB / 22.91GiB","network":"415MB / 127MB","restarts":0,"started":"2026-03-22T13:00:33","ports":"0.0.0.0:8081->8080/tcp, [::]:8081->8080/tcp"},{"name":"docker-monitor-bot-1","status":"healthy","uptime":"Up 4 days","cpu":4.02,"memory":"26.7MiB / 22.91GiB","network":"556MB / 221MB","restarts":0,"started":"2026-03-20T08:43:55","ports":"0.0.0.0:8082->8080/tcp, [::]:8082->8080/tcp"}],
+  "containers": [{"name":"reth-faucet-1","status":"healthy","uptime":"Up 23 minutes","cpu":0.01,"memory":"47.07MiB / 22.91GiB","network":"0B / 0B","restarts":0,"started":"2026-03-29T17:20:13","ports":""},{"name":"docker-frontend-1","status":"healthy","uptime":"Up 16 hours","cpu":0.00,"memory":"18.11MiB / 22.91GiB","network":"104kB / 213kB","restarts":0,"started":"2026-03-29T01:16:59","ports":"0.0.0.0:3000->80/tcp, [::]:3000->80/tcp"},{"name":"reth-reth-1","status":"healthy","uptime":"Up 16 hours","cpu":2.51,"memory":"455.1MiB / 22.91GiB","network":"344MB / 319MB","restarts":0,"started":"2026-03-29T01:16:59","ports":"8546/tcp, 9001/tcp, 0.0.0.0:8545->8545/tcp, [::]:8545->8545/tcp, 30303/tcp, 30303/udp"},{"name":"reth-chaos-trader-1","status":"running","uptime":"Up 16 hours","cpu":3.85,"memory":"53.94MiB / 22.91GiB","network":"69.2MB / 71.4MB","restarts":0,"started":"2026-03-29T01:16:59","ports":""},{"name":"reth-mm-daemon-1","status":"running","uptime":"Up 16 hours","cpu":0.73,"memory":"68.1MiB / 22.91GiB","network":"189MB / 154MB","restarts":0,"started":"2026-03-29T01:16:59","ports":""},{"name":"reth-indexer-1","status":"healthy","uptime":"Up 16 hours","cpu":0.83,"memory":"93.19MiB / 22.91GiB","network":"240MB / 288MB","restarts":1,"started":"2026-03-29T01:17:00","ports":"0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp"},{"name":"reth-postgres-1","status":"healthy","uptime":"Up 16 hours","cpu":0.11,"memory":"166.3MiB / 22.91GiB","network":"135MB / 177MB","restarts":0,"started":"2026-03-29T01:16:59","ports":"0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp"},{"name":"docker-rates-indexer-1","status":"healthy","uptime":"Up 16 hours","cpu":0.22,"memory":"98.78MiB / 22.91GiB","network":"107MB / 40.6MB","restarts":0,"started":"2026-03-29T01:16:59","ports":"0.0.0.0:8081->8080/tcp, [::]:8081->8080/tcp"},{"name":"docker-monitor-bot-1","status":"healthy","uptime":"Up 16 hours","cpu":0.03,"memory":"33.57MiB / 22.91GiB","network":"90.4MB / 35.8MB","restarts":0,"started":"2026-03-29T01:16:59","ports":"0.0.0.0:8082->8080/tcp, [::]:8082->8080/tcp"}],
   "services": {
-    "nginx": {"healthy":true,"response_ms":60},
-    "rates_indexer": {"healthy":true,"response_ms":5,"last_block":"24727904"},
-    "indexer": {"healthy":true,"response_ms":2},
+    "nginx": {"healthy":true,"response_ms":52},
+    "rates_indexer": {"healthy":true,"response_ms":5,"last_block":"24764814"},
+    "indexer": {"healthy":true,"response_ms":3},
     "monitor_bot": {"healthy":true,"response_ms":1},
-    "anvil": {"healthy":true,"block":"177451","mem_mb":494,"uptime":"1-03:29:20","db_mb":63,"chain_id":"31337","gas_gwei":"0.0","block_ts":1774361464,"txpool_pending":0,"txpool_queued":0}
+    "anvil": {"healthy":true,"block":"621429","mem_mb":501,"uptime":"16:27:04","db_mb":63,"chain_id":"31337","gas_gwei":"0.0","block_ts":1774806244,"txpool_pending":0,"txpool_queued":0}
   },
-  "ssl": {"expiry":"2026-05-10","days_remaining":47},
-  "git": {"commit":"933f885f","message":"landing: redesign homepage for stability + protection positioning","time":"2026-03-23T16:16:15+00:00","author":"Antigravity Agent"},
-  "docker": {"dangling_images":21,"images_size":"6.465GB","active":24,"total":45},
-  "databases": {"aave_rates": {"size_mb": 96.1, "tables": {"rates": {"rows": 1740147, "latest_age_secs": 18}, "eth_prices": {"rows": 294668, "latest_age_secs": 18}, "rates_dai": {"rows": 329274, "latest_age_secs": 18}, "rates_usdt": {"rows": 327485, "latest_age_secs": 18}}, "corrupt_rows": 2722}, "clean_rates": {"size_mb": 1.6, "freshness_secs": 665, "rows_24h": 24, "nulls_7d": {"eth_price": 0, "usdc_rate": 0, "dai_rate": 0, "usdt_rate": 0}, "missing_hours_7d": 0, "sync_age_secs": 24}, "pool_state": {"healthy": true, "last_indexed_block": 177451, "total_events": 0, "block_states_rows": 29217, "events_rows": 75153, "mark_price": 3.224835, "index_price": 3.244626, "liquidity": "11759454452303", "token0_balance": 4101577162840, "token1_balance": 5077410268889, "total_debt": 14337522.788778}},
+  "ssl": {"expiry":"2026-05-10","days_remaining":41},
+  "git": {"commit":"?","message":"?","time":"","author":"?"},
+  "docker": {"dangling_images":22,"images_size":"6.623GB","active":25,"total":47},
+  "databases": {"aave_rates": {"size_mb": 102.2, "tables": {"rates": {"rows": 1777087, "latest_age_secs": 19}, "eth_prices": {"rows": 331588, "latest_age_secs": 19}, "rates_dai": {"rows": 366214, "latest_age_secs": 19}, "rates_usdt": {"rows": 364425, "latest_age_secs": 19}}, "corrupt_rows": 2722}, "clean_rates": {"size_mb": 1.6, "freshness_secs": 2646, "rows_24h": 24, "nulls_7d": {"eth_price": 0, "usdc_rate": 0, "dai_rate": 0, "usdt_rate": 0}, "missing_hours_7d": 0, "sync_age_secs": 12}, "pool_state": {"healthy": true, "last_indexed_block": 621429, "total_events": 0, "block_states_rows": 92989, "events_rows": 256515, "mark_price": 3.215482, "index_price": 3.213622, "liquidity": "11762292939674", "token0_balance": 4175079395439, "token1_balance": 5253487563271, "total_debt": 14337613.422391}},
   "backups": {
-  "timestamp": "2026-03-24T03:00:10Z",
-  "date": "2026-03-24",
+  "timestamp": "2026-03-29T03:00:10Z",
+  "date": "2026-03-29",
   "status": "success",
   "total": 2,
   "success": 2,
   "failed": [],
-  "size": "33M",
+  "size": "35M",
   "retained": 8,
   "deleted": 1
 },
-  "history": {"load": [4.49, 4.53, 4.79, 4.79, 5.03, 5.03, 4.74, 4.74, 4.32, 4.32, 4.56, 4.45, 4.45, 4.37, 4.37, 4.38, 4.38, 4.32, 4.32, 4.36, 4.36, 4.39, 4.39, 4.59, 4.59, 4.5, 4.34, 4.34, 4.53, 4.58, 4.58, 4.46, 4.46, 4.34, 4.34, 4.42, 4.42, 4.22, 4.22, 4.21, 4.21, 4.33, 4.33, 4.36, 4.36, 4.43, 4.43, 6.23, 6.23, 4.95, 4.95, 4.65, 4.65, 4.46, 4.46, 4.34, 4.34, 4.4, 4.4, 5.2], "mem": [27.1, 26.5, 26.1, 26.1, 26.1, 26.1, 26.2, 26.2, 26.1, 26.1, 26.2, 26.2, 26.2, 26.1, 26.1, 26.1, 26.1, 26.2, 26.2, 26.1, 26.1, 26.4, 26.4, 26.4, 26.4, 26.5, 26.8, 26.8, 26.7, 26.4, 26.4, 26.9, 26.9, 27.0, 27.1, 26.5, 26.5, 26.3, 26.3, 26.2, 26.2, 26.3, 26.3, 26.3, 26.3, 27.6, 27.6, 37.6, 37.6, 36.8, 36.8, 36.5, 36.5, 36.4, 36.4, 36.0, 36.0, 36.0, 36.0, 36.0], "disk": [54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54, 54], "block": [24727744, 24727750, 24727754, 24727754, 24727759, 24727759, 24727764, 24727764, 24727770, 24727770, 24727774, 24727779, 24727779, 24727785, 24727785, 24727789, 24727789, 24727794, 24727794, 24727799, 24727799, 24727804, 24727804, 24727809, 24727809, 24727814, 24727819, 24727819, 24727824, 24727829, 24727829, 24727834, 24727834, 24727839, 24727839, 24727845, 24727845, 24727849, 24727849, 24727854, 24727854, 24727859, 24727859, 24727865, 24727865, 24727869, 24727869, 24727874, 24727874, 24727880, 24727880, 24727884, 24727884, 24727889, 24727889, 24727894, 24727894, 24727899, 24727899, 24727904]}
+  "history": {"load": [0.2, 0.18, 0.13, 0.26, 0.26, 2.29, 2.29, 1.06, 1.06, 0.61, 0.24, 0.24, 0.21, 0.21, 0.12, 0.12, 0.47, 0.47, 0.9, 0.9, 1.44, 0.96, 0.96, 0.5, 0.5, 0.51, 0.51, 0.37, 0.37, 0.67, 0.67, 0.47, 0.47, 0.21, 0.21, 0.37, 0.37, 0.51, 0.44, 0.44, 0.34, 0.34, 0.12, 0.12, 0.31, 0.31, 0.16, 0.2, 0.45, 0.37, 0.37, 0.24, 0.24, 0.13, 0.26, 0.26, 0.29, 0.37, 0.41, 0.41], "mem": [7.7, 8.1, 7.0, 10.9, 10.9, 21.1, 21.1, 18.8, 18.8, 18.4, 18.5, 18.5, 18.3, 18.3, 18.3, 18.3, 18.2, 18.2, 19.4, 19.4, 18.4, 18.6, 18.6, 18.6, 18.6, 18.7, 18.7, 18.7, 18.7, 18.6, 18.6, 18.8, 18.8, 18.3, 18.3, 18.1, 18.1, 18.1, 18.1, 18.1, 18.0, 18.1, 18.1, 18.0, 18.1, 18.1, 18.2, 18.1, 18.1, 18.2, 18.2, 18.1, 18.1, 18.2, 18.3, 18.3, 18.4, 18.5, 18.5, 18.5], "disk": [55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55, 55], "block": [24764639, 24764645, 24764649, 24764654, 24764654, 24764659, 24764659, 24764664, 24764664, 24764669, 24764674, 24764674, 24764680, 24764680, 24764684, 24764684, 24764689, 24764689, 24764694, 24764694, 24764700, 24764704, 24764704, 24764709, 24764709, 24764714, 24764714, 24764720, 24764720, 24764724, 24764724, 24764729, 24764729, 24764735, 24764735, 24764739, 24764739, 24764744, 24764749, 24764749, 24764755, 24764755, 24764759, 24764759, 24764764, 24764764, 24764769, 24764775, 24764779, 24764784, 24764784, 24764789, 24764789, 24764795, 24764799, 24764799, 24764804, 24764810, 24764814, 24764814]}
 }

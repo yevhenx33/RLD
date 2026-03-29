@@ -537,26 +537,18 @@ def start_faucet(deploy: dict):
     except Exception as e:
         warn(f"Could not fund SimFunder: {e}")
 
-    # Kill existing faucet processes
-    run_quiet(["pkill", "-f", "faucet_server.py"])
-    time.sleep(1)
+    # Faucet server lifecycle is now managed by Docker Compose
+    # (reth-faucet-1 container with restart: unless-stopped).
+    # The container is started automatically via docker-compose.reth.yml.
+    # To restart manually: docker compose -f docker/reth/docker-compose.reth.yml up -d faucet
 
-    # Start faucet server
-    faucet_env = {**os.environ, "WHALE_KEY": WHALE_KEY}
-    subprocess.Popen(
-        ["python3", str(SCRIPT_DIR / "faucet_server.py")],
-        stdout=open("/tmp/faucet_server.log", "w"),
-        stderr=subprocess.STDOUT,
-        env=faucet_env,
-    )
-
-    # Verify health
+    # Verify health (whether Docker-managed or already running)
     for i in range(1, 16):
         if http_get("http://localhost:8088/health") == 200:
-            ok("Faucet server healthy on :8088")
+            ok("Faucet server healthy on :8088 (Docker-managed)")
             return
         time.sleep(1)
-    warn("Faucet server did not respond to /health within 15s — check /tmp/faucet_server.log")
+    warn("Faucet server did not respond to /health within 15s — check: docker logs reth-faucet-1")
 
 
 # ═══════════════════════════════════════════════════════════════
