@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { ethers } from "ethers";
 import { InputGroup, SummaryRow } from "./TradingTerminal";
-import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { getSigner } from "../../utils/connection";
 import { useTwammOrder } from "../../hooks/useTwammOrder";
 import { usePoolLiquidity, liquidityToAmounts, computeLiquidity } from "../../hooks/usePoolLiquidity";
 import { ZERO_FOR_ONE_LONG } from "../../config/simulationConfig";
@@ -51,7 +51,7 @@ function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account
       if (txPauseRef) txPauseRef.current = true;
 
       // Get MetaMask signer (handles Anvil chainId sync)
-      const signer = await getAnvilSigner();
+      const signer = await getSigner();
 
       // 2. Connect to broker
       const broker = new ethers.Contract(brokerAddress, PRIME_BROKER_ABI, signer);
@@ -96,7 +96,6 @@ function MintForm({ brokerBalance, currentRate, brokerAddress, marketId, account
         || "Unknown error";
       addToast({ type: "error", title: "Mint Failed", message: reason });
     } finally {
-      await restoreAnvilChainId();
       setExecuting(false);
       if (txPauseRef) txPauseRef.current = false;
     }
@@ -513,7 +512,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
     setLpStep("Computing token split...");
 
     try {
-      const signer = await getAnvilSigner();
+      const signer = await getSigner();
       const provider = signer.provider;
       const executorAddr = infrastructure.broker_executor;
       const routerAddr = infrastructure.broker_router;
@@ -624,7 +623,6 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       console.error("[LP] Atomic execution failed:", err);
       setLpError(err.reason || err.shortMessage || err.message || "Transaction failed");
     } finally {
-      await restoreAnvilChainId();
       setLpExecuting(false);
       if (txPauseRef) txPauseRef.current = false;
     }

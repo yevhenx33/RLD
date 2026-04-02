@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { getSigner } from "../../utils/connection";
 import { rpcProvider } from "../../utils/provider";
 import { useSimulation } from "../../hooks/useSimulation";
 import {
@@ -2109,7 +2109,7 @@ export default function SimulationTerminal() {
               });
             } else if (type === 'track-lp') {
               try {
-                const signer = await getAnvilSigner();
+                const signer = await getSigner();
                 const broker = new ethers.Contract(brokerAddress, [
                   'function setActiveV4Position(uint256 newTokenId) external',
                 ], signer);
@@ -2121,11 +2121,10 @@ export default function SimulationTerminal() {
                 console.error('[LP] track failed:', e);
                 addToast({ type: 'error', title: e.reason || e.shortMessage || 'Track failed' });
               } finally {
-                await restoreAnvilChainId();
               }
             } else if (type === 'untrack-lp') {
               try {
-                const signer = await getAnvilSigner();
+                const signer = await getSigner();
                 const broker = new ethers.Contract(brokerAddress, [
                   'function setActiveV4Position(uint256 newTokenId) external',
                 ], signer);
@@ -2137,7 +2136,6 @@ export default function SimulationTerminal() {
                 console.error('[LP] untrack failed:', e);
                 addToast({ type: 'error', title: e.reason || e.shortMessage || 'Untrack failed' });
               } finally {
-                await restoreAnvilChainId();
               }
             } else if (type === 'claim-fees') {
               // handled by ClaimFeesModal now

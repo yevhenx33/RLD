@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { getSigner } from "../../utils/connection";
 import { rpcProvider } from "../../utils/provider";
 import { TrendingUp, Terminal, AlertTriangle, ChevronDown, Layers } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
@@ -205,7 +205,7 @@ export default function BasisTradePage() {
     try {
       if (!marketInfo?.infrastructure?.basis_trade_factory) return;
       setIsApproving(true);
-      const signer = await getAnvilSigner();
+      const signer = await getSigner();
       const basisTradeFactory = marketInfo.infrastructure.basis_trade_factory;
       const approveTokenAddr = selectedToken === "USDC" ? USDC_ADDRESS : SUSDE_ADDRESS;
       
@@ -229,7 +229,6 @@ export default function BasisTradePage() {
       addToast({ type: "error", title: "Approval Failed", message: msg });
     } finally {
       setIsApproving(false);
-      try { await restoreAnvilChainId(); } catch { /* non-critical */ }
     }
   };
 

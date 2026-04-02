@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { getSigner } from "../../utils/connection";
 import { rpcProvider } from "../../utils/provider";
 import { Shield, Terminal, AlertTriangle, ChevronDown, Wallet } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
@@ -123,7 +123,7 @@ export default function BondsPage() {
     try {
       if (!marketInfo?.infrastructure?.bond_factory || !marketInfo?.collateral?.address) return;
       setIsApproving(true);
-      const signer = await getAnvilSigner();
+      const signer = await getSigner();
       
       const provider = rpcProvider;
       let approveTokenAddr = marketInfo.collateral.address;
@@ -156,7 +156,6 @@ export default function BondsPage() {
       addToast({ type: "error", title: "Approval Failed", message: msg });
     } finally {
       setIsApproving(false);
-      try { await restoreAnvilChainId(); } catch { /* non-critical */ }
     }
   };
 

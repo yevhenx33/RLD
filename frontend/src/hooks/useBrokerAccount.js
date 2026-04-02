@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-import { RPC_URL, getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { RPC_URL, getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
 
 // ── Minimal ABIs ───────────────────────────────────────────────────
@@ -158,8 +158,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
 
     try {
       // Get MetaMask signer (handles Anvil chainId sync)
-      setStep("Syncing chain ID...");
-      const signer = await getAnvilSigner();
+      const signer = await getSigner();
 
       const factory = new ethers.Contract(
         brokerFactoryAddr,
@@ -207,7 +206,6 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       setError(msg);
       setStep("");
     } finally {
-      await restoreAnvilChainId();
       setCreating(false);
     }
   }, [account, brokerFactoryAddr]);
@@ -226,8 +224,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       setStep("Preparing deposit...");
 
       try {
-        // Sync Anvil + MetaMask for signed tx
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         // waUSDC has 6 decimals
         const amountWei = ethers.parseUnits(amount.toString(), 6);
@@ -255,7 +252,6 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setDepositing(false);
       }
     },
