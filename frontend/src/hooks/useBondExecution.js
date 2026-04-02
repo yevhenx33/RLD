@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
 
 // ── ABI fragments ─────────────────────────────────────────────────
@@ -172,8 +172,7 @@ export function useBondExecution(
         // ── Get signer only when needed for transactions ────────
         let signer;
         if (allowance < totalWei) {
-          setStep("Syncing chain ID...");
-          signer = await getAnvilSigner();
+          signer = await getSigner();
           setStep(`Approve ${approveLabel} for BondFactory...`);
           const tokenToApprove = new ethers.Contract(approveTokenAddr, ERC20_ABI, signer);
           const approveTx = await tokenToApprove.approve(
@@ -186,8 +185,7 @@ export function useBondExecution(
 
         // ── Mint bond (single TX) ───────────────────────────────
         if (!signer) {
-          setStep("Syncing chain ID...");
-          signer = await getAnvilSigner();
+          signer = await getSigner();
         }
         setStep("Minting bond...");
         const bondFactory = new ethers.Contract(
@@ -288,7 +286,7 @@ export function useBondExecution(
       } finally {
         setExecuting(false);
         if (pauseRef) pauseRef.current = false;
-        try { await restoreAnvilChainId(); } catch { /* ignore */ }
+
       }
     },
     [account, infrastructure, collateralAddr, positionAddr, _syncAndNotify, pauseRef],
@@ -329,7 +327,7 @@ export function useBondExecution(
       setStep("Preparing...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         // ── 1. Build pool key ─────────────────────────────────────
         const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();
@@ -405,7 +403,7 @@ export function useBondExecution(
       } finally {
         setExecuting(false);
         if (pauseRef) pauseRef.current = false;
-        try { await restoreAnvilChainId(); } catch { /* ignore */ }
+
       }
     },
     [account, infrastructure, collateralAddr, positionAddr, _syncAndNotify, pauseRef],

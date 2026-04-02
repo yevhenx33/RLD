@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getSigner } from "../utils/connection";
 
 // ── ABI fragments ────────────────────────────────────────────────
 
@@ -192,7 +192,7 @@ export function useTwammOrder(
       setStep("Preparing TWAMM order...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const broker = new ethers.Contract(
           brokerAddress,
           PRIME_BROKER_TWAMM_ABI,
@@ -259,7 +259,6 @@ export function useTwammOrder(
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -288,7 +287,7 @@ export function useTwammOrder(
       setStep("Cancelling TWAMM order...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const broker = new ethers.Contract(
           brokerAddress,
           PRIME_BROKER_TWAMM_ABI,
@@ -324,7 +323,6 @@ export function useTwammOrder(
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -359,7 +357,7 @@ export function useTwammOrder(
       setStep("Claiming expired TWAMM order...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const broker = new ethers.Contract(
           brokerAddress,
           PRIME_BROKER_TWAMM_ABI,
@@ -425,7 +423,6 @@ export function useTwammOrder(
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -452,7 +449,7 @@ export function useTwammOrder(
       setStep("Tracking TWAMM order as collateral...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const broker = new ethers.Contract(brokerAddress, PRIME_BROKER_TWAMM_ABI, signer);
         const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
 
@@ -486,7 +483,6 @@ export function useTwammOrder(
         setError(reason || "Track order failed");
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -512,7 +508,7 @@ export function useTwammOrder(
       setStep("Untracking TWAMM order...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const broker = new ethers.Contract(brokerAddress, PRIME_BROKER_TWAMM_ABI, signer);
 
         // Pass zeroed-out info to clear the active order
@@ -551,7 +547,6 @@ export function useTwammOrder(
         setError(reason || "Untrack order failed");
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },

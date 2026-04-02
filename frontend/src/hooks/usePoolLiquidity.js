@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
 
 // ── PrimeBroker LP ABI ────────────────────────────────────────────
@@ -438,7 +438,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
 
         // 4. Connect MetaMask (with Anvil chainId sync)
         setExecutionStep("Connecting wallet...");
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         // 5. Send addPoolLiquidity tx
         setExecutionStep("Sending add liquidity tx...");
@@ -501,7 +501,6 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         console.error("[LP] addPoolLiquidity failed:", err);
         setExecutionError(err.reason || err.shortMessage || err.message || "Transaction failed");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -538,7 +537,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
 
         // Connect MetaMask (with Anvil chainId sync)
         setExecutionStep("Connecting wallet...");
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         // Send removePoolLiquidity tx
         setExecutionStep("Sending remove liquidity tx...");
@@ -556,7 +555,6 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         console.error("[LP] removePoolLiquidity failed:", err);
         setExecutionError(err.reason || err.shortMessage || err.message || "Transaction failed");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -577,7 +575,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
       setExecutionStep("Tracking LP position as collateral...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, signer);
 
         setExecutionStep("Confirm in wallet...");
@@ -599,7 +597,6 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         setExecutionError(reason || "Track position failed");
         setExecutionStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -620,7 +617,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
       setExecutionStep("Untracking LP position...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, signer);
 
         setExecutionStep("Confirm in wallet...");
@@ -642,7 +639,6 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         setExecutionError(reason || "Untrack position failed");
         setExecutionStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -666,7 +662,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
       setExecutionStep("Preparing fee collection...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const broker = new ethers.Contract(brokerAddress, BROKER_LP_ABI, signer);
 
         // Read current activeTokenId to restore later
@@ -709,7 +705,6 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         setExecutionError(reason || "Fee collection failed");
         setExecutionStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },

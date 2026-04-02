@@ -13,7 +13,7 @@
  */
 
 import { ethers } from "ethers";
-import { RPC_URL } from "./anvil";
+import { RPC_URL } from "./connection";
 
 // Chain ID 31337 = Anvil / Reth dev mode
 const CHAIN_ID = 31337;

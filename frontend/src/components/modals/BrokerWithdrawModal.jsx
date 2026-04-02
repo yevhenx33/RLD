@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { X, ArrowUp, Loader2, AlertTriangle } from "lucide-react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { getSigner } from "../../utils/connection";
 
 /**
  * Broker Withdraw modal — calls broker.withdrawCollateral / withdrawPositionToken.
@@ -41,7 +41,7 @@ export default function BrokerWithdrawModal({
     setExecutionError("");
     if (txPauseRef) txPauseRef.current = true;
     try {
-      const signer = await getAnvilSigner();
+      const signer = await getSigner();
       const userAddr = await signer.getAddress();
       const broker = new ethers.Contract(brokerAddress, [withdrawFn], signer);
 
@@ -75,7 +75,6 @@ export default function BrokerWithdrawModal({
       setExecuting(false);
       setExecutionStep("");
       if (txPauseRef) txPauseRef.current = false;
-      await restoreAnvilChainId();
     }
   };
 

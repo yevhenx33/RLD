@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
 
 // ── ABI fragments ─────────────────────────────────────────────────
@@ -215,8 +215,7 @@ export function useBasisTradeExecution(
 
         let signer;
         if (allowance < totalWei) {
-          setStep("Syncing chain ID...");
-          signer = await getAnvilSigner();
+          signer = await getSigner();
           setStep(`Approve ${approveLabel} for BasisTradeFactory...`);
           const tokenToApprove = new ethers.Contract(approveTokenAddr, ERC20_ABI, signer);
           const approveTx = await tokenToApprove.approve(
@@ -229,8 +228,7 @@ export function useBasisTradeExecution(
 
         // ── Open position (single TX with flash loan) ───────────
         if (!signer) {
-          setStep("Syncing chain ID...");
-          signer = await getAnvilSigner();
+          signer = await getSigner();
         }
         setStep("Opening position (flash loan)...");
 
@@ -338,7 +336,7 @@ export function useBasisTradeExecution(
       } finally {
         setExecuting(false);
         if (pauseRef) pauseRef.current = false;
-        try { await restoreAnvilChainId(); } catch { /* ignore */ }
+
       }
     },
     [account, infrastructure, collateralAddr, positionAddr, USDC_ADDRESS, SUSDE_TOKEN_ADDRESS, _syncAndNotify, pauseRef],
@@ -375,7 +373,7 @@ export function useBasisTradeExecution(
       setStep("Preparing...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         // ── Build pool key ─────────────────────────────────────
         const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();
@@ -476,7 +474,7 @@ export function useBasisTradeExecution(
       } finally {
         setExecuting(false);
         if (pauseRef) pauseRef.current = false;
-        try { await restoreAnvilChainId(); } catch { /* ignore */ }
+
       }
     },
     [account, infrastructure, collateralAddr, positionAddr, SUSDE_TOKEN_ADDRESS, _syncAndNotify, pauseRef],

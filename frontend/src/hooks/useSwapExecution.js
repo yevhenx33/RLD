@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../utils/anvil";
+import { getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
 
 // BrokerRouter ABI (executeLong + closeLong)
@@ -90,17 +90,14 @@ function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
   };
 }
 
-/**
- * Ensure BrokerRouter is approved as operator on the broker.
- * Uses getAnvilSigner for the approval tx if needed.
- */
+/** Ensure BrokerRouter is approved as operator on the broker. */
 async function ensureOperator(brokerAddress, routerAddress, setStep) {
   const broker = new ethers.Contract(brokerAddress, BROKER_ABI, rpcProvider);
   const isOperator = await broker.operators(routerAddress);
 
   if (!isOperator) {
     setStep("Approving BrokerRouter as operator...");
-    const signer = await getAnvilSigner();
+    const signer = await getSigner();
     const brokerSigned = new ethers.Contract(brokerAddress, BROKER_ABI, signer);
 
     setStep("Confirm operator approval in wallet...");
@@ -110,8 +107,6 @@ async function ensureOperator(brokerAddress, routerAddress, setStep) {
     setStep("Waiting for approval...");
     await opTx.wait();
 
-    // Restore chainId between operator approval and the main tx
-    await restoreAnvilChainId();
   }
 }
 
@@ -178,7 +173,7 @@ export function useSwapExecution(
 
         // 2. Execute the swap via MetaMask
         setStep("Preparing swap...");
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         const router = new ethers.Contract(
           infrastructure.broker_router,
@@ -216,7 +211,6 @@ export function useSwapExecution(
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -239,7 +233,7 @@ export function useSwapExecution(
         await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
         setStep("Preparing close...");
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         const router = new ethers.Contract(
           infrastructure.broker_router,
@@ -274,7 +268,6 @@ export function useSwapExecution(
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -306,7 +299,7 @@ export function useSwapExecution(
         await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
         setStep("Preparing short...");
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         const router = new ethers.Contract(
           infrastructure.broker_router,
@@ -349,7 +342,6 @@ export function useSwapExecution(
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -372,7 +364,7 @@ export function useSwapExecution(
         await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
         setStep("Preparing close short...");
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         const router = new ethers.Contract(
           infrastructure.broker_router,
@@ -412,7 +404,6 @@ export function useSwapExecution(
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },
@@ -432,7 +423,7 @@ export function useSwapExecution(
       setStep("Preparing debt repayment...");
 
       try {
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
 
         // Read marketId from broker
         const broker = new ethers.Contract(
@@ -474,7 +465,6 @@ export function useSwapExecution(
         setError(msg);
         setStep("");
       } finally {
-        await restoreAnvilChainId();
         setExecuting(false);
       }
     },

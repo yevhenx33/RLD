@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { X, ArrowDown, Loader2, AlertTriangle } from "lucide-react";
 import { ethers } from "ethers";
-import { getAnvilSigner, restoreAnvilChainId } from "../../utils/anvil";
+import { getSigner } from "../../utils/connection";
 import { rpcProvider } from "../../utils/provider";
 
 /**
@@ -31,7 +31,7 @@ export default function DepositModal({
     (async () => {
       try {
         const provider = rpcProvider;
-        const signer = await getAnvilSigner();
+        const signer = await getSigner();
         const token = new ethers.Contract(
           tokenAddress,
           ["function balanceOf(address) view returns (uint256)"],
@@ -39,7 +39,6 @@ export default function DepositModal({
         );
         const bal = await token.balanceOf(await signer.getAddress());
         setWalletBalance(parseFloat(ethers.formatUnits(bal, tokenDecimals)));
-        await restoreAnvilChainId();
       } catch {
         setWalletBalance(null);
       }
@@ -58,7 +57,7 @@ export default function DepositModal({
     setExecutionError("");
     if (txPauseRef) txPauseRef.current = true;
     try {
-      const signer = await getAnvilSigner();
+      const signer = await getSigner();
       const token = new ethers.Contract(
         tokenAddress,
         ["function transfer(address to, uint256 amount) returns (bool)"],
@@ -85,7 +84,6 @@ export default function DepositModal({
       setExecuting(false);
       setExecutionStep("");
       if (txPauseRef) txPauseRef.current = false;
-      await restoreAnvilChainId();
     }
   };
 
