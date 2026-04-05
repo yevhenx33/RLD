@@ -1,3 +1,4 @@
+import morpho.netfix  # Force IPv4 (Docker workaround)
 """
 Morpho Blue Indexer — Main Entry Point.
 
