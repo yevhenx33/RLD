@@ -50,6 +50,7 @@ LP_FUND =    100_000_000 * 10**6   # $100M
 MM_FUND =     10_000_000 * 10**6   # $10M
 CHAOS_FUND =  10_000_000 * 10**6   # $10M
 TOTAL_FUND = LP_FUND + MM_FUND + CHAOS_FUND
+FAUCET_RESERVE = 1_000_000_000 * 10**6  # $1B for faucet SimFunder
 
 # BrokerCreated event topic
 BROKER_CREATED_SIG = "c418c83b1622e1e32aac5d6d2848134a7e89eb8e96c8514afd1757d25ee5ef71"
@@ -302,6 +303,13 @@ def fund_users(w3, deploy, sim_funder):
         assert_balance_gte(wausdc, addr, int(amount * 0.90), f"{name} waUSDC")
 
     ok("All users funded ✅")
+
+    # 2.5 Load SimFunder with $1B for faucet
+    step("2.5", f"Loading SimFunder with ${FAUCET_RESERVE/1e6:,.0f} for faucet...")
+    calldata = cast_calldata("transfer(address,uint256)", sim_funder, FAUCET_RESERVE)
+    send_tx(w3, USDC, calldata, WHALE_KEY, "USDC→SimFunder (faucet reserve)")
+    assert_balance_gte(USDC, sim_funder, FAUCET_RESERVE, "SimFunder faucet reserve")
+    ok("Faucet reserve loaded ✅")
 
 # ═══════════════════════════════════════════════════════════════
 # STEP 3: LP SETUP

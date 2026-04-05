@@ -44,6 +44,7 @@ NO_BUILD=false
 SKIP_GENESIS=false
 FRESH=false
 WITH_USERS=false
+FROM_SNAPSHOT=false
 
 for arg in "$@"; do
     case "$arg" in
@@ -51,13 +52,15 @@ for arg in "$@"; do
         --skip-genesis)   SKIP_GENESIS=true ;;
         --fresh)          FRESH=true ;;
         --with-users)     WITH_USERS=true ;;
+        --from-snapshot)  FROM_SNAPSHOT=true; SKIP_GENESIS=true ;;
         --help|-h)
-            echo "Usage: $0 [--no-build] [--skip-genesis] [--fresh] [--with-users]"
+            echo "Usage: $0 [--no-build] [--skip-genesis] [--fresh] [--with-users] [--from-snapshot]"
             echo ""
             echo "  --no-build       Skip Docker image rebuilds"
             echo "  --skip-genesis   Reuse existing genesis.json (skip Anvil deploy)"
             echo "  --fresh          Wipe Reth datadir before starting"
             echo "  --with-users     Run broker/LP setup on Reth (indexer captures events)"
+            echo "  --from-snapshot  Restore genesis from latest snapshot (fast restart)"
             exit 0
             ;;
         *) echo "Unknown option: $arg"; exit 1 ;;
@@ -94,10 +97,10 @@ dim()     { echo -e "${DIM}    $1${NC}"; }
 # ═════════════════════════════════════════════════════════════
 header "PREFLIGHT CHECKS"
 
-for cmd in docker cast reth; do
+for cmd in docker cast; do
     command -v "$cmd" &>/dev/null || { fail "$cmd not found in PATH"; exit 1; }
 done
-ok "Required tools found (docker, cast, reth)"
+ok "Required tools found (docker, cast)"
 
 docker compose version &>/dev/null || { fail "docker compose v2 not available"; exit 1; }
 ok "Docker compose v2 available"
@@ -123,11 +126,13 @@ fi
 # ═════════════════════════════════════════════════════════════
 header "STEP 1: TEAR DOWN"
 
-step "1a" "Stopping all stacks..."
-# Stop services but preserve reth-datadir volume (use 'down' without -v for reth data)
+step "1a" "Stopping simulation stack..."
+# Only tear down the simulation compose — infra (rates-indexer) and frontend are independent
 docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" down 2>/dev/null || true
 docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" down -v 2>/dev/null || true
-ok "Docker stacks stopped"
+# Ensure shared network exists (infra + frontend depend on it)
+docker network create rld_shared 2>/dev/null || true
+ok "Simulation stack stopped (infra + frontend untouched)"
 
 step "1b" "Killing stale bare-metal processes..."
 pkill -f "reth.*--dev" 2>/dev/null || true
@@ -213,10 +218,19 @@ if [ "$SKIP_GENESIS" = false ]; then
                 cast rpc anvil_setChainId 31337 --rpc-url "$ANVIL_RPC" > /dev/null 2>&1 || true
                 break
             else
-                fail "Deployer exited with code $EXIT_CODE"
-                docker logs docker-deployer-1 --tail 30 2>&1
-                kill "$ANVIL_PID" 2>/dev/null || true
-                exit 1
+                # Check if deployment.json was populated (Phases 1-4 succeeded)
+                DEPLOY_KEYS=$(jq 'length' "$DEPLOY_JSON" 2>/dev/null || echo "0")
+                if [ "$DEPLOY_KEYS" -gt 5 ]; then
+                    warn "Deployer exited with code $EXIT_CODE but deployment.json has $DEPLOY_KEYS keys — treating as partial success"
+                    docker logs docker-deployer-1 --tail 5 2>&1
+                    cast rpc anvil_setChainId 31337 --rpc-url "$ANVIL_RPC" > /dev/null 2>&1 || true
+                    break
+                else
+                    fail "Deployer exited with code $EXIT_CODE"
+                    docker logs docker-deployer-1 --tail 30 2>&1
+                    kill "$ANVIL_PID" 2>/dev/null || true
+                    exit 1
+                fi
             fi
         fi
 
@@ -338,9 +352,37 @@ print(f'  Patched deploy_block/fork_block → 0 for Reth')
     wait "$ANVIL_PID" 2>/dev/null || true
     ok "Anvil stack stopped"
 
+    # ── 2h. Save genesis snapshot ──
+    step "2h" "Saving genesis snapshot..."
+    SNAPSHOT_DIR="$SCRIPT_DIR/snapshots"
+    mkdir -p "$SNAPSHOT_DIR"
+    SNAPSHOT_NAME="genesis-$(date +%Y%m%d-%H%M%S).tar.gz"
+    tar -czf "$SNAPSHOT_DIR/$SNAPSHOT_NAME" \
+        -C "$SCRIPT_DIR" genesis.json deployment-snapshot.json 2>/dev/null
+    ok "Snapshot saved: snapshots/$SNAPSHOT_NAME ($(du -h "$SNAPSHOT_DIR/$SNAPSHOT_NAME" | cut -f1))"
+    # Keep last 3 snapshots
+    ls -t "$SNAPSHOT_DIR"/genesis-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+    SNAPSHOT_COUNT=$(ls "$SNAPSHOT_DIR"/genesis-*.tar.gz 2>/dev/null | wc -l)
+    dim "  $SNAPSHOT_COUNT snapshot(s) retained"
+
 else
     header "STEP 2: GENESIS (SKIPPED)"
-    ok "Reusing existing genesis.json ($(du -h "$GENESIS_FILE" | cut -f1))"
+
+    # Auto-restore from snapshot if genesis is missing
+    SNAPSHOT_DIR="$SCRIPT_DIR/snapshots"
+    if [ ! -f "$GENESIS_FILE" ] || [ "$FROM_SNAPSHOT" = true ]; then
+        LATEST_SNAPSHOT=$(ls -t "$SNAPSHOT_DIR"/genesis-*.tar.gz 2>/dev/null | head -1)
+        if [ -n "$LATEST_SNAPSHOT" ]; then
+            step "2r" "Restoring from snapshot: $(basename "$LATEST_SNAPSHOT")..."
+            tar -xzf "$LATEST_SNAPSHOT" -C "$SCRIPT_DIR"
+            ok "Genesis restored from snapshot"
+        else
+            fail "No genesis.json and no snapshots found — run with --fresh first"
+            exit 1
+        fi
+    else
+        ok "Reusing existing genesis.json ($(du -h "$GENESIS_FILE" | cut -f1))"
+    fi
 
     if [ ! -f "$DEPLOY_SNAPSHOT" ]; then
         fail "deployment-snapshot.json not found — run without --skip-genesis first"
@@ -557,9 +599,9 @@ else
 fi
 
 # ── 4g. Start trading bots (after users are funded) ───────────
-step "4g" "Starting mm-daemon + chaos-trader..."
-docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG mm-daemon chaos-trader 2>&1 | tail -5
-ok "Trading bots started"
+step "4g" "Starting mm-daemon + chaos-trader + faucet..."
+docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG mm-daemon chaos-trader faucet 2>&1 | tail -5
+ok "Trading bots + faucet started"
 
 # ═════════════════════════════════════════════════════════════
 # STATUS REPORT

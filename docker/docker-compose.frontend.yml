@@ -1,13 +1,19 @@
 # ═══════════════════════════════════════════════════════════════
-# RLD Frontend (containerized)
+# RLD Frontend (Nginx + Vite SPA)
 # ═══════════════════════════════════════════════════════════════
-# Builds and serves the Vite React frontend via Nginx.
+# Independently deployable. Proxies to indexer and rates-indexer
+# via Docker DNS on the shared rld_shared network.
 #
 #  Usage:
-#    docker compose -f docker/docker-compose.frontend.yml up -d --build
+#    docker compose -f docker/docker-compose.frontend.yml up -d
+#
+#  Deploy new build:
+#    cd frontend && VITE_API_BASE_URL=/api npx vite build
+#    docker compose -f docker/docker-compose.frontend.yml up -d --force-recreate
 #
 #  Access:
-#    http://localhost:3000
+#    http://localhost:3000 (direct)
+#    https://rld.fi (via Cloudflare → host nginx → :3000)
 # ═══════════════════════════════════════════════════════════════
 
 services:
@@ -16,11 +22,7 @@ services:
     ports:
       - "${FRONTEND_PORT:-3000}:80"
     volumes:
-      # Serve the pre-built dist from the host (updated by CI via SCP)
-      # No image rebuild needed on deploy — just recreate the container
       - /home/ubuntu/RLD/frontend/dist:/usr/share/nginx/html:ro
-      # Overlay fonts.css and fonts/ directly from git (always current after git reset)
-      # This bypasses any SCP/permission issues with dist/fonts.css
       - /home/ubuntu/RLD/frontend/public/fonts.css:/usr/share/nginx/html/fonts.css:ro
       - /home/ubuntu/RLD/frontend/public/fonts:/usr/share/nginx/html/fonts:ro
       - /home/ubuntu/RLD/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -28,7 +30,12 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:80/ || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/ || exit 1"]
       interval: 30s
       timeout: 3s
       retries: 3
+
+networks:
+  default:
+    name: rld_shared
+    external: true

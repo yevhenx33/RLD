@@ -54,3 +54,6 @@ Thumbs.db
 # Stale local DB files (live data is in Docker volumes)
 backend/data/
 data/
+*.env
+!*.env.enc
+secrets.txt

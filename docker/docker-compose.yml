@@ -23,7 +23,7 @@ services:
       - POSTGRES_PASSWORD=${DB_PASSWORD:-rld_dev_password}
       - POSTGRES_DB=rld_indexer
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rld -d rld_indexer"]
       interval: 5s
@@ -48,12 +48,12 @@ services:
     volumes:
       - ./deployment.json:/config/deployment.json:ro
     ports:
-      - "${INDEXER_PORT:-8080}:8080"
+      - "127.0.0.1:${INDEXER_PORT:-8080}:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')\" || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8080\"' || exit 1"]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -107,11 +107,7 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'python3 -c "import os,sys; [sys.exit(0) for f in os.listdir(''/proc'') if f.isdigit() and ''combined_daemon'' in open(f''/proc/{f}/cmdline'',''rb'').read().decode(errors=''ignore'')]" || exit 1',
-        ]
+      test: ["CMD-SHELL", "pgrep -f combined_daemon || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 60s
@@ -135,11 +131,7 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'python3 -c "import os,sys; [sys.exit(0) for f in os.listdir(''/proc'') if f.isdigit() and ''chaos_daemon'' in open(f''/proc/{f}/cmdline'',''rb'').read().decode(errors=''ignore'')]" || exit 1',
-        ]
+      test: ["CMD-SHELL", "pgrep -f chaos_daemon || exit 1"]
       interval: 30s
       timeout: 5s
       start_period: 60s

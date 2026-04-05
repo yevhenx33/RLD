@@ -33,16 +33,23 @@ log_phase() { echo -e "\n${BLUE}═══ PHASE $1: $2 ═══${NC}\n"; }
 log_step()  { echo -e "${YELLOW}[$1] $2${NC}"; }
 log_ok()    { echo -e "${GREEN}✓ $1${NC}"; }
 log_err()   { echo -e "${RED}✗ $1${NC}"; exit 1; }
+log_warn()  { echo -e "${YELLOW}⚠ $1${NC}"; }
 log_info()  { echo -e "${CYAN}ℹ $1${NC}"; }
 
-# ─── Validate env ─────────────────────────────────────────────
+# ─── Validate & export env ────────────────────────────────────
 RPC_URL=${RPC_URL:-"http://host.docker.internal:8545"}
-PRIVATE_KEY=${DEPLOYER_KEY}
+export PRIVATE_KEY=${DEPLOYER_KEY}
+export RPC_URL DEPLOYER_KEY
 
 for VAR in DEPLOYER_KEY; do
     if [ -z "${!VAR}" ]; then
         log_err "$VAR not set"
     fi
+done
+
+# Export user keys if present (needed by Phase 5)
+for VAR in USER_A_KEY USER_B_KEY USER_C_KEY MM_KEY CHAOS_KEY; do
+    export "$VAR=${!VAR}"
 done
 
 # ─── Mainnet constants ────────────────────────────────────────
@@ -89,14 +96,23 @@ cast block-number --rpc-url "$RPC_URL" > /dev/null 2>&1 || log_err "Anvil not re
 cast rpc evm_setAutomine true --rpc-url "$RPC_URL" > /dev/null 2>&1 || true
 log_ok "Auto-mine enabled for deployment"
 
-# ─── Source & run phases ──────────────────────────────────────
+# ─── Source & run phases (1-4 are hard failures) ──────────────
 PHASE_DIR="$(cd "$(dirname "$0")" && pwd)/phases"
 
 source "$PHASE_DIR/01_protocol.sh"
 source "$PHASE_DIR/02_market.sh"
 source "$PHASE_DIR/03_periphery.sh"
 source "$PHASE_DIR/04_finalize.sh"
+
+# ─── Phase 5: User setup (soft failure — deployment.json already saved) ──
+set +e
 source "$PHASE_DIR/05_users.sh"
+PHASE5_EXIT=$?
+set -e
+
+if [ $PHASE5_EXIT -ne 0 ]; then
+    log_warn "Phase 5 (user setup) had errors (exit=$PHASE5_EXIT) — deployment is still valid"
+fi
 
 echo ""
 echo -e "${MAGENTA}╔═══════════════════════════════════════════════════╗${NC}"
@@ -105,3 +121,4 @@ echo -e "${MAGENTA}╚═══════════════════�
 echo ""
 echo "  Daemons poll indexer for config and start automatically."
 echo ""
+

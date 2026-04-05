@@ -1,0 +1,67 @@
+# ═══════════════════════════════════════════════════════════════
+# RLD Infrastructure — Always-On Services
+# ═══════════════════════════════════════════════════════════════
+# Independent from the simulation. Runs 24/7, never restarted
+# by restart-reth.sh. Parses Ethereum mainnet for live rates.
+#
+#  Usage:
+#    docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
+#
+#  Services:
+#    rates-indexer  — Live Aave/sUSDe/ETH rate scraper (persistent SQLite)
+#    morpho-indexer — Morpho Blue market/vault/allocation indexer
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  rates-indexer:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.rates
+    ports:
+      - "127.0.0.1:${RATES_PORT:-8081}:8080"
+    volumes:
+      - rates-data:/app/data
+    environment:
+      - MAINNET_RPC_URL=${MAINNET_RPC_URL:-https://eth.llamarpc.com}
+      - RESERVE_RPC_URL=${RESERVE_RPC_URL:-}
+      - ETH_PRICE_GRAPH_URL=${ETH_PRICE_GRAPH_URL:-}
+      - DB_DIR=/app/data
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8080\"' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+  morpho-indexer:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.morpho
+    ports:
+      - "127.0.0.1:${MORPHO_PORT:-8082}:8080"
+    volumes:
+      - morpho-data:/app/data
+    environment:
+      - MAINNET_RPC_URL=${MAINNET_RPC_URL:-https://eth.llamarpc.com}
+      - DB_DIR=/app/data
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/')"]
+      interval: 60s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+
+volumes:
+  rates-data:
+    name: reth_rates-data
+    external: true
+  morpho-data:
+
+networks:
+  default:
+    name: rld_shared
+    external: true

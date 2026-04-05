@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  timescale:
+    image: timescale/timescaledb-ha:pg16
+    container_name: rld_timescale
+    environment:
+      - POSTGRES_PASSWORD=rld_ts_f0729124f4aef67b
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=rld_data
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - timescale_data:/home/postgres/pgdata/data
+      - ./init-schema.sql:/docker-entrypoint-initdb.d/init-schema.sql
+
+  graphql:
+    image: graphile/postgraphile
+    container_name: rld_graphql
+    restart: on-failure
+    depends_on:
+      - timescale
+    ports:
+      - "127.0.0.1:5000:5000"
+    command:
+      - "--connection"
+      - "postgresql://postgres:postgres@timescale:5432/rld_data"
+      - "--schema"
+      - "public"
+      - "--watch"
+      - "--cors"
+      - "--enhance-graphiql"
+      - "--dynamic-json"
+
+volumes:
+  timescale_data:

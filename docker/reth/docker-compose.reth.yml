@@ -1,12 +1,19 @@
 # ═══════════════════════════════════════════════════════════════
 # RLD Simulation Stack (Reth Mode)
 # ═══════════════════════════════════════════════════════════════
-# All services run in Docker, including Reth.
-# Genesis contains all deployed contracts — no deployer needed.
+# Core simulation services only. Rates-indexer and frontend run
+# in separate compose files on the shared rld_shared network.
 #
 #  Usage:
-#    1. Generate genesis:  ./docker/reth/00_warmup.sh
-#    2. Run:               ./docker/reth/restart-reth.sh
+#    ./docker/reth/restart-reth.sh --fresh --with-users
+#
+#  Services:
+#    reth         — Reth dev-mode node with custom genesis
+#    postgres     — PostgreSQL for simulation indexer
+#    indexer      — On-chain event indexer + REST/GraphQL API
+#    mm-daemon    — Market-maker bot
+#    chaos-trader — Random trading bot
+#    faucet       — Whale faucet for funding users
 # ═══════════════════════════════════════════════════════════════
 
 services:
@@ -29,7 +36,7 @@ services:
       - --http.port
       - "8545"
       - --http.api
-      - "eth,net,web3,debug,trace,txpool"
+      - "eth,net,web3,txpool"
       - --http.corsdomain
       - "*"
       - --gpo.maxprice
@@ -40,7 +47,7 @@ services:
       - reth-datadir:/data
       - ./genesis.json:/genesis/genesis.json:ro
     ports:
-      - "${RETH_PORT:-8545}:8545"
+      - "127.0.0.1:${RETH_PORT:-8545}:8545"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8545\"' || exit 1"]
@@ -59,7 +66,7 @@ services:
       - POSTGRES_PASSWORD=${DB_PASSWORD:-rld_dev_password}
       - POSTGRES_DB=rld_indexer
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rld -d rld_indexer"]
       interval: 5s
@@ -86,10 +93,10 @@ services:
     volumes:
       - ../deployment.json:/config/deployment.json:ro
     ports:
-      - "${INDEXER_PORT:-8080}:8080"
+      - "127.0.0.1:${INDEXER_PORT:-8080}:8080"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')\" || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8080\"' || exit 1"]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -110,7 +117,7 @@ services:
       - PRIVATE_KEY=${MM_KEY}
       - MM_KEY=${MM_KEY}
       - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
-      - API_URL=${API_URL:-http://rates-indexer:8080}
+      - API_URL=http://rates-indexer:8080
       - API_KEY=${API_KEY}
     restart: unless-stopped
 
@@ -148,7 +155,7 @@ services:
     network_mode: host
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8088/health')\" || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8088\"' || exit 1"]
       interval: 15s
       timeout: 5s
       start_period: 15s
@@ -157,3 +164,8 @@ services:
 volumes:
   postgres-data-reth:
   reth-datadir:
+
+networks:
+  default:
+    name: rld_shared
+    external: true

@@ -21,7 +21,7 @@ services:
       context: ..
       dockerfile: backend/Dockerfile.rates
     ports:
-      - "${RATES_PORT:-8081}:8080"
+      - "127.0.0.1:${RATES_PORT:-8081}:8080"
     volumes:
       - rates-data:/app/data
     environment:
