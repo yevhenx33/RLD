@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-04-06T13:54:52Z",
+  "status": "healthy",
+  "latency_ms": 591,
+  "metrics": {
+    "total_snapshots": 907209,
+    "active_markets_synced": 242,
+    "vault_allocations": 2089210
+  },
+  "anomalies": {
+    "invalid_apy_rates": 0,
+    "null_values": 0
+  }
+}
