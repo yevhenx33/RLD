@@ -5,6 +5,11 @@ Ethereum Mainnet addresses, ABI selectors, and indexer settings.
 """
 
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+ENV_PATH = Path("/home/ubuntu/RLD/docker/.env")
+load_dotenv(ENV_PATH)
 
 # ─── RPC ──────────────────────────────────────────────────────
 MAINNET_RPC_URL = os.getenv("MAINNET_RPC_URL", "https://eth.llamarpc.com")
@@ -32,7 +37,7 @@ SEL_TOTAL_SUPPLY = "0x18160ddd"   # totalSupply() → uint256
 SEL_PRICE = "0xa035b1fe"          # price() → uint256
 
 # AdaptiveCurveIRM
-SEL_RATE_AT_TARGET = "0xd3c520db" # rateAtUTarget(bytes32) → int256
+SEL_RATE_AT_TARGET = "0x01977b57" # rateAtTarget(bytes32) → int256
 
 # Multicall3
 SEL_AGGREGATE3 = "0x82ad56cb"     # aggregate3((address,bool,bytes)[]) → (bool,bytes)[]

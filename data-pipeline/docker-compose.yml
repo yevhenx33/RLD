@@ -12,7 +12,8 @@ services:
       - "127.0.0.1:5433:5432"
     volumes:
       - timescale_data:/home/postgres/pgdata/data
-      - ./init-schema.sql:/docker-entrypoint-initdb.d/init-schema.sql
+      - ./init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql
+      - ./morpho-schema.sql:/docker-entrypoint-initdb.d/02-morpho-schema.sql
 
   graphql:
     image: graphile/postgraphile
@@ -24,13 +25,14 @@ services:
       - "127.0.0.1:5000:5000"
     command:
       - "--connection"
-      - "postgresql://postgres:postgres@timescale:5432/rld_data"
+      - "postgresql://postgres:rld_ts_f0729124f4aef67b@timescale:5432/rld_data"
       - "--schema"
       - "public"
       - "--watch"
       - "--cors"
       - "--enhance-graphiql"
       - "--dynamic-json"
+      - "--retry-on-init-fail"
 
 volumes:
   timescale_data:

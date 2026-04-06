@@ -22,7 +22,8 @@ def eth_get_block(block_num):
 
 def eth_get_logs(from_block, to_block, address, topics):
     return rpc_request("eth_getLogs", [{
-        "fromBlock": hex(from_block), "toBlock": hex(to_block),
+        "fromBlock": hex(from_block) if isinstance(from_block, int) else from_block,
+        "toBlock": hex(to_block) if isinstance(to_block, int) else to_block,
         "address": address, "topics": topics,
     }])
 
@@ -210,3 +211,40 @@ def multicall_irm_rates(market_ids, block="latest"):
                 except Exception:
                     pass
     return results
+
+def multicall3_try_aggregate(calls: list[tuple[str, str]], block="latest"):
+    """
+    On-chain Multicall3 tryAggregate.
+    calls: list of (target_address, hex_calldata)
+    Returns: list of (bool success, str hex_return_data)
+    """
+    if not calls:
+        return []
+    
+    from eth_abi import encode, decode
+    # Selector for tryAggregate(bool,(address,bytes)[]) is 0xbce38bd7
+    SELECTOR = "0xbce38bd7"
+    
+    formatted_calls = []
+    for target, calldata in calls:
+        target_bytes = bytes.fromhex(target.replace('0x', ''))
+        data_bytes = bytes.fromhex(calldata.replace('0x', ''))
+        formatted_calls.append((target_bytes, data_bytes))
+        
+    encoded_args = encode(["bool", "(address,bytes)[]"], [False, formatted_calls])
+    tx_data = SELECTOR + encoded_args.hex()
+    
+    try:
+        res = eth_call(MULTICALL3, tx_data, block)
+    except Exception as e:
+        log.warning(f"multicall3_try_aggregate eth_call failed: {e}")
+        return [(False, "0x")] * len(calls)
+
+    if not res or res == "0x":
+        return [(False, "0x")] * len(calls)
+        
+    res_bytes = bytes.fromhex(res.replace("0x", ""))
+    decoded = decode(["(bool,bytes)[]"], res_bytes)[0]
+    
+    return [(success, "0x" + rdata.hex()) for success, rdata in decoded]
+

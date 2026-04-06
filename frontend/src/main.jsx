@@ -22,6 +22,7 @@ const Vaults = lazy(() => import("./components/common/Vaults"));
 const VaultDetail = lazy(() => import("./components/common/VaultDetail"));
 const BasisTrade = lazy(() => import("./components/basis-trade/BasisTrade"));
 const BrokersDashboard = lazy(() => import("./components/brokers/BrokersDashboard"));
+const IntelDashboard = lazy(() => import("./components/intel/IntelDashboard"));
 
 // eslint-disable-next-line react-refresh/only-export-components
 const Loading = () => (
@@ -71,6 +72,14 @@ ReactDOM.createRoot(document.getElementById("root")).render(
               element={
                 <Suspense fallback={<Loading />}>
                   <Homepage />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/intel"
+              element={
+                <Suspense fallback={<Loading />}>
+                  <IntelDashboard />
                 </Suspense>
               }
             />
