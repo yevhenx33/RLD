@@ -2120,7 +2120,6 @@ export default function SimulationTerminal() {
               } catch (e) {
                 console.error('[LP] track failed:', e);
                 addToast({ type: 'error', title: e.reason || e.shortMessage || 'Track failed' });
-              } finally {
               }
             } else if (type === 'untrack-lp') {
               try {
@@ -2135,7 +2134,6 @@ export default function SimulationTerminal() {
               } catch (e) {
                 console.error('[LP] untrack failed:', e);
                 addToast({ type: 'error', title: e.reason || e.shortMessage || 'Untrack failed' });
-              } finally {
               }
             } else if (type === 'claim-fees') {
               // handled by ClaimFeesModal now
