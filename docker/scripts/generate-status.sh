@@ -13,6 +13,10 @@ DISK_TOTAL=$(df -BG / | awk 'NR==2{print $2}' | tr -d 'G')
 DISK_USED=$(df -BG / | awk 'NR==2{print $3}' | tr -d 'G')
 DISK_FREE=$(df -BG / | awk 'NR==2{print $4}' | tr -d 'G')
 DISK_PCT=$(df / | awk 'NR==2{print $5}' | tr -d '%')
+DATA_DISK_TOTAL=$(df -BG /mnt/data 2>/dev/null | awk 'NR==2{print $2}' | tr -d 'G' || echo 0)
+DATA_DISK_USED=$(df -BG /mnt/data 2>/dev/null | awk 'NR==2{print $3}' | tr -d 'G' || echo 0)
+DATA_DISK_FREE=$(df -BG /mnt/data 2>/dev/null | awk 'NR==2{print $4}' | tr -d 'G' || echo 0)
+DATA_DISK_PCT=$(df /mnt/data 2>/dev/null | awk 'NR==2{print $5}' | tr -d '%' || echo 0)
 MEM_TOTAL=$(free -m | awk '/Mem/{print $2}')
 MEM_USED=$(free -m | awk '/Mem/{print $3}')
 MEM_AVAIL=$(free -m | awk '/Mem/{print $7}')
@@ -308,6 +312,9 @@ else
 fi
 echo "$HIST" > "$HISTORY"
 
+# ── Node Metrics (Reth Mainnet / Lighthouse) ──
+NODE_METRICS_JSON=$(python3 /home/ubuntu/RLD/docker/scripts/fetch_node_metrics.py 2>/dev/null) || NODE_METRICS_JSON='{}'
+
 # ── Write JSON (atomic) ──
 TMPOUT=$(mktemp "${OUTPUT}.XXXXXX")
 cat > "$TMPOUT" << ENDJSON
@@ -318,6 +325,7 @@ cat > "$TMPOUT" << ENDJSON
     "load": [$LOAD_1, $LOAD_5, $LOAD_15],
     "cpu_cores": $CPU_CORES,
     "disk": {"total_gb":$DISK_TOTAL,"used_gb":$DISK_USED,"free_gb":$DISK_FREE,"percent":$DISK_PCT},
+    "data_disk": {"total_gb":${DATA_DISK_TOTAL:-0},"used_gb":${DATA_DISK_USED:-0},"free_gb":${DATA_DISK_FREE:-0},"percent":${DATA_DISK_PCT:-0}},
     "memory": {"total_mb":$MEM_TOTAL,"used_mb":$MEM_USED,"available_mb":$MEM_AVAIL},
     "swap": {"total_mb":$SWAP_TOTAL,"used_mb":$SWAP_USED},
     "connections": {"established":$ESTAB,"listening":$LISTEN},
@@ -335,6 +343,7 @@ cat > "$TMPOUT" << ENDJSON
   "git": {"commit":"$GIT_COMMIT","message":"$GIT_MSG","time":"$GIT_TIME","author":"$GIT_AUTHOR"},
   "docker": {"dangling_images":$DANGLING,"images_size":"$IMG_SIZE","active":$IMG_ACTIVE,"total":$IMG_TOTAL},
   "databases": $DB_JSON,
+  "nodes": $NODE_METRICS_JSON,
   "backups": $BACKUP_JSON,
   "history": $HIST
 }

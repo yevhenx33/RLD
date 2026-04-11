@@ -1,0 +1,81 @@
+# ═══════════════════════════════════════════════════════════════
+# RLD Mainnet Node — Reth EL + Lighthouse CL
+# ═══════════════════════════════════════════════════════════════
+# Pruned mainnet full node for zero-cost, zero-latency RPC.
+# Replaces all external Alchemy/Infura/Llama calls.
+#
+#  Usage:
+#    docker compose -f docker/docker-compose.mainnet.yml up -d
+#
+#  RPC endpoint (local only):
+#    http://127.0.0.1:8546
+#
+#  Disk budget: ~60-80GB (pruned state + beacon)
+#  Sync time:   ~6-12h (snap sync)
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  reth-mainnet:
+    image: ghcr.io/paradigmxyz/reth:v1.11.3
+    container_name: reth-mainnet
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8546:8545"         # JSON-RPC (local only)
+      - "30304:30304"                  # P2P (avoid conflict with dev reth on 30303)
+      - "30304:30304/udp"
+    volumes:
+      - /mnt/data/reth:/data
+      - ./mainnet/jwt.hex:/jwt.hex:ro
+    command:
+      - node
+      - --datadir=/data
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3
+      - --http.corsdomain=*
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.port=8551
+      - --authrpc.jwtsecret=/jwt.hex
+      - --port=30304
+      - --log.stdout.filter=info
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8545 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' | grep result || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+
+  lighthouse:
+    image: sigp/lighthouse:latest
+    container_name: lighthouse-beacon
+    restart: unless-stopped
+    depends_on:
+      - reth-mainnet
+    ports:
+      - "9001:9000"                    # P2P (avoid conflict)
+      - "9001:9000/udp"
+      - "127.0.0.1:5052:5052"         # Beacon API (local only)
+    volumes:
+      - /mnt/data/lighthouse:/data
+      - ./mainnet/jwt.hex:/jwt.hex:ro
+    command:
+      - lighthouse
+      - bn
+      - --network=mainnet
+      - --datadir=/data
+      - --execution-endpoint=http://reth-mainnet:8551
+      - --execution-jwt=/jwt.hex
+      - --checkpoint-sync-url=https://beaconstate.ethstaker.cc
+      - --http
+      - --http-address=0.0.0.0
+      - --http-port=5052
+      - --slots-per-restore-point=8192
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5052/eth/v1/node/syncing | grep -q head_slot || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+
+

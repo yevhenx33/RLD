@@ -31,3 +31,11 @@
 ## 8. Scope ≠ Depth — One Paper, One Contribution
 - **Pattern:** A paper covering 5 distinct products (bonds, fixed-rate borrowing, vol trading, CDS, RWA) gets rejected because validation is shallow on every front.
 - **Rule:** Each standalone contribution is a separate paper. Breadth of claims must be matched by depth of validation. If covering multiple products, the paper must be explicitly framed as an architecture overview, not a deep dive on each.
+
+## 9. Docker `iptables: false` + UFW = Silent Network Death
+- **Pattern:** `daemon.json` had `"iptables": false`, meaning Docker never created NAT MASQUERADE rules. Containers resolved DNS fine (Docker's internal resolver at 127.0.0.11) but TCP connections to external IPs silently timed out. The healthcheck (`curl localhost:8080/`) passed because it only tested the local API server, not actual data freshness. Result: `rates-indexer` appeared healthy for 6 days while producing zero new data.
+- **Rule:** (1) Never set `iptables: false` on a Docker host where containers need external network access. If UFW is needed, use `/etc/ufw/after.rules` to add Docker-specific NAT/FORWARD rules instead. (2) Healthchecks for indexers must assert **data freshness** (e.g., `last_indexed_block` within N of chain head), not just process liveness.
+
+## 10. Reth `--full` ≠ "Full Node" — It Means Full Archive-Style Sync
+- **Pattern:** Used `--full` flag thinking it meant "full node" (as opposed to light client). In reth, `--full` means "download and re-execute every block from genesis" — it consumed 130GB at 43% completion and would have required 300+GB. Meanwhile, default reth (no `--full`) does snap sync: downloads only the state trie at a recent pivot block (~50-60GB).
+- **Rule:** For indexing use cases that only need `eth_call` at `latest`, never use `--full`. Default snap sync is sufficient. Always estimate disk budget before starting a multi-hour sync: `current_usage + expected_sync_size < 80% of disk`.

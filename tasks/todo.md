@@ -94,3 +94,14 @@ new-front/
 - [x] Executed deterministic Tier 1 / 2 / 3 Blue Chip distribution simulation.
 - [x] Validated Tail Risk reduction from -$59K naive loss to a +$26K structural profit across identical defaulted assets.
 - [ ] Needs Review: Finalize asset whitelist for the actual Solidity deployment configuration.
+
+## Review: Dashboard Infrastructure Observability Overlay
+- [x] Evaluated Phase 1: ultra-compact, read-only HTML layout.
+- [x] Injected `docker/scripts/fetch_node_metrics.py` proxy to extract purely JSON RPC metrics rather than heavy parsing.
+- [x] Injected UI changes into `index.html` binding the JSON payload components strictly into rows (`sys.nodes.reth_mainnet`, `sys.nodes.lighthouse`).
+
+## Review: ClickHouse Analytical Engine (OLAP)
+- [x] Bootstrapped local `clickhouse-server` container binding to `/mnt/data/clickhouse` for heavy analytical workloads.
+- [x] Executed Phase 1 Approval: Developed Python ETL script (`merge_aave_morpho.py`).
+- [x] Transferred >6,034,000 structural rows from Postgres Array (`rld_timescale`) and isolated SQLite volumes (`morpho_enriched_final.db`) into ClickHouse memory.
+- [x] Proven Poka-Yoke metrics (successful instantiation of Unified Long Form Timeseries Table).

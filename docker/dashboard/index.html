@@ -882,7 +882,7 @@
                 />
               </Card>
               <Card
-                title="DISK"
+                title="DISK (/)"
                 badge={
                   <Badge
                     text={`${sys.disk.percent}%`}
@@ -904,33 +904,28 @@
                 />
               </Card>
               <Card
-                title="SSL CERT"
+                title="DATA DISK"
                 badge={
-                  <Badge
-                    text={ssl.days_remaining > 30 ? "VALID" : "EXPIRING"}
+                  sys.data_disk ? <Badge
+                    text={`${sys.data_disk.percent}%`}
                     type={
-                      ssl.days_remaining > 30
-                        ? "g"
-                        : ssl.days_remaining > 7
+                      sys.data_disk.percent > 85
+                        ? "r"
+                        : sys.data_disk.percent > 70
                           ? "a"
-                          : "r"
+                          : "g"
                     }
-                  />
+                  /> : null
                 }
                 delay={4}
               >
-                <Metric
-                  value={ssl.days_remaining}
-                  unit="days"
-                  color={
-                    ssl.days_remaining > 30
-                      ? "var(--g)"
-                      : ssl.days_remaining > 7
-                        ? "var(--a)"
-                        : "var(--r)"
-                  }
-                />
+                {sys.data_disk ? <Metric
+                  value={sys.data_disk.used_gb}
+                  unit="G"
+                  label={`${sys.data_disk.free_gb}G free of ${sys.data_disk.total_gb}G`}
+                /> : <span style={{fontSize: 10, color: "var(--td)"}}>Not Available</span>}
               </Card>
+
             </div>
 
             {/* ══ ROW 2: Resource Bars + History ══ */}
@@ -948,7 +943,7 @@
                         marginBottom: 3,
                       }}
                     >
-                      <span style={{ fontSize: 10 }}>disk</span>
+                      <span style={{ fontSize: 10 }}>disk (/)</span>
                       <span
                         style={{
                           fontSize: 10,
@@ -960,6 +955,28 @@
                     </div>
                     <Bar value={sys.disk.used_gb} max={sys.disk.total_gb} />
                   </div>
+                  {sys.data_disk && <div>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 3,
+                        marginTop: 10,
+                      }}
+                    >
+                      <span style={{ fontSize: 10 }}>data disk (/mnt/data)</span>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          color: barColor(sys.data_disk.percent),
+                        }}
+                      >
+                        {sys.data_disk.used_gb}G / {sys.data_disk.total_gb}G
+                      </span>
+                    </div>
+                    <Bar value={sys.data_disk.used_gb} max={sys.data_disk.total_gb} />
+                  </div>}
                   <div>
                     <div
                       style={{
@@ -1083,7 +1100,20 @@
               </Card>
             </div>
 
-            {/* ══ ROW 3: Containers ══ */}
+            {/* ══ ROW 3: Data Provenance & Nodes ══ */}
+            <div className="grid g3" style={{ marginBottom: 1 }}>
+              <Card title="RETH MAINNET (EL)" badge={<Badge text={d.nodes?.reth_mainnet?.syncing ? "SYNCING" : "SYNCED"} type={d.nodes?.reth_mainnet?.syncing ? "a" : "g"} />} delay={6}>
+                <Metric value={d.nodes?.reth_mainnet?.current_block > 0 ? fmtN(d.nodes?.reth_mainnet?.current_block) : "0"} unit="blk" label={d.nodes?.reth_mainnet?.syncing ? "Downloading State..." : "Ready"} color={d.nodes?.reth_mainnet?.syncing ? "var(--a)" : "var(--g)"} />
+              </Card>
+              <Card title="LIGHTHOUSE (CL)" badge={<Badge text={d.nodes?.lighthouse?.syncing ? "SYNCING" : "SYNCED"} type={d.nodes?.lighthouse?.syncing ? "a" : "g"} />} delay={6}>
+                <Metric value={d.nodes?.lighthouse?.distance || "0"} unit="slots" label="Distance from head" color={d.nodes?.lighthouse?.syncing ? "var(--a)" : "var(--g)"} />
+              </Card>
+              <Card title="MORPHO DB (SQLITE)" badge={<Badge text={d.nodes?.morpho_db?.status === "available" ? "READY" : "MISSING"} type={d.nodes?.morpho_db?.status === "available" ? "g" : "r"} />} delay={6}>
+                <Metric value={d.nodes?.morpho_db?.size_mb || 0} unit="MB" label="/mnt/data/morpho_enriched_final.db" color={d.nodes?.morpho_db?.status === "available" ? "var(--g)" : "var(--r)"} />
+              </Card>
+            </div>
+
+            {/* ══ ROW 4: Containers ══ */}
             <Card
               title="CONTAINERS"
               badge={
@@ -1186,7 +1216,7 @@
               </table>
             </Card>
 
-            {/* ══ ROW 4: Services + Security ══ */}
+            {/* ══ ROW 5: Services + Security ══ */}
             <div className="grid g2" style={{ marginBottom: 1 }}>
               <Card
                 title="SERVICES"
@@ -1322,52 +1352,33 @@
                     </div>
                   );
                   return (
-                    <div style={{ display: "flex", flexDirection: "column" }}>
-                      <div style={{ display: "flex", gap: 1 }}>
-                        {/* Left column: core chain metrics */}
-                        <div style={{ flex: 1 }}>
-                          <MetricRow
-                            label="Block"
-                            value={r.block ? fmtN(r.block) : "—"}
-                            color="var(--g)"
-                            mono
-                          />
-                          <MetricRow
-                            label="Block Age"
-                            value={blockAge !== null ? (blockAge < 5 ? `${blockAge}s ✓` : `${blockAge}s ⚠`) : "—"}
-                            color={blockAge !== null && blockAge < 5 ? "var(--g)" : "var(--a)"}
-                          />
-                          <MetricRow
-                            label="Chain ID"
-                            value={r.chain_id || "—"}
-                            mono
-                          />
-                          <MetricRow
-                            label="Gas Price"
-                            value={r.gas_gwei ? `${r.gas_gwei} gwei` : "—"}
-                          />
-                        </div>
-                        {/* Right column: resource metrics */}
-                        <div style={{ flex: 1 }}>
-                          <MetricRow
-                            label="Memory"
-                            value={r.mem_mb ? `${r.mem_mb} MB` : "—"}
-                            color={r.mem_mb > 2000 ? "var(--a)" : r.mem_mb > 4000 ? "var(--r)" : "var(--tb)"}
-                          />
-                          <MetricRow
-                            label="DB Size"
-                            value={r.db_mb ? `${r.db_mb} MB` : "—"}
-                          />
-                          <MetricRow
-                            label="Uptime"
-                            value={r.uptime || "—"}
-                          />
-                          <MetricRow
-                            label="Txpool"
-                            value={`${r.txpool_pending || 0} pending / ${r.txpool_queued || 0} queued`}
-                            color={r.txpool_pending > 10 ? "var(--a)" : "var(--td)"}
-                          />
-                        </div>
+                    <div style={{ display: "flex", gap: "10px" }}>
+                      {/* Left column: Core RPC metrics */}
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 9, color: "var(--td)", marginBottom: 4, letterSpacing: "1px" }}>ANVIL RPC</div>
+                        <MetricRow label="Block" value={r.block ? fmtN(r.block) : "—"} color="var(--g)" mono />
+                        <MetricRow label="Block Age" value={blockAge !== null ? (blockAge < 5 ? `${blockAge}s ✓` : `${blockAge}s ⚠`) : "—"} color={blockAge !== null && blockAge < 5 ? "var(--g)" : "var(--a)"} />
+                        <MetricRow label="Chain ID" value={r.chain_id || "—"} mono />
+                        <MetricRow label="Gas Price" value={r.gas_gwei ? `${r.gas_gwei} gwei` : "—"} />
+                        <MetricRow label="Memory" value={r.mem_mb ? `${r.mem_mb} MB` : "—"} color={r.mem_mb > 2000 ? "var(--a)" : r.mem_mb > 4000 ? "var(--r)" : "var(--tb)"} />
+                        <MetricRow label="Txpool" value={`${r.txpool_pending || 0} pending`} color={r.txpool_pending > 10 ? "var(--a)" : "var(--td)"} />
+                      </div>
+                      
+                      {/* Right column: Pool State */}
+                      <div style={{ flex: 1, paddingLeft: 10, borderLeft: "1px dashed rgba(255,255,255,0.08)", minHeight: "100%" }}>
+                        <div style={{ fontSize: 9, color: "var(--td)", marginBottom: 4, letterSpacing: "1px" }}>POSTGRES INDEXER</div>
+                        {d.databases?.pool_state && d.databases?.pool_state?.healthy ? (
+                          <>
+                            <MetricRow label="Mark Price" value={d.databases.pool_state.mark_price ? `$${d.databases.pool_state.mark_price}` : "—"} color="var(--g)" mono />
+                            <MetricRow label="Index Price" value={d.databases.pool_state.index_price ? `$${d.databases.pool_state.index_price}` : "—"} mono />
+                            <MetricRow label="Total Debt" value={d.databases.pool_state.total_debt || "—"} mono />
+                            <MetricRow label="Liquidity" value={d.databases.pool_state.liquidity || "—"} mono />
+                            <MetricRow label="Token 0" value={d.databases.pool_state.token0_balance || "—"} mono />
+                            <MetricRow label="Token 1" value={d.databases.pool_state.token1_balance || "—"} mono />
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 10, color: "var(--r)", marginTop: 4 }}>Offline</div>
+                        )}
                       </div>
                     </div>
                   );
@@ -1582,108 +1593,7 @@
                   })()}
                 </Card>
 
-                <Card
-                  title="POOL STATE"
-                  badge={(() => {
-                    const ps = d.databases?.pool_state;
-                    if (!ps || ps.error || !ps.healthy)
-                      return <Badge text="DOWN" type="r" />;
-                    if (!ps.mark_price || ps.last_indexed_block <= 0)
-                      return <Badge text="EMPTY" type="a" />;
-                    return <Badge text="LIVE" type="g" />;
-                  })()}
-                  delay={10}
-                >
-                  {(() => {
-                    const ps = d.databases?.pool_state;
-                    if (!ps || !ps.healthy)
-                      return (
-                        <div style={{ color: "var(--r)", fontSize: 11 }}>
-                          ⚠ Postgres not reachable
-                        </div>
-                      );
 
-                    const blockLag = svc.anvil?.block && ps.last_indexed_block
-                      ? Number(svc.anvil.block) - ps.last_indexed_block
-                      : null;
-
-                    const MetricRow = ({ label, value, color, mono }) => (
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: 10,
-                          padding: "4px 6px",
-                          borderBottom: "1px solid rgba(255,255,255,0.02)",
-                        }}
-                      >
-                        <span>{label}</span>
-                        <span
-                          style={{
-                            fontWeight: 600,
-                            color: color || "var(--tb)",
-                            fontFamily: mono ? '"JetBrains Mono", monospace' : undefined,
-                          }}
-                        >
-                          {value}
-                        </span>
-                      </div>
-                    );
-
-                    return (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 2,
-                        }}
-                      >
-                        <MetricRow
-                          label="mark price"
-                          value={ps.mark_price ? `$${Number(ps.mark_price).toFixed(6)}` : "—"}
-                          color="var(--g)"
-                        />
-                        <MetricRow
-                          label="index price"
-                          value={ps.index_price ? `$${Number(ps.index_price).toFixed(6)}` : "—"}
-                          color="var(--c)"
-                        />
-                        <MetricRow
-                          label="liquidity"
-                          value={ps.liquidity ? fmtN(ps.liquidity) : "—"}
-                        />
-                        <MetricRow
-                          label="token0 bal (wRLP)"
-                          value={ps.token0_balance != null ? fmtN(ps.token0_balance) : "—"}
-                        />
-                        <MetricRow
-                          label="token1 bal (waUSDC)"
-                          value={ps.token1_balance != null ? fmtN(ps.token1_balance) : "—"}
-                        />
-                        <div style={{ borderTop: "1px solid var(--bdr)", marginTop: 4, paddingTop: 4 }}>
-                          <MetricRow
-                            label="indexed block"
-                            value={ps.last_indexed_block > 0 ? fmtN(ps.last_indexed_block) : "—"}
-                            color={ps.last_indexed_block > 0 ? "var(--g)" : "var(--td)"}
-                          />
-                          <MetricRow
-                            label="block lag"
-                            value={blockLag != null ? blockLag : "—"}
-                            color={blockLag !== null ? (blockLag < 10 ? "var(--g)" : blockLag < 50 ? "var(--a)" : "var(--r)") : "var(--td)"}
-                          />
-                          <MetricRow
-                            label="events"
-                            value={fmtN(ps.events_rows)}
-                          />
-                          <MetricRow
-                            label="block states"
-                            value={fmtN(ps.block_states_rows)}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </Card>
 
                 <Card
                   title="DATA QUALITY"
