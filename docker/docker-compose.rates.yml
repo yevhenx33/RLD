@@ -24,12 +24,15 @@ services:
       - "127.0.0.1:${RATES_PORT:-8081}:8080"
     volumes:
       - rates-data:/app/data
+      - ../backend/morpho/data:/app/morpho_data
     environment:
       - MAINNET_RPC_URL=${MAINNET_RPC_URL:-https://eth.llamarpc.com}
       - RESERVE_RPC_URL=${RESERVE_RPC_URL:-}
       - ETH_PRICE_GRAPH_URL=${ETH_PRICE_GRAPH_URL:-}
       - DB_DIR=/app/data
       - PYTHONUNBUFFERED=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       interval: 30s
@@ -37,6 +40,20 @@ services:
       start_period: 30s
       retries: 3
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
+
+  fluid-indexer:
+    build:
+      context: ..
+      dockerfile: data-pipeline/Dockerfile.fluid
+    environment:
+      - ALCHEMY_RPC=${MAINNET_RPC_URL:-https://eth-mainnet.g.alchemy.com/v2/iEA4zlQuXkdZi0FNY5WrC}
+      - CLICKHOUSE_HOST=host.docker.internal
+      - CLICKHOUSE_PORT=8123
+      - POLL_INTERVAL=300
+      - PYTHONUNBUFFERED=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
 
 volumes:
   rates-data: # Persistent SQLite DB for Aave rates
