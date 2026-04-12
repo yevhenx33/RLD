@@ -63,8 +63,8 @@ SELECT
     COALESCE(UPPER(p.loan_symbol), 'UNKNOWN') AS symbol,
     s.market_id AS entity_id,
     '' AS target_id,
-    0.0 AS supply_usd,  -- Simplified for now as we'd need oracle joins
-    0.0 AS borrow_usd,
+    CAST(s.total_supply_assets AS REAL) / POWER(10, COALESCE(p.loan_decimals, 18)) AS supply_usd,
+    CAST(s.total_borrow_assets AS REAL) / POWER(10, COALESCE(p.loan_decimals, 18)) AS borrow_usd,
     COALESCE(s.supply_apy, 0.0) AS supply_apy,
     COALESCE(s.borrow_apy, 0.0) AS borrow_apy,
     COALESCE(s.utilization, 0.0) AS utilization,

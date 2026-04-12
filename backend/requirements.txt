@@ -11,3 +11,4 @@ strawberry-graphql[fastapi]
 psycopg2-binary
 asyncpg
 eth-abi
+clickhouse-connect

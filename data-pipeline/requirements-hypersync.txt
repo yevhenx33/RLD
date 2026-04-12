@@ -1,0 +1,4 @@
+hypersync>=0.8
+pyarrow>=14.0
+clickhouse-connect>=0.7
+python-dotenv>=1.0
