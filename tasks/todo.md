@@ -105,3 +105,6 @@ new-front/
 - [x] Executed Phase 1 Approval: Developed Python ETL script (`merge_aave_morpho.py`).
 - [x] Transferred >6,034,000 structural rows from Postgres Array (`rld_timescale`) and isolated SQLite volumes (`morpho_enriched_final.db`) into ClickHouse memory.
 - [x] Proven Poka-Yoke metrics (successful instantiation of Unified Long Form Timeseries Table).
+
+## Review
+- [x] Refactored Markets.jsx Explore page to 2-column lg:flex-row layout
