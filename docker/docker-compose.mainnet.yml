@@ -1,8 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-# RLD Mainnet Node — Reth EL + Lighthouse CL
+# RLD Mainnet Node — Reth 2.0 EL + Lighthouse CL
 # ═══════════════════════════════════════════════════════════════
-# Pruned mainnet full node for zero-cost, zero-latency RPC.
-# Replaces all external Alchemy/Infura/Llama calls.
+# Minimal-mode mainnet node for zero-cost, zero-latency RPC.
+# Serves eth_call (current state) + real-time block subscriptions.
+# Historical event logs come from Envio HyperSync backfill.
 #
 #  Usage:
 #    docker compose -f docker/docker-compose.mainnet.yml up -d
@@ -10,13 +11,13 @@
 #  RPC endpoint (local only):
 #    http://127.0.0.1:8546
 #
-#  Disk budget: ~60-80GB (pruned state + beacon)
-#  Sync time:   ~6-12h (snap sync)
+#  Disk budget: ~224 GB Reth + ~35 GB Lighthouse ≈ 260 GB
+#  Sync time:   ~12-24h (minimal mode, Storage V2)
 # ═══════════════════════════════════════════════════════════════
 
 services:
   reth-mainnet:
-    image: ghcr.io/paradigmxyz/reth:v1.11.3
+    image: ghcr.io/paradigmxyz/reth:v2.0.0
     container_name: reth-mainnet
     restart: unless-stopped
     ports:
@@ -29,6 +30,7 @@ services:
     command:
       - node
       - --datadir=/data
+      - --minimal
       - --http
       - --http.addr=0.0.0.0
       - --http.port=8545
@@ -40,11 +42,11 @@ services:
       - --port=30304
       - --log.stdout.filter=info
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8545 -X POST -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' | grep result || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --post-data='{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' --header='Content-Type: application/json' http://localhost:8545 | grep result || exit 1"]
       interval: 30s
       timeout: 10s
-      start_period: 120s
-      retries: 3
+      start_period: 300s
+      retries: 5
 
   lighthouse:
     image: sigp/lighthouse:latest
