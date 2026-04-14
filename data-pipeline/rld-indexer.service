@@ -1,0 +1,17 @@
+[Unit]
+Description=RLD Unified Protocol Indexer (Fluid + Chainlink + Aave + Morpho)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/RLD/data-pipeline
+ExecStart=/home/ubuntu/RLD/data-pipeline/.venv/bin/python scripts/run_indexer.py
+Restart=always
+RestartSec=30
+Environment=CLICKHOUSE_HOST=localhost
+Environment=CLICKHOUSE_PORT=8123
+Environment=POLL_INTERVAL=300
+
+[Install]
+WantedBy=multi-user.target

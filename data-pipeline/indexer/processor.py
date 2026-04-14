@@ -1,0 +1,127 @@
+import os
+import asyncio
+import logging
+import clickhouse_connect
+from indexer.base import BaseSource
+
+log = logging.getLogger("processor")
+
+class SimulatedLog:
+    """Mock HyperSync log object for decoders reading from ClickHouse mempool."""
+    def __init__(self, row):
+        self.block_number = row[0]
+        # row[1] is block_timestamp -> handled by block_ts_map separately
+        self.transaction_hash = row[2]
+        self.log_index = row[3]
+        self.address = row[4]
+        # topics
+        self.topics = [t for t in [row[6], row[7], row[8], row[9]] if t]
+        self.data = row[10]
+
+
+class ProtocolProcessor:
+    """
+    Vertical Event Processor.
+    Strictly isolated decoder that reads from ClickHouse mempool 
+    and idempotently writes to unified_timeseries.
+    """
+    def __init__(self, source: BaseSource, clickhouse_host="localhost", clickhouse_port=8123):
+        self.source = source
+        self.ch_host = clickhouse_host
+        self.ch_port = clickhouse_port
+        self.batch_blocks = 50_000 
+        
+        # Ensure state table exists
+        ch = self._create_ch_client()
+        ch.command("""
+        CREATE TABLE IF NOT EXISTS processor_state (
+            protocol String,
+            last_processed_block UInt64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY protocol
+        """)
+
+    def _create_ch_client(self):
+        return clickhouse_connect.get_client(host=self.ch_host, port=self.ch_port)
+
+    def get_last_processed_block(self, ch) -> int:
+        res = ch.command(f"SELECT max(last_processed_block) FROM processor_state WHERE protocol = '{self.source.name}'")
+        return int(res) if res else 0
+
+    def set_last_processed_block(self, ch, block_num: int):
+        ch.insert('processor_state', [[self.source.name, block_num]], column_names=['protocol', 'last_processed_block'])
+
+    def run_processor_cycle(self):
+        if not self.source.raw_table:
+            log.info(f"[{self.source.name}-Processor] No raw_table configured. Skipping processing.")
+            return
+
+        ch = self._create_ch_client()
+        last_processed = self.get_last_processed_block(ch)
+        if last_processed == 0:
+            last_processed = max(0, self.source.genesis_block - 1)
+        
+        # Identify absolute head of mempool
+        max_mempool_block_res = ch.command(f"SELECT max(block_number) FROM {self.source.raw_table}")
+        max_mempool_block = int(max_mempool_block_res) if max_mempool_block_res else 0
+
+        if max_mempool_block <= last_processed:
+            log.info(f"[{self.source.name}-Processor] Up to date at block {last_processed}")
+            return
+
+        log.info(f"[{self.source.name}-Processor] Decoding {last_processed} -> {max_mempool_block}")
+
+        current_start = last_processed + 1
+        while current_start <= max_mempool_block:
+            current_end = min(current_start + self.batch_blocks - 1, max_mempool_block)
+            
+            # Extract batch from mempool
+            query = f"""
+            SELECT 
+                block_number, block_timestamp, tx_hash, log_index, contract, 
+                event_name, topic0, topic1, topic2, topic3, data
+            FROM {self.source.raw_table}
+            WHERE block_number >= {current_start} AND block_number <= {current_end}
+            ORDER BY block_number ASC, log_index ASC
+            """
+            rows = ch.query(query).result_rows
+
+            if not rows:
+                self.set_last_processed_block(ch, current_end)
+                current_start = current_end + 1
+                continue
+
+            block_ts_map = {}
+            simulated_logs = []
+            
+            for row in rows:
+                block_ts_map[row[0]] = row[1]  # cache block -> timestamp
+                simulated_logs.append(SimulatedLog(row))
+
+            decoded_rows = []
+            for log_entry in simulated_logs:
+                # Poison Pill Defensive Wrapper
+                try:
+                    d = self.source.decode(log_entry, block_ts_map)
+                    if d:
+                        decoded_rows.append(d)
+                except Exception as e:
+                    # In production this would write to dead_letter_events
+                    log.error(f"[{self.source.name}-Processor] Decode Error at block {log_entry.block_number}: {e}")
+
+            if decoded_rows:
+                n_merged = self.source.merge(ch, decoded_rows)
+                log.info(f"[{self.source.name}-Processor] {len(decoded_rows)} decoded -> {n_merged} timeseries metrics written (blocks {current_start}->{current_end})")
+            else:
+                log.info(f"[{self.source.name}-Processor] 0 decoded metrics emitted (blocks {current_start}->{current_end})")
+
+            # Advance cursor
+            self.set_last_processed_block(ch, current_end)
+            current_start = current_end + 1
+            
+            # Explicit reclaim
+            decoded_rows.clear()
+            simulated_logs.clear()
+            block_ts_map.clear()
+            rows = []

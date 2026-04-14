@@ -108,3 +108,17 @@ new-front/
 
 ## Review
 - [x] Refactored Markets.jsx Explore page to 2-column lg:flex-row layout
+
+## Review: Custom Oracle Protocol-Native Event Mappings (Phase 2)
+- [x] Architectured `indexer/sources/custom_feeds.py` as a strictly typed router bypassing silent proxies.
+- [x] Bootstrapped structural deterministic mappings for 16 Dummy Oracle feeds asserting exactly 1.0 (12 dec).
+- [x] Architectured `indexer/sources/lido.py` to algebraically decode exact `stEthPerToken` exchanges via native `TokenRebased` events (`0xbef9...`).
+- [x] Hardened code against zero-division payloads with deterministic Poka-Yoke error boundaries.
+- [x] Integrated `LidoRebaseSource` and `StaticPegsSource` in the unified `run_indexer.py` engine loops.
+- [x] Validated USR (Resolv Protocol) as an absolute static `$1.000` structure and mapped it deterministically into `StaticPegsSource`.
+- [x] Finalized error resolution for `syrupUSDT` and `ETH+` custom oracle feeds by overriding their structural bounds natively in `replay_morpho_full.py`.
+
+## [Review] Data Pipeline Architecture Refactor
+- [ ] Review decoupled run_indexer.py argparse implementation
+- [ ] Review genesis_block parameter functionality in collector/processor
+- [ ] Review Watcher mempool atomic purge logic

@@ -13,8 +13,153 @@ import datetime
 import logging
 
 import hypersync
+import pandas as pd
 
 log = logging.getLogger("indexer")
+
+
+def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str) -> pd.DataFrame:
+    """
+    Ensure contiguous hourly data for every entity_id by forward-filling gaps.
+
+    For each entity_id present in the incoming dataframe, queries the last known
+    state from ClickHouse, then generates a row for every hour from the last
+    known timestamp to the current batch's max timestamp, carrying forward the
+    most recent values when no event occurred.
+
+    Args:
+        df: DataFrame with columns matching unified_timeseries schema.
+            Must have 'timestamp', 'entity_id', 'symbol', 'protocol', etc.
+        ch: ClickHouse client.
+        protocol: Protocol name (e.g., 'AAVE_MARKET').
+
+    Returns:
+        DataFrame with all hours filled — no gaps > 1H per entity_id.
+    """
+    if df.empty:
+        return df
+
+    entity_ids = df["entity_id"].unique().tolist()
+    batch_max_ts = df["timestamp"].max()
+
+    # Get last known state across ALL entities in protocol from ClickHouse
+    batch_min_ts = df["timestamp"].min()
+    try:
+        last_known = ch.query_df(f"""
+            SELECT entity_id, symbol,
+                   argMax(timestamp, timestamp) AS last_ts,
+                   argMax(supply_usd, timestamp) AS supply_usd,
+                   argMax(borrow_usd, timestamp) AS borrow_usd,
+                   argMax(supply_apy, timestamp) AS supply_apy,
+                   argMax(borrow_apy, timestamp) AS borrow_apy,
+                   argMax(utilization, timestamp) AS utilization,
+                   argMax(price_usd, timestamp) AS price_usd
+            FROM unified_timeseries
+            WHERE protocol = '{protocol}'
+              AND timestamp < '{batch_min_ts.strftime("%Y-%m-%d %H:%M:%S")}'
+            GROUP BY entity_id, symbol
+        """)
+        
+        if not last_known.empty:
+            for eid in last_known["entity_id"].unique():
+                if eid not in entity_ids:
+                    entity_ids.append(eid)
+                    
+    except Exception:
+        last_known = pd.DataFrame()
+
+    filled_parts = []
+
+    for eid in entity_ids:
+        eid_rows = df[df["entity_id"] == eid].sort_values("timestamp")
+        
+        fill_start = eid_rows["timestamp"].min() if not eid_rows.empty else batch_max_ts
+        symbol = eid_rows["symbol"].iloc[0] if not eid_rows.empty else ""
+        
+        seed_row = None
+        if not last_known.empty:
+            lk = last_known[last_known["entity_id"] == eid]
+            if not lk.empty:
+                last_ts = pd.Timestamp(lk["last_ts"].iloc[0])
+                symbol = lk["symbol"].iloc[0]
+                if eid_rows.empty or last_ts < fill_start:
+                    fill_start = last_ts + pd.Timedelta(hours=1)
+                    seed_row = lk.iloc[0]
+
+        if eid_rows.empty and seed_row is None:
+            continue
+
+        # Build complete hourly range
+        full_range = pd.date_range(
+            start=fill_start.floor("h"),
+            end=batch_max_ts.floor("h"),
+            freq="h",
+        )
+        if len(full_range) == 0:
+            filled_parts.append(eid_rows)
+            continue
+
+        # Create template with all hours
+        template = pd.DataFrame({"timestamp": full_range})
+        template["entity_id"] = eid
+        template["symbol"] = symbol
+        template["protocol"] = protocol
+        template["target_id"] = ""
+
+        # Merge actual data onto template
+        merged = template.merge(
+            eid_rows[["timestamp", "supply_usd", "borrow_usd", "supply_apy",
+                       "borrow_apy", "utilization", "price_usd"]],
+            on="timestamp",
+            how="left",
+        )
+
+        # If we have a seed row from CH, prepend it so ffill has a starting value
+        if seed_row is not None and merged.iloc[0].isna().any():
+            for col in ["supply_usd", "borrow_usd", "supply_apy", "borrow_apy",
+                        "utilization", "price_usd"]:
+                if pd.isna(merged[col].iloc[0]):
+                    merged.loc[merged.index[0], col] = seed_row.get(col, 0.0)
+
+        # Track exactly which rows were mathematically empty before filling
+        is_gap = pd.isna(merged["supply_usd"])
+
+        # Forward-fill all anchor bases
+        fill_cols = ["supply_usd", "borrow_usd", "supply_apy", "borrow_apy",
+                     "utilization", "price_usd"]
+        merged[fill_cols] = merged[fill_cols].ffill()
+        merged[fill_cols] = merged[fill_cols].fillna(0.0)
+
+        # Segment the DataFrame by physical anchors. 
+        # A new segment starts every time `is_gap` is False.
+        merged['segment'] = (~is_gap).cumsum()
+
+        # Calculate hour-over-hour multipliers (1 + APY / 8760)
+        merged['sup_factor'] = 1.0
+        merged.loc[is_gap, 'sup_factor'] = 1.0 + (merged.loc[is_gap, 'supply_apy'] / 8760)
+        
+        merged['bor_factor'] = 1.0
+        merged.loc[is_gap, 'bor_factor'] = 1.0 + (merged.loc[is_gap, 'borrow_apy'] / 8760)
+
+        # Cumulatively multiply these factors within each isolated segment
+        merged['sup_multiplier'] = merged.groupby('segment')['sup_factor'].cumprod()
+        merged['bor_multiplier'] = merged.groupby('segment')['bor_factor'].cumprod()
+
+        # Since `supply_usd` is ffilled, it holds the absolute flat anchor. 
+        # Multiplying it by the cumulative factor perfectly synthesizes mechanical compounding.
+        merged['supply_usd'] = merged['supply_usd'] * merged['sup_multiplier']
+        merged['borrow_usd'] = merged['borrow_usd'] * merged['bor_multiplier']
+
+        # Strip computational degrees of freedom
+        merged = merged.drop(columns=['segment', 'sup_factor', 'bor_factor', 'sup_multiplier', 'bor_multiplier'])
+
+        filled_parts.append(merged)
+
+    if not filled_parts:
+        return df
+
+    result = pd.concat(filled_parts, ignore_index=True)
+    return result
 
 
 class BaseSource(ABC):
@@ -31,6 +176,7 @@ class BaseSource(ABC):
     contracts: list[str] = []          # Contract addresses to monitor
     topics: list[str] = []             # Event topic0 hashes to filter
     raw_table: Optional[str] = None    # ClickHouse table for raw events (optional)
+    genesis_block: int = 0             # The starting block number for indexing
 
     # ── HyperSync integration ────────────────────────────────
     def log_selection(self) -> hypersync.LogSelection:

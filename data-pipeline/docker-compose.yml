@@ -34,5 +34,34 @@ services:
       - "--dynamic-json"
       - "--retry-on-init-fail"
 
+  aave_collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.indexer
+    container_name: rld_aave_collector
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+      - SEND_MESSAGES=true
+    command: ["python", "/app/scripts/run_indexer.py", "--source", "AAVE_MARKET", "--role", "collector"]
+    network_mode: "host"
+
+  aave_processor:
+    build:
+      context: .
+      dockerfile: Dockerfile.indexer
+    container_name: rld_aave_processor
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+      - SEND_MESSAGES=true
+    command: ["python", "/app/scripts/run_indexer.py", "--source", "AAVE_MARKET", "--role", "processor"]
+    network_mode: "host"
 volumes:
   timescale_data:

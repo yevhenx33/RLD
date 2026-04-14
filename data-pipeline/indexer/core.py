@@ -89,9 +89,7 @@ class IndexerEngine:
         )
 
     async def run_cycle(self, hs_client, ch):
-        """Execute one poll → decode → merge cycle for all sources."""
-
-        # 1. Determine block range from all sources' cursors
+        """Execute the fetching, parsing, and aggregation pipeline using a bounded stream."""
         cursors = [s.get_cursor(ch) for s in self.sources]
         from_block = min(cursors) + 1
         head_block = await hs_client.get_height() - CONFIRMATION_BLOCKS
@@ -101,71 +99,84 @@ class IndexerEngine:
             return
 
         gap = head_block - from_block + 1
-        log.info(f"Processing blocks {from_block} → {head_block} "
-                 f"({gap} blocks, ~{gap * 12 / 60:.0f} min)")
+        log.info(f"Processing blocks {from_block} → {head_block} ({gap} blocks)")
 
-        # 2. Build ONE HyperSync query with all sources' log selections
+        # ── STAGE 0: Bounded Batch Strategy ─────────────────────
+        BATCH_SIZE = 100_000 # Max blocks per memory ingestion cycle
         log_selections = [s.log_selection() for s in self.sources]
 
-        # 3. Paginated fetch — HyperSync returns max ~5000 events per get().
-        #    Use next_block to iterate until all events are collected.
-        all_logs = []
-        all_blocks = []
-        cursor = from_block
-        t0 = time.time()
-        pages = 0
+        current_start = from_block
+        while current_start <= head_block:
+            current_end = min(current_start + BATCH_SIZE - 1, head_block)
 
-        while cursor < head_block:
-            query = hypersync.Query(
-                from_block=cursor,
-                to_block=head_block,
-                logs=log_selections,
-                field_selection=hypersync.FieldSelection(
-                    log=LOG_FIELDS,
-                    block=BLOCK_FIELDS,
-                ),
-            )
-            res = await hs_client.get(query)
-            all_logs.extend(res.data.logs)
-            all_blocks.extend(res.data.blocks)
-            pages += 1
+            # ── STAGE 1: THE FETCHER (Produce to Memory-Pool) ───
+            mempool_logs = []
+            mempool_blocks = []
+            pages = 0
+            cursor = current_start
+            
+            while cursor <= current_end:
+                query = hypersync.Query(
+                    from_block=cursor,
+                    to_block=current_end,
+                    logs=log_selections,
+                    field_selection=hypersync.FieldSelection(
+                        log=LOG_FIELDS,
+                        block=BLOCK_FIELDS,
+                    ),
+                )
+                res = await hs_client.get(query)
+                mempool_logs.extend(res.data.logs)
+                mempool_blocks.extend(res.data.blocks)
+                pages += 1
 
-            nb = res.next_block
-            if nb <= cursor:
-                break
-            cursor = nb
+                nb = res.next_block
+                if nb <= cursor:
+                    break
+                cursor = nb
 
-        elapsed = time.time() - t0
-        log.info(f"  HyperSync: {len(all_logs)} events in {elapsed:.2f}s "
-                 f"({pages} pages)")
-
-        # 4. Build block timestamp map
-        block_ts_map = build_block_ts_map(all_blocks)
-
-        # 5. Route events to sources and process
-        for source in self.sources:
-            source_logs = [l for l in all_logs if source.route(l)]
-            if not source_logs and not source.raw_table:
+            # Skip downstream if empty
+            if not mempool_logs:
+                current_start = current_end + 1
                 continue
 
-            # Insert raw events (if source has a raw table)
-            if source.raw_table and source_logs:
-                n_raw = source.insert_raw(ch, source_logs, block_ts_map)
-                log.info(f"  {source.name}: {n_raw} raw events stored")
+            block_ts_map = build_block_ts_map(mempool_blocks)
+            log.info(f"  [Fetcher] Downloaded {len(mempool_logs)} logs over {pages} pages for blocks {current_start}→{current_end}")
 
-            # Decode
-            decoded = []
-            for entry in source_logs:
-                d = source.decode(entry, block_ts_map)
-                if d is not None:
-                    decoded.append(d)
+            # ── STAGE 2 & 3: PARSER & AGGREGATOR (Consume & Commit) ───
+            for source in self.sources:
+                # 2.1 Route to relevant source
+                source_logs = [l for l in mempool_logs if source.route(l)]
+                if not source_logs and not source.raw_table:
+                    continue
 
-            # Merge
-            if decoded:
-                n_merged = source.merge(ch, decoded)
-                log.info(f"  {source.name}: {len(decoded)} decoded → {n_merged} merged")
-            elif source_logs:
-                log.info(f"  {source.name}: {len(source_logs)} events, 0 decoded")
+                # 2.2 Persist Raw Event Ledger (Mempool -> DB)
+                if source.raw_table and source_logs:
+                    n_raw = source.insert_raw(ch, source_logs, block_ts_map)
+                    log.info(f"    [{source.name}-DB] {n_raw} raw events safely committed")
+
+                # 2.3 Strict Decoder (Invariant Parsing)
+                decoded = []
+                for entry in source_logs:
+                    d = source.decode(entry, block_ts_map)
+                    if d is not None:
+                        # Poka-Yoke Invariant Checking could occur here dynamically
+                        decoded.append(d)
+
+                # 3.1 Aggregation & Merge
+                if decoded:
+                    n_merged = source.merge(ch, decoded)
+                    log.info(f"    [{source.name}-Processor] {len(decoded)} decoded → {n_merged} merged to Timeseries")
+                elif source_logs:
+                    log.info(f"    [{source.name}-Processor] {len(source_logs)} events, 0 resolved to state delta")
+
+            # ── EXPLICIT MEMORY RECLAMATION ───────────────────────
+            del mempool_logs
+            del mempool_blocks
+            del block_ts_map
+            
+            # Step batch forward
+            current_start = current_end + 1
 
     async def _async_run(self):
         """Async main loop."""

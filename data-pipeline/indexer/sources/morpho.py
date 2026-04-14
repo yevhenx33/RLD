@@ -16,7 +16,9 @@ from typing import Optional
 
 import pandas as pd
 
-from ..base import BaseSource
+from ..base import BaseSource, forward_fill_hourly
+from ..tokens import (TOKENS as KNOWN_TOKENS, STABLES, ETH_ASSETS, BTC_ASSETS,
+                      SYM_DECIMALS, get_usd_price, get_chainlink_prices)
 
 log = logging.getLogger("indexer.morpho")
 
@@ -44,23 +46,7 @@ STATE_TOPICS = [t for t, n in TOPICS.items()
 SECONDS_PER_YEAR = 365 * 24 * 3600  # Match Morpho's non-leap constant
 WAD = 10**18
 
-# ── Known loan token metadata ──────────────────────────────
-# Populated from market_params; fallback for top markets
-KNOWN_TOKENS = {
-    "a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": ("USDC", 6),
-    "dac17f958d2ee523a2206206994597c13d831ec7": ("USDT", 6),
-    "6b175474e89094c44da98b954eedeac495271d0f": ("DAI", 18),
-    "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": ("WETH", 18),
-    "2260fac5e5542a773aa44fbcfedf7c193bc2c599": ("WBTC", 8),
-    "7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0": ("wstETH", 18),
-    "4c9edd5852cd905f086c759e8383e09bff1e68b3": ("USDe", 18),
-    "9d39a5de30e57443bff2a8307a4256c8797a3497": ("sUSDe", 18),
-    "dc035d45d973e3ec169d2276ddab16f1e407384f": ("USDS", 18),
-    "cbb7c0000ab88b473b1f5afd9ef808440eed33bf": ("cbBTC", 8),
-    "8236a87084f8b84306f72007f36f2618a5634494": ("LBTC", 8),
-    "6c3ea9036406852006290770bedfcaba0e23a0e8": ("PYUSD", 6),
-    "1c7d4b196cb0c7b01d743fbc6116a902379c7238": ("EURC", 6),
-}
+# KNOWN_TOKENS imported from tokens.py
 
 
 class MarketState:
@@ -86,7 +72,9 @@ class MorphoSource(BaseSource):
     """Stateful Morpho Blue event decoder.
 
     Tracks cumulative market state in memory and emits rate snapshots
-    at each AccrueInterest event.
+    at each AccrueInterest event.  Also tracks vault positions from
+    Supply/Withdraw events (via topic3=onBehalf) to produce
+    MORPHO_ALLOCATION and MORPHO_VAULT rows.
     """
 
     name = "MORPHO_MARKET"
@@ -99,6 +87,120 @@ class MorphoSource(BaseSource):
         self._markets: dict[str, MarketState] = {}
         self._market_symbols: dict[str, str] = {}  # market_id -> symbol (loaded from CH)
         self._initialized = False
+        # ── Vault tracking ──────────────────────────────────────
+        self._vault_addrs: set[str] = set()           # known vault addresses (lowercase)
+        self._vault_positions: dict[tuple[str, str], int] = {}  # (vault, market) -> supply_shares
+        self._vault_meta: dict[str, dict] = {}        # vault_addr -> {name, asset_symbol, asset_address}
+
+    def load_state_from_ch(self, ch):
+        """Pre-seed cumulative market state from last known ClickHouse data.
+
+        This avoids the cold-start problem where all markets begin with
+        zero supply/borrow and produce incorrect utilization/TVL until
+        enough events accumulate to reconstruct the full state.
+
+        Reverse-converts supply_usd/borrow_usd → raw token amounts using
+        price_usd and known token decimals.
+        """
+        try:
+            # Load symbol mapping first
+            self._load_symbols(ch)
+
+            # ── Pre-seed market state ────────────────────────────
+            latest = ch.query_df("""
+                SELECT entity_id,
+                       argMax(symbol, timestamp) AS sym,
+                       argMax(supply_usd, timestamp) AS supply_usd,
+                       argMax(borrow_usd, timestamp) AS borrow_usd,
+                       argMax(price_usd, timestamp) AS price_usd
+                FROM unified_timeseries
+                WHERE protocol = 'MORPHO_MARKET'
+                GROUP BY entity_id
+                HAVING supply_usd > 0
+            """)
+
+            eth_price, btc_price = get_chainlink_prices(ch)
+
+            if not latest.empty:
+                seeded = 0
+                for _, row in latest.iterrows():
+                    eid = row["entity_id"]
+                    sym = row["sym"]
+                    decimals = SYM_DECIMALS.get(sym, 18)
+
+                    token_price = get_usd_price(sym, eth_price, btc_price)
+                    if token_price <= 0:
+                        token_price = 1.0
+
+                    supply_raw = int(row["supply_usd"] / token_price * (10 ** decimals))
+                    borrow_raw = int(row["borrow_usd"] / token_price * (10 ** decimals))
+
+                    state = self._ensure_market(eid)
+                    state.total_supply_assets = supply_raw
+                    state.total_borrow_assets = borrow_raw
+                    state.loan_symbol = sym
+                    state.loan_decimals = decimals
+                    seeded += 1
+                log.info(f"Pre-seeded {seeded} Morpho market states from ClickHouse")
+            else:
+                log.info("No existing Morpho market state in ClickHouse")
+
+            # ── Pre-seed vault metadata ──────────────────────────
+            try:
+                vm = ch.query_df(
+                    "SELECT vault_address, name, asset_symbol, asset_address "
+                    "FROM morpho_vault_meta"
+                )
+                for _, row in vm.iterrows():
+                    va = row["vault_address"].lower()
+                    self._vault_addrs.add(va)
+                    self._vault_meta[va] = {
+                        "name": row["name"],
+                        "asset_symbol": row["asset_symbol"],
+                        "asset_address": row["asset_address"],
+                    }
+                log.info(f"Loaded {len(self._vault_addrs)} vault addresses")
+            except Exception as e:
+                log.warning(f"Could not load vault meta: {e}")
+
+            # ── Pre-seed vault positions from MORPHO_ALLOCATION ─
+            if self._vault_addrs:
+                try:
+                    allocs = ch.query_df("""
+                        SELECT entity_id AS vault, target_id AS market,
+                               argMax(supply_usd, timestamp) AS supply_usd,
+                               argMax(symbol, timestamp) AS sym
+                        FROM unified_timeseries
+                        WHERE protocol = 'MORPHO_ALLOCATION'
+                        GROUP BY entity_id, target_id
+                        HAVING supply_usd > 0
+                    """)
+                    if not allocs.empty:
+                        pos_count = 0
+                        for _, row in allocs.iterrows():
+                            va = row["vault"].lower()
+                            mid = row["market"].lower()
+                            sym = row["sym"]
+                            # Reverse USD → shares: need market totalSupplyAssets/Shares
+                            mstate = self._markets.get(mid)
+                            if not mstate or mstate.total_supply_assets <= 0:
+                                continue
+                            decimals = SYM_DECIMALS.get(sym, 18)
+                            tp = get_usd_price(sym, eth_price, btc_price)
+                            if tp <= 0:
+                                tp = 1.0
+                            supply_assets = int(row["supply_usd"] / tp * (10 ** decimals))
+                            # shares = assets * totalShares / totalAssets
+                            # We don't have totalShares stored, so approximate shares ≈ assets
+                            # (This is corrected by event replay from the cursor forward)
+                            self._vault_positions[(va, mid)] = supply_assets
+                            pos_count += 1
+                        log.info(f"Pre-seeded {pos_count} vault positions from ClickHouse")
+                except Exception as e:
+                    log.warning(f"Could not pre-seed vault positions: {e}")
+
+        except Exception as e:
+            log.warning(f"Failed to pre-seed Morpho state: {e}")
 
     def log_selection(self) -> "hypersync.LogSelection":
         """Override: no topic filter — we need ALL events."""
@@ -175,26 +277,46 @@ class MorphoSource(BaseSource):
             }
 
         elif evt == "Supply" and len(raw) >= 128:
+            # data = [assets, shares]
             assets = int(raw[0:64], 16)
+            shares = int(raw[64:128], 16)
             state.total_supply_assets += assets
+            # Track vault position if onBehalf is a known vault
+            if len(topics) >= 4 and self._vault_addrs:
+                on_behalf = topics[3][-40:].lower()  # last 20 bytes = address
+                va = "0x" + on_behalf
+                if va in self._vault_addrs:
+                    key = (va, market_id)
+                    self._vault_positions[key] = self._vault_positions.get(key, 0) + shares
 
         elif evt == "Withdraw" and len(raw) >= 192:
-            # data = [caller_addr, assets, shares]
+            # data = [receiver, assets, shares]; topic2=caller, topic3=onBehalf
             assets = int(raw[64:128], 16)
+            shares = int(raw[128:192], 16)
             state.total_supply_assets -= assets
+            # Track vault position
+            if len(topics) >= 4 and self._vault_addrs:
+                on_behalf = topics[3][-40:].lower()
+                va = "0x" + on_behalf
+                if va in self._vault_addrs:
+                    key = (va, market_id)
+                    self._vault_positions[key] = max(
+                        0, self._vault_positions.get(key, 0) - shares)
 
         elif evt == "Borrow" and len(raw) >= 192:
-            # data = [caller_addr, assets, shares]
+            # data = [receiver, assets, shares]
             assets = int(raw[64:128], 16)
             state.total_borrow_assets += assets
 
         elif evt == "Repay" and len(raw) >= 128:
+            # data = [assets, shares]
             assets = int(raw[0:64], 16)
             state.total_borrow_assets -= assets
 
-        elif evt == "Liquidate" and len(raw) >= 320:
-            repaid = int(raw[0:64], 16)
-            bad_debt = int(raw[192:256], 16)
+        elif evt == "Liquidate" and len(raw) >= 448:
+            # data = [caller, repaidAssets, repaidShares, seizedAssets, seizedShares, badDebtAssets, badDebtShares]
+            repaid = int(raw[64:128], 16)
+            bad_debt = int(raw[320:384], 16)
             state.total_borrow_assets -= repaid
             state.total_borrow_assets -= bad_debt
 
@@ -248,76 +370,22 @@ class MorphoSource(BaseSource):
         if len(hourly) == 0:
             return 0
 
-        # Delete existing rows for affected hours
-        hours = hourly["ts"].unique()
-        for h in hours:
-            ts_str = pd.Timestamp(h).strftime("%Y-%m-%d %H:%M:%S")
-            ch.command(
-                f"ALTER TABLE unified_timeseries DELETE "
-                f"WHERE protocol='MORPHO_MARKET' AND timestamp='{ts_str}'"
-            )
-
         # ── Convert raw token amounts to USD ──────────────────────
-        # Build decimals map from KNOWN_TOKENS via symbol
-        SYM_DECIMALS = {}
-        for addr, (sym, dec) in KNOWN_TOKENS.items():
-            SYM_DECIMALS[sym] = dec
-        # Default to 18 if unknown
+        eth_price, btc_price = get_chainlink_prices(ch)
 
-        # Get latest Chainlink prices
-        eth_price = 2000.0
-        btc_price = 70000.0
-        try:
-            ep = ch.command(
-                "SELECT argMax(price, timestamp) FROM chainlink_prices "
-                "WHERE feed = 'ETH/USD'"
-            )
-            if ep:
-                eth_price = float(ep)
-            bp = ch.command(
-                "SELECT argMax(price, timestamp) FROM chainlink_prices "
-                "WHERE feed = 'BTC/USD'"
-            )
-            if bp:
-                btc_price = float(bp)
-        except Exception:
-            pass
-
-        STABLE_SYMS = {"USDC", "USDT", "DAI", "PYUSD", "EURC", "USDe",
-                       "sUSDe", "USDS", "GHO", "crvUSD", "FRAX", "LUSD"}
-        ETH_SYMS = {"WETH", "wstETH", "cbETH", "rETH", "weETH", "ezETH",
-                    "stETH", "mETH", "osETH"}
-        BTC_SYMS = {"WBTC", "cbBTC", "LBTC", "tBTC", "eBTC"}
-
-        def token_to_usd(symbol, raw_amount, market_id):
+        def token_to_usd(symbol, raw_amount):
             decimals = SYM_DECIMALS.get(symbol, 18)
             human = raw_amount / (10 ** decimals)
-            if symbol in STABLE_SYMS:
-                return human * 1.0
-            if symbol in ETH_SYMS:
-                return human * eth_price
-            if symbol in BTC_SYMS:
-                return human * btc_price
-            return human  # unknown — assume $1
+            return human * get_usd_price(symbol, eth_price, btc_price)
 
         hourly["supply_usd_val"] = hourly.apply(
-            lambda r: token_to_usd(r["symbol"], r["total_supply"], r["market_id"]),
+            lambda r: token_to_usd(r["symbol"], r["total_supply"]),
             axis=1,
         )
         hourly["borrow_usd_val"] = hourly.apply(
-            lambda r: token_to_usd(r["symbol"], r["total_borrow"], r["market_id"]),
+            lambda r: token_to_usd(r["symbol"], r["total_borrow"]),
             axis=1,
         )
-
-        # Price per unit of loan token (for the price_usd column)
-        def get_price(sym):
-            if sym in STABLE_SYMS:
-                return 1.0
-            if sym in ETH_SYMS:
-                return eth_price
-            if sym in BTC_SYMS:
-                return btc_price
-            return 1.0
 
         final = pd.DataFrame({
             "timestamp": hourly["ts"],
@@ -330,11 +398,113 @@ class MorphoSource(BaseSource):
             "supply_apy": hourly["supply_apy"],
             "borrow_apy": hourly["borrow_apy"],
             "utilization": hourly["utilization"],
-            "price_usd": hourly["symbol"].map(get_price),
+            "price_usd": hourly["symbol"].map(
+                lambda s: get_usd_price(s, eth_price, btc_price)),
         })
 
+        # Forward-fill: ensure contiguous hourly data per entity
+        final = forward_fill_hourly(final, ch, "MORPHO_MARKET")
+
+        # Delete existing MORPHO_MARKET rows for the filled range, then re-insert
         if len(final) > 0:
+            min_ts = final["timestamp"].min().strftime("%Y-%m-%d %H:%M:%S")
+            max_ts = final["timestamp"].max().strftime("%Y-%m-%d %H:%M:%S")
+            ch.command(
+                f"ALTER TABLE unified_timeseries DELETE "
+                f"WHERE protocol='MORPHO_MARKET' "
+                f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
+            )
             ch.insert_df("unified_timeseries", final)
 
-        return len(final)
+        total_rows = len(final)
+
+        # ── Produce MORPHO_ALLOCATION + MORPHO_VAULT rows ────────
+        if self._vault_addrs and self._vault_positions and len(hourly) > 0:
+            batch_ts = hourly["ts"].max()  # latest hour in this batch
+            alloc_rows = []
+            vault_totals: dict[str, float] = {}  # vault -> total_supply_usd
+
+            for (va, mid), supply_shares in self._vault_positions.items():
+                if supply_shares <= 0:
+                    continue
+                mstate = self._markets.get(mid)
+                if not mstate or mstate.total_supply_assets <= 0:
+                    continue
+
+                # Convert shares → assets (approximation: shares ≈ assets
+                # when totalSupplyShares is unknown; improves with event replay)
+                supply_assets = supply_shares
+
+                sym = mstate.loan_symbol or self._market_symbols.get(mid, "UNKNOWN")
+                decimals = SYM_DECIMALS.get(sym, 18)
+                tp = get_usd_price(sym, eth_price, btc_price)
+                supply_usd = supply_assets / (10 ** decimals) * tp
+                share_pct = (supply_assets / mstate.total_supply_assets
+                             if mstate.total_supply_assets > 0 else 0.0)
+
+                # Aggregate vault-level TVL
+                vault_totals[va] = vault_totals.get(va, 0.0) + supply_usd
+
+                # Get vault symbol from meta
+                v_meta = self._vault_meta.get(va, {})
+                v_sym = v_meta.get("asset_symbol", sym).upper()
+
+                alloc_rows.append({
+                    "timestamp": batch_ts,
+                    "protocol": "MORPHO_ALLOCATION",
+                    "symbol": v_sym,
+                    "entity_id": va,
+                    "target_id": mid,
+                    "supply_usd": supply_usd,
+                    "borrow_usd": 0.0,
+                    "supply_apy": 0.0,
+                    "borrow_apy": 0.0,
+                    "utilization": share_pct,  # share_pct stored in utilization field
+                    "price_usd": 0.0,
+                })
+
+            if alloc_rows:
+                alloc_df = pd.DataFrame(alloc_rows)
+                ts_str = batch_ts.strftime("%Y-%m-%d %H:%M:%S")
+                ch.command(
+                    f"ALTER TABLE unified_timeseries DELETE "
+                    f"WHERE protocol='MORPHO_ALLOCATION' "
+                    f"AND timestamp = '{ts_str}'"
+                )
+                ch.insert_df("unified_timeseries", alloc_df)
+                total_rows += len(alloc_df)
+
+            # Vault-level rows
+            vault_rows = []
+            for va, tvl_usd in vault_totals.items():
+                if tvl_usd <= 0:
+                    continue
+                v_meta = self._vault_meta.get(va, {})
+                v_sym = v_meta.get("asset_symbol", "UNKNOWN").upper()
+                vault_rows.append({
+                    "timestamp": batch_ts,
+                    "protocol": "MORPHO_VAULT",
+                    "symbol": v_sym,
+                    "entity_id": va,
+                    "target_id": "",
+                    "supply_usd": tvl_usd,
+                    "borrow_usd": 0.0,
+                    "supply_apy": 0.0,
+                    "borrow_apy": 0.0,
+                    "utilization": 0.0,
+                    "price_usd": 0.0,
+                })
+
+            if vault_rows:
+                vault_df = pd.DataFrame(vault_rows)
+                ts_str = batch_ts.strftime("%Y-%m-%d %H:%M:%S")
+                ch.command(
+                    f"ALTER TABLE unified_timeseries DELETE "
+                    f"WHERE protocol='MORPHO_VAULT' "
+                    f"AND timestamp = '{ts_str}'"
+                )
+                ch.insert_df("unified_timeseries", vault_df)
+                total_rows += len(vault_df)
+
+        return total_rows
 

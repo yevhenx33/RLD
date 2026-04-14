@@ -11,63 +11,11 @@ from typing import Optional
 
 import pandas as pd
 
-from ..base import BaseSource
+from ..base import BaseSource, forward_fill_hourly
+from ..tokens import (TOKENS as ADDR_MAP, STABLES, ETH_ASSETS, BTC_ASSETS,
+                      PRICE_MULTIPLIERS, get_usd_price, get_chainlink_prices)
 
 log = logging.getLogger("indexer.fluid")
-
-# ── Token registry ──────────────────────────────────────────
-ADDR_MAP = {
-    'dac17f958d2ee523a2206206994597c13d831ec7': ('USDT', 6),
-    'a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': ('USDC', 6),
-    '4c9edd5852cd905f086c759e8383e09bff1e68b3': ('USDe', 18),
-    'c139190f447e929f090edeb554d95abb8b18ac1c': ('USDtb', 18),
-    '9d39a5de30e57443bff2a8307a4256c8797a3497': ('sUSDe', 18),
-    '2260fac5e5542a773aa44fbcfedf7c193bc2c599': ('WBTC', 8),
-    'cbb7c0000ab88b473b1f5afd9ef808440eed33bf': ('CBBTC', 8),
-    'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee': ('ETH', 18),
-    '40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f': ('GHO', 18),
-    '66a1e37c9b0eaddca17d3662d6c05f4decf3e110': ('USR', 18),
-    '085780639cc2cacd35e474e71f4d000e2405d8f6': ('fxUSD', 18),
-    '8236a87084f8b84306f72007f36f2618a5634494': ('LBTC', 8),
-    '4956b52ae2ff65d74ca2d61207523288e4528f96': ('RLP', 18),
-    '1202f5c7b4b9e47a1a484e8b270be34dbbc75055': ('wstUSR', 18),
-    '7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0': ('WSTETH', 18),
-    'beefc011e94f43b8b7b455ebab290c7ab4e216f1': ('csUSDL', 18),
-    'a1290d69c65a6fe4df752f95823fae25cb99e5a7': ('rsETH', 18),
-    '45804880de22913dafe09f4980848ece6ecbaf78': ('PAXG', 18),
-    '68749665ff8d2d112fa859aa293f07a622782f38': ('XAUt', 6),
-    '917cee801a67f933f2e6b33fc0cd1ed2d5909d88': ('weETHs', 18),
-    'bf5495efe5db9ce00f80364c8b423567e58d2110': ('ezETH', 18),
-    '73a15fed60bf67631dc6cd7bc5b6e8da8190acf5': ('USD0', 18),
-    '15700b564ca08d9439c58ca5053166e8317aa138': ('deUSD', 18),
-    'cd5fe23c85820f7b72d0926fc9b05b43e359b7ee': ('weETH', 18),
-    '48f9e38f3070ad8945dfeae3fa70987722e3d89c': ('iUSD', 18),
-    '6f40d4a6237c257fff2db00fa0510deeecd303eb': ('FLUID', 18),
-    'a3931d71877c0e7a3148cb7eb4463524fec27fbd': ('sUSDS', 18),
-    '3d7d6fdf07ee548b939a80edbc9b2256d0cdc003': ('srUSDe', 18),
-    '80ac24aa929eaf5013f6436cda2a7ba190f5cc0b': ('syrupUSDC', 6),
-    'c58d044404d8b14e953c115e67823784dea53d8f': ('jrUSDe', 18),
-    'f1c9acdc66974dfb6decb12aa385b9cd01190e38': ('osETH', 18),
-    '356b8d89c1e1239cbbb9de4815c39a1474d5ba7d': ('syrupUSDT', 6),
-    '657e8c867d8b37dcc18fa4caead9c45eb088c642': ('eBTC', 8),
-    '5086bf358635b81d8c47c66d1c8b9e567db70c72': ('reUSD', 18),
-    '18084fba666a33d37592fa2633fd49a74dd93a88': ('tBTC', 18),
-    'd5f7838f5c461feff7fe49ea5ebaf7728bb0adfa': ('mETH', 18),
-}
-
-STABLES = {
-    'USDC', 'USDT', 'USDe', 'USDtb', 'GHO', 'USR', 'fxUSD', 'USD0',
-    'deUSD', 'iUSD', 'syrupUSDC', 'syrupUSDT', 'reUSD', 'sUSDS', 'sUSDe',
-    'srUSDe', 'jrUSDe', 'csUSDL', 'wstUSR',
-}
-BTC_ASSETS = {'WBTC', 'CBBTC', 'eBTC', 'tBTC', 'LBTC'}
-ETH_ASSETS = {'WSTETH', 'ETH', 'weETHs', 'ezETH', 'weETH', 'rsETH', 'osETH', 'mETH'}
-
-PRICE_MULTIPLIERS = {
-    'ETH': 1.000, 'WSTETH': 1.230, 'weETH': 1.050, 'weETHs': 1.050,
-    'rsETH': 1.040, 'ezETH': 1.020, 'osETH': 1.010, 'mETH': 1.040,
-    'WBTC': 1.000, 'CBBTC': 1.000, 'LBTC': 1.000, 'tBTC': 1.000, 'eBTC': 1.000,
-}
 
 MASK_64 = (1 << 64) - 1
 
@@ -87,31 +35,6 @@ class FluidSource(BaseSource):
 
     def _event_name(self, log_entry) -> str:
         return "Operate"
-
-    def insert_raw(self, ch, logs, block_ts_map) -> int:
-        """Custom raw insert for fluid_events (has supply/borrow_amount cols)."""
-        rows = []
-        for entry in logs:
-            topics = entry.topics or []
-            ts = block_ts_map.get(entry.block_number, datetime.datetime.now(datetime.UTC))
-            ts_naive = ts.replace(tzinfo=None)
-            rows.append([
-                entry.block_number, ts_naive, entry.transaction_hash or "",
-                entry.log_index or 0,
-                (entry.address or "").lower(), "Operate",
-                topics[0] if len(topics) > 0 else "",
-                topics[1] if len(topics) > 1 else None,
-                topics[2] if len(topics) > 2 else None,
-                topics[3] if len(topics) > 3 else None,
-                entry.data or "", 0, 0,
-            ])
-        if rows:
-            ch.insert("fluid_events", rows, column_names=[
-                "block_number", "block_timestamp", "tx_hash", "log_index",
-                "contract", "event_name", "topic0", "topic1", "topic2",
-                "topic3", "data", "supply_amount", "borrow_amount",
-            ])
-        return len(rows)
 
     def decode(self, log_entry, block_ts_map) -> Optional[dict]:
         """Decode BigMath-packed LogOperate event."""
@@ -185,12 +108,12 @@ class FluidSource(BaseSource):
         # Get Chainlink prices
         eth_prices = ch.query_df("""
             SELECT toStartOfHour(timestamp) AS ts, argMax(price, timestamp) AS eth_usd
-            FROM chainlink_prices WHERE feed = 'ETH/USD'
+            FROM chainlink_prices WHERE feed = 'ETH / USD'
             GROUP BY ts ORDER BY ts
         """)
         btc_prices = ch.query_df("""
             SELECT toStartOfHour(timestamp) AS ts, argMax(price, timestamp) AS btc_usd
-            FROM chainlink_prices WHERE feed = 'BTC/USD'
+            FROM chainlink_prices WHERE feed = 'BTC / USD'
             GROUP BY ts ORDER BY ts
         """)
 
@@ -219,15 +142,6 @@ class FluidSource(BaseSource):
         merged['supply_usd'] = merged['supply_tokens'] * merged['price_usd']
         merged['borrow_usd'] = merged['borrow_tokens'] * merged['price_usd']
 
-        # Delete existing rows for affected hours, then re-insert
-        hours = merged['ts'].unique()
-        for h in hours:
-            ts_str = pd.Timestamp(h).strftime('%Y-%m-%d %H:%M:%S')
-            ch.command(
-                f"ALTER TABLE unified_timeseries DELETE "
-                f"WHERE protocol='FLUID_MARKET' AND timestamp='{ts_str}'"
-            )
-
         final = pd.DataFrame({
             'timestamp': merged['ts'],
             'protocol': 'FLUID_MARKET',
@@ -243,7 +157,18 @@ class FluidSource(BaseSource):
         })
         final = final[final['supply_usd'] > 0]
 
+        # Forward-fill: ensure contiguous hourly data per entity
+        final = forward_fill_hourly(final, ch, 'FLUID_MARKET')
+
+        # Delete existing rows for all hours in the filled range, then re-insert
         if len(final) > 0:
-            ch.insert_df("unified_timeseries", final)
+            min_ts = final['timestamp'].min().strftime('%Y-%m-%d %H:%M:%S')
+            max_ts = final['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S')
+            ch.command(
+                f"ALTER TABLE unified_timeseries DELETE "
+                f"WHERE protocol='FLUID_MARKET' "
+                f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
+            )
+            ch.insert_df('unified_timeseries', final)
 
         return len(final)
