@@ -17,6 +17,16 @@ import pandas as pd
 
 log = logging.getLogger("indexer")
 
+# POKA-YOKE: Central routing table for protocol-specific output tables.
+# Each protocol writes to its own physically isolated ClickHouse table.
+# The Merge-engine 'unified_timeseries' view combines them for reads.
+PROTOCOL_TABLES = {
+    "AAVE_MARKET": "aave_timeseries",
+    "MORPHO_MARKET": "morpho_timeseries",
+    "MORPHO_ALLOCATION": "morpho_timeseries",
+    "MORPHO_VAULT": "morpho_timeseries",
+}
+
 
 def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = True) -> pd.DataFrame:
     """
@@ -45,6 +55,8 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
     # Get last known state across ALL entities in protocol from ClickHouse
     batch_min_ts = df["timestamp"].min()
     try:
+        # POKA-YOKE: Read from protocol-specific table, not shared view
+        read_table = PROTOCOL_TABLES.get(protocol, 'unified_timeseries')
         last_known = ch.query_df(f"""
             SELECT entity_id, symbol,
                    argMax(timestamp, timestamp) AS last_ts,
@@ -54,7 +66,7 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
                    argMax(borrow_apy, timestamp) AS borrow_apy,
                    argMax(utilization, timestamp) AS utilization,
                    argMax(price_usd, timestamp) AS price_usd
-            FROM unified_timeseries
+            FROM {read_table}
             WHERE protocol = '{protocol}'
               AND timestamp < '{batch_min_ts.strftime("%Y-%m-%d %H:%M:%S")}'
             GROUP BY entity_id, symbol
@@ -148,8 +160,10 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
 
             # Since `supply_usd` is ffilled, it holds the absolute flat anchor. 
             # Multiplying it by the cumulative factor perfectly synthesizes mechanical compounding.
-            merged['supply_usd'] = merged['supply_usd'] * merged['sup_multiplier']
-            merged['borrow_usd'] = merged['borrow_usd'] * merged['bor_multiplier']
+            # Morpho Markets trace native AccrueInterest physical flows, so we ONLY synthetically compound legacy Aave gaps.
+            if len(group["protocol"]) > 0 and group["protocol"].iloc[0] != "MORPHO_MARKET":
+                merged['supply_usd'] = merged['supply_usd'] * merged['sup_multiplier']
+                merged['borrow_usd'] = merged['borrow_usd'] * merged['bor_multiplier']
 
         # Strip computational degrees of freedom
         if compound:
@@ -179,6 +193,11 @@ class BaseSource(ABC):
     topics: list[str] = []             # Event topic0 hashes to filter
     raw_table: Optional[str] = None    # ClickHouse table for raw events (optional)
     genesis_block: int = 0             # The starting block number for indexing
+
+    @property
+    def output_table(self) -> str:
+        """Return the protocol-specific output table for writes."""
+        return PROTOCOL_TABLES.get(self.name, 'unified_timeseries')
 
     # ── HyperSync integration ────────────────────────────────
     def log_selection(self) -> hypersync.LogSelection:

@@ -45,7 +45,7 @@ During V3 launch, protocols utilized localized controllers to mint massive `vari
 The system contains a native verification engine (`scripts/validate_aave_markets.py`) dedicated exclusively to preventing mathematical indexer drift. 
 
 Running the verifier performs a point-in-time cross-evaluation:
-* **The Claim:** It queries the absolute highest block synthesized natively inside the ClickHouse `unified_timeseries` boundary.
+* **The Claim:** It queries the absolute highest block synthesized natively inside the ClickHouse `aave_timeseries` boundary (read through `unified_timeseries`).
 * **The Physical Truth:** It instantly performs a stateless `eth_call(getReserveData)` using Alchemy Mainnet RPC mapped natively to the `PoolDataProvider` contract at the absolute identical block. 
 * **The Threshold Check:** If the calculated EVM value drifts further than > `0.1%` from the local timeseries accumulator, the engine mathematically Pulls the Andon cord and halts validation.
 
@@ -73,7 +73,7 @@ services:
     command: ["python", "/app/scripts/run_indexer.py", "--source", "AAVE_MARKET", "--role", "processor"]
 ```
 
-These processes are natively constrained and will perpetually fill out the `unified_timeseries` database autonomously without human interaction.
+These processes are natively constrained and will perpetually fill out the `aave_timeseries` database autonomously without human interaction.
 
 ## 4. Derived Whale & Analytical Capabilities
 Because the architecture fundamentally preserves all chronological hex logs in ClickHouse (`aave_events`), we effectively maintain a local physical copy of Aave's financial ledger.
@@ -81,3 +81,11 @@ This native data allows frictionless extensions without altering backend archite
 - Mapping individual physical `onBehalfOf` owners to generate Top Whale analysis.
 - Isolating the `totalPremium` derived from Flashloans natively.
 - Tracking mechanical capital flow velocity across un-isolated tokens.
+
+---
+
+## 5. Protocol Database Isolation (Poka-Yoke)
+Historically, the `unified_timeseries` table was a shared namespace risking cross-protocol contamination during purges. The architecture now enforces **strict physical isolation**:
+1. **Isolated Storage:** `aave_v3.py` writes exclusively to `aave_timeseries`.
+2. **Merge Engine Read:** The GraphQL API and downstream materialized views read from `unified_timeseries`, which is now a ClickHouse `Merge` engine virtual table pointing to `^(aave|morpho)_timeseries$`.
+3. **Software Guard:** `processor.py` explicitly asserts the target table name via the `PROTOCOL_TABLES` mapping, making cross-table writes impossible.

@@ -57,3 +57,5 @@ data/
 *.env
 !*.env.enc
 secrets.txt
+.venv/
+scratch/

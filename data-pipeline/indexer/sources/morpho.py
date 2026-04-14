@@ -14,6 +14,9 @@ import datetime
 import logging
 from typing import Optional
 
+import os
+import requests
+
 import pandas as pd
 
 from ..base import BaseSource, forward_fill_hourly
@@ -81,12 +84,16 @@ class MorphoSource(BaseSource):
     contracts = [MORPHO_BLUE]
     topics = []  # Fetch ALL events from contract (no topic filter)
     raw_table = "morpho_events"
+    genesis_block = 18883124
 
     def __init__(self):
         super().__init__()
         self._markets: dict[str, MarketState] = {}
         self._market_symbols: dict[str, str] = {}  # market_id -> symbol (loaded from CH)
+        self._market_decimals: dict[str, int] = {} # market_id -> loan_decimals
+        self._whitelisted_markets: set[str] = set()
         self._initialized = False
+        self._rpc_url = os.environ.get("MAINNET_RPC_URL", "https://eth.llamarpc.com")
         # ── Vault tracking ──────────────────────────────────────
         self._vault_addrs: set[str] = set()           # known vault addresses (lowercase)
         self._vault_positions: dict[tuple[str, str], int] = {}  # (vault, market) -> supply_shares
@@ -103,8 +110,23 @@ class MorphoSource(BaseSource):
         price_usd and known token decimals.
         """
         try:
-            # Load symbol mapping first
-            self._load_symbols(ch)
+            # 1. Load exhaustive parameters and Poka-Yoke Whitelist 
+            params = ch.query_df(
+                "SELECT lower(market_id) AS market_id, loan_symbol, loan_decimals "
+                "FROM morpho_market_params"
+            )
+            for _, row in params.iterrows():
+                mid = row["market_id"]
+                sym = row["loan_symbol"]
+                dec = row["loan_decimals"]
+                self._market_symbols[mid] = sym
+                self._market_decimals[mid] = dec
+                # Chainlink filter proxy: Assume Known Tokens have reliable pricing
+                if sym in KNOWN_TOKENS or sym in STABLES or sym in ETH_ASSETS or sym in BTC_ASSETS:
+                    self._whitelisted_markets.add(mid)
+            
+            log.info(f"Whitelisted {len(self._whitelisted_markets)} Chainlink-backed Morpho markets.")
+            self._initialized = True
 
             # ── Pre-seed market state ────────────────────────────
             latest = ch.query_df("""
@@ -113,7 +135,7 @@ class MorphoSource(BaseSource):
                        argMax(supply_usd, timestamp) AS supply_usd,
                        argMax(borrow_usd, timestamp) AS borrow_usd,
                        argMax(price_usd, timestamp) AS price_usd
-                FROM unified_timeseries
+                FROM morpho_timeseries
                 WHERE protocol = 'MORPHO_MARKET'
                 GROUP BY entity_id
                 HAVING supply_usd > 0
@@ -170,7 +192,7 @@ class MorphoSource(BaseSource):
                         SELECT entity_id AS vault, target_id AS market,
                                argMax(supply_usd, timestamp) AS supply_usd,
                                argMax(symbol, timestamp) AS sym
-                        FROM unified_timeseries
+                        FROM morpho_timeseries
                         WHERE protocol = 'MORPHO_ALLOCATION'
                         GROUP BY entity_id, target_id
                         HAVING supply_usd > 0
@@ -217,6 +239,53 @@ class MorphoSource(BaseSource):
         except Exception:
             return 0
 
+    def _fetch_token_decimals(self, token_address: str) -> int:
+        """Synchronously fetch token decimals via basic JSON-RPC with strict timeout."""
+        token_address_lower = token_address.lower().replace("0x", "")
+        if token_address_lower in KNOWN_TOKENS:
+            return KNOWN_TOKENS[token_address_lower][1]
+
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{"to": token_address, "data": "0x313ce567"}, "latest"], # decimals()
+            "id": 1
+        }
+        try:
+            resp = requests.post(self._rpc_url, json=payload, timeout=1.0)
+            resp.raise_for_status()
+            res = resp.json().get("result")
+            if res and res != "0x":
+                return int(res, 16)
+        except Exception as e:
+            log.warning(f"Timeout/Error fetching decimals for {token_address}: {e}")
+        return 18
+
+    def _fetch_token_symbol(self, token_address: str) -> str:
+        """Synchronously fetch token symbol via basic JSON-RPC with strict timeout."""
+        token_address_lower = token_address.lower().replace("0x", "")
+        if token_address_lower in KNOWN_TOKENS:
+            return KNOWN_TOKENS[token_address_lower][0]
+
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "eth_call",
+            "params": [{"to": token_address, "data": "0x95d89b41"}, "latest"], # symbol()
+            "id": 1
+        }
+        try:
+            resp = requests.post(self._rpc_url, json=payload, timeout=1.0)
+            resp.raise_for_status()
+            res = resp.json().get("result")
+            if res and res.startswith("0x") and len(res) > 130:
+                length = int(res[66:130], 16)
+                hex_str = res[130:130 + (length * 2)]
+                sym = bytes.fromhex(hex_str).decode('utf-8', errors='ignore').replace('\x00', '')
+                return sym
+        except Exception as e:
+            log.warning(f"Timeout/Error fetching symbol for {token_address}: {e}")
+        return "UNKNOWN"
+
     def _ensure_market(self, market_id: str) -> MarketState:
         """Get or create market state."""
         if market_id not in self._markets:
@@ -241,7 +310,13 @@ class MorphoSource(BaseSource):
         if not evt:
             return None
 
-        market_id = topics[1].lower()
+        market_id_raw = topics[1].lower()
+        market_id = market_id_raw[2:] if market_id_raw.startswith("0x") else market_id_raw
+        
+        # POKA-YOKE: Strict Whitelist ingestion boundary
+        if market_id not in self._whitelisted_markets and evt != "CreateMarket":
+            return None
+            
         raw = data[2:] if data and len(data) > 2 else ""
         state = self._ensure_market(market_id)
 
@@ -313,12 +388,19 @@ class MorphoSource(BaseSource):
             assets = int(raw[0:64], 16)
             state.total_borrow_assets -= assets
 
-        elif evt == "Liquidate" and len(raw) >= 448:
-            # data = [caller, repaidAssets, repaidShares, seizedAssets, seizedShares, badDebtAssets, badDebtShares]
-            repaid = int(raw[64:128], 16)
-            bad_debt = int(raw[320:384], 16)
+        elif evt == "Liquidate" and len(raw) >= 256:
+            # data = [repaidAssets, repaidShares, seizedAssets, seizedShares, badDebtAssets?, badDebtShares?]
+            # On-chain emits 320 hex chars (5 words) when badDebtShares=0; 384 when present
+            repaid = int(raw[0:64], 16)
+            bad_debt = int(raw[256:320], 16) if len(raw) >= 320 else 0
             state.total_borrow_assets -= repaid
             state.total_borrow_assets -= bad_debt
+
+        elif evt == "CreateMarket" and len(raw) >= 160:
+            # Fetch token metadata instantly from the local ClickHouse index mapper
+            if market_id in self._market_symbols:
+                state.loan_symbol = self._market_symbols[market_id]
+                state.loan_decimals = self._market_decimals.get(market_id, 18)
 
         elif evt == "SetFee" and len(raw) >= 64:
             state.fee_wad = int(raw[0:64], 16)
@@ -372,18 +454,20 @@ class MorphoSource(BaseSource):
 
         # ── Convert raw token amounts to USD ──────────────────────
         eth_price, btc_price = get_chainlink_prices(ch)
+        
+        # POKA-YOKE: Map exact physically extracted decimals for perfect scaling
+        hourly["decimals"] = hourly["market_id"].map(self._market_decimals).fillna(18)
 
-        def token_to_usd(symbol, raw_amount):
-            decimals = SYM_DECIMALS.get(symbol, 18)
+        def token_to_usd_exact(symbol, raw_amount, decimals):
             human = raw_amount / (10 ** decimals)
             return human * get_usd_price(symbol, eth_price, btc_price)
 
         hourly["supply_usd_val"] = hourly.apply(
-            lambda r: token_to_usd(r["symbol"], r["total_supply"]),
+            lambda r: token_to_usd_exact(r["symbol"], r["total_supply"], r["decimals"]),
             axis=1,
         )
         hourly["borrow_usd_val"] = hourly.apply(
-            lambda r: token_to_usd(r["symbol"], r["total_borrow"]),
+            lambda r: token_to_usd_exact(r["symbol"], r["total_borrow"], r["decimals"]),
             axis=1,
         )
 
@@ -402,19 +486,19 @@ class MorphoSource(BaseSource):
                 lambda s: get_usd_price(s, eth_price, btc_price)),
         })
 
-        # Forward-fill: ensure contiguous hourly data per entity
-        final = forward_fill_hourly(final, ch, "MORPHO_MARKET")
+        # Base Physical Isolation: Do NOT double-compound. Events already structurally increase balances.
+        final = forward_fill_hourly(final, ch, "MORPHO_MARKET", compound=False)
 
         # Delete existing MORPHO_MARKET rows for the filled range, then re-insert
         if len(final) > 0:
             min_ts = final["timestamp"].min().strftime("%Y-%m-%d %H:%M:%S")
             max_ts = final["timestamp"].max().strftime("%Y-%m-%d %H:%M:%S")
             ch.command(
-                f"ALTER TABLE unified_timeseries DELETE "
+                f"ALTER TABLE {self.output_table} DELETE "
                 f"WHERE protocol='MORPHO_MARKET' "
                 f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
             )
-            ch.insert_df("unified_timeseries", final)
+            ch.insert_df(self.output_table, final)
 
         total_rows = len(final)
 
@@ -436,7 +520,7 @@ class MorphoSource(BaseSource):
                 supply_assets = supply_shares
 
                 sym = mstate.loan_symbol or self._market_symbols.get(mid, "UNKNOWN")
-                decimals = SYM_DECIMALS.get(sym, 18)
+                decimals = self._market_decimals.get(mid, 18)
                 tp = get_usd_price(sym, eth_price, btc_price)
                 supply_usd = supply_assets / (10 ** decimals) * tp
                 share_pct = (supply_assets / mstate.total_supply_assets
@@ -467,11 +551,11 @@ class MorphoSource(BaseSource):
                 alloc_df = pd.DataFrame(alloc_rows)
                 ts_str = batch_ts.strftime("%Y-%m-%d %H:%M:%S")
                 ch.command(
-                    f"ALTER TABLE unified_timeseries DELETE "
+                    f"ALTER TABLE {self.output_table} DELETE "
                     f"WHERE protocol='MORPHO_ALLOCATION' "
                     f"AND timestamp = '{ts_str}'"
                 )
-                ch.insert_df("unified_timeseries", alloc_df)
+                ch.insert_df(self.output_table, alloc_df)
                 total_rows += len(alloc_df)
 
             # Vault-level rows
@@ -499,12 +583,45 @@ class MorphoSource(BaseSource):
                 vault_df = pd.DataFrame(vault_rows)
                 ts_str = batch_ts.strftime("%Y-%m-%d %H:%M:%S")
                 ch.command(
-                    f"ALTER TABLE unified_timeseries DELETE "
+                    f"ALTER TABLE {self.output_table} DELETE "
                     f"WHERE protocol='MORPHO_VAULT' "
                     f"AND timestamp = '{ts_str}'"
                 )
-                ch.insert_df("unified_timeseries", vault_df)
+                ch.insert_df(self.output_table, vault_df)
                 total_rows += len(vault_df)
 
         return total_rows
 
+
+if __name__ == "__main__":
+    # Poka-Yoke Verification
+    logging.basicConfig(level=logging.INFO)
+    print("Running Poka-Yoke Verification for Morpho Universal Indexer")
+    
+    src = MorphoSource()
+    
+    # 1. Happy Path: WETH Token
+    print("Testing Happy Path (WETH)...")
+    sym = src._fetch_token_symbol("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    dec = src._fetch_token_decimals("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
+    assert sym == "WETH", f"Expected WETH, got {sym}"
+    assert dec == 18, f"Expected 18, got {dec}"
+    print("Happy Path Passed.")
+
+    # 2. Happy Path: USDC Token (6 decimals)
+    print("Testing Happy Path (USDC)...")
+    sym = src._fetch_token_symbol("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+    dec = src._fetch_token_decimals("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+    assert sym == "USDC", f"Expected USDC, got {sym}"
+    assert dec == 6, f"Expected 6, got {dec}"
+    print("Happy Path Passed.")
+
+    # 3. Failure Mode: Bogus Token / Timeout
+    print("Testing Failure Mode (Bogus Address)...")
+    sym = src._fetch_token_symbol("0x0000000000000000000000000000000000000000")
+    dec = src._fetch_token_decimals("0x0000000000000000000000000000000000000000")
+    assert sym == "UNKNOWN", f"Expected UNKNOWN, got {sym}"
+    assert dec == 18, f"Expected 18, got {dec}"
+    print("Failure Mode Caught and Safely Defaulted.")
+    
+    print("All Poka-Yoke validations passed. Ready for Monte-Carlo fuzzing.")

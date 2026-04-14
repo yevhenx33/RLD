@@ -1,5 +1,12 @@
 # Frontend Visual Redesign
 
+## Review: Universal Morpho Market Indexer
+- [x] Implemented deterministic JSON-RPC decimal and symbol fetching with strict timeouts.
+- [x] Intercepted `CreateMarket` payload natively inside `morpho.py`.
+- [x] Executed Poka-Yoke verification successfully simulating a WETH lookup, USDC lookup, and an intentional HTTP timeout failure cleanly defaulting to 18 decimals and UNKNOWN symbol.
+- [ ] Needs Review: Check if any new obscure tokens should be statically mapped in `tokens.py` to avoid continuous cache misses, or if the pipeline is scaling effectively on its own.
+
+
 ## Phase 1: Standalone Landing Page Folder ✅
 
 - [x] Create `new-front/` at project root (sibling to `frontend/`)

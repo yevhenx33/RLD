@@ -165,10 +165,10 @@ class FluidSource(BaseSource):
             min_ts = final['timestamp'].min().strftime('%Y-%m-%d %H:%M:%S')
             max_ts = final['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S')
             ch.command(
-                f"ALTER TABLE unified_timeseries DELETE "
+                f"ALTER TABLE {self.output_table} DELETE "
                 f"WHERE protocol='FLUID_MARKET' "
                 f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
             )
-            ch.insert_df('unified_timeseries', final)
+            ch.insert_df(self.output_table, final)
 
         return len(final)
