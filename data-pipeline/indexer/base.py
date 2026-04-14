@@ -18,7 +18,7 @@ import pandas as pd
 log = logging.getLogger("indexer")
 
 
-def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str) -> pd.DataFrame:
+def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = True) -> pd.DataFrame:
     """
     Ensure contiguous hourly data for every entity_id by forward-filling gaps.
 
@@ -130,28 +130,30 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str) -> pd.DataFrame:
         merged[fill_cols] = merged[fill_cols].ffill()
         merged[fill_cols] = merged[fill_cols].fillna(0.0)
 
-        # Segment the DataFrame by physical anchors. 
-        # A new segment starts every time `is_gap` is False.
-        merged['segment'] = (~is_gap).cumsum()
+        if compound:
+            # Segment the DataFrame by physical anchors. 
+            # A new segment starts every time `is_gap` is False.
+            merged['segment'] = (~is_gap).cumsum()
 
-        # Calculate hour-over-hour multipliers (1 + APY / 8760)
-        merged['sup_factor'] = 1.0
-        merged.loc[is_gap, 'sup_factor'] = 1.0 + (merged.loc[is_gap, 'supply_apy'] / 8760)
-        
-        merged['bor_factor'] = 1.0
-        merged.loc[is_gap, 'bor_factor'] = 1.0 + (merged.loc[is_gap, 'borrow_apy'] / 8760)
+            # Calculate hour-over-hour multipliers (1 + APY / 8760)
+            merged['sup_factor'] = 1.0
+            merged.loc[is_gap, 'sup_factor'] = 1.0 + (merged.loc[is_gap, 'supply_apy'] / 8760)
+            
+            merged['bor_factor'] = 1.0
+            merged.loc[is_gap, 'bor_factor'] = 1.0 + (merged.loc[is_gap, 'borrow_apy'] / 8760)
 
-        # Cumulatively multiply these factors within each isolated segment
-        merged['sup_multiplier'] = merged.groupby('segment')['sup_factor'].cumprod()
-        merged['bor_multiplier'] = merged.groupby('segment')['bor_factor'].cumprod()
+            # Cumulatively multiply these factors within each isolated segment
+            merged['sup_multiplier'] = merged.groupby('segment')['sup_factor'].cumprod()
+            merged['bor_multiplier'] = merged.groupby('segment')['bor_factor'].cumprod()
 
-        # Since `supply_usd` is ffilled, it holds the absolute flat anchor. 
-        # Multiplying it by the cumulative factor perfectly synthesizes mechanical compounding.
-        merged['supply_usd'] = merged['supply_usd'] * merged['sup_multiplier']
-        merged['borrow_usd'] = merged['borrow_usd'] * merged['bor_multiplier']
+            # Since `supply_usd` is ffilled, it holds the absolute flat anchor. 
+            # Multiplying it by the cumulative factor perfectly synthesizes mechanical compounding.
+            merged['supply_usd'] = merged['supply_usd'] * merged['sup_multiplier']
+            merged['borrow_usd'] = merged['borrow_usd'] * merged['bor_multiplier']
 
         # Strip computational degrees of freedom
-        merged = merged.drop(columns=['segment', 'sup_factor', 'bor_factor', 'sup_multiplier', 'bor_multiplier'])
+        if compound:
+            merged = merged.drop(columns=['segment', 'sup_factor', 'bor_factor', 'sup_multiplier', 'bor_multiplier'])
 
         filled_parts.append(merged)
 

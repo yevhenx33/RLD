@@ -58,6 +58,7 @@ class ProtocolProcessor:
             return
 
         ch = self._create_ch_client()
+        self.source.get_cursor(ch)  # Ensure source state tables exist
         last_processed = self.get_last_processed_block(ch)
         if last_processed == 0:
             last_processed = max(0, self.source.genesis_block - 1)
