@@ -127,8 +127,10 @@ class ShadowWatcher:
         log.warning(f"Initiating Self-Healing Wipe. Rolling cursor back to {new_cursor}...")
         
         # Wipe the last 24 hours of timeseries output
+        from indexer.base import PROTOCOL_TABLES
+        target_table = PROTOCOL_TABLES.get(protocol, 'unified_timeseries')
         ch.command(f"""
-            ALTER TABLE unified_timeseries DELETE 
+            ALTER TABLE {target_table} DELETE 
             WHERE protocol='{protocol}' AND timestamp >= now() - INTERVAL 25 HOUR
         """)
         

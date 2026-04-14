@@ -72,6 +72,7 @@ class ProtocolProcessor:
             return
 
         log.info(f"[{self.source.name}-Processor] Decoding {last_processed} -> {max_mempool_block}")
+        log.info(f"[{self.source.name}-Processor] POKA-YOKE: Output table = {self.source.output_table}")
 
         current_start = last_processed + 1
         while current_start <= max_mempool_block:
