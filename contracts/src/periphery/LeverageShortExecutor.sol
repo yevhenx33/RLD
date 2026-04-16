@@ -146,7 +146,7 @@ contract LeverageShortExecutor is ReentrancyGuard {
         );
 
         // 3. Withdraw wRLP to this executor
-        pb.withdrawPositionToken(address(this), targetDebtAmount);
+        pb.withdrawToken(pb.positionToken(), address(this), targetDebtAmount);
 
         // 4. Approve pool manager for swap
         IERC20(positionToken).approve(address(poolManager), targetDebtAmount);

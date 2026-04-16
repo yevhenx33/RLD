@@ -103,7 +103,7 @@ contract LeverageShortTests is LiquidationBase {
             int256(depositAmount),
             int256(posAmount)
         );
-        helper.withdrawPositionToken(address(this), posAmount);
+        helper.withdrawToken(helper.positionToken(), address(this), posAmount);
         collateralMock.mint(address(this), 1_000_000e6);
 
         IAllowanceTransfer(PERMIT2_ADDRESS).approve(

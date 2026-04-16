@@ -106,12 +106,12 @@ contract BrokerRouterTrading is LiquidationBase {
         collateralMock.transfer(address(helper), depositAmount);
         helper.modifyPosition(MarketId.unwrap(marketId), int256(depositAmount), int256(posAmount));
         // Withdraw position tokens (broker retains 20x collateral vs debt — very solvent)
-        helper.withdrawPositionToken(address(this), posAmount);
+        helper.withdrawToken(helper.positionToken(), address(this), posAmount);
         // Withdraw collateral for pool — leave enough to stay solvent
         // After withdrawal: broker has (depositAmount - colAmount) collateral, posAmount debt
         // Need (depositAmount - colAmount) > posAmount * INDEX_PRICE_WAD * minColRatio / 1e18
         if (colAmount < depositAmount - posAmount * 10) {
-            helper.withdrawCollateral(address(this), colAmount);
+            helper.withdrawToken(helper.collateralToken(), address(this), colAmount);
         } else {
             // Just use what the test contract already has from the mock
             collateralMock.mint(address(this), colAmount);

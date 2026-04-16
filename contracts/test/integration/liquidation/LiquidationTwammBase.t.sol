@@ -80,7 +80,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
             int256(clearerWRLP * 20),
             int256(clearerWRLP)
         );
-        helper.withdrawPositionToken(address(this), clearerWRLP);
+        helper.withdrawToken(helper.positionToken(), address(this), clearerWRLP);
         // Approve TWAMM hook to pull wRLP during clear
         ERC20(ma.positionToken).approve(address(twammHook), type(uint256).max);
     }
@@ -217,9 +217,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         );
         if (currentCash > targetCash) {
             try
-                broker.withdrawCollateral(
-                    address(this),
-                    currentCash - targetCash
+                broker.withdrawToken(broker.collateralToken(), address(this), currentCash - targetCash
                 )
             {} catch {}
         }
@@ -229,7 +227,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         );
         if (currentWRLP > 0) {
             try
-                broker.withdrawPositionToken(address(this), currentWRLP)
+                broker.withdrawToken(broker.positionToken(), address(this), currentWRLP)
             {} catch {}
         }
 
@@ -293,9 +291,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         );
         if (currentCash > targetCash) {
             try
-                broker.withdrawCollateral(
-                    address(this),
-                    currentCash - targetCash
+                broker.withdrawToken(broker.collateralToken(), address(this), currentCash - targetCash
                 )
             {} catch {}
         }
@@ -304,9 +300,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         );
         if (currentWRLP > targetWRLP) {
             try
-                broker.withdrawPositionToken(
-                    address(this),
-                    currentWRLP - targetWRLP
+                broker.withdrawToken(broker.positionToken(), address(this), currentWRLP - targetWRLP
                 )
             {} catch {}
         }
@@ -367,9 +361,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         );
         if (currentCash > targetCash) {
             try
-                broker.withdrawCollateral(
-                    address(this),
-                    currentCash - targetCash
+                broker.withdrawToken(broker.collateralToken(), address(this), currentCash - targetCash
                 )
             {} catch {}
         }
@@ -378,9 +370,7 @@ abstract contract LiquidationTwammBase is LiquidationBase {
         );
         if (currentWRLP > targetWRLP) {
             try
-                broker.withdrawPositionToken(
-                    address(this),
-                    currentWRLP - targetWRLP
+                broker.withdrawToken(broker.positionToken(), address(this), currentWRLP - targetWRLP
                 )
             {} catch {}
         }

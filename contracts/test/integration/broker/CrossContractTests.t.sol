@@ -93,7 +93,7 @@ contract CrossContractTests is LiquidationBase {
             int256(depositAmount),
             int256(posAmount)
         );
-        helper.withdrawPositionToken(address(this), posAmount);
+        helper.withdrawToken(helper.positionToken(), address(this), posAmount);
         collateralMock.mint(address(this), 1_000_000e6);
 
         IAllowanceTransfer(PERMIT2_ADDRESS).approve(
@@ -259,7 +259,7 @@ contract CrossContractTests is LiquidationBase {
         );
 
         // Verify broker is still operational
-        broker.withdrawCollateral(owner, 1_000e6);
+        broker.withdrawToken(broker.collateralToken(), owner, 1_000e6);
     }
 
     // ================================================================
@@ -393,7 +393,7 @@ contract CrossContractTests is LiquidationBase {
         );
 
         // BrokerA withdrawing all collateral doesn't affect BrokerB
-        brokerA.withdrawCollateral(address(this), 100_000e6);
+        brokerA.withdrawToken(brokerA.collateralToken(), address(this), 100_000e6);
         assertTrue(
             core.isSolvent(marketId, address(brokerB)),
             "BrokerB still solvent after A withdrawal"

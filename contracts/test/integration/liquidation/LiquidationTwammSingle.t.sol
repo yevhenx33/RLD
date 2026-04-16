@@ -6,6 +6,7 @@ import {IJTM} from "../../../src/twamm/IJTM.sol";
 import {IJTM} from "../../../src/twamm/IJTM.sol";
 import {IPrimeBroker} from "../../../src/shared/interfaces/IPrimeBroker.sol";
 import {PrimeBroker} from "../../../src/rld/broker/PrimeBroker.sol";
+import {PrimeBrokerLens} from "../../../src/rld/periphery/PrimeBrokerLens.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
@@ -415,8 +416,9 @@ contract LiquidationTwammSingle is LiquidationTwammBase {
     ///      order key (including dynamically-set expiration).
     function _getCancelPreview(
         PrimeBroker broker
-    ) internal view returns (uint256 buyOwed, uint256 sellRefund) {
-        IPrimeBroker.BrokerState memory state = broker.getFullState();
+    ) internal returns (uint256 buyOwed, uint256 sellRefund) {
+        PrimeBrokerLens lens = new PrimeBrokerLens();
+        PrimeBrokerLens.BrokerState memory state = lens.getFullState(address(broker));
         return (state.twammBuyOwed, state.twammSellOwed);
     }
 
@@ -426,7 +428,7 @@ contract LiquidationTwammSingle is LiquidationTwammBase {
         uint256 expectedBuy,
         uint256 expectedSellApprox,
         string memory label
-    ) internal view {
+    ) internal {
         (uint256 buy, uint256 sell) = _getCancelPreview(broker);
         console.log("  Cancel preview: buy:", buy / 1e6, "sell:", sell / 1e6);
         assertEq(buy, expectedBuy, string.concat(label, ": buyOwed mismatch"));

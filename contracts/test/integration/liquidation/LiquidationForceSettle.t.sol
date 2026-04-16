@@ -17,6 +17,7 @@ import {
 } from "v4-core/src/test/PoolModifyLiquidityTestNoChecks.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {PrimeBroker} from "../../../src/rld/broker/PrimeBroker.sol";
+import {PrimeBrokerLens} from "../../../src/rld/periphery/PrimeBrokerLens.sol";
 import "forge-std/console.sol";
 
 /// @title Tier 7: ForceSettle Tests
@@ -72,7 +73,7 @@ contract LiquidationForceSettle is LiquidationTwammBase {
             int256(lpCollateral),
             int256(lpWRLP)
         );
-        helper.withdrawPositionToken(address(this), lpWRLP);
+        helper.withdrawToken(helper.positionToken(), address(this), lpWRLP);
 
         // Read current pool tick and center LP around it (±600 ticks)
         (, int24 currentTick, , ) = poolManager.getSlot0(marketTwammKey.toId());
@@ -116,8 +117,9 @@ contract LiquidationForceSettle is LiquidationTwammBase {
 
     function _getCancelPreview(
         PrimeBroker broker
-    ) internal view returns (uint256 buyOwed, uint256 sellRefund) {
-        IPrimeBroker.BrokerState memory state = broker.getFullState();
+    ) internal returns (uint256 buyOwed, uint256 sellRefund) {
+        PrimeBrokerLens lens = new PrimeBrokerLens();
+        PrimeBrokerLens.BrokerState memory state = lens.getFullState(address(broker));
         return (state.twammBuyOwed, state.twammSellOwed);
     }
 

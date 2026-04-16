@@ -664,8 +664,8 @@ contract BrokerPositionTracking is LiquidationTwammBase {
         uint256 cAmt
     ) internal returns (uint256 tokenId) {
         // Withdraw tokens from broker to test contract
-        broker.withdrawPositionToken(address(this), wAmt);
-        broker.withdrawCollateral(address(this), cAmt);
+        broker.withdrawToken(broker.positionToken(), address(this), wAmt);
+        broker.withdrawToken(broker.collateralToken(), address(this), cAmt);
 
         vm.warp(1_700_000_000);
 

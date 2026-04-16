@@ -81,7 +81,7 @@ contract ValuationModuleTests is LiquidationTwammBase {
         PrimeBroker helper = _createBroker();
         collateralMock.transfer(address(helper), depositAmount);
         helper.modifyPosition(MarketId.unwrap(marketId), int256(depositAmount), int256(posAmount));
-        helper.withdrawPositionToken(address(this), posAmount);
+        helper.withdrawToken(helper.positionToken(), address(this), posAmount);
         collateralMock.mint(address(this), 500_000e6);
 
         IAllowanceTransfer(PERMIT2_ADDRESS)
@@ -138,7 +138,7 @@ contract ValuationModuleTests is LiquidationTwammBase {
         broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(0));
 
         // Broker withdraws collateral to sell via TWAMM
-        broker.withdrawCollateral(address(broker), 10_000e6);
+        broker.withdrawToken(broker.collateralToken(), address(broker), 10_000e6);
 
         // Place TWAMM order: sell 10k collateral over 1 hour
         (, IJTM.OrderKey memory orderKey) = _placeTwammOrder(broker, 10_000e6, true, TWAMM_DURATION);
@@ -177,8 +177,8 @@ contract ValuationModuleTests is LiquidationTwammBase {
         broker1.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(0));
         broker2.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(0));
 
-        broker1.withdrawCollateral(address(broker1), 10_000e6);
-        broker2.withdrawCollateral(address(broker2), 30_000e6);
+        broker1.withdrawToken(broker1.collateralToken(), address(broker1), 10_000e6);
+        broker2.withdrawToken(broker2.collateralToken(), address(broker2), 30_000e6);
 
         // Place two orders with different sell rates (10k vs 30k over same duration)
         (, IJTM.OrderKey memory key1) = _placeTwammOrder(broker1, 10_000e6, true, TWAMM_DURATION);
@@ -205,7 +205,7 @@ contract ValuationModuleTests is LiquidationTwammBase {
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), 100_000e6);
         broker.modifyPosition(MarketId.unwrap(marketId), int256(uint256(100_000e6)), int256(0));
-        broker.withdrawCollateral(address(broker), 10_000e6);
+        broker.withdrawToken(broker.collateralToken(), address(broker), 10_000e6);
 
         (, IJTM.OrderKey memory orderKey) = _placeTwammOrder(broker, 10_000e6, true, TWAMM_DURATION);
 
@@ -339,7 +339,7 @@ contract ValuationModuleTests is LiquidationTwammBase {
         uint256 posAmount = 50_000e6;
         collateralMock.transfer(address(helper), posAmount * 20);
         helper.modifyPosition(MarketId.unwrap(marketId), int256(posAmount * 20), int256(posAmount));
-        helper.withdrawPositionToken(address(this), posAmount);
+        helper.withdrawToken(helper.positionToken(), address(this), posAmount);
         collateralMock.mint(address(this), 200_000e6);
 
         IAllowanceTransfer(PERMIT2_ADDRESS)

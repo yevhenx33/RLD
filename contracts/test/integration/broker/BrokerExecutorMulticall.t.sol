@@ -239,8 +239,8 @@ contract BrokerExecutorMulticall is LiquidationBase {
         calls[1] = BrokerExecutor.Call({
             target: address(broker),
             data: abi.encodeCall(
-                PrimeBroker.withdrawCollateral,
-                (owner, 10_000e6)
+                PrimeBroker.withdrawToken,
+                (ma.collateralToken, owner, 10_000e6)
             )
         });
 

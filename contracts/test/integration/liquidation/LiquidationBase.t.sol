@@ -176,7 +176,7 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
         PrimeBroker helper = _createBroker();
         collateralMock.transfer(address(helper), LIQUIDATOR_WRLP * 20);
         helper.modifyPosition(MarketId.unwrap(marketId), int256(LIQUIDATOR_WRLP * 20), int256(LIQUIDATOR_WRLP));
-        helper.withdrawPositionToken(liquidator, LIQUIDATOR_WRLP);
+        helper.withdrawToken(helper.positionToken(), liquidator, LIQUIDATOR_WRLP);
         collateralMock.transfer(liquidator, LIQUIDATOR_CASH);
         vm.prank(liquidator);
         ERC20(ma.positionToken).approve(address(core), type(uint256).max);
@@ -205,8 +205,8 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
     // ======================== LP PROVISION ========================
 
     function _provideV4LP(PrimeBroker broker, uint256 wAmt, uint256 cAmt) internal returns (uint256 tokenId) {
-        broker.withdrawPositionToken(address(this), wAmt);
-        broker.withdrawCollateral(address(this), cAmt);
+        broker.withdrawToken(broker.positionToken(), address(this), wAmt);
+        broker.withdrawToken(broker.collateralToken(), address(this), cAmt);
         vm.warp(1_700_000_000);
         IAllowanceTransfer(PERMIT2_ADDRESS)
             .approve(ma.positionToken, address(positionManager), type(uint160).max, type(uint48).max);
@@ -254,11 +254,11 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
     function _provideV4LPOutOfRange(PrimeBroker broker, uint256 amount, bool above) internal returns (uint256 tokenId) {
         bool wRLPisC0 = Currency.unwrap(lpPoolKey.currency0) == ma.positionToken;
         if (above) {
-            if (wRLPisC0) broker.withdrawPositionToken(address(this), amount);
-            else broker.withdrawCollateral(address(this), amount);
+            if (wRLPisC0) broker.withdrawToken(broker.positionToken(), address(this), amount);
+            else broker.withdrawToken(broker.collateralToken(), address(this), amount);
         } else {
-            if (wRLPisC0) broker.withdrawCollateral(address(this), amount);
-            else broker.withdrawPositionToken(address(this), amount);
+            if (wRLPisC0) broker.withdrawToken(broker.collateralToken(), address(this), amount);
+            else broker.withdrawToken(broker.positionToken(), address(this), amount);
         }
 
         vm.warp(1_700_000_000);
@@ -356,11 +356,11 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
 
         uint256 currentWRLP = ERC20(ma.positionToken).balanceOf(address(broker));
         if (currentWRLP > targetWRLP) {
-            broker.withdrawPositionToken(address(this), currentWRLP - targetWRLP);
+            broker.withdrawToken(broker.positionToken(), address(this), currentWRLP - targetWRLP);
         }
         uint256 currentCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         if (currentCash > targetCash) {
-            try broker.withdrawCollateral(address(this), currentCash - targetCash) {} catch {}
+            try broker.withdrawToken(broker.collateralToken(), address(this), currentCash - targetCash) {} catch {}
         }
 
         uint256 fc = ERC20(ma.collateralToken).balanceOf(address(broker));
@@ -387,11 +387,11 @@ abstract contract LiquidationBase is JITRLDIntegrationBase {
 
         uint256 currentWRLP = ERC20(ma.positionToken).balanceOf(address(broker));
         if (currentWRLP > targetWRLP) {
-            broker.withdrawPositionToken(address(this), currentWRLP - targetWRLP);
+            broker.withdrawToken(broker.positionToken(), address(this), currentWRLP - targetWRLP);
         }
         uint256 currentCash = ERC20(ma.collateralToken).balanceOf(address(broker));
         if (currentCash > targetCash) {
-            try broker.withdrawCollateral(address(this), currentCash - targetCash) {} catch {}
+            try broker.withdrawToken(broker.collateralToken(), address(this), currentCash - targetCash) {} catch {}
         }
 
         uint256 fc = ERC20(ma.collateralToken).balanceOf(address(broker));

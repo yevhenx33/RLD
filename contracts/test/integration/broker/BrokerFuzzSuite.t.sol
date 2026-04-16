@@ -283,7 +283,7 @@ contract BrokerFuzzSuite is LiquidationBase {
             );
             if (currentCash > cash) {
                 try
-                    broker.withdrawCollateral(address(this), currentCash - cash)
+                    broker.withdrawToken(broker.collateralToken(), address(this), currentCash - cash)
                 {} catch {}
             }
         } else {
@@ -297,7 +297,7 @@ contract BrokerFuzzSuite is LiquidationBase {
             );
             if (currentCash > cash) {
                 try
-                    broker.withdrawCollateral(address(this), currentCash - cash)
+                    broker.withdrawToken(broker.collateralToken(), address(this), currentCash - cash)
                 {} catch {}
             }
         }
@@ -1013,7 +1013,7 @@ contract BrokerFuzzSuite is LiquidationBase {
         assertEq(navBefore, amount * 3, "NAV should equal initial transfer");
 
         // Withdraw `amount` — directly reduces broker balance
-        broker.withdrawCollateral(address(this), amount);
+        broker.withdrawToken(broker.collateralToken(), address(this), amount);
 
         uint256 navAfterWithdraw = broker.getNetAccountValue();
 

@@ -281,10 +281,10 @@ contract RLDCoreJitTwammE2E is JITRLDIntegrationBase {
         uint256 ctBefore = collateralMock.balanceOf(address(this));
 
         // Withdraw wRLP for LP
-        broker.withdrawPositionToken(address(this), LP_WRLP_AMOUNT);
+        broker.withdrawToken(broker.positionToken(), address(this), LP_WRLP_AMOUNT);
 
         // Withdraw collateral for LP
-        broker.withdrawCollateral(address(this), LP_CT_AMOUNT);
+        broker.withdrawToken(broker.collateralToken(), address(this), LP_CT_AMOUNT);
 
         uint256 ptAfter = ERC20(wrlpToken).balanceOf(address(this));
         uint256 ctAfter = collateralMock.balanceOf(address(this));
@@ -315,7 +315,7 @@ contract RLDCoreJitTwammE2E is JITRLDIntegrationBase {
         // debtValue = 500k. netWorth = 540k - 500k = 40k.
         // Withdrawals use maintenanceMargin (1.1), marginReq = 500k * 0.1 = 50k. 40k < 50k → insolvent
         vm.expectRevert();
-        broker.withdrawCollateral(address(this), 960_000e6);
+        broker.withdrawToken(broker.collateralToken(), address(this), 960_000e6);
     }
 
     // ================================================================
@@ -329,8 +329,8 @@ contract RLDCoreJitTwammE2E is JITRLDIntegrationBase {
         // Deposit + mint + withdraw
         collateralMock.transfer(address(broker), COLLATERAL_AMOUNT);
         broker.modifyPosition(MarketId.unwrap(marketId), int256(COLLATERAL_AMOUNT), int256(DEBT_AMOUNT));
-        broker.withdrawPositionToken(address(this), LP_WRLP_AMOUNT);
-        broker.withdrawCollateral(address(this), LP_CT_AMOUNT);
+        broker.withdrawToken(broker.positionToken(), address(this), LP_WRLP_AMOUNT);
+        broker.withdrawToken(broker.collateralToken(), address(this), LP_CT_AMOUNT);
 
         // Approve wrlpToken for LP router
         ERC20(wrlpToken).approve(address(lpRouter), type(uint256).max);
@@ -361,8 +361,8 @@ contract RLDCoreJitTwammE2E is JITRLDIntegrationBase {
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), COLLATERAL_AMOUNT);
         broker.modifyPosition(MarketId.unwrap(marketId), int256(COLLATERAL_AMOUNT), int256(DEBT_AMOUNT));
-        broker.withdrawPositionToken(address(this), LP_WRLP_AMOUNT);
-        broker.withdrawCollateral(address(this), LP_CT_AMOUNT);
+        broker.withdrawToken(broker.positionToken(), address(this), LP_WRLP_AMOUNT);
+        broker.withdrawToken(broker.collateralToken(), address(this), LP_CT_AMOUNT);
         ERC20(wrlpToken).approve(address(lpRouter), type(uint256).max);
 
         lpRouter.modifyLiquidity(
@@ -397,8 +397,8 @@ contract RLDCoreJitTwammE2E is JITRLDIntegrationBase {
         PrimeBroker broker = _createBroker();
         collateralMock.transfer(address(broker), COLLATERAL_AMOUNT);
         broker.modifyPosition(MarketId.unwrap(marketId), int256(COLLATERAL_AMOUNT), int256(DEBT_AMOUNT));
-        broker.withdrawPositionToken(address(this), LP_WRLP_AMOUNT);
-        broker.withdrawCollateral(address(this), LP_CT_AMOUNT);
+        broker.withdrawToken(broker.positionToken(), address(this), LP_WRLP_AMOUNT);
+        broker.withdrawToken(broker.collateralToken(), address(this), LP_CT_AMOUNT);
         ERC20(wrlpToken).approve(address(lpRouter), type(uint256).max);
 
         lpRouter.modifyLiquidity(
@@ -468,10 +468,10 @@ contract RLDCoreJitTwammE2E is JITRLDIntegrationBase {
         assertTrue(core.isSolvent(marketId, address(broker)), "INV-3: solvent after mint");
 
         // Step 4: Withdraw tokens
-        broker.withdrawPositionToken(address(this), LP_WRLP_AMOUNT);
+        broker.withdrawToken(broker.positionToken(), address(this), LP_WRLP_AMOUNT);
         assertTrue(core.isSolvent(marketId, address(broker)), "INV-4: solvent after wRLP withdrawal");
 
-        broker.withdrawCollateral(address(this), LP_CT_AMOUNT);
+        broker.withdrawToken(broker.collateralToken(), address(this), LP_CT_AMOUNT);
         assertTrue(core.isSolvent(marketId, address(broker)), "INV-5: solvent after CT withdrawal");
 
         // Step 5: Add LP (uses deployer's tokens, not broker's)
@@ -525,7 +525,7 @@ contract RLDCoreJitTwammE2E is JITRLDIntegrationBase {
         // Deposit + mint + withdraw some for LP
         collateralMock.transfer(address(broker), COLLATERAL_AMOUNT);
         broker.modifyPosition(MarketId.unwrap(marketId), int256(COLLATERAL_AMOUNT), int256(DEBT_AMOUNT));
-        broker.withdrawPositionToken(address(this), LP_WRLP_AMOUNT);
+        broker.withdrawToken(broker.positionToken(), address(this), LP_WRLP_AMOUNT);
 
         // Add LP to pool
         ERC20(wrlpToken).approve(address(lpRouter), type(uint256).max);
@@ -575,8 +575,8 @@ contract RLDCoreJitTwammE2E is JITRLDIntegrationBase {
         broker.modifyPosition(MarketId.unwrap(marketId), int256(COLLATERAL_AMOUNT), int256(DEBT_AMOUNT));
 
         // Withdraw wRLP + collateral to test contract for LP
-        broker.withdrawPositionToken(address(this), LP_WRLP_AMOUNT);
-        broker.withdrawCollateral(address(this), LP_CT_AMOUNT);
+        broker.withdrawToken(broker.positionToken(), address(this), LP_WRLP_AMOUNT);
+        broker.withdrawToken(broker.collateralToken(), address(this), LP_CT_AMOUNT);
 
         console.log("[Phase 5] wRLP withdrawn:", LP_WRLP_AMOUNT / 1e6);
         console.log("[Phase 5] Collateral withdrawn:", LP_CT_AMOUNT / 1e6);

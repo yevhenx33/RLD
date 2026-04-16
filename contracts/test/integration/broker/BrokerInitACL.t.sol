@@ -240,16 +240,16 @@ contract BrokerInitACL is JITRLDIntegrationBase {
 
         // Owner can call
         vm.prank(alice);
-        broker.withdrawCollateral(alice, small);
+        broker.withdrawToken(broker.collateralToken(), alice, small);
 
         // Operator can call
         vm.prank(bob);
-        broker.withdrawCollateral(bob, small);
+        broker.withdrawToken(broker.collateralToken(), bob, small);
 
         // Attacker cannot call
         vm.prank(attacker);
         vm.expectRevert("Not Authorized");
-        broker.withdrawCollateral(attacker, small);
+        broker.withdrawToken(broker.collateralToken(), attacker, small);
     }
 
     // ================================================================
