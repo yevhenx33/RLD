@@ -132,10 +132,12 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                     >
                       Perps
                     </Link>
-                    <div className="flex items-center justify-between gap-2.5 px-4 py-3 border-b border-white/5 cursor-not-allowed">
-                      <span className="text-sm font-bold uppercase tracking-widest text-[#333]">CDS</span>
-                      <span className="text-[9px] font-bold uppercase tracking-[0.2em] text-cyan-900 border border-cyan-900/40 px-1.5 py-px">Soon</span>
-                    </div>
+                    <Link
+                      to="/markets/cds"
+                      className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
+                    >
+                      CDS
+                    </Link>
                     <Link
                       to="/markets/pools"
                       className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors"
@@ -273,6 +275,13 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                   >
                     <div className="w-1 h-1 bg-cyan-500/50" />
                     Perps
+                  </Link>
+                  <Link
+                    to="/markets/cds"
+                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/cds") ? "text-cyan-400" : "text-gray-500"}`}
+                  >
+                    <div className="w-1 h-1 bg-cyan-500/50" />
+                    CDS
                   </Link>
                   <Link
                     to="/markets/pools"
