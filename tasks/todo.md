@@ -129,3 +129,8 @@ new-front/
 - [ ] Review decoupled run_indexer.py argparse implementation
 - [ ] Review genesis_block parameter functionality in collector/processor
 - [ ] Review Watcher mempool atomic purge logic
+
+## [Review] CDS Frontend UI Implementation
+- [x] Initialized and verified pure UI structure for CDS Markets and individual CDS Terminal views.
+- [x] Implemented placeholder deterministic `CdsDataModule.jsx` UI tabs for Payout Simulation and Historical Prices without relying on back-end connections.
+- [ ] Needs Review: Check if CDS UI matches the target industrial design paradigm and approve the S.M.A.R.T layout separation from Bonds.

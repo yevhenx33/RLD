@@ -30,7 +30,17 @@ const StatItem = ({ label, value }) => (
   </div>
 );
 
-const MetricsGrid = ({ latest, dailyChange, openInterest, liquidity }) => (
+const MetricsGrid = ({ 
+  latest, 
+  dailyChange, 
+  openInterest, 
+  liquidity,
+  paramLabel = "PARAMETERS",
+  paramItems = [
+    { label: "MATURITY", value: "1H — 1Y" },
+    { label: "WITHDRAW", value: "Inst." }
+  ]
+}) => (
   <div className="grid grid-cols-3 h-full border border-white/10 bg-[#080808] divide-x divide-white/10">
     <MetricCell
       label="CURRENT_SPOT"
@@ -74,13 +84,14 @@ const MetricsGrid = ({ latest, dailyChange, openInterest, liquidity }) => (
       }
     />
     <MetricCell
-      label="PARAMETERS"
+      label={paramLabel}
       Icon={Clock}
       hideLabelOnMobile={true}
       content={
-        <div className="flex flex-col gap-3 md:gap-6 mt-auto">
-          <StatItem label="MATURITY" value="1H — 1Y" />
-          <StatItem label="WITHDRAW" value="Inst." />
+        <div className={`flex flex-col mt-auto ${paramItems.length > 2 ? 'gap-2 md:gap-3' : 'gap-3 md:gap-6'}`}>
+          {paramItems.map((item, idx) => (
+            <StatItem key={idx} label={item.label} value={item.value} />
+          ))}
         </div>
       }
     />

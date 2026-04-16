@@ -17,6 +17,8 @@ const MarketDetail = lazy(() => import("./components/charts/MarketDetail"));
 const Portfolio = lazy(() => import("./components/portfolio/Portfolio"));
 const SimulationTerminal = lazy(() => import("./components/trading/SimulationTerminal"));
 const PerpsDirectory = lazy(() => import("./components/trading/PerpsDirectory"));
+const CdsDirectory = lazy(() => import("./components/cds/CdsDirectory"));
+const Cds = lazy(() => import("./components/cds/Cds"));
 const PoolLP = lazy(() => import("./components/pools/PoolLP"));
 const PoolsDirectory = lazy(() => import("./components/pools/PoolsDirectory"));
 const TwammOrders = lazy(() => import("./components/twamm/TwammOrders"));
@@ -160,6 +162,22 @@ ReactDOM.createRoot(document.getElementById("root")).render(
                 element={
                   <Suspense fallback={<Loading />}>
                     <SimulationTerminal />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/markets/cds"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <CdsDirectory />
+                  </Suspense>
+                }
+              />
+              <Route
+                path="/markets/cds/:address"
+                element={
+                  <Suspense fallback={<Loading />}>
+                    <Cds />
                   </Suspense>
                 }
               />

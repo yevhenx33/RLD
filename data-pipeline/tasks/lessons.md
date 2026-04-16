@@ -1,0 +1,7 @@
+\n**Lesson [2026-04-14]: Database Isolation & Truncate Protocols**\nNever use `TRUNCATE TABLE unified_timeseries` when debugging a specific protocol's timeseries, because it inherently destroys parallelly running daemon states like Aave. In the future, isolate cross-protocol data stores physically (e.g., using explicit `PARTITION BY protocol` or deploying strictly separate dedicated state schemas per market source) to ensure synchronous, O(1) partitioned destruction without risking cross-contamination of peer processors.
+
+**Lesson [2026-04-14]: Liquidate Event Length Guard**
+The Morpho Blue `Liquidate` event ABI specifies 6 data fields (384 hex chars), but on-chain Solidity emits only 5 words (320 hex chars) when `badDebtShares = 0`. A guard of `len(raw) >= 384` silently skipped ALL 100 liquidation events for cbBTC/USDC, leaving $28.97M of repaid debt un-subtracted. Fix: use `len(raw) >= 256` as the outer guard with a conditional inner read for `badDebtAssets`. **Detection method:** Progressive archival block comparison isolated a $20M drift jump to a 500K-block window, then gross flow analysis proved the Liquidate parser was the only zero-output pathway.
+
+**Lesson [2026-04-14]: EVM Event Data Truncation**
+Solidity may omit trailing zero-valued fields from event data payloads. Never hardcode minimum data lengths based on the full ABI specification. Always use the minimum length required to read the fields you actually need, and conditionally read optional trailing fields.
