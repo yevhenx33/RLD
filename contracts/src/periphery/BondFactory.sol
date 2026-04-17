@@ -218,7 +218,7 @@ contract BondFactory is ReentrancyGuard {
 
         // ── 4. Withdraw minted wRLP → swap → waUSDC proceeds ───────────
         address positionToken = pb.positionToken();
-        pb.withdrawPositionToken(address(this), debtAmount);
+        pb.withdrawToken(pb.positionToken(), address(this), debtAmount);
         uint256 proceeds = _swapExactInput(
             positionToken, COLLATERAL, debtAmount, poolKey
         );
@@ -332,7 +332,7 @@ contract BondFactory is ReentrancyGuard {
             uint256 leftoverWRLP = ERC20(positionToken).balanceOf(broker);
             if (leftoverWRLP > 0) {
                 // Withdraw wRLP from broker → this contract
-                pb.withdrawPositionToken(address(this), leftoverWRLP);
+                pb.withdrawToken(pb.positionToken(), address(this), leftoverWRLP);
                 // Swap wRLP → waUSDC on V4
                 uint256 waUSDCReceived = _swapExactInput(
                     positionToken,
@@ -351,10 +351,10 @@ contract BondFactory is ReentrancyGuard {
 
         if (collBal > 0) {
             if (useUnderlying) {
-                pb.withdrawCollateral(address(this), collBal);
+                pb.withdrawToken(pb.collateralToken(), address(this), collBal);
                 _unwrapAndSend(collBal, msg.sender);
             } else {
-                pb.withdrawCollateral(msg.sender, collBal);
+                pb.withdrawToken(pb.collateralToken(), msg.sender, collBal);
             }
         }
 
@@ -408,7 +408,7 @@ contract BondFactory is ReentrancyGuard {
         );
 
         // 2. Withdraw exactly amountIn waUSDC from broker to this contract
-        pb.withdrawCollateral(address(this), amountIn);
+        pb.withdrawToken(pb.collateralToken(), address(this), amountIn);
 
         // 3. Swap waUSDC → wRLP on V4 (exact input = amountIn)
         uint256 wrlpReceived = _swapExactInput(

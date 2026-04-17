@@ -286,11 +286,24 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     error NotFactory();
     error BrokerFrozen_();
     error InvalidToken();
+    error AlreadyInitialized();
+    error ZeroAddress();
+    error TooManyOperators();
+    error NoActivePosition();
+    error InvalidTarget();
+    error ExecuteFailed();
+    error ZeroLiquidity();
+    error InvalidOrder();
+    error NoActiveOrder();
+    error WrongMarket();
+    error DuplicateOperator();
+    error NotOperator();
+    error InvalidNonce();
+    error InvalidSignature();
+    error AlreadyFrozen();
+    error NotFrozen();
 
     /* ============================================================================================ */
-    /*                                         MODIFIERS                                           */
-    /* ============================================================================================ */
-
     /// @dev Restricts function to RLDCore only
     /// Used for: seize() during liquidation
     modifier onlyCore() {
@@ -395,8 +408,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         address[] calldata _initialOperators
     ) external {
         // SECURITY: Prevent re-initialization
-        require(!initialized, "Initialized");
-        require(_core != address(0), "Invalid Core");
+        if (initialized) revert AlreadyInitialized();
+        if (_core == address(0)) revert ZeroAddress();
 
         // CRITICAL: Set CORE here, not in constructor
         // EIP-1167 clones would otherwise inherit placeholder from implementation
@@ -416,10 +429,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         rateOracle = vars.rateOracle;
 
         // Set initial operators (e.g., BrokerRouter) so they're pre-approved from deploy
-        require(
-            _initialOperators.length <= MAX_OPERATORS,
-            "Too many operators"
-        );
+        if (_initialOperators.length > MAX_OPERATORS) revert TooManyOperators();
         for (uint256 i = 0; i < _initialOperators.length; i++) {
             operators[_initialOperators[i]] = true;
             operatorList.push(_initialOperators[i]);
@@ -526,7 +536,16 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             // TWAMM orders are tied to orderKey.owner and cannot be transferred
             // But we check defensively in case of edge cases
             if (activeTwammOrder.orderKey.owner == address(this)) {
-                bytes memory data = _encodeTwammData(activeTwammOrder);
+                bytes memory data = abi.encode(
+                    address(activeTwammOrder.key.hooks), // hook
+                    activeTwammOrder.key,                // key
+                    activeTwammOrder.orderKey,           // orderKey
+                    rateOracle,                          // oracle
+                    collateralToken,                     // valuationToken
+                    positionToken,                       // positionToken
+                    underlyingPool,                      // underlyingPool
+                    underlyingToken                      // underlyingToken
+                );
                 totalValue += IValuationModule(TWAMM_MODULE).getValue(data);
             }
             // If ownership check fails, order value = 0 (not counted)
@@ -808,11 +827,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Uses DECREASE_LIQUIDITY with 0 liquidity + TAKE_PAIR to collect fees.
     /// @dev Only callable by authorized operators (owner or approved operator).
     function collectV4Fees() external onlyAuthorized {
-        require(activeTokenId != 0, "!lp");
-        require(
-            IERC721(POSM).ownerOf(activeTokenId) == address(this),
-            "!owner"
-        );
+        if (activeTokenId == 0) revert NoActivePosition();
+        if (IERC721(POSM).ownerOf(activeTokenId) != address(this)) revert NotOwner();
         _decreaseV4Liquidity(activeTokenId, 0, false);
     }
 
@@ -860,8 +876,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (bytes memory result)
     {
-        require(target != CORE, "Use modifyPosition");
-        require(target != address(this), "No self-call");
+        if (target == CORE) revert InvalidTarget();
+        if (target == address(this)) revert InvalidTarget();
 
         bool success;
         (success, result) = target.call(data);
@@ -871,7 +887,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
                     revert(add(32, result), mload(result))
                 }
             } else {
-                revert("Execute failed");
+                revert ExecuteFailed();
             }
         }
 
@@ -899,10 +915,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     ) external onlyAuthorized nonReentrant whenNotFrozen {
         if (newTokenId != 0) {
             // SECURITY: Verify this broker actually owns the position
-            require(
-                IERC721(POSM).ownerOf(newTokenId) == address(this),
-                "!owner"
-            );
+            if (IERC721(POSM).ownerOf(newTokenId) != address(this)) revert NotOwner();
         }
 
         uint256 oldTokenId = activeTokenId;
@@ -939,7 +952,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 tokenId)
     {
-        require(liquidity > 0, "!0");
+        if (liquidity == 0) revert ZeroLiquidity();
 
         PoolKey memory poolKey = _getPoolKey(twammHook);
 
@@ -1007,14 +1020,14 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 amount0, uint256 amount1)
     {
-        require(liquidity > 0, "!0");
-        require(IERC721(POSM).ownerOf(tokenId) == address(this), "!owner");
+        if (liquidity == 0) revert ZeroLiquidity();
+        if (IERC721(POSM).ownerOf(tokenId) != address(this)) revert NotOwner();
 
         // Check current liquidity to determine if full removal
         uint128 currentLiquidity = IPositionManager(POSM).getPositionLiquidity(
             tokenId
         );
-        require(currentLiquidity > 0, "!0");
+        if (currentLiquidity == 0) revert ZeroLiquidity();
 
         bool fullRemoval = liquidity >= currentLiquidity;
         uint128 actualLiquidity = fullRemoval ? currentLiquidity : liquidity;
@@ -1081,8 +1094,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             );
 
             // SECURITY: Verify order exists and is owned by this broker
-            require(order.sellRate > 0, "!order");
-            require(info.orderKey.owner == address(this), "!owner");
+            if (order.sellRate == 0) revert InvalidOrder();
+            if (info.orderKey.owner != address(this)) revert NotOwner();
         }
 
         bytes32 oldOrderId = activeTwammOrder.orderId;
@@ -1090,7 +1103,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         emit ActiveTwammOrderChanged(oldOrderId, info.orderId);
 
         // SECURITY: Prevent gaming by switching to smaller orders
-        require(IRLDCore(CORE).isSolvent(marketId, address(this)), "!solv");
+        if (!IRLDCore(CORE).isSolvent(marketId, address(this))) revert Insolvent();
     }
 
     /// @notice Clears the tracked V4 LP position
@@ -1176,7 +1189,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 buyTokensOut, uint256 sellTokensRefund)
     {
-        require(activeTwammOrder.orderId != bytes32(0), "!order");
+        if (activeTwammOrder.orderId == bytes32(0)) revert NoActiveOrder();
         bytes32 cancelledOrderId = activeTwammOrder.orderId;
         (buyTokensOut, sellTokensRefund) = _cancelTwammOrder();
         emit TwammOrderCancelled(cancelledOrderId, buyTokensOut, sellTokensRefund);
@@ -1196,7 +1209,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         nonReentrant
         returns (uint256 claimed0, uint256 claimed1)
     {
-        require(activeTwammOrder.orderId != bytes32(0), "!order");
+        if (activeTwammOrder.orderId == bytes32(0)) revert NoActiveOrder();
         bytes32 claimedOrderId = activeTwammOrder.orderId;
 
         // syncAndClaimTokens: syncs earnings, auto-deletes expired orders,
@@ -1233,7 +1246,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         nonReentrant
         returns (uint256 claimed0, uint256 claimed1)
     {
-        require(orderKey.owner == address(this), "!owner");
+        if (orderKey.owner != address(this)) revert NotOwner();
 
         bytes32 claimedOrderId = keccak256(abi.encode(orderKey));
         (claimed0, claimed1) = IJTM(twammHook).syncAndClaimTokens(
@@ -1275,10 +1288,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         MarketId id = MarketId.wrap(rawMarketId);
 
         // SECURITY: Can only modify position in this broker's market
-        require(
-            MarketId.unwrap(id) == MarketId.unwrap(marketId),
-            "Wrong Market"
-        );
+        if (MarketId.unwrap(id) != MarketId.unwrap(marketId)) revert WrongMarket();
 
         // Encode for callback
         bytes memory data = abi.encode(id, deltaCollateral, deltaDebt);
@@ -1299,7 +1309,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @return Empty bytes (required by interface)
     function lockAcquired(bytes calldata data) external returns (bytes memory) {
         // SECURITY: Only Core can trigger this callback
-        require(msg.sender == CORE, "!core");
+        if (msg.sender != CORE) revert NotCore();
 
         (MarketId id, int256 deltaCollateral, int256 deltaDebt) = abi.decode(
             data,
@@ -1307,7 +1317,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         );
 
         // SECURITY: Double-check market ID
-        require(MarketId.unwrap(id) == MarketId.unwrap(marketId), "!mkt");
+        if (MarketId.unwrap(id) != MarketId.unwrap(marketId)) revert WrongMarket();
 
         // Execute the position modification in Core
         IRLDCore(CORE).modifyPosition(id, deltaCollateral, deltaDebt);
@@ -1325,39 +1335,17 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /*                                    TOKEN WITHDRAWALS                                        */
     /* ============================================================================================ */
 
-    /// @notice Withdraws collateral token to a specified recipient
-    /// @dev Dedicated withdrawal function with solvency check
+    /// @notice Withdraws a generic ERC20 token to a specified recipient tracking solvency limits
+    /// @dev Consolidated withdrawal function
+    /// @param token The address of the token to withdraw
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to withdraw
-    function withdrawCollateral(
+    function withdrawToken(
+        address token,
         address recipient,
         uint256 amount
     ) external onlyAuthorized nonReentrant whenNotFrozen {
-        ERC20(collateralToken).safeTransfer(recipient, amount);
-        _checkSolvency();
-    }
-
-    /// @notice Withdraws position token (wRLP) to a specified recipient
-    /// @dev Dedicated withdrawal function with solvency check
-    /// @param recipient The address to receive the tokens
-    /// @param amount The amount to withdraw
-    function withdrawPositionToken(
-        address recipient,
-        uint256 amount
-    ) external onlyAuthorized nonReentrant whenNotFrozen {
-        ERC20(positionToken).safeTransfer(recipient, amount);
-        _checkSolvency();
-    }
-
-    /// @notice Withdraws underlying token to a specified recipient
-    /// @dev Dedicated withdrawal function with solvency check
-    /// @param recipient The address to receive the tokens
-    /// @param amount The amount to withdraw
-    function withdrawUnderlying(
-        address recipient,
-        uint256 amount
-    ) external onlyAuthorized nonReentrant whenNotFrozen {
-        ERC20(underlyingToken).safeTransfer(recipient, amount);
+        ERC20(token).safeTransfer(recipient, amount);
         _checkSolvency();
     }
 
@@ -1386,37 +1374,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             );
     }
 
-    /// @dev Encodes data for TWAMM_MODULE.getValue()
-    /// @param info The TWAMM order info
-    /// @return Encoded bytes matching TwammBrokerModule.VerifyParams
-    function _encodeTwammData(
-        TwammOrderInfo memory info
-    ) internal view returns (bytes memory) {
-        // NOTE: Order must match TwammBrokerModule.VerifyParams struct:
-        // (hook, key, orderKey, oracle, valuationToken, positionToken, underlyingPool, underlyingToken)
-        return
-            abi.encode(
-                address(info.key.hooks), // hook - The TWAMM hook address
-                info.key, // key - PoolKey
-                info.orderKey, // orderKey - OrderKey
-                rateOracle, // oracle - IRLDOracle for getIndexPrice
-                collateralToken, // valuationToken - valued 1:1
-                positionToken, // positionToken - wRLP, valued via index price
-                underlyingPool, // underlyingPool - Aave pool
-                underlyingToken // underlyingToken - underlying asset (USDC)
-            );
-    }
-
-    /// @dev Gets spot price from oracle
-    /// @param quote The quote token address
-    /// @param base The base token address
-    /// @return Price in WAD format (1e18 = 1.0)
-    function _getOraclePrice(
-        address quote,
-        address base
-    ) internal view returns (uint256) {
-        return ISpotOracle(rateOracle).getSpotPrice(quote, base);
-    }
+    /* ============================================================================================ */
 
     /// @dev Shared solvency check — reverts with Insolvent() if broker is underwater
     function _checkSolvency() internal view {
@@ -1469,7 +1427,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         } else if (msg.sender == operator && operators[msg.sender] && !active) {
             // Operator can revoke themselves
         } else {
-            revert("Not authorized");
+            revert NotAuthorized();
         }
 
         _updateOperator(operator, active);
@@ -1478,12 +1436,12 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Shared helper for adding/removing operators with event emission
     function _updateOperator(address operator, bool active) internal {
         if (active) {
-            require(!operators[operator], "!dup");
-            require(operatorList.length < MAX_OPERATORS, "!max");
+            if (operators[operator]) revert DuplicateOperator();
+            if (operatorList.length >= MAX_OPERATORS) revert TooManyOperators();
             operators[operator] = true;
             operatorList.push(operator);
         } else {
-            require(operators[operator], "!op");
+            if (!operators[operator]) revert NotOperator();
             operators[operator] = false;
             for (uint256 i = 0; i < operatorList.length; i++) {
                 if (operatorList[i] == operator) {
@@ -1528,7 +1486,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         );
 
         // Verify nonce
-        require(nonce == operatorNonces[msg.sender], "!nonce");
+        if (nonce != operatorNonces[msg.sender]) revert InvalidNonce();
         operatorNonces[msg.sender]++;
 
         // Build signed message hash
@@ -1550,7 +1508,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
 
         // Verify signature is from owner
         address signer = ECDSA.recover(ethSignedHash, signature);
-        require(signer == owner, "!sig");
+        if (signer != owner) revert InvalidSignature();
 
         _updateOperator(operator, active);
     }
@@ -1573,7 +1531,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// 4. TWAMM unwind continues at hook level (not affected by freeze)
     /// 5. At maturity, new owner calls unfreeze() and withdraws
     function freeze() external onlyOwner nonReentrant {
-        require(!frozen, "!freeze");
+        if (frozen) revert AlreadyFrozen();
         frozen = true;
         _revokeAll();
         emit BrokerFrozen(msg.sender);
@@ -1583,104 +1541,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Only owner (current NFT holder) can unfreeze
     /// After unfreezing, owner must call setOperator() to re-add operators
     function unfreeze() external onlyOwner nonReentrant {
-        require(frozen, "!freeze");
+        if (!frozen) revert NotFrozen();
         frozen = false;
         emit BrokerUnfrozen(msg.sender);
     }
 
-    /* ============================================================================================ */
-    /*                                    INDEXING SUPPORT                                         */
-    /* ============================================================================================ */
-
-    /// @notice Returns the complete state of this broker for indexing
-    /// @dev Used by indexers to verify their computed state matches on-chain
-    function getFullState()
-        external
-        view
-        override
-        returns (BrokerState memory state)
-    {
-        // Balances
-        state.collateralBalance = ERC20(collateralToken).balanceOf(
-            address(this)
-        );
-        state.positionBalance = ERC20(positionToken).balanceOf(address(this));
-
-        // Debt from Core
-        IRLDCore.Position memory pos = IRLDCore(CORE).getPosition(
-            marketId,
-            address(this)
-        );
-        state.debtPrincipal = pos.debtPrincipal;
-
-        // Debt value (principal × normFactor × price)
-        if (state.debtPrincipal > 0) {
-            IRLDCore.MarketState memory marketState = IRLDCore(CORE)
-                .getMarketState(marketId);
-            uint256 trueDebt = (uint256(state.debtPrincipal) *
-                marketState.normalizationFactor) / 1e18;
-            uint256 indexPrice = IRLDOracle(rateOracle).getIndexPrice(
-                underlyingPool,
-                underlyingToken
-            );
-            state.debtValue = (trueDebt * indexPrice) / 1e18;
-        }
-
-        // TWAMM owed amounts
-        if (
-            activeTwammOrder.orderId != bytes32(0) &&
-            activeTwammOrder.orderKey.owner == address(this)
-        ) {
-            address twammHook = address(activeTwammOrder.key.hooks);
-            (uint256 buyTokensOwed, uint256 sellTokensRefund) = IJTM(twammHook)
-                .getCancelOrderState(
-                    activeTwammOrder.key,
-                    activeTwammOrder.orderKey
-                );
-            state.twammSellOwed = sellTokensRefund;
-            state.twammBuyOwed = buyTokensOwed;
-        }
-
-        // V4 LP value
-        if (
-            activeTokenId != 0 &&
-            IERC721(POSM).ownerOf(activeTokenId) == address(this)
-        ) {
-            bytes memory data = _encodeModuleData(activeTokenId);
-            state.v4LPValue = IValuationModule(V4_MODULE).getValue(data);
-        }
-
-        // NAV (total assets)
-        state.netAccountValue = getNetAccountValue();
-
-        // Health factor and solvency
-        if (state.debtValue > 0) {
-            // health = nav / debtValue (scaled by 1e18)
-            state.healthFactor =
-                (state.netAccountValue * 1e18) /
-                state.debtValue;
-            state.isSolvent = IRLDCore(CORE).isSolvent(marketId, address(this));
-        } else {
-            state.healthFactor = type(uint256).max;
-            state.isSolvent = true;
-        }
-    }
-
-    /// @notice Emits a StateAudit event for reconciliation
-    /// @dev Called periodically by keepers to verify indexer state
-    function emitStateAudit() external override {
-        IRLDCore.Position memory pos = IRLDCore(CORE).getPosition(
-            marketId,
-            address(this)
-        );
-
-        emit StateAudit(
-            address(this),
-            ERC20(collateralToken).balanceOf(address(this)),
-            ERC20(positionToken).balanceOf(address(this)),
-            pos.debtPrincipal,
-            this.getNetAccountValue(),
-            block.number
-        );
-    }
 }
