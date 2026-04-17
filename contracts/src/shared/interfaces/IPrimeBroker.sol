@@ -78,35 +78,6 @@ interface IPrimeBroker {
         bytes32 reason // keccak256("deposit"), keccak256("withdraw"), etc.
     );
 
-    /// @notice Emitted for periodic state verification
-    event StateAudit(
-        address indexed account,
-        uint256 collateralBalance,
-        uint256 positionBalance,
-        uint128 debtPrincipal,
-        uint256 nav,
-        uint256 blockNumber
-    );
-
-    /// @notice Complete broker state for indexing
-    struct BrokerState {
-        uint256 collateralBalance;
-        uint256 positionBalance;
-        uint128 debtPrincipal;
-        uint256 debtValue;
-        uint256 twammSellOwed;
-        uint256 twammBuyOwed;
-        uint256 v4LPValue;
-        uint256 netAccountValue;
-        uint256 healthFactor;
-        bool isSolvent;
-    }
-
-    /// @notice Returns the complete state of this broker
-    function getFullState() external view returns (BrokerState memory);
-
-    /// @notice Emits a StateAudit event for reconciliation
-    function emitStateAudit() external;
 
     /// @notice Sets an operator for the Prime Broker.
     /// @dev Operators can perform all actions except ownership transfer.
@@ -157,6 +128,12 @@ interface IPrimeBroker {
     function cancelTwammOrder()
         external
         returns (uint256 buyTokensOut, uint256 sellTokensRefund);
+
+    /// @notice Withdraws a generic ERC20 token to a specified recipient tracking solvency limits
+    /// @param token The address of the token to withdraw
+    /// @param recipient The address to receive the tokens
+    /// @param amount The amount to withdraw
+    function withdrawToken(address token, address recipient, uint256 amount) external;
 
     /* ============================================================================================ */
     /*                                      BOND FREEZE                                            */

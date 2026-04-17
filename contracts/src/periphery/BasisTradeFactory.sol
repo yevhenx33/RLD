@@ -434,7 +434,7 @@ contract BasisTradeFactory is ReentrancyGuard {
             address positionToken = pb.positionToken();
             uint256 wrlpBal = ERC20(positionToken).balanceOf(broker);
             if (wrlpBal > 0) {
-                pb.withdrawPositionToken(address(this), wrlpBal);
+                pb.withdrawToken(pb.positionToken(), address(this), wrlpBal);
                 _swapExactInput(positionToken, COLLATERAL, wrlpBal, poolKey);
             }
         }

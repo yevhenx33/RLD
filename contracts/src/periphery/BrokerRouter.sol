@@ -395,7 +395,7 @@ contract BrokerRouter is ReentrancyGuard {
         _validatePoolKey(poolKey, collateral, position);
 
         // 1. Withdraw collateral from broker to this router
-        pb.withdrawCollateral(address(this), amountIn);
+        pb.withdrawToken(pb.collateralToken(), address(this), amountIn);
 
         // 2. Approve PoolManager for the swap
         IERC20(collateral).approve(address(poolManager), amountIn);
@@ -463,7 +463,7 @@ contract BrokerRouter is ReentrancyGuard {
         _validatePoolKey(poolKey, collateral, position);
 
         // 1. Withdraw position tokens (wRLP) from broker to this router
-        pb.withdrawPositionToken(address(this), amountIn);
+        pb.withdrawToken(pb.positionToken(), address(this), amountIn);
 
         // 2. Approve PoolManager for the swap
         IERC20(position).approve(address(poolManager), amountIn);
@@ -542,7 +542,7 @@ contract BrokerRouter is ReentrancyGuard {
         );
 
         // 2. Withdraw minted wRLP to this router
-        pb.withdrawPositionToken(address(this), targetDebtAmount);
+        pb.withdrawToken(pb.positionToken(), address(this), targetDebtAmount);
 
         // 3. Approve PoolManager for swap
         IERC20(position).approve(address(poolManager), targetDebtAmount);
@@ -613,7 +613,7 @@ contract BrokerRouter is ReentrancyGuard {
         _validatePoolKey(poolKey, collateral, position);
 
         // 1. Withdraw collateral (waUSDC) from broker to buy wRLP
-        pb.withdrawCollateral(address(this), collateralToSpend);
+        pb.withdrawToken(pb.collateralToken(), address(this), collateralToSpend);
 
         // 2. Approve PoolManager for the swap
         IERC20(collateral).approve(address(poolManager), collateralToSpend);
