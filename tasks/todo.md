@@ -134,3 +134,11 @@ new-front/
 - [x] Initialized and verified pure UI structure for CDS Markets and individual CDS Terminal views.
 - [x] Implemented placeholder deterministic `CdsDataModule.jsx` UI tabs for Payout Simulation and Historical Prices without relying on back-end connections.
 - [ ] Needs Review: Check if CDS UI matches the target industrial design paradigm and approve the S.M.A.R.T layout separation from Bonds.
+
+## Review: TWAMM to GhostEngine V3
+- [x] Refactored `PrimeBroker.sol` tracking parameters to `(marketId, orderId)`.
+- [x] Swapped hook-based JTM parameters for explicit GhostRouter and TwapEngine entrypoints across PrimeBroker.
+- [x] Rewrote `TwapEngineBrokerModule.sol` to evaluate stream states independent of hook logic.
+- [x] Refactored downstream dependencies (`BondFactory.sol`, `BasisTradeFactory.sol`) to interact safely with the V3 parameters format (fetching expiration and TwapEngine addresses natively).
+- [x] Completed full parity integration verification, resolving compilation errors and ensuring test suite passes.
+- [ ] Needs Review: Verify full end-to-end functionality of V3 in staging configuration.

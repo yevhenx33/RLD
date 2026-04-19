@@ -14,7 +14,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {IJTM} from "../../twamm/IJTM.sol";
+import {ITwapEngine} from "../../dex/interfaces/ITwapEngine.sol";
 
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../../shared/interfaces/ISpotOracle.sol";
@@ -211,9 +211,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Implements both IRLDOracle and ISpotOracle interfaces
     address public rateOracle;
 
-    /// @notice TWAMM hook address — used to build PoolKey for V4 LP operations
-    /// @dev Cached during initialize() for gas savings
-    address public hookAddress;
+    /// @notice TwapEngine address
+    /// @dev Cached during submitTwammOrder() for gas savings
+    address public twapEngine;
 
     /* ─────────────────────────────────────────────────────────────────────────────────────────── */
     /*                              TRACKED POSITIONS (V1: ONE EACH)                               */
@@ -532,22 +532,18 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         // Delegate to TWAMM valuation module
         // Module calls hook.getCancelOrderState() to get refund + earnings values
         if (activeTwammOrder.orderId != bytes32(0)) {
-            // SECURITY: Verify order is still owned by this broker
-            // TWAMM orders are tied to orderKey.owner and cannot be transferred
-            // But we check defensively in case of edge cases
-            if (activeTwammOrder.orderKey.owner == address(this)) {
-                bytes memory data = abi.encode(
-                    address(activeTwammOrder.key.hooks), // hook
-                    activeTwammOrder.key,                // key
-                    activeTwammOrder.orderKey,           // orderKey
-                    rateOracle,                          // oracle
-                    collateralToken,                     // valuationToken
-                    positionToken,                       // positionToken
-                    underlyingPool,                      // underlyingPool
-                    underlyingToken                      // underlyingToken
-                );
-                totalValue += IValuationModule(TWAMM_MODULE).getValue(data);
-            }
+            // Trust it is valid (solvency check will fail if it's not)
+            bytes memory data = abi.encode(
+                twapEngine,                          // twapEngine
+                activeTwammOrder.marketId,           // marketId
+                activeTwammOrder.orderId,            // orderId
+                rateOracle,                          // oracle
+                collateralToken,                     // valuationToken
+                positionToken,                       // positionToken
+                underlyingPool,                      // underlyingPool
+                underlyingToken                      // underlyingToken
+            );
+            totalValue += IValuationModule(TWAMM_MODULE).getValue(data);
             // If ownership check fails, order value = 0 (not counted)
         }
 
@@ -713,29 +709,30 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     ///      getCancelOrderState() return accurate buyTokensOwed.
     ///      Try/catch ensures this never blocks liquidation.
     function _tryForceSettleGhost() internal {
-        address hook = address(activeTwammOrder.key.hooks);
-        bool zfo = activeTwammOrder.orderKey.zeroForOne;
+        (uint256 streamGhostT0, uint256 streamGhostT1, , , ) = ITwapEngine(
+            twapEngine
+        ).states(activeTwammOrder.marketId);
 
-        // Check if there's ghost worth settling
-        (uint256 a0, uint256 a1, , ) = IJTM(hook).getStreamState(
-            activeTwammOrder.key
+        (, , , , , bool zfo) = ITwapEngine(twapEngine).streamOrders(
+            activeTwammOrder.marketId,
+            activeTwammOrder.orderId
         );
-        uint256 ghost = zfo ? a0 : a1;
-        if (ghost == 0) return; // No ghost — skip, save gas
 
-        // Force-settle: market-sell ghost, record earnings
+        uint256 ghost = zfo ? streamGhostT0 : streamGhostT1;
+        if (ghost == 0) return;
+
         try
-            IJTM(hook).forceSettle(activeTwammOrder.key, zfo, marketId)
-        {} catch {} // Best-effort: don't block liquidation
+            ITwapEngine(twapEngine).forceSettle(activeTwammOrder.marketId, zfo)
+        {} catch {}
     }
 
     function _cancelTwammOrder()
         internal
         returns (uint256 buyTokensOut, uint256 sellTokensRefund)
     {
-        (buyTokensOut, sellTokensRefund) = IJTM(
-            address(activeTwammOrder.key.hooks)
-        ).cancelOrder(activeTwammOrder.key, activeTwammOrder.orderKey);
+        (sellTokensRefund, buyTokensOut) = ITwapEngine(
+            twapEngine
+        ).cancelOrder(activeTwammOrder.marketId, activeTwammOrder.orderId);
         delete activeTwammOrder;
     }
 
@@ -990,10 +987,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             emit ActivePositionChanged(oldTokenId, tokenId);
         }
 
-        // Cache hook address for future reference
-        if (hookAddress == address(0)) {
-            hookAddress = twammHook;
-        }
+        // Note: No longer syncing hookAddress here. twapEngine is cached in TWAMM paths.
 
         emit LiquidityAdded(tokenId, liquidity);
 
@@ -1083,23 +1077,23 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     ///
     /// @param info The TWAMM order info to track (pass empty orderId to clear)
     function setActiveTwammOrder(
+        address _twapEngine,
         TwammOrderInfo calldata info
     ) external onlyAuthorized nonReentrant whenNotFrozen {
         if (info.orderId != bytes32(0)) {
-            // The TWAMM hook is at info.key.hooks (NOT TWAMM_MODULE)
-            address twammHook = address(info.key.hooks);
-            IJTM.Order memory order = IJTM(twammHook).getOrder(
-                info.key,
-                info.orderKey
+            (address owner, uint256 sellRate, , , , ) = ITwapEngine(_twapEngine).streamOrders(
+                info.marketId,
+                info.orderId
             );
 
             // SECURITY: Verify order exists and is owned by this broker
-            if (order.sellRate == 0) revert InvalidOrder();
-            if (info.orderKey.owner != address(this)) revert NotOwner();
+            if (sellRate == 0) revert InvalidOrder();
+            if (owner != address(this)) revert NotOwner();
         }
 
         bytes32 oldOrderId = activeTwammOrder.orderId;
         activeTwammOrder = info;
+        twapEngine = _twapEngine; // Cache
         emit ActiveTwammOrderChanged(oldOrderId, info.orderId);
 
         // SECURITY: Prevent gaming by switching to smaller orders
@@ -1136,42 +1130,46 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// For selling wRLP: first call modifyPosition() to mint, then withdrawPositionToken() to self.
     /// For selling collateral: ensure collateral balance in broker.
     ///
-    /// @param twammHook The TWAMM hook contract address
-    /// @param params The order parameters (key, zeroForOne, duration, amountIn)
+    /// @param _twapEngine The TwapEngine boundary contract address
+    /// @param _marketId The market identifier
+    /// @param zeroForOne Direction of the flow
+    /// @param duration The lifespan of the order
+    /// @param amountIn The total tokens to stream
     /// @return orderId The unique identifier of the created order
-    /// @return orderKey The order key for tracking and claiming
     function submitTwammOrder(
-        address twammHook,
-        IJTM.SubmitOrderParams calldata params
+        address _twapEngine,
+        bytes32 _marketId,
+        bool zeroForOne,
+        uint256 duration,
+        uint256 amountIn
     )
         external
         onlyAuthorized
         nonReentrant
         whenNotFrozen
-        returns (bytes32 orderId, IJTM.OrderKey memory orderKey)
+        returns (bytes32 orderId)
     {
-        // Determine which token is being sold
-        address sellToken = params.zeroForOne
-            ? Currency.unwrap(params.key.currency0)
-            : Currency.unwrap(params.key.currency1);
+        twapEngine = _twapEngine; // Cache
 
-        // Step 1: JIT Approval - approve exact amount needed
-        ERC20(sellToken).approve(twammHook, params.amountIn);
+        (address c0, address c1) = positionToken < collateralToken
+            ? (positionToken, collateralToken)
+            : (collateralToken, positionToken);
+        address sellToken = zeroForOne ? c0 : c1;
 
-        // Step 2: Submit order - this broker becomes the owner
-        (orderId, orderKey) = IJTM(twammHook).submitOrder(params);
+        address ghostRouter = ITwapEngine(_twapEngine).ghostRouter();
+        ERC20(sellToken).approve(ghostRouter, amountIn);
 
-        // Step 3: Revoke approval (cleanup)
-        ERC20(sellToken).approve(twammHook, 0);
+        orderId = ITwapEngine(_twapEngine).submitStream(_marketId, zeroForOne, duration, amountIn);
 
-        // Step 4: Auto-register for solvency tracking
+        ERC20(sellToken).approve(ghostRouter, 0);
+
         bytes32 oldOrderId = activeTwammOrder.orderId;
         activeTwammOrder = TwammOrderInfo({
-            key: params.key,
-            orderKey: orderKey,
+            marketId: _marketId,
             orderId: orderId
         });
-        emit TwammOrderSubmitted(orderId, params.zeroForOne, params.amountIn, orderKey.expiration);
+        (, , , , uint256 expiration, ) = ITwapEngine(_twapEngine).streamOrders(_marketId, orderId);
+        emit TwammOrderSubmitted(orderId, zeroForOne, amountIn, expiration);
         emit ActiveTwammOrderChanged(oldOrderId, orderId);
 
         // Step 5: Verify solvency
@@ -1201,58 +1199,41 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev For expired orders, cancelOrder() reverts with OrderAlreadyExpired.
     ///      This function uses syncAndClaimTokens() which handles expired orders
     ///      correctly: syncs earnings, deletes the order, and transfers tokens.
-    /// @return claimed0 Amount of token0 claimed
-    /// @return claimed1 Amount of token1 claimed
+    /// @return claimedBuyToken Amount of buy tokens claimed
     function claimExpiredTwammOrder()
         external
         onlyAuthorized
         nonReentrant
-        returns (uint256 claimed0, uint256 claimed1)
+        returns (uint256 claimedBuyToken)
     {
         if (activeTwammOrder.orderId == bytes32(0)) revert NoActiveOrder();
         bytes32 claimedOrderId = activeTwammOrder.orderId;
 
-        // syncAndClaimTokens: syncs earnings, auto-deletes expired orders,
-        // and transfers both token0 and token1 owed to this broker
-        (claimed0, claimed1) = IJTM(address(activeTwammOrder.key.hooks))
-            .syncAndClaimTokens(
-                IJTM.SyncParams({
-                    key: activeTwammOrder.key,
-                    orderKey: activeTwammOrder.orderKey
-                })
-            );
+        claimedBuyToken = ITwapEngine(twapEngine).claimTokens(
+            activeTwammOrder.marketId,
+            activeTwammOrder.orderId
+        );
 
-        // Clear tracking
         delete activeTwammOrder;
-        emit TwammOrderClaimed(claimedOrderId, claimed0, claimed1);
+        emit TwammOrderClaimed(claimedOrderId, claimedBuyToken, 0);
         emit ActiveTwammOrderChanged(claimedOrderId, bytes32(0));
     }
 
-    /// @notice Claims tokens from an arbitrary expired TWAMM order (not tracked)
-    /// @dev Used when the broker has untracked expired orders (e.g., after
-    ///      submitting a new order that overwrote activeTwammOrder tracking)
-    /// @param twammHook The TWAMM hook address
-    /// @param key The pool key
-    /// @param orderKey The order key (owner, expiration, zeroForOne)
-    /// @return claimed0 Amount of token0 claimed
-    /// @return claimed1 Amount of token1 claimed
-    function claimExpiredTwammOrderWithKey(
-        address twammHook,
-        PoolKey calldata key,
-        IJTM.OrderKey calldata orderKey
+    function claimExpiredTwammOrderWithId(
+        address _twapEngine,
+        bytes32 _marketId,
+        bytes32 _orderId
     )
         external
         onlyAuthorized
         nonReentrant
-        returns (uint256 claimed0, uint256 claimed1)
+        returns (uint256 claimedBuyToken)
     {
-        if (orderKey.owner != address(this)) revert NotOwner();
+        (address owner, , , , , ) = ITwapEngine(_twapEngine).streamOrders(_marketId, _orderId);
+        if (owner != address(this)) revert NotOwner();
 
-        bytes32 claimedOrderId = keccak256(abi.encode(orderKey));
-        (claimed0, claimed1) = IJTM(twammHook).syncAndClaimTokens(
-            IJTM.SyncParams({key: key, orderKey: orderKey})
-        );
-        emit TwammOrderClaimed(claimedOrderId, claimed0, claimed1);
+        claimedBuyToken = ITwapEngine(_twapEngine).claimTokens(_marketId, _orderId);
+        emit TwammOrderClaimed(_orderId, claimedBuyToken, 0);
     }
 
     /* ============================================================================================ */

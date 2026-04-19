@@ -4,7 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {StdInvariant} from "forge-std/StdInvariant.sol";
 
-import {TwapEngine} from "../../src/twamm_v3/TwapEngine.sol";
+import {TwapEngine} from "../../src/dex/TwapEngine.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockGhostRouterForEngine} from "./mocks/MockGhostRouterForEngine.sol";
 import {TwapEngineInvariantHandler} from "./invariants/TwapEngineInvariantHandler.sol";

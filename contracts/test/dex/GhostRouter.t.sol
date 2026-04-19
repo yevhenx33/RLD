@@ -3,7 +3,7 @@ pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 
-import {GhostRouter} from "../../src/twamm_v3/GhostRouter.sol";
+import {GhostRouter} from "../../src/dex/GhostRouter.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockStrictApproveERC20} from "./mocks/MockStrictApproveERC20.sol";
 import {MockGhostOracle} from "./mocks/MockGhostOracle.sol";

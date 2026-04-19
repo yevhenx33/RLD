@@ -13,7 +13,7 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
-import {IJTM} from "../twamm/IJTM.sol";
+import {ITwapEngine} from "../dex/interfaces/ITwapEngine.sol";
 import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {IV4Quoter} from "v4-periphery/src/interfaces/IV4Quoter.sol";
@@ -86,8 +86,8 @@ contract BondFactory is ReentrancyGuard {
     /// @notice The BrokerRouter for executing short positions (mint only)
     address public immutable ROUTER;
 
-    /// @notice The TWAMM hook for streaming orders
-    address public immutable TWAMM_HOOK;
+    /// @notice The TwapEngine for streaming orders
+    address public immutable TWAP_ENGINE;
 
     /// @notice The collateral token (waUSDC)
     address public immutable COLLATERAL;
@@ -146,21 +146,21 @@ contract BondFactory is ReentrancyGuard {
     constructor(
         address brokerFactory_,
         address router_,
-        address twammHook_,
+        address twapEngine_,
         address collateral_,
         address poolManager_,
         address quoter_
     ) {
         require(brokerFactory_ != address(0), "Invalid factory");
         require(router_ != address(0), "Invalid router");
-        require(twammHook_ != address(0), "Invalid twamm");
+        require(twapEngine_ != address(0), "Invalid twapEngine");
         require(collateral_ != address(0), "Invalid collateral");
         require(poolManager_ != address(0), "Invalid poolManager");
         require(quoter_ != address(0), "Invalid quoter");
 
         BROKER_FACTORY = PrimeBrokerFactory(brokerFactory_);
         ROUTER = router_;
-        TWAMM_HOOK = twammHook_;
+        TWAP_ENGINE = twapEngine_;
         COLLATERAL = collateral_;
         POOL_MANAGER = IPoolManager(poolManager_);
         QUOTER = IV4Quoter(quoter_);
@@ -227,13 +227,8 @@ contract BondFactory is ReentrancyGuard {
         IERC20(COLLATERAL).transfer(broker, proceeds);
 
         bool sellCollateral = Currency.unwrap(poolKey.currency0) == COLLATERAL;
-        IJTM.SubmitOrderParams memory params = IJTM.SubmitOrderParams({
-            key: poolKey,
-            zeroForOne: sellCollateral,
-            duration: duration,
-            amountIn: proceeds
-        });
-        pb.submitTwammOrder(TWAMM_HOOK, params);
+        bytes32 marketId = MarketId.unwrap(pb.marketId());
+        pb.submitTwammOrder(TWAP_ENGINE, marketId, sellCollateral, duration, proceeds);
 
         // ── 6. Freeze broker + track ownership ──────────────────────────
         pb.freeze();
@@ -282,17 +277,7 @@ contract BondFactory is ReentrancyGuard {
         }
 
         // ── 3. Handle TWAMM order ───────────────────────────────────────
-        (, , bytes32 orderId) = pb.activeTwammOrder();
-        if (orderId != bytes32(0)) {
-            (, IJTM.OrderKey memory orderKey, ) = pb.activeTwammOrder();
-            uint256 expiration = uint256(orderKey.expiration);
-
-            if (block.timestamp >= expiration) {
-                pb.claimExpiredTwammOrder();
-            } else {
-                pb.cancelTwammOrder();
-            }
-        }
+        _handleTwammClose(pb);
 
         // ── 4. Repay wRLP debt ──────────────────────────────────────────
         address coreAddr = pb.CORE();
@@ -382,6 +367,21 @@ contract BondFactory is ReentrancyGuard {
         BROKER_FACTORY.transferFrom(msg.sender, address(this), tokenId);
         bondOwner[broker] = msg.sender;
         emit BondReturned(msg.sender, broker);
+    }
+
+    /* ========================= INTERNAL HELPERS ========================== */
+
+    /// @notice Helper to handle TWAMM cancellation to bypass deep stack limits natively.
+    function _handleTwammClose(PrimeBroker pb) internal {
+        (bytes32 trackedMarketId, bytes32 orderId) = pb.activeTwammOrder();
+        if (orderId != bytes32(0)) {
+            (, , , , uint256 expiration, ) = ITwapEngine(TWAP_ENGINE).streamOrders(trackedMarketId, orderId);
+            if (block.timestamp >= expiration) {
+                pb.claimExpiredTwammOrder();
+            } else {
+                pb.cancelTwammOrder();
+            }
+        }
     }
 
     /* ========================= V4 SWAP HELPERS ============================ */

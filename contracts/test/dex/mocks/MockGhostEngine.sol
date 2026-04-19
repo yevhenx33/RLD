@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {IGhostEngine} from "../../../src/twamm_v3/interfaces/IGhostEngine.sol";
+import {IGhostEngine} from "../../../src/dex/interfaces/IGhostEngine.sol";
 
 contract MockGhostEngine is IGhostEngine {
     uint256 public ghost0;

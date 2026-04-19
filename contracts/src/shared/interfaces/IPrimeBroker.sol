@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {IJTM} from "../../twamm/IJTM.sol";
+// V3 Interfaces rely on basic types
 
 /// @title Prime Broker Interface
 /// @notice Interface for the "Smart Margin Account" that holds assets.
@@ -11,8 +10,7 @@ import {IJTM} from "../../twamm/IJTM.sol";
 ///      positions for solvency calculations.
 interface IPrimeBroker {
     struct TwammOrderInfo {
-        PoolKey key;
-        IJTM.OrderKey orderKey;
+        bytes32 marketId;
         bytes32 orderId;
     }
 
@@ -90,8 +88,9 @@ interface IPrimeBroker {
     function setActiveV4Position(uint256 newTokenId) external;
 
     /// @notice Sets which TWAMM order is tracked for NAV calculation.
+    /// @param twapEngine The TwapEngine Spoke address.
     /// @param info The TWAMM order info to track.
-    function setActiveTwammOrder(TwammOrderInfo calldata info) external;
+    function setActiveTwammOrder(address twapEngine, TwammOrderInfo calldata info) external;
 
     /// @notice Get the current nonce for signature-based operator authorization.
     /// @param caller The address of the caller (executor contract).
@@ -111,16 +110,21 @@ interface IPrimeBroker {
         bytes32 commitment
     ) external;
 
-    /// @notice Submits a TWAMM order with automatic registration for solvency tracking.
+    /// @notice Submits a TWAMM stream order via TwapEngine with auto-registration.
     /// @dev The broker becomes the order owner. Uses JIT approval internally.
-    /// @param twammHook The TWAMM hook contract address.
-    /// @param params The order parameters (key, zeroForOne, duration, amountIn).
+    /// @param twapEngine Address of the TwapEngine.
+    /// @param marketId ID of the market to trade against.
+    /// @param zeroForOne Direction of the swap.
+    /// @param duration Order lifespan in seconds.
+    /// @param amountIn Total volume to stream.
     /// @return orderId The unique identifier of the created order.
-    /// @return orderKey The order key for tracking and claiming.
     function submitTwammOrder(
-        address twammHook,
-        IJTM.SubmitOrderParams calldata params
-    ) external returns (bytes32 orderId, IJTM.OrderKey memory orderKey);
+        address twapEngine,
+        bytes32 marketId,
+        bool zeroForOne,
+        uint256 duration,
+        uint256 amountIn
+    ) external returns (bytes32 orderId);
 
     /// @notice Cancels the active TWAMM order and claims proceeds.
     /// @return buyTokensOut Amount of buy tokens received.
@@ -128,6 +132,14 @@ interface IPrimeBroker {
     function cancelTwammOrder()
         external
         returns (uint256 buyTokensOut, uint256 sellTokensRefund);
+
+    /// @notice Claims tokens from an expired TWAMM order that isn't actively tracked.
+    /// @return claimedBuyToken Amount of buy tokens claimed.
+    function claimExpiredTwammOrderWithId(
+        address twapEngine,
+        bytes32 marketId,
+        bytes32 orderId
+    ) external returns (uint256 claimedBuyToken);
 
     /// @notice Withdraws a generic ERC20 token to a specified recipient tracking solvency limits
     /// @param token The address of the token to withdraw

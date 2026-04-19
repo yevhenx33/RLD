@@ -760,51 +760,38 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
     function _calculateLiquidationSeize(
         MarketId id,
-        address /* user — no longer needed (H-2: NAV cached in ctx) */,
+        address /* user */,
         uint256 debtToCover,
         MarketConfig memory config,
         uint256 principalSnapshot,
         LiquidationCtx memory ctx
     ) internal view returns (uint256 seizeAmount) {
-        MarketAddresses storage addresses = marketAddresses[id];
+        address module = marketAddresses[id].liquidationModule;
 
-        // Use cached indexPrice from ctx (H-1 fix: single oracle call)
-        uint256 indexPrice = ctx.indexPrice;
+        ILiquidationModule.PriceData memory priceData;
+        priceData.normalizationFactor = ctx.normFactor;
+        priceData.spotPrice = 1e18; // waUSDC valuation unit
 
-        uint256 spotPrice = addresses.spotOracle != address(0)
-            ? ISpotOracle(addresses.spotOracle).getSpotPrice(
-                addresses.collateralToken,
-                addresses.underlyingToken
-            )
-            : 1e18;
+        {
+            uint256 spotPrice = marketAddresses[id].spotOracle != address(0)
+                ? ISpotOracle(marketAddresses[id].spotOracle).getSpotPrice(
+                    marketAddresses[id].collateralToken,
+                    marketAddresses[id].underlyingToken
+                )
+                : 1e18;
 
-        // PRICING: Collateral (waUSDC) IS the unit of account → price = 1.
-        // Debt (wRLP) is priced via indexPrice. Use min for conservative debt valuation
-        // (protects liquidator from overpaying).
-        uint256 debtPrice = indexPrice < spotPrice ? indexPrice : spotPrice;
-        uint256 collateralPrice = 1e18; // waUSDC is the valuation currency
+            // Protect liquidator from overpaying by using min price
+            priceData.indexPrice = ctx.indexPrice < spotPrice ? ctx.indexPrice : spotPrice;
+        }
 
-        ILiquidationModule.PriceData memory priceData = ILiquidationModule
-            .PriceData({
-                indexPrice: debtPrice,
-                spotPrice: collateralPrice,
-                normalizationFactor: ctx.normFactor
-            });
-
-        // Use pre-reduction principal for correct health score calculation.
-        // The optimistic reduction in _updateLiquidationDebt already modified
-        // storage, so we use the snapshot taken before that step.
-        uint256 remainingPrincipal = principalSnapshot;
-
-        (, seizeAmount) = ILiquidationModule(addresses.liquidationModule)
-            .calculateSeizeAmount(
-                debtToCover,
-                ctx.totalAssets, // H-2 FIX: use cached NAV, not a second oracle call
-                remainingPrincipal,
-                priceData,
-                config,
-                config.liquidationParams
-            );
+        (, seizeAmount) = ILiquidationModule(module).calculateSeizeAmount(
+            debtToCover,
+            ctx.totalAssets,
+            principalSnapshot, // H-2 FIX: Pre-reduction principal
+            priceData,
+            config,
+            config.liquidationParams
+        );
     }
 
     function _settleLiquidation(
@@ -817,26 +804,30 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         // NEGATIVE EQUITY PROTECTION: Cap seize at available collateral
         // H-2 FIX: Use cached ctx.totalAssets instead of a second getNetAccountValue() call.
         // This prevents state divergence between the seize calculation and settlement.
-        uint256 availableCollateral = ctx.totalAssets;
-        uint256 seizeAmount = ctx.seizeAmount;
-        uint256 principalToCover = ctx.principalToCover;
-        uint256 normFactor = ctx.normFactor;
-        uint256 actualSeizeAmount = seizeAmount;
-        uint256 actualPrincipalToCover = principalToCover;
-        Position storage pos = positions[id][user];
+        uint256 actualSeizeAmount;
+        uint256 actualPrincipalToCover;
 
-        if (seizeAmount > availableCollateral) {
-            actualSeizeAmount = availableCollateral;
-            uint256 actualDebtCovered = availableCollateral
-                .mulWad(debtToCover)
-                .divWad(seizeAmount);
-            actualPrincipalToCover = actualDebtCovered.divWad(normFactor);
-            // Restore uncovered principal to pos.debtPrincipal
-            // (_updateLiquidationDebt optimistically reduced it by full principalToCover)
-            pos.debtPrincipal =
-                pos.debtPrincipal +
-                uint128(principalToCover) -
-                uint128(actualPrincipalToCover);
+        {
+            uint256 availableCollateral = ctx.totalAssets;
+            uint256 seizeAmount = ctx.seizeAmount;
+
+            if (seizeAmount > availableCollateral) {
+                actualSeizeAmount = availableCollateral;
+                uint256 actualDebtCovered = availableCollateral
+                    .mulWad(debtToCover)
+                    .divWad(seizeAmount);
+                actualPrincipalToCover = actualDebtCovered.divWad(ctx.normFactor);
+
+                // Restore uncovered principal to pos.debtPrincipal
+                Position storage pos = positions[id][user];
+                pos.debtPrincipal =
+                    pos.debtPrincipal +
+                    uint128(ctx.principalToCover) -
+                    uint128(actualPrincipalToCover);
+            } else {
+                actualSeizeAmount = seizeAmount;
+                actualPrincipalToCover = ctx.principalToCover;
+            }
         }
 
         // Execute seize — broker may unwind positions (TWAMM, LP) during this call
@@ -866,20 +857,20 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         // BAD DEBT DETECTION: After all seize & burns, check what's left
         // If the user still has debtPrincipal, it is truly unbacked.
-        // Transfer it to state.badDebt and fully clear the user's position.
-        MarketState storage state = marketStates[id];
-        if (pos.debtPrincipal > 0 && seizeAmount > availableCollateral) {
-            uint128 badDebtAmount = pos.debtPrincipal;
-            state.badDebt += badDebtAmount;
-            pos.debtPrincipal = 0;
-            emit BadDebtRegistered(id, badDebtAmount, state.badDebt);
+        {
+            Position storage pos = positions[id][user];
+            MarketState storage state = marketStates[id];
+            if (pos.debtPrincipal > 0 && ctx.seizeAmount > ctx.totalAssets) {
+                uint128 badDebtAmount = pos.debtPrincipal;
+                state.badDebt += badDebtAmount;
+                pos.debtPrincipal = 0;
+                emit BadDebtRegistered(id, badDebtAmount, state.badDebt);
+            }
+            
+            // Sync totalDebt from totalSupply (single source of truth)
+            state.totalDebt = uint128(PositionToken(positionToken).totalSupply());
+            emit MarketStateUpdated(id, state.normalizationFactor, state.totalDebt);
         }
-
-        // Sync totalDebt from totalSupply (single source of truth)
-        // F-01 FIX: Previously totalDebt was never decremented during liquidation
-        state.totalDebt = uint128(PositionToken(positionToken).totalSupply());
-
-        emit MarketStateUpdated(id, state.normalizationFactor, state.totalDebt);
 
         // SLIPPAGE PROTECTION: Ensure liquidator receives minimum collateral
         require(

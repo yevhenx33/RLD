@@ -5,7 +5,7 @@ import {IPrimeBroker} from "../../shared/interfaces/IPrimeBroker.sol";
 import {IRLDCore, MarketId} from "../../shared/interfaces/IRLDCore.sol";
 import {IValuationModule} from "../../shared/interfaces/IValuationModule.sol";
 import {IRLDOracle} from "../../shared/interfaces/IRLDOracle.sol";
-import {IJTM} from "../../twamm/IJTM.sol";
+import {ITwapEngine} from "../../dex/interfaces/ITwapEngine.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
@@ -26,8 +26,9 @@ interface IPrimeBrokerView is IPrimeBroker {
     function TWAMM_MODULE() external view returns (address);
     function CORE() external view returns (address);
     function marketId() external view returns (MarketId);
+    function twapEngine() external view returns (address);
     function activeTokenId() external view returns (uint256);
-    function activeTwammOrder() external view returns (PoolKey memory key, IJTM.OrderKey memory orderKey, bytes32 orderId);
+    function activeTwammOrder() external view returns (bytes32 marketId, bytes32 orderId);
 }
 
 /// @title Prime Broker Lens
@@ -81,13 +82,17 @@ contract PrimeBrokerLens {
         }
 
         // TWAMM owed amounts
-        (PoolKey memory twammKey, IJTM.OrderKey memory twammOrderKey, bytes32 twammOrderId) = b.activeTwammOrder();
-        if (twammOrderId != bytes32(0) && twammOrderKey.owner == broker) {
-            address twammHook = address(twammKey.hooks);
-            (uint256 buyTokensOwed, uint256 sellTokensRefund) = IJTM(twammHook)
-                .getCancelOrderState(twammKey, twammOrderKey);
-            state.twammSellOwed = sellTokensRefund;
-            state.twammBuyOwed = buyTokensOwed;
+        (bytes32 twammMarketId, bytes32 twammOrderId) = b.activeTwammOrder();
+        if (twammOrderId != bytes32(0)) {
+            address twapEngine = b.twapEngine();
+            (address owner, , , , , ) = ITwapEngine(twapEngine).streamOrders(twammMarketId, twammOrderId);
+            
+            if (owner == broker) {
+                (uint256 buyTokensOwed, uint256 sellTokensRefund) = ITwapEngine(twapEngine)
+                    .getCancelOrderStateExact(twammMarketId, twammOrderId);
+                state.twammSellOwed = sellTokensRefund;
+                state.twammBuyOwed = buyTokensOwed;
+            }
         }
 
         // V4 LP value

@@ -1,0 +1,13 @@
+--- test/TwapEngineV3.t.sol
++++ test/TwapEngineV3.t.sol
+@@ -194,6 +194,11 @@
+         vm.prank(address(router));
+         engine.syncAndFetchGhost(marketId);
+ 
++        (uint256 sellRateBefore,) = engine.streamPools(marketId, true);
++        console.log("sellRateBefore:", sellRateBefore);
++        console.log("expected order.sellRate:", (200e18 * 1e18) / 7200);
++
+         // Now lastUpdateTime = startEpoch + INTERVAL
+         // expiration = startEpoch + 2*INTERVAL
+         // remaining = 1*INTERVAL = half of total 2*INTERVAL duration

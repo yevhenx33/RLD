@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-import {IGhostRouter} from "../../../src/twamm_v3/interfaces/IGhostRouter.sol";
+import {IGhostRouter} from "../../../src/dex/interfaces/IGhostRouter.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 interface IERC20Like {
@@ -73,5 +73,9 @@ contract MockGhostRouterForEngine is IGhostRouter {
         amountOut = overrideOut == 0 ? amountIn : overrideOut;
         address buyToken = zeroForOne ? markets[marketId].token1 : markets[marketId].token0;
         IMintableERC20Like(buyToken).mint(address(this), amountOut);
+    }
+
+    function observe(bytes32, uint32[] calldata secondsAgos) external pure override returns (uint256[] memory priceCumulatives) {
+        priceCumulatives = new uint256[](secondsAgos.length);
     }
 }

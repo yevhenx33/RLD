@@ -31,6 +31,41 @@ interface ITwapEngine is IGhostEngine {
         uint256 epochInterval;
     }
 
+    function maxDiscountBps() external view returns (uint256);
+    function discountRateScaled() external view returns (uint256);
+    function ghostRouter() external view returns (address);
+
+    function states(bytes32 marketId)
+        external
+        view
+        returns (
+            uint256 streamGhostT0,
+            uint256 streamGhostT1,
+            uint256 lastUpdateTime,
+            uint256 lastClearTime,
+            uint256 epochInterval
+        );
+
+    function streamPools(bytes32 marketId, bool zeroForOne)
+        external
+        view
+        returns (
+            uint256 sellRateCurrent,
+            uint256 earningsFactorCurrent
+        );
+
+    function streamOrders(bytes32 marketId, bytes32 orderId)
+        external
+        view
+        returns (
+            address owner,
+            uint256 sellRate,
+            uint256 earningsFactorLast,
+            uint256 startEpoch,
+            uint256 expiration,
+            bool zeroForOne
+        );
+
     // ─── TWAMM Retail Entrypoints ───────────────────────────
 
     function submitStream(
