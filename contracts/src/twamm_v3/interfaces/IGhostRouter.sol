@@ -7,9 +7,10 @@ interface IGhostRouter {
     /// @notice Used strictly by the Spokes (Engines) to command the vault to push funds to users
     function pushMarketFunds(bytes32 marketId, bool zeroForOne, address to, uint256 amount) external;
 
-    /// @notice Initialize a new Sovereign Market over a vanilla V4 pair
+    /// @notice Initialize a new Sovereign Market over a vanilla V4 pair with a dedicated oracle
     function initializeMarket(
-        PoolKey calldata vanillaKey
+        PoolKey calldata vanillaKey,
+        address oracle
     ) external returns (bytes32 marketId);
 
     /// @notice Taker entrypoint for routing swaps optimally through internal Ghost Liquidity then external
