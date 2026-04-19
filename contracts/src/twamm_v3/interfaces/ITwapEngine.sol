@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+import {IGhostEngine} from "./IGhostEngine.sol";
 
-interface ITwapEngine {
+/// @title ITwapEngine — TWAMM-specific Spoke Interface
+/// @notice Extends IGhostEngine with stream order lifecycle methods.
+interface ITwapEngine is IGhostEngine {
     struct StreamOrder {
         address owner;
         uint256 sellRate;
@@ -28,7 +31,7 @@ interface ITwapEngine {
         uint256 epochInterval;
     }
 
-    // ─── External Entrypoints ───────────────────────────────
+    // ─── TWAMM Retail Entrypoints ───────────────────────────
 
     function submitStream(
         bytes32 marketId,
@@ -43,8 +46,13 @@ interface ITwapEngine {
 
     function clearAuction(bytes32 marketId, bool zeroForOne, uint256 maxAmount, uint256 minDiscountBps) external;
 
-    // ─── Router Hooks & Views ───────────────────────────────
+    // ─── Liquidation & Valuation ────────────────────────────
 
-    // Request engine to cross a specific volume against its internal unnetted flow
-    function requestNetting(bytes32 marketId, bool zeroForOne, uint256 amountIn, uint256 spotPrice) external returns (uint256 filledAmount);
+    /// @notice Force-settle all ghost for a direction into V4 AMM (PrimeBroker liquidation path)
+    function forceSettle(bytes32 marketId, bool zeroForOne) external;
+
+    /// @notice Preview cancel state without mutation (NAV valuation for PrimeBrokerLens)
+    function getCancelOrderState(bytes32 marketId, bytes32 orderId)
+        external view returns (uint256 buyTokensOwed, uint256 sellTokensRefund);
 }
+
