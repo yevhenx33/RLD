@@ -13,11 +13,11 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PrimeBrokerFactory} from "./PrimeBrokerFactory.sol";
 import {BrokerVerifier} from "../modules/verifier/BrokerVerifier.sol";
 import {
-    UniswapV4SingletonOracle
-} from "../modules/oracles/UniswapV4SingletonOracle.sol";
+    GhostSingletonOracle
+} from "../modules/oracles/GhostSingletonOracle.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {FixedPointMathLib} from "../../shared/utils/FixedPointMathLib.sol";
-import {JTM as TwammHook} from "../../twamm/JTM.sol";
+import {IGhostRouter} from "../../dex/interfaces/IGhostRouter.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -91,11 +91,11 @@ contract RLDMarketFactory is ReentrancyGuard {
     /// @notice Implementation contract for PrimeBroker clones
     address public immutable PRIME_BROKER_IMPL;
 
-    /// @notice Singleton oracle for Uniswap V4 TWAP price queries
-    address public immutable SINGLETON_V4_ORACLE;
+    /// @notice Ghost oracle for TWAMM V3 price queries
+    address public immutable GHOST_ORACLE;
 
-    /// @notice TWAMM hook for time-weighted AMM functionality (can be address(0) for testing)
-    address public immutable TWAMM;
+    /// @notice Sovereign GhostRouter for TWAMM v3 markets
+    address public immutable GHOST_ROUTER;
 
     /// @notice Standard funding model for interest rate calculations
     address public immutable STD_FUNDING_MODEL;
@@ -230,9 +230,9 @@ contract RLDMarketFactory is ReentrancyGuard {
         address poolManager,
         address positionTokenImpl,
         address primeBrokerImpl,
-        address v4Oracle,
+        address ghostOracle,
         address fundingModel,
-        address twamm,
+        address ghostRouter,
         address metadataRenderer,
         uint32 _fundingPeriod,
         address brokerRouter
@@ -240,12 +240,12 @@ contract RLDMarketFactory is ReentrancyGuard {
         // Store deployer for one-time CORE initialization
         DEPLOYER = msg.sender;
 
-        // Validate all critical immutables (TWAMM can be 0 for testing)
+        // Validate all critical immutables (GHOST_ROUTER can be 0 for testing)
         // NOTE: CORE is NOT validated here - it will be set via initializeCore()
         require(poolManager != address(0), "Invalid PoolManager");
         require(positionTokenImpl != address(0), "Invalid PositionTokenImpl");
         require(primeBrokerImpl != address(0), "Invalid PrimeBrokerImpl");
-        require(v4Oracle != address(0), "Invalid V4Oracle");
+        require(ghostOracle != address(0), "Invalid GhostOracle");
         require(fundingModel != address(0), "Invalid FundingModel");
         require(metadataRenderer != address(0), "Invalid MetadataRenderer");
 
@@ -262,9 +262,9 @@ contract RLDMarketFactory is ReentrancyGuard {
         POOL_MANAGER = poolManager;
         POSITION_TOKEN_IMPL = positionTokenImpl;
         PRIME_BROKER_IMPL = primeBrokerImpl;
-        SINGLETON_V4_ORACLE = v4Oracle;
+        GHOST_ORACLE = ghostOracle;
         STD_FUNDING_MODEL = fundingModel;
-        TWAMM = twamm;
+        GHOST_ROUTER = ghostRouter;
         METADATA_RENDERER = metadataRenderer;
         FUNDING_PERIOD = _fundingPeriod;
         BROKER_ROUTER = brokerRouter;
@@ -581,35 +581,17 @@ contract RLDMarketFactory is ReentrancyGuard {
             currency1: currency1,
             fee: params.poolFee,
             tickSpacing: params.tickSpacing,
-            hooks: IHooks(TWAMM)
+            hooks: IHooks(address(0))
         });
 
         // Step 6: Initialize pool at computed price
         IPoolManager(POOL_MANAGER).initialize(key, initSqrtPrice);
 
-        // Step 7: Set price bounds for TWAMM
-        // Bounds derived from MIN_PRICE (0.0001) and MAX_PRICE (100) to ensure consistency
-        uint160 minSqrt;
-        uint160 maxSqrt;
-        uint256 Q96 = 1 << 96;
-
-        if (currency0 == Currency.wrap(positionToken)) {
-            // wRLP is Token0: price = collateral/wRLP
-            // Price range: [MIN_PRICE, MAX_PRICE] = [0.0001, 100]
-            // sqrtPrice range: [sqrt(0.0001), sqrt(100)] = [0.01, 10]
-            minSqrt = uint160(Q96 / 100); // sqrt(MIN_PRICE) = sqrt(0.0001) = 0.01
-            maxSqrt = uint160(Q96 * 10); // sqrt(MAX_PRICE) = sqrt(100) = 10
-        } else {
-            // wRLP is Token1: price = wRLP/collateral (inverted)
-            // Price range: [1/MAX_PRICE, 1/MIN_PRICE] = [0.01, 10000]
-            // sqrtPrice range: [sqrt(0.01), sqrt(10000)] = [0.1, 100]
-            minSqrt = uint160(Q96 / 10); // sqrt(1/MAX_PRICE) = sqrt(0.01) = 0.1
-            maxSqrt = uint160(Q96 * 100); // sqrt(1/MIN_PRICE) = sqrt(10000) = 100
-        }
-
-        // Only set bounds if TWAMM is configured (can be address(0) in tests)
-        if (TWAMM != address(0)) {
-            TwammHook(TWAMM).setPriceBounds(key, minSqrt, maxSqrt);
+        // Step 7: Register market with GhostRouter
+        // The router natively wraps the V4 pool and acts as the central settlement hub.
+        // It provides the spot price oracle from V4 slot0 and tracks TWAP cumulatives.
+        if (GHOST_ROUTER != address(0)) {
+            IGhostRouter(GHOST_ROUTER).initializeMarketWithUniswapOracle(key);
         }
 
         // Step 8: Register with singleton oracle for TWAP queries
@@ -629,10 +611,10 @@ contract RLDMarketFactory is ReentrancyGuard {
             "Oracle token mismatch"
         );
 
-        UniswapV4SingletonOracle(SINGLETON_V4_ORACLE).registerPool(
+        GhostSingletonOracle(GHOST_ORACLE).registerPool(
             positionToken,
             key,
-            TWAMM,
+            GHOST_ROUTER,
             params.oraclePeriod
         );
 
@@ -679,7 +661,7 @@ contract RLDMarketFactory is ReentrancyGuard {
             underlyingPool: params.underlyingPool,
             rateOracle: params.rateOracle,
             spotOracle: params.spotOracle,
-            markOracle: SINGLETON_V4_ORACLE,
+            markOracle: GHOST_ORACLE,
             fundingModel: STD_FUNDING_MODEL,
             curator: params.curator,
             liquidationModule: params.liquidationModule,

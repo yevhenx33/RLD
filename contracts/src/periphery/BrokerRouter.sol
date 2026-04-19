@@ -403,32 +403,34 @@ contract BrokerRouter is ReentrancyGuard {
         // 3. Determine swap direction
         bool zeroForOne = collateral < position;
 
-        SwapParams memory swapParams = SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: -int256(amountIn), // negative = exact input in V4
-            sqrtPriceLimitX96: zeroForOne
-                ? 4295128740 // MIN_SQRT_PRICE + 1
-                : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
-        });
+        {
+            SwapParams memory swapParams = SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(amountIn), // negative = exact input in V4
+                sqrtPriceLimitX96: zeroForOne
+                    ? 4295128740 // MIN_SQRT_PRICE + 1
+                    : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
+            });
 
-        // 4. Execute swap via PoolManager
-        BalanceDelta delta = abi.decode(
-            poolManager.unlock(
-                abi.encode(
-                    SwapCallback({
-                        sender: address(this),
-                        key: poolKey,
-                        params: swapParams
-                    })
-                )
-            ),
-            (BalanceDelta)
-        );
+            // 4. Execute swap via PoolManager
+            BalanceDelta delta = abi.decode(
+                poolManager.unlock(
+                    abi.encode(
+                        SwapCallback({
+                            sender: address(this),
+                            key: poolKey,
+                            params: swapParams
+                        })
+                    )
+                ),
+                (BalanceDelta)
+            );
 
-        // 5. Calculate output (the token we received — positive delta)
-        amountOut = zeroForOne
-            ? uint256(int256(delta.amount1()))
-            : uint256(int256(delta.amount0()));
+            // 5. Calculate output (the token we received — positive delta)
+            amountOut = zeroForOne
+                ? uint256(int256(delta.amount1()))
+                : uint256(int256(delta.amount0()));
+        }
 
         // 6. Transfer ALL position tokens back to broker
         uint256 posBalance = IERC20(position).balanceOf(address(this));
@@ -471,32 +473,34 @@ contract BrokerRouter is ReentrancyGuard {
         // 3. Determine swap direction (selling position for collateral)
         bool zeroForOne = position < collateral;
 
-        SwapParams memory swapParams = SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: -int256(amountIn), // negative = exact input in V4
-            sqrtPriceLimitX96: zeroForOne
-                ? 4295128740 // MIN_SQRT_PRICE + 1
-                : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
-        });
+        {
+            SwapParams memory swapParams = SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(amountIn), // negative = exact input in V4
+                sqrtPriceLimitX96: zeroForOne
+                    ? 4295128740 // MIN_SQRT_PRICE + 1
+                    : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
+            });
 
-        // 4. Execute swap via PoolManager
-        BalanceDelta delta = abi.decode(
-            poolManager.unlock(
-                abi.encode(
-                    SwapCallback({
-                        sender: address(this),
-                        key: poolKey,
-                        params: swapParams
-                    })
-                )
-            ),
-            (BalanceDelta)
-        );
+            // 4. Execute swap via PoolManager
+            BalanceDelta delta = abi.decode(
+                poolManager.unlock(
+                    abi.encode(
+                        SwapCallback({
+                            sender: address(this),
+                            key: poolKey,
+                            params: swapParams
+                        })
+                    )
+                ),
+                (BalanceDelta)
+            );
 
-        // 5. Calculate output (collateral received — positive delta)
-        amountOut = zeroForOne
-            ? uint256(int256(delta.amount1()))
-            : uint256(int256(delta.amount0()));
+            // 5. Calculate output (collateral received — positive delta)
+            amountOut = zeroForOne
+                ? uint256(int256(delta.amount1()))
+                : uint256(int256(delta.amount0()));
+        }
 
         // 6. Transfer ALL collateral proceeds back to broker
         uint256 colBalance = IERC20(collateral).balanceOf(address(this));
@@ -550,31 +554,33 @@ contract BrokerRouter is ReentrancyGuard {
         // 4. Swap wRLP → collateral
         bool zeroForOne = position < collateral;
 
-        SwapParams memory swapParams = SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: -int256(targetDebtAmount), // negative = exact input in V4
-            sqrtPriceLimitX96: zeroForOne
-                ? 4295128740
-                : 1461446703485210103287273052203988822378723970341
-        });
+        {
+            SwapParams memory swapParams = SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(targetDebtAmount), // negative = exact input in V4
+                sqrtPriceLimitX96: zeroForOne
+                    ? 4295128740
+                    : 1461446703485210103287273052203988822378723970341
+            });
 
-        BalanceDelta delta = abi.decode(
-            poolManager.unlock(
-                abi.encode(
-                    SwapCallback({
-                        sender: address(this),
-                        key: poolKey,
-                        params: swapParams
-                    })
-                )
-            ),
-            (BalanceDelta)
-        );
+            BalanceDelta delta = abi.decode(
+                poolManager.unlock(
+                    abi.encode(
+                        SwapCallback({
+                            sender: address(this),
+                            key: poolKey,
+                            params: swapParams
+                        })
+                    )
+                ),
+                (BalanceDelta)
+            );
 
-        // 5. Calculate actual swap output explicitly
-        proceeds = zeroForOne
-            ? uint256(int256(delta.amount1()))
-            : uint256(int256(delta.amount0()));
+            // 5. Calculate actual swap output explicitly
+            proceeds = zeroForOne
+                ? uint256(int256(delta.amount1()))
+                : uint256(int256(delta.amount0()));
+        }
 
         // 6. Transfer swap proceeds back to broker
         IERC20(collateral).transfer(broker, proceeds);
@@ -621,58 +627,39 @@ contract BrokerRouter is ReentrancyGuard {
         // 3. Swap waUSDC → wRLP (exact input: spend all collateralToSpend)
         bool zeroForOne = collateral < position;
 
-        SwapParams memory swapParams = SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: -int256(collateralToSpend), // negative = exact input
-            sqrtPriceLimitX96: zeroForOne
-                ? 4295128740 // MIN_SQRT_PRICE + 1
-                : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
-        });
+        {
+            SwapParams memory swapParams = SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(collateralToSpend), // negative = exact input
+                sqrtPriceLimitX96: zeroForOne
+                    ? 4295128740 // MIN_SQRT_PRICE + 1
+                    : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
+            });
 
-        BalanceDelta delta = abi.decode(
-            poolManager.unlock(
-                abi.encode(
-                    SwapCallback({
-                        sender: address(this),
-                        key: poolKey,
-                        params: swapParams
-                    })
-                )
-            ),
-            (BalanceDelta)
-        );
+            BalanceDelta delta = abi.decode(
+                poolManager.unlock(
+                    abi.encode(
+                        SwapCallback({
+                            sender: address(this),
+                            key: poolKey,
+                            params: swapParams
+                        })
+                    )
+                ),
+                (BalanceDelta)
+            );
 
-        // 4. Calculate wRLP received (positive delta on the output side)
-        debtRepaid = zeroForOne
-            ? uint256(int256(delta.amount1()))
-            : uint256(int256(delta.amount0()));
+            // 4. Calculate wRLP received (positive delta on the output side)
+            debtRepaid = zeroForOne
+                ? uint256(int256(delta.amount1()))
+                : uint256(int256(delta.amount0()));
+        }
 
         // 5. Transfer ALL wRLP to broker (needed for burn in modifyPosition)
         uint256 posBalance = IERC20(position).balanceOf(address(this));
         IERC20(position).transfer(broker, posBalance);
 
-        // 6. Cap repayment at actual outstanding debt to prevent underflow
-        uint128 currentDebt = IRLDCore(pb.CORE())
-            .getPosition(pb.marketId(), address(pb))
-            .debtPrincipal;
-        if (debtRepaid > currentDebt) {
-            debtRepaid = currentDebt;
-        }
-
-        // 7. Repay debt: Core will burn wRLP from broker
-        pb.modifyPosition(rawMarketId, int256(0), -int256(debtRepaid));
-
-        // 8. Return any leftover collateral or excess wRLP to broker
-        uint256 leftover = IERC20(collateral).balanceOf(address(this));
-        if (leftover > 0) {
-            IERC20(collateral).transfer(broker, leftover);
-        }
-        uint256 excessPos = IERC20(position).balanceOf(address(this));
-        if (excessPos > 0) {
-            IERC20(position).transfer(broker, excessPos);
-        }
-
-        emit ShortClosed(broker, debtRepaid, collateralToSpend);
+        _finalizeCloseShort(broker, debtRepaid, collateralToSpend);
     }
 
     /* ============================================================================================ */
@@ -737,6 +724,40 @@ contract BrokerRouter is ReentrancyGuard {
     /* ============================================================================================ */
     /*                                     INTERNAL HELPERS                                         */
     /* ============================================================================================ */
+
+    function _finalizeCloseShort(
+        address broker,
+        uint256 debtRepaid,
+        uint256 collateralToSpend
+    ) internal {
+        PrimeBroker pb = PrimeBroker(payable(broker));
+        address collateral = pb.collateralToken();
+        address position = pb.positionToken();
+        bytes32 rawMarketId = MarketId.unwrap(pb.marketId());
+
+        // 6. Cap repayment at actual outstanding debt to prevent underflow
+        uint128 currentDebt = IRLDCore(pb.CORE())
+            .getPosition(pb.marketId(), address(pb))
+            .debtPrincipal;
+        if (debtRepaid > currentDebt) {
+            debtRepaid = currentDebt;
+        }
+
+        // 7. Repay debt: Core will burn wRLP from broker
+        pb.modifyPosition(rawMarketId, int256(0), -int256(debtRepaid));
+
+        // 8. Return any leftover collateral or excess wRLP to broker
+        uint256 leftover = IERC20(collateral).balanceOf(address(this));
+        if (leftover > 0) {
+            IERC20(collateral).transfer(broker, leftover);
+        }
+        uint256 excessPos = IERC20(position).balanceOf(address(this));
+        if (excessPos > 0) {
+            IERC20(position).transfer(broker, excessPos);
+        }
+
+        emit ShortClosed(broker, debtRepaid, collateralToSpend);
+    }
 
     /// @notice Validates that the pool's currencies match the broker's token pair
     /// @dev Prevents swapping against wrong pools — currencies must be {collateral, position}

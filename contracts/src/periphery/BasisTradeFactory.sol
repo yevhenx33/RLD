@@ -14,7 +14,8 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
-import {IJTM} from "../twamm/IJTM.sol";
+import {ITwapEngine} from "../dex/interfaces/ITwapEngine.sol";
+import {MarketId} from "../shared/interfaces/IRLDCore.sol";
 
 /* ═══════════════════════════════════════════════════════════════════════════════
    EXTERNAL INTERFACES
@@ -182,7 +183,7 @@ contract BasisTradeFactory is ReentrancyGuard {
     /* ═══════════════════════════════════════════════════ IMMUTABLES ═══════════════════════════════ */
 
     PrimeBrokerFactory public immutable BROKER_FACTORY;
-    address public immutable TWAMM_HOOK;
+    address public immutable TWAP_ENGINE;
     address public immutable COLLATERAL; // waUSDC (RLD collateral token)
     IPoolManager public immutable POOL_MANAGER;
 
@@ -260,65 +261,65 @@ contract BasisTradeFactory is ReentrancyGuard {
     }
 
     /* ═══════════════════════════════════════════════════ CONSTRUCTOR ══════════════════════════════ */
+    struct ConstructorParams {
+        address brokerFactory;
+        address twapEngine;
+        address collateral;
+        address poolManager;
+        address morpho;
+        address sUsde;
+        address usde;
+        address usdc;
+        address pyusd;
+        address curveUsdeUsdcPool;
+        address curvePyusdUsdcPool;
+        int128 curveUsdeIndex;
+        int128 curveUsdcIndexUsde;
+        int128 curvePyusdIndex;
+        int128 curveUsdcIndexPyusd;
+        address morphoOracle;
+        address morphoIrm;
+        uint256 morphoLltv;
+    }
 
-    constructor(
-        address brokerFactory_,
-        address twammHook_,
-        address collateral_,
-        address poolManager_,
-        address morpho_,
-        address sUsde_,
-        address usde_,
-        address usdc_,
-        address pyusd_,
-        address curveUsdeUsdcPool_,
-        address curvePyusdUsdcPool_,
-        int128 curveUsdeIndex_,
-        int128 curveUsdcIndexUsde_,
-        int128 curvePyusdIndex_,
-        int128 curveUsdcIndexPyusd_,
-        // Morpho market params
-        address morphoOracle_,
-        address morphoIrm_,
-        uint256 morphoLltv_
-    ) {
-        require(brokerFactory_ != address(0), "!factory");
-        require(twammHook_ != address(0), "!twamm");
-        require(collateral_ != address(0), "!collateral");
-        require(poolManager_ != address(0), "!pm");
-        require(morpho_ != address(0), "!morpho");
-        require(sUsde_ != address(0), "!susde");
-        require(usde_ != address(0), "!usde");
-        require(usdc_ != address(0), "!usdc");
-        require(pyusd_ != address(0), "!pyusd");
+    constructor(ConstructorParams memory p) {
+        require(p.brokerFactory != address(0), "!factory");
+        require(p.twapEngine != address(0), "!twamm");
+        require(p.collateral != address(0), "!collateral");
+        require(p.poolManager != address(0), "!pm");
+        require(p.morpho != address(0), "!morpho");
+        require(p.sUsde != address(0), "!susde");
+        require(p.usde != address(0), "!usde");
+        require(p.usdc != address(0), "!usdc");
+        require(p.pyusd != address(0), "!pyusd");
 
-        BROKER_FACTORY = PrimeBrokerFactory(brokerFactory_);
-        TWAMM_HOOK = twammHook_;
-        COLLATERAL = collateral_;
-        POOL_MANAGER = IPoolManager(poolManager_);
-        MORPHO = IMorpho(morpho_);
-        SUSDE = sUsde_;
-        USDE = usde_;
-        USDC = usdc_;
-        PYUSD = pyusd_;
+        BROKER_FACTORY = PrimeBrokerFactory(p.brokerFactory);
+        TWAP_ENGINE = p.twapEngine;
+        COLLATERAL = p.collateral;
+        POOL_MANAGER = IPoolManager(p.poolManager);
+        MORPHO = IMorpho(p.morpho);
+        SUSDE = p.sUsde;
+        USDE = p.usde;
+        USDC = p.usdc;
+        PYUSD = p.pyusd;
 
-        CURVE_USDE_USDC_POOL = curveUsdeUsdcPool_;
-        CURVE_PYUSD_USDC_POOL = curvePyusdUsdcPool_;
-        CURVE_USDE_INDEX = curveUsdeIndex_;
-        CURVE_USDC_INDEX_USDE = curveUsdcIndexUsde_;
-        CURVE_PYUSD_INDEX = curvePyusdIndex_;
-        CURVE_USDC_INDEX_PYUSD = curveUsdcIndexPyusd_;
+        CURVE_USDE_USDC_POOL = p.curveUsdeUsdcPool;
+        CURVE_PYUSD_USDC_POOL = p.curvePyusdUsdcPool;
+        CURVE_USDE_INDEX = p.curveUsdeIndex;
+        CURVE_USDC_INDEX_USDE = p.curveUsdcIndexUsde;
+        CURVE_PYUSD_INDEX = p.curvePyusdIndex;
+        CURVE_USDC_INDEX_PYUSD = p.curveUsdcIndexPyusd;
 
         morphoMarketParams = MarketParams({
-            loanToken: pyusd_,
-            collateralToken: sUsde_,
-            oracle: morphoOracle_,
-            irm: morphoIrm_,
-            lltv: morphoLltv_
+            loanToken: p.pyusd,
+            collateralToken: p.sUsde,
+            oracle: p.morphoOracle,
+            irm: p.morphoIrm,
+            lltv: p.morphoLltv
         });
 
         // Pre-approve Morpho for sUSDe (collateral)
-        IERC20(sUsde_).approve(morpho_, type(uint256).max);
+        IERC20(p.sUsde).approve(p.morpho, type(uint256).max);
     }
 
     /* ═══════════════════════════════════════════ OPEN — USDC ENTRY ═══════════════════════════════ */
@@ -417,10 +418,9 @@ contract BasisTradeFactory is ReentrancyGuard {
         delete tradeOwner[broker];
 
         // ── 2. Cancel/claim TWAMM order ─────────────────────────────────
-        (, , bytes32 orderId) = pb.activeTwammOrder();
+        (bytes32 trackedMarketId, bytes32 orderId) = pb.activeTwammOrder();
         if (orderId != bytes32(0)) {
-            (, IJTM.OrderKey memory orderKey, ) = pb.activeTwammOrder();
-            uint256 expiration = uint256(orderKey.expiration);
+            (, , , , uint256 expiration, ) = ITwapEngine(TWAP_ENGINE).streamOrders(trackedMarketId, orderId);
 
             if (block.timestamp >= expiration) {
                 pb.claimExpiredTwammOrder();
@@ -667,15 +667,9 @@ contract BasisTradeFactory is ReentrancyGuard {
 
         // Determine sell direction: wRLP → waUSDC
         bool zeroForOne = positionToken < COLLATERAL;
+        bytes32 marketId = MarketId.unwrap(pb.marketId());
 
-        IJTM.SubmitOrderParams memory params = IJTM.SubmitOrderParams({
-            key: poolKey,
-            zeroForOne: zeroForOne,
-            duration: duration,
-            amountIn: wrlpBalance
-        });
-
-        pb.submitTwammOrder(TWAMM_HOOK, params);
+        pb.submitTwammOrder(TWAP_ENGINE, marketId, zeroForOne, duration, wrlpBalance);
     }
 
     /* ═══════════════════════════════════════ SWAP HELPERS ═════════════════════════════════════════ */

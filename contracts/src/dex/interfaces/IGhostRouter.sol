@@ -34,4 +34,16 @@ interface IGhostRouter {
 
     /// @notice Allows Spokes to automatically settle depleted streams across V4 safely
     function settleGhost(bytes32 marketId, bool zeroForOne, uint256 amountIn) external returns (uint256 amountOut);
+
+    /// @notice Query the native price accumulator for TWAP computation.
+    /// @dev Returns price cumulatives (Σ price×Δt, price in 1e18) at each requested point.
+    ///      Price is token1-per-token0, matching getSpotPrice() convention.
+    ///      Consumer computes TWAP: (cum[1] - cum[0]) / (secondsAgos[0] - secondsAgos[1]).
+    /// @param marketId The sovereign market to query.
+    /// @param secondsAgos Array of lookback offsets from block.timestamp (e.g., [1800, 0]).
+    /// @return priceCumulatives Array of price cumulatives at each requested point.
+    function observe(bytes32 marketId, uint32[] calldata secondsAgos)
+        external
+        view
+        returns (uint256[] memory priceCumulatives);
 }

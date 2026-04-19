@@ -43,6 +43,17 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
         SwapParams params;
     }
 
+    struct NettingParams {
+        bytes32 marketId;
+        uint256 spotPrice;
+        uint256[] engineG0s;
+        uint256[] engineG1s;
+        uint256 totalG0;
+        uint256 totalG1;
+        uint256 macroToken0;
+        uint256 macroToken1;
+    }
+
     struct Market {
         address token0;
         address token1;
@@ -61,6 +72,32 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
     /// @notice The global Uniswap V4 PoolManager
     IPoolManager public immutable poolManager;
 
+    // ─── ORACLE ACCUMULATOR ──────────────────────────────────────────────────
+
+    /// @notice Ring buffer capacity for price observations per market.
+    /// @dev 256 slots. At ~12s blocks, covers ~51 minutes of per-block history.
+    ///      At lower swap frequency, covers proportionally longer windows.
+    uint16 public constant ORACLE_CARDINALITY = 256;
+
+    /// @notice A single price observation: cumulative (price × elapsed_seconds).
+    /// @dev price is token1-per-token0, scaled by 1e18 (matches PRICE_SCALE).
+    struct Observation {
+        uint32 blockTimestamp;
+        uint256 priceCumulative;
+    }
+
+    /// @notice Per-market ring buffer bookkeeping.
+    struct OracleState {
+        uint16 index;       // slot of the most recent observation
+        uint16 cardinality; // number of populated slots (≤ ORACLE_CARDINALITY)
+    }
+
+    /// @notice Oracle ring buffer state per market.
+    mapping(bytes32 => OracleState) public oracleStates;
+
+    /// @notice Oracle observations ring buffer.  observations[marketId][slot].
+    mapping(bytes32 => mapping(uint256 => Observation)) internal oracleObservations;
+
     // ─── Custom Errors ────────────────────────────────────────────────────────
 
     error UnauthorizedEngine();
@@ -76,6 +113,8 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
     error InvalidEngineAddress();
     error InvalidEngineContract();
     error EngineNotRegistered();
+    error OracleNotInitialized();
+    error ObservationTooOld();
     error InvalidPoolManager();
     error InvalidOwner();
 
@@ -233,6 +272,9 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
             oracleMode: OracleMode.External,
             vanillaKey: vanillaKey
         });
+
+        // Seed the oracle accumulator with the genesis observation.
+        _initializeOracle(marketId);
     }
 
     function _setExternalOracle(bytes32 marketId, address oracle) internal {
@@ -325,6 +367,9 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
             IERC20(tokenOut).safeTransfer(msg.sender, amountOut);
         }
 
+        // Record price observation for TWAP accumulator
+        _writeObservation(marketId, spotPrice);
+
         emit SwapExecuted(marketId, msg.sender, zeroForOne, amountIn, amountOut, amountOutMinimum);
     }
 
@@ -338,6 +383,10 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
         Market storage market = markets[marketId];
         if (market.token0 == address(0)) revert MarketNotFound();
         amountOut = _executeVanillaV4Swap(market.vanillaKey, zeroForOne, amountIn);
+
+        // Record price observation for TWAP accumulator
+        _writeObservation(marketId, getSpotPrice(marketId));
+
         emit GhostSettledViaAMM(marketId, msg.sender, zeroForOne, amountIn, amountOut);
     }
 
@@ -346,17 +395,20 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
     /// @notice Aggregate ghost balances from all engines, compute price-weighted
     ///         macro intersection, and distribute settlement pro-rata.
     function _executeGlobalNetting(bytes32 marketId, uint256 spotPrice) internal {
-        (uint256[] memory engineG0s, uint256[] memory engineG1s, uint256 totalG0, uint256 totalG1) =
-            _aggregateGhostBalances(marketId);
+        NettingParams memory p;
+        p.marketId = marketId;
+        p.spotPrice = spotPrice;
 
-        if (totalG0 == 0 || totalG1 == 0) return;
+        (p.engineG0s, p.engineG1s, p.totalG0, p.totalG1) = _aggregateGhostBalances(marketId);
 
-        (uint256 macroToken0, uint256 macroToken1) = _computeMacroIntersection(totalG0, totalG1, spotPrice);
+        if (p.totalG0 == 0 || p.totalG1 == 0) return;
 
-        if (macroToken0 == 0 && macroToken1 == 0) return;
+        (p.macroToken0, p.macroToken1) = _computeMacroIntersection(p.totalG0, p.totalG1, spotPrice);
 
-        _distributeNettingProRata(marketId, spotPrice, engineG0s, engineG1s, totalG0, totalG1, macroToken0, macroToken1);
-        emit GlobalNettingExecuted(marketId, spotPrice, totalG0, totalG1, macroToken0, macroToken1);
+        if (p.macroToken0 == 0 && p.macroToken1 == 0) return;
+
+        _distributeNettingProRata(p);
+        emit GlobalNettingExecuted(marketId, spotPrice, p.totalG0, p.totalG1, p.macroToken0, p.macroToken1);
     }
 
     /// @notice Poll all engines to sync state and collect ghost balances.
@@ -400,16 +452,7 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
 
     /// @notice Distribute the macro intersection pro-rata across engines
     ///         using the cumulative fraction pattern (zero-dust).
-    function _distributeNettingProRata(
-        bytes32 marketId,
-        uint256 spotPrice,
-        uint256[] memory engineG0s,
-        uint256[] memory engineG1s,
-        uint256 totalG0,
-        uint256 totalG1,
-        uint256 macroToken0,
-        uint256 macroToken1
-    ) internal {
+    function _distributeNettingProRata(NettingParams memory p) internal {
         uint256 numEngines = approvedEngines.length;
         uint256 runFrac0;
         uint256 runFrac1;
@@ -420,24 +463,24 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
             uint256 consumed0;
             uint256 consumed1;
 
-            if (totalG0 > 0 && macroToken0 > 0) {
-                runFrac0 += engineG0s[i];
-                uint256 expected = (macroToken0 * runFrac0) / totalG0;
+            if (p.totalG0 > 0 && p.macroToken0 > 0) {
+                runFrac0 += p.engineG0s[i];
+                uint256 expected = (p.macroToken0 * runFrac0) / p.totalG0;
                 consumed0 = expected - runMatch0;
                 runMatch0 += consumed0;
             }
 
-            if (totalG1 > 0 && macroToken1 > 0) {
-                runFrac1 += engineG1s[i];
-                uint256 expected = (macroToken1 * runFrac1) / totalG1;
+            if (p.totalG1 > 0 && p.macroToken1 > 0) {
+                runFrac1 += p.engineG1s[i];
+                uint256 expected = (p.macroToken1 * runFrac1) / p.totalG1;
                 consumed1 = expected - runMatch1;
                 runMatch1 += consumed1;
             }
 
             if (consumed0 > 0 || consumed1 > 0) {
                 address engine = approvedEngines[i];
-                try IGhostEngine(engine).applyNettingResult(marketId, consumed0, consumed1, spotPrice) {} catch {
-                    emit EngineCallFailed(engine, marketId, ENGINE_OP_APPLY_NETTING);
+                try IGhostEngine(engine).applyNettingResult(p.marketId, consumed0, consumed1, p.spotPrice) {} catch {
+                    emit EngineCallFailed(engine, p.marketId, ENGINE_OP_APPLY_NETTING);
                 }
             }
         }
@@ -520,5 +563,115 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
             if (amount0 > 0) key.currency0.take(poolManager, sender, uint256(int256(amount0)), false);
             if (amount1 > 0) key.currency1.take(poolManager, sender, uint256(int256(amount1)), false);
         }
+    }
+
+    // ─── ORACLE ACCUMULATOR IMPLEMENTATION ─────────────────────────────────
+
+    /// @notice Seed the oracle ring buffer for a newly initialized market.
+    function _initializeOracle(bytes32 marketId) internal {
+        oracleObservations[marketId][0] = Observation({
+            blockTimestamp: uint32(block.timestamp),
+            priceCumulative: 0
+        });
+        oracleStates[marketId] = OracleState({
+            index: 0,
+            cardinality: 1
+        });
+    }
+
+    /// @notice Append a price observation to the ring buffer.
+    /// @dev Skips if block.timestamp unchanged (same block = no new time-weighted info).
+    function _writeObservation(bytes32 marketId, uint256 spotPrice) internal {
+        OracleState storage state = oracleStates[marketId];
+        Observation storage last = oracleObservations[marketId][state.index];
+
+        uint32 currentTime = uint32(block.timestamp);
+        if (last.blockTimestamp == currentTime) return; // same block — skip
+
+        uint32 elapsed = currentTime - last.blockTimestamp;
+        uint256 newCumulative = last.priceCumulative + (spotPrice * elapsed);
+
+        uint16 newIndex = (state.index + 1) % ORACLE_CARDINALITY;
+        oracleObservations[marketId][newIndex] = Observation({
+            blockTimestamp: currentTime,
+            priceCumulative: newCumulative
+        });
+
+        state.index = newIndex;
+        if (state.cardinality < ORACLE_CARDINALITY) {
+            state.cardinality = state.cardinality + 1;
+        }
+    }
+
+    /// @inheritdoc IGhostRouter
+    function observe(bytes32 marketId, uint32[] calldata secondsAgos)
+        external
+        view
+        override
+        returns (uint256[] memory priceCumulatives)
+    {
+        OracleState storage state = oracleStates[marketId];
+        if (state.cardinality == 0) revert OracleNotInitialized();
+
+        uint256 currentSpot = getSpotPrice(marketId);
+        priceCumulatives = new uint256[](secondsAgos.length);
+
+        for (uint256 i = 0; i < secondsAgos.length; i++) {
+            uint32 target = uint32(block.timestamp) - secondsAgos[i];
+            priceCumulatives[i] = _observeSingle(marketId, state, target, currentSpot);
+        }
+    }
+
+    /// @notice Resolve the price cumulative at an arbitrary historical timestamp.
+    /// @dev Three cases:
+    ///      1. target ≥ newest observation → extrapolate forward with current spot.
+    ///      2. target < oldest observation → revert (not enough history).
+    ///      3. between two observations → linear interpolation.
+    function _observeSingle(
+        bytes32 marketId,
+        OracleState storage state,
+        uint32 target,
+        uint256 currentSpot
+    ) internal view returns (uint256) {
+        Observation storage newest = oracleObservations[marketId][state.index];
+
+        // Case 1: target is at or after the latest observation — extrapolate.
+        if (target >= newest.blockTimestamp) {
+            uint32 elapsed = target - newest.blockTimestamp;
+            return newest.priceCumulative + (currentSpot * elapsed);
+        }
+
+        // Case 2: check if target is before the oldest observation we have.
+        uint16 oldestIndex = state.cardinality < ORACLE_CARDINALITY
+            ? 0
+            : (state.index + 1) % ORACLE_CARDINALITY;
+        Observation storage oldest = oracleObservations[marketId][oldestIndex];
+        if (target < oldest.blockTimestamp) revert ObservationTooOld();
+
+        // Case 3: scan backwards from newest to find the two observations
+        //         bracketing the target timestamp, then interpolate.
+        for (uint16 j = 1; j < state.cardinality; j++) {
+            uint16 prevIdx = state.index >= j
+                ? state.index - j
+                : ORACLE_CARDINALITY + state.index - j;
+
+            Observation storage before = oracleObservations[marketId][prevIdx];
+
+            if (before.blockTimestamp <= target) {
+                // `before` is at or below target. The slot after it brackets from above.
+                uint16 afterIdx = (prevIdx + 1) % ORACLE_CARDINALITY;
+                Observation storage after_ = oracleObservations[marketId][afterIdx];
+
+                // Linear interpolation between `before` and `after_`.
+                uint32 span = after_.blockTimestamp - before.blockTimestamp;
+                uint256 cumDelta = after_.priceCumulative - before.priceCumulative;
+                uint32 targetDelta = target - before.blockTimestamp;
+
+                return before.priceCumulative + (cumDelta * targetDelta) / span;
+            }
+        }
+
+        // Should be unreachable if oldest-check passed, but guard anyway.
+        revert ObservationTooOld();
     }
 }
