@@ -13,8 +13,8 @@ contract TwapEngineLens {
         engine = TwapEngine(_engine);
     }
 
-    /// @notice Get order state by orderId
-    function getOrder(bytes32 orderId)
+    /// @notice Get order state by marketId + orderId.
+    function getOrder(bytes32 marketId, bytes32 orderId)
         external
         view
         returns (
@@ -26,7 +26,7 @@ contract TwapEngineLens {
             bool zeroForOne
         )
     {
-        return engine.streamOrders(orderId);
+        return engine.streamOrders(marketId, orderId);
     }
 
     /// @notice Get ghost balances and discount state for a market.
@@ -34,18 +34,11 @@ contract TwapEngineLens {
     function getStreamState(bytes32 marketId)
         external
         view
-        returns (
-            uint256 ghost0,
-            uint256 ghost1,
-            uint256 currentDiscount,
-            uint256 timeSinceLastClear
-        )
+        returns (uint256 ghost0, uint256 ghost1, uint256 currentDiscount, uint256 timeSinceLastClear)
     {
         (uint256 g0, uint256 g1, uint256 lastUpdate, uint256 lastClear,) = engine.states(marketId);
 
-        uint256 deltaTime = block.timestamp > lastUpdate
-            ? block.timestamp - lastUpdate
-            : 0;
+        uint256 deltaTime = block.timestamp > lastUpdate ? block.timestamp - lastUpdate : 0;
 
         (uint256 sellRate0,) = engine.streamPools(marketId, true);
         (uint256 sellRate1,) = engine.streamPools(marketId, false);
@@ -70,8 +63,25 @@ contract TwapEngineLens {
         return engine.streamPools(marketId, zeroForOne);
     }
 
-    /// @notice Preview cancel state (earnings + refund) without mutation.
-    ///         Delegates to engine since it needs internal nested mapping access.
+    /// @notice Preview cancel state using committed engine state (no simulated time drift).
+    function getCancelOrderStateCommitted(bytes32 marketId, bytes32 orderId)
+        external
+        view
+        returns (uint256 buyTokensOwed, uint256 sellTokensRefund)
+    {
+        return engine.getCancelOrderState(marketId, orderId);
+    }
+
+    /// @notice Preview cancel state at the current block timestamp (exact-at-now simulation).
+    function getCancelOrderStateExact(bytes32 marketId, bytes32 orderId)
+        external
+        view
+        returns (uint256 buyTokensOwed, uint256 sellTokensRefund)
+    {
+        return engine.getCancelOrderStateExact(marketId, orderId);
+    }
+
+    /// @notice Backward-compatible alias of committed cancel preview endpoint.
     function getCancelOrderState(bytes32 marketId, bytes32 orderId)
         external
         view

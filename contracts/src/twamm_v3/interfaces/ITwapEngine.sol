@@ -54,5 +54,12 @@ interface ITwapEngine is IGhostEngine {
     /// @notice Preview cancel state without mutation (NAV valuation for PrimeBrokerLens)
     function getCancelOrderState(bytes32 marketId, bytes32 orderId)
         external view returns (uint256 buyTokensOwed, uint256 sellTokensRefund);
+
+    /// @notice Preview cancel state at the current block timestamp without mutating engine state.
+    ///         This endpoint simulates time progression from committed state to "now".
+    function getCancelOrderStateExact(bytes32 marketId, bytes32 orderId)
+        external
+        view
+        returns (uint256 buyTokensOwed, uint256 sellTokensRefund);
 }
 
