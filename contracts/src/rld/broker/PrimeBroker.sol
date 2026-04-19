@@ -10,27 +10,10 @@ import {FixedPointMathLib} from "../../shared/utils/FixedPointMathLib.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ITwapEngine} from "../../dex/interfaces/ITwapEngine.sol";
-
-import {Currency} from "v4-core/src/types/Currency.sol";
 import {ISpotOracle} from "../../shared/interfaces/ISpotOracle.sol";
 import {IRLDOracle} from "../../shared/interfaces/IRLDOracle.sol";
-
-// Uniswap V4 Imports
-import {
-    IPositionManager
-} from "v4-periphery/src/interfaces/IPositionManager.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {LiquidityAmounts} from "../../shared/libraries/LiquidityAmounts.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {
-    PositionInfo,
-    PositionInfoLibrary
-} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
+import {PrimeBrokerOpsModule} from "./PrimeBrokerOpsModule.sol";
 
 /// @dev Minimal ERC721 interface for ownership checks
 interface IERC721 {
@@ -139,7 +122,6 @@ interface IPermit2 {
 ///
 contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     using SafeTransferLib for ERC20;
-    using PositionInfoLibrary for PositionInfo;
     using FixedPointMathLib for uint256;
 
     /* ============================================================================================ */
@@ -166,6 +148,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @notice Universal V4 Position Manager (POSM) for NFT ownership checks
     /// @dev The Uniswap V4 contract that mints LP position NFTs
     address public immutable POSM;
+
+    /// @notice Delegatecall module for V4/TWAMM/operator-signature operations.
+    address public immutable OPS_MODULE;
 
     /// @notice Canonical Permit2 contract for token approvals
     address public constant PERMIT2 =
@@ -407,6 +392,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         V4_MODULE = _v4Module;
         TWAMM_MODULE = _twammModule;
         POSM = _posm;
+        OPS_MODULE = address(new PrimeBrokerOpsModule());
 
         // SECURITY: Lock the implementation contract
         // This prevents anyone from calling initialize() on the implementation itself
@@ -765,103 +751,35 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         internal
         returns (uint256 buyTokensOut, uint256 sellTokensRefund)
     {
-        (sellTokensRefund, buyTokensOut) = ITwapEngine(
-            twapEngine
-        ).cancelOrder(activeTwammOrder.marketId, activeTwammOrder.orderId);
-        delete activeTwammOrder;
+        bytes memory result = _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.cancelTwammOrderInternal.selector
+            )
+        );
+        (buyTokensOut, sellTokensRefund) = abi.decode(result, (uint256, uint256));
     }
 
     function _unwindV4Position(uint256 targetAmount) internal {
-        // 1. Value the position
-        bytes memory valData = _encodeModuleData(activeTokenId);
-        uint256 totalValue = IValuationModule(V4_MODULE).getValue(valData);
-        if (totalValue == 0) return;
-
-        // 2. Calculate proportional liquidity to remove
-        uint128 totalLiquidity = IPositionManager(POSM).getPositionLiquidity(
-            activeTokenId
+        _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.unwindV4PositionInternal.selector,
+                POSM,
+                V4_MODULE,
+                targetAmount
+            )
         );
-        uint128 liquidityToRemove = totalLiquidity;
-
-        if (totalValue > targetAmount) {
-            liquidityToRemove = uint128(
-                uint256(totalLiquidity).mulDivUp(targetAmount, totalValue)
-            );
-        }
-        if (liquidityToRemove == 0) return;
-
-        bool fullRemoval = liquidityToRemove >= totalLiquidity;
-
-        // 3. Use shared helper
-        _decreaseV4Liquidity(activeTokenId, liquidityToRemove, fullRemoval);
-
-        // 4. Update tracking
-        if (fullRemoval) {
-            activeTokenId = 0;
-        }
-    }
-
-    /// @dev Shared helper for removing V4 LP liquidity.
-    ///      Reused by: _unwindV4Position (seize/liquidation), removePoolLiquidity (user-facing)
-    ///
-    /// @param tokenId  The V4 LP position NFT ID
-    /// @param liquidity Amount of liquidity to remove
-    /// @param burn     If true, burns the position NFT after removing all liquidity
-    function _decreaseV4Liquidity(
-        uint256 tokenId,
-        uint128 liquidity,
-        bool burn
-    ) internal {
-        (PoolKey memory pk, ) = IPositionManager(POSM).getPoolAndPositionInfo(
-            tokenId
-        );
-
-        if (burn) {
-            // BURN_POSITION handles decreasing to 0 internally, then burns NFT
-            bytes memory actions = abi.encodePacked(
-                uint8(0x03), // BURN_POSITION (handles decrease + burn)
-                uint8(0x11) // TAKE_PAIR
-            );
-
-            bytes[] memory params = new bytes[](2);
-            params[0] = abi.encode(tokenId, uint128(0), uint128(0), bytes(""));
-            params[1] = abi.encode(pk.currency0, pk.currency1, address(this));
-
-            IPositionManager(POSM).modifyLiquidities(
-                abi.encode(actions, params),
-                block.timestamp + 60
-            );
-        } else {
-            // DECREASE_LIQUIDITY + TAKE_PAIR (keep position)
-            bytes memory actions = abi.encodePacked(
-                uint8(0x01), // DECREASE_LIQUIDITY
-                uint8(0x11) // TAKE_PAIR
-            );
-
-            bytes[] memory params = new bytes[](2);
-            params[0] = abi.encode(
-                tokenId,
-                liquidity,
-                uint128(0),
-                uint128(0),
-                bytes("")
-            );
-            params[1] = abi.encode(pk.currency0, pk.currency1, address(this));
-
-            IPositionManager(POSM).modifyLiquidities(
-                abi.encode(actions, params),
-                block.timestamp + 60
-            );
-        }
     }
 
     /// @notice Collect accumulated LP fees from a V4 position without removing liquidity.
     /// @dev Uses DECREASE_LIQUIDITY with 0 liquidity + TAKE_PAIR to collect fees.
     /// @dev Only callable by authorized operators (owner or approved operator).
     function collectV4Fees() external onlyAuthorized {
-        if (activeTokenId == 0) revert NoActivePosition();
-        if (IERC721(POSM).ownerOf(activeTokenId) != address(this)) revert NotOwner();
-        _decreaseV4Liquidity(activeTokenId, 0, false);
+        _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.collectV4Fees.selector,
+                POSM
+            )
+        );
     }
 
     /* ============================================================================================ */
@@ -947,17 +865,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     function setActiveV4Position(
         uint256 newTokenId
     ) external onlyAuthorized nonReentrant whenNotFrozen {
-        if (newTokenId != 0) {
-            // SECURITY: Verify this broker actually owns the position
-            if (IERC721(POSM).ownerOf(newTokenId) != address(this)) revert NotOwner();
-        }
-
-        uint256 oldTokenId = activeTokenId;
-        activeTokenId = newTokenId;
-        emit ActivePositionChanged(oldTokenId, newTokenId);
-
-        // SECURITY: Prevent gaming by switching to smaller positions
-        _checkSolvency();
+        _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.setActiveV4Position.selector,
+                POSM,
+                newTokenId
+            )
+        );
     }
 
     /// @notice Adds liquidity to the V4 pool, minting a new LP position NFT
@@ -986,50 +900,19 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 tokenId)
     {
-        if (liquidity == 0) revert ZeroLiquidity();
-
-        PoolKey memory poolKey = _getPoolKey(twammHook);
-
-        // Actions: MINT_POSITION (0x02) + CLOSE_CURRENCY (0x12) × 2
-        bytes memory actions = abi.encodePacked(
-            uint8(0x02), // MINT_POSITION
-            uint8(0x12), // CLOSE_CURRENCY
-            uint8(0x12) // CLOSE_CURRENCY
+        bytes memory result = _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.addPoolLiquidity.selector,
+                POSM,
+                twammHook,
+                tickLower,
+                tickUpper,
+                liquidity,
+                amount0Max,
+                amount1Max
+            )
         );
-
-        bytes[] memory params = new bytes[](3);
-        params[0] = abi.encode(
-            poolKey,
-            tickLower,
-            tickUpper,
-            liquidity,
-            amount0Max,
-            amount1Max,
-            address(this), // recipient = this broker
-            bytes("") // no hook data
-        );
-        params[1] = abi.encode(poolKey.currency0);
-        params[2] = abi.encode(poolKey.currency1);
-
-        IPositionManager(POSM).modifyLiquidities(
-            abi.encode(actions, params),
-            block.timestamp + 60
-        );
-
-        // Auto-track first position; subsequent positions require setActiveV4Position()
-        tokenId = IPositionManager(POSM).nextTokenId() - 1;
-        if (activeTokenId == 0) {
-            uint256 oldTokenId = activeTokenId;
-            activeTokenId = tokenId;
-            emit ActivePositionChanged(oldTokenId, tokenId);
-        }
-
-        // Note: No longer syncing hookAddress here. twapEngine is cached in TWAMM paths.
-
-        emit LiquidityAdded(tokenId, liquidity);
-
-        // SECURITY: Solvency check after adding LP
-        _checkSolvency();
+        tokenId = abi.decode(result, (uint256));
     }
 
     /// @notice Removes liquidity from a specific V4 LP position
@@ -1051,52 +934,15 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 amount0, uint256 amount1)
     {
-        if (liquidity == 0) revert ZeroLiquidity();
-        if (IERC721(POSM).ownerOf(tokenId) != address(this)) revert NotOwner();
-
-        // Check current liquidity to determine if full removal
-        uint128 currentLiquidity = IPositionManager(POSM).getPositionLiquidity(
-            tokenId
+        bytes memory result = _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.removePoolLiquidity.selector,
+                POSM,
+                tokenId,
+                liquidity
+            )
         );
-        if (currentLiquidity == 0) revert ZeroLiquidity();
-
-        bool fullRemoval = liquidity >= currentLiquidity;
-        uint128 actualLiquidity = fullRemoval ? currentLiquidity : liquidity;
-
-        // Use shared helper (also used by seize/_unwindV4Position)
-        _decreaseV4Liquidity(tokenId, actualLiquidity, fullRemoval);
-
-        // Clear tracking if this was the tracked position and fully removed
-        if (fullRemoval && tokenId == activeTokenId) {
-            emit ActivePositionChanged(activeTokenId, 0);
-            activeTokenId = 0;
-        }
-
-        emit LiquidityRemoved(tokenId, actualLiquidity, fullRemoval);
-
-        // SECURITY: Solvency check after removing LP
-        _checkSolvency();
-    }
-
-    /// @dev Builds a PoolKey from cached token addresses and the provided hook
-    /// @param twammHook The TWAMM hook address
-    /// @return The constructed PoolKey with sorted currencies
-    function _getPoolKey(
-        address twammHook
-    ) internal view returns (PoolKey memory) {
-        // V4 requires currency0 < currency1
-        (address c0, address c1) = positionToken < collateralToken
-            ? (positionToken, collateralToken)
-            : (collateralToken, positionToken);
-
-        return
-            PoolKey({
-                currency0: Currency.wrap(c0),
-                currency1: Currency.wrap(c1),
-                fee: 500,
-                tickSpacing: 5,
-                hooks: IHooks(twammHook)
-            });
+        (amount0, amount1) = abi.decode(result, (uint256, uint256));
     }
 
     /// @notice Sets which TWAMM order is tracked for solvency calculations
@@ -1117,24 +963,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         address _twapEngine,
         TwammOrderInfo calldata info
     ) external onlyAuthorized nonReentrant whenNotFrozen {
-        if (info.orderId != bytes32(0)) {
-            (address owner, uint256 sellRate, , , , ) = ITwapEngine(_twapEngine).streamOrders(
-                info.marketId,
-                info.orderId
-            );
-
-            // SECURITY: Verify order exists and is owned by this broker
-            if (sellRate == 0) revert InvalidOrder();
-            if (owner != address(this)) revert NotOwner();
-        }
-
-        bytes32 oldOrderId = activeTwammOrder.orderId;
-        activeTwammOrder = info;
-        twapEngine = _twapEngine; // Cache
-        emit ActiveTwammOrderChanged(oldOrderId, info.orderId);
-
-        // SECURITY: Prevent gaming by switching to smaller orders
-        if (!IRLDCore(CORE).isSolvent(marketId, address(this))) revert Insolvent();
+        _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.setActiveTwammOrder.selector,
+                _twapEngine,
+                info
+            )
+        );
     }
 
     /// @notice Clears the tracked V4 LP position
@@ -1146,10 +981,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         nonReentrant
         whenNotFrozen
     {
-        uint256 oldTokenId = activeTokenId;
-        activeTokenId = 0;
-        emit ActivePositionChanged(oldTokenId, 0);
-        _checkSolvency();
+        _delegateToOpsModule(
+            abi.encodeWithSelector(PrimeBrokerOpsModule.clearActiveV4Position.selector)
+        );
     }
 
     /// @notice Submits a TWAMM order and automatically registers it for solvency tracking
@@ -1186,31 +1020,17 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (bytes32 orderId)
     {
-        twapEngine = _twapEngine; // Cache
-
-        (address c0, address c1) = positionToken < collateralToken
-            ? (positionToken, collateralToken)
-            : (collateralToken, positionToken);
-        address sellToken = zeroForOne ? c0 : c1;
-
-        address ghostRouter = ITwapEngine(_twapEngine).ghostRouter();
-        ERC20(sellToken).approve(ghostRouter, amountIn);
-
-        orderId = ITwapEngine(_twapEngine).submitStream(_marketId, zeroForOne, duration, amountIn);
-
-        ERC20(sellToken).approve(ghostRouter, 0);
-
-        bytes32 oldOrderId = activeTwammOrder.orderId;
-        activeTwammOrder = TwammOrderInfo({
-            marketId: _marketId,
-            orderId: orderId
-        });
-        (, , , , uint256 expiration, ) = ITwapEngine(_twapEngine).streamOrders(_marketId, orderId);
-        emit TwammOrderSubmitted(orderId, zeroForOne, amountIn, expiration);
-        emit ActiveTwammOrderChanged(oldOrderId, orderId);
-
-        // Step 5: Verify solvency
-        _checkSolvency();
+        bytes memory result = _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.submitTwammOrder.selector,
+                _twapEngine,
+                _marketId,
+                zeroForOne,
+                duration,
+                amountIn
+            )
+        );
+        orderId = abi.decode(result, (bytes32));
     }
 
     /// @notice Cancels the active TWAMM order and claims proceeds
@@ -1224,12 +1044,10 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         whenNotFrozen
         returns (uint256 buyTokensOut, uint256 sellTokensRefund)
     {
-        if (activeTwammOrder.orderId == bytes32(0)) revert NoActiveOrder();
-        bytes32 cancelledOrderId = activeTwammOrder.orderId;
-        (buyTokensOut, sellTokensRefund) = _cancelTwammOrder();
-        emit TwammOrderCancelled(cancelledOrderId, buyTokensOut, sellTokensRefund);
-        emit ActiveTwammOrderChanged(cancelledOrderId, bytes32(0));
-        _checkSolvency();
+        bytes memory result = _delegateToOpsModule(
+            abi.encodeWithSelector(PrimeBrokerOpsModule.cancelTwammOrder.selector)
+        );
+        (buyTokensOut, sellTokensRefund) = abi.decode(result, (uint256, uint256));
     }
 
     /// @notice Claims tokens from an expired TWAMM order
@@ -1243,17 +1061,10 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         nonReentrant
         returns (uint256 claimedBuyToken)
     {
-        if (activeTwammOrder.orderId == bytes32(0)) revert NoActiveOrder();
-        bytes32 claimedOrderId = activeTwammOrder.orderId;
-
-        claimedBuyToken = ITwapEngine(twapEngine).claimTokens(
-            activeTwammOrder.marketId,
-            activeTwammOrder.orderId
+        bytes memory result = _delegateToOpsModule(
+            abi.encodeWithSelector(PrimeBrokerOpsModule.claimExpiredTwammOrder.selector)
         );
-
-        delete activeTwammOrder;
-        emit TwammOrderClaimed(claimedOrderId, claimedBuyToken, 0);
-        emit ActiveTwammOrderChanged(claimedOrderId, bytes32(0));
+        claimedBuyToken = abi.decode(result, (uint256));
     }
 
     function claimExpiredTwammOrderWithId(
@@ -1266,11 +1077,15 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         nonReentrant
         returns (uint256 claimedBuyToken)
     {
-        (address owner, , , , , ) = ITwapEngine(_twapEngine).streamOrders(_marketId, _orderId);
-        if (owner != address(this)) revert NotOwner();
-
-        claimedBuyToken = ITwapEngine(_twapEngine).claimTokens(_marketId, _orderId);
-        emit TwammOrderClaimed(_orderId, claimedBuyToken, 0);
+        bytes memory result = _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.claimExpiredTwammOrderWithId.selector,
+                _twapEngine,
+                _marketId,
+                _orderId
+            )
+        );
+        claimedBuyToken = abi.decode(result, (uint256));
     }
 
     /* ============================================================================================ */
@@ -1487,6 +1302,22 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /*                                    INTERNAL HELPERS                                         */
     /* ============================================================================================ */
 
+    /// @dev Delegatecall helper for heavy broker operations.
+    function _delegateToOpsModule(
+        bytes memory callData
+    ) internal returns (bytes memory result) {
+        (bool ok, bytes memory returndata) = OPS_MODULE.delegatecall(callData);
+        if (!ok) {
+            if (returndata.length > 0) {
+                assembly {
+                    revert(add(returndata, 32), mload(returndata))
+                }
+            }
+            revert ExecuteFailed();
+        }
+        return returndata;
+    }
+
     /// @dev Returns collateral currently free (not reserved by active queue requests).
     function _availableCollateralForWithdrawal() internal view returns (uint256) {
         uint256 balance = ERC20(collateralToken).balanceOf(address(this));
@@ -1589,28 +1420,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             revert NotAuthorized();
         }
 
-        _updateOperator(operator, active);
-    }
-
-    /// @dev Shared helper for adding/removing operators with event emission
-    function _updateOperator(address operator, bool active) internal {
-        if (active) {
-            if (operators[operator]) revert DuplicateOperator();
-            if (operatorList.length >= MAX_OPERATORS) revert TooManyOperators();
-            operators[operator] = true;
-            operatorList.push(operator);
-        } else {
-            if (!operators[operator]) revert NotOperator();
-            operators[operator] = false;
-            for (uint256 i = 0; i < operatorList.length; i++) {
-                if (operatorList[i] == operator) {
-                    operatorList[i] = operatorList[operatorList.length - 1];
-                    operatorList.pop();
-                    break;
-                }
-            }
-        }
-        emit OperatorUpdated(operator, active);
+        _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.updateOperator.selector,
+                operator,
+                active
+            )
+        );
     }
 
     /// @notice Revokes all operators atomically — called by factory on NFT transfer
@@ -1640,36 +1456,16 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         uint256 nonce,
         bytes32 commitment
     ) external nonReentrant whenNotFrozen {
-        address owner = IERC721(factory).ownerOf(
-            uint256(uint160(address(this)))
-        );
-
-        // Verify nonce
-        if (nonce != operatorNonces[msg.sender]) revert InvalidNonce();
-        operatorNonces[msg.sender]++;
-
-        // Build signed message hash
-        // Includes: operator, active, broker, nonce, caller (executor), commitment, chainId
-        bytes32 structHash = keccak256(
-            abi.encode(
+        _delegateToOpsModule(
+            abi.encodeWithSelector(
+                PrimeBrokerOpsModule.setOperatorWithSignature.selector,
                 operator,
                 active,
-                address(this),
+                signature,
                 nonce,
-                msg.sender,
-                commitment,
-                block.chainid
+                commitment
             )
         );
-        bytes32 ethSignedHash = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", structHash)
-        );
-
-        // Verify signature is from owner
-        address signer = ECDSA.recover(ethSignedHash, signature);
-        if (signer != owner) revert InvalidSignature();
-
-        _updateOperator(operator, active);
     }
 
     /* ============================================================================================ */
