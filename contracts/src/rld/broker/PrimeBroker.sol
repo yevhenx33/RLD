@@ -211,9 +211,32 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     /// @dev Implements both IRLDOracle and ISpotOracle interfaces
     address public rateOracle;
 
+    /// @notice Optional settlement module for CDS markets (address(0) => standard RLP).
+    address public settlementModule;
+
     /// @notice TwapEngine address
     /// @dev Cached during submitTwammOrder() for gas savings
     address public twapEngine;
+
+    /* ─────────────────────────────────────────────────────────────────────────────────────────── */
+    /*                               CDS WITHDRAWAL QUEUE (7-DAY)                                  */
+    /* ─────────────────────────────────────────────────────────────────────────────────────────── */
+
+    /// @notice Fixed withdrawal delay for debt-bearing CDS brokers.
+    uint48 public constant WITHDRAWAL_DELAY = 7 days;
+
+    /// @notice Monotonic identifier for queued withdrawal requests.
+    uint256 public nextWithdrawalId;
+
+    /// @notice Total collateral reserved by active queue entries in the current epoch.
+    uint256 public queuedCollateralTotal;
+
+    /// @notice Queue epoch used for O(1) invalidation during settlement.
+    uint64 public withdrawalQueueEpoch;
+
+    /// @notice Per-request withdrawal queue storage.
+    mapping(uint256 withdrawalId => WithdrawalRequest request)
+        private withdrawalRequests;
 
     /* ─────────────────────────────────────────────────────────────────────────────────────────── */
     /*                              TRACKED POSITIONS (V1: ONE EACH)                               */
@@ -302,6 +325,16 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     error InvalidSignature();
     error AlreadyFrozen();
     error NotFrozen();
+    error WithdrawalQueueRequired();
+    error WithdrawalQueueNotRequired();
+    error ZeroWithdrawalAmount();
+    error InvalidWithdrawalRecipient();
+    error UnknownWithdrawalRequest();
+    error WithdrawalNotReady(uint48 unlockAt);
+    error WithdrawalRequestStale();
+    error ActiveWithdrawalRequest();
+    error InsufficientUnqueuedCollateral();
+    error GlobalSettlementActive();
 
     /* ============================================================================================ */
     /// @dev Restricts function to RLDCore only
@@ -427,6 +460,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         positionToken = vars.positionToken;
         underlyingPool = vars.underlyingPool;
         rateOracle = vars.rateOracle;
+        settlementModule = vars.settlementModule;
+        nextWithdrawalId = 1;
 
         // Set initial operators (e.g., BrokerRouter) so they're pre-approved from deploy
         if (_initialOperators.length > MAX_OPERATORS) revert TooManyOperators();
@@ -875,6 +910,8 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
     {
         if (target == CORE) revert InvalidTarget();
         if (target == address(this)) revert InvalidTarget();
+        if (_isGlobalSettlementActive()) revert GlobalSettlementActive();
+        if (_requiresWithdrawalQueue()) revert WithdrawalQueueRequired();
 
         bool success;
         (success, result) = target.call(data);
@@ -1326,13 +1363,154 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         address recipient,
         uint256 amount
     ) external onlyAuthorized nonReentrant whenNotFrozen {
+        if (_isGlobalSettlementActive()) revert GlobalSettlementActive();
+        if (_requiresWithdrawalQueue()) revert WithdrawalQueueRequired();
+        if (
+            token == collateralToken &&
+            _availableCollateralForWithdrawal() < amount
+        ) {
+            revert InsufficientUnqueuedCollateral();
+        }
+
         ERC20(token).safeTransfer(recipient, amount);
         _checkSolvency();
+    }
+
+    /// @notice Queues delayed collateral withdrawal for debt-bearing CDS brokers.
+    /// @dev Multiple concurrent requests are supported via unique withdrawal ids.
+    function requestWithdrawal(
+        uint256 amount,
+        address recipient
+    )
+        external
+        onlyAuthorized
+        nonReentrant
+        whenNotFrozen
+        returns (uint256 withdrawalId)
+    {
+        if (!_requiresWithdrawalQueue()) revert WithdrawalQueueNotRequired();
+        if (_isGlobalSettlementActive()) revert GlobalSettlementActive();
+        if (amount == 0) revert ZeroWithdrawalAmount();
+        if (recipient == address(0)) revert InvalidWithdrawalRecipient();
+        if (_availableCollateralForWithdrawal() < amount) {
+            revert InsufficientUnqueuedCollateral();
+        }
+
+        withdrawalId = nextWithdrawalId++;
+        uint48 unlockAt = uint48(block.timestamp + WITHDRAWAL_DELAY);
+
+        withdrawalRequests[withdrawalId] = WithdrawalRequest({
+            amount: amount,
+            recipient: recipient,
+            unlockAt: unlockAt,
+            queueEpoch: withdrawalQueueEpoch
+        });
+        queuedCollateralTotal += amount;
+
+        emit WithdrawalRequested(
+            withdrawalId,
+            recipient,
+            amount,
+            unlockAt,
+            withdrawalQueueEpoch
+        );
+    }
+
+    /// @notice Cancels a previously queued withdrawal request.
+    function cancelWithdrawal(
+        uint256 withdrawalId
+    ) external onlyAuthorized nonReentrant whenNotFrozen {
+        WithdrawalRequest memory request = withdrawalRequests[withdrawalId];
+        if (request.amount == 0) revert UnknownWithdrawalRequest();
+
+        if (request.queueEpoch == withdrawalQueueEpoch) {
+            queuedCollateralTotal -= request.amount;
+        }
+
+        delete withdrawalRequests[withdrawalId];
+        emit WithdrawalCancelled(withdrawalId);
+    }
+
+    /// @notice Executes a queued withdrawal after the 7-day delay has elapsed.
+    function executeWithdrawal(
+        uint256 withdrawalId
+    ) external onlyAuthorized nonReentrant whenNotFrozen {
+        WithdrawalRequest memory request = withdrawalRequests[withdrawalId];
+        if (request.amount == 0) revert UnknownWithdrawalRequest();
+        if (_isGlobalSettlementActive()) revert GlobalSettlementActive();
+        if (request.queueEpoch != withdrawalQueueEpoch)
+            revert WithdrawalRequestStale();
+        if (block.timestamp < request.unlockAt)
+            revert WithdrawalNotReady(request.unlockAt);
+
+        queuedCollateralTotal -= request.amount;
+        delete withdrawalRequests[withdrawalId];
+
+        ERC20(collateralToken).safeTransfer(request.recipient, request.amount);
+        emit WithdrawalExecuted(withdrawalId, request.recipient, request.amount);
+        _checkSolvency();
+    }
+
+    /// @notice Deletes stale queue entries after settlement epoch invalidation.
+    function pruneWithdrawal(uint256 withdrawalId) external {
+        WithdrawalRequest memory request = withdrawalRequests[withdrawalId];
+        if (request.amount == 0) revert UnknownWithdrawalRequest();
+        if (request.queueEpoch == withdrawalQueueEpoch)
+            revert ActiveWithdrawalRequest();
+
+        delete withdrawalRequests[withdrawalId];
+        emit WithdrawalPruned(withdrawalId, request.queueEpoch);
+    }
+
+    /// @notice Invalidates the active queue epoch during global settlement.
+    /// @dev Called by RLDCore settlement hooks. This does not loop requests.
+    function invalidateWithdrawalQueue()
+        external
+        onlyCore
+        nonReentrant
+        returns (uint64 newQueueEpoch)
+    {
+        newQueueEpoch = withdrawalQueueEpoch + 1;
+        withdrawalQueueEpoch = newQueueEpoch;
+        queuedCollateralTotal = 0;
+        emit WithdrawalQueueInvalidated(newQueueEpoch);
+    }
+
+    /// @notice Returns a queued withdrawal request by id.
+    function getWithdrawalRequest(
+        uint256 withdrawalId
+    ) external view returns (WithdrawalRequest memory request) {
+        request = withdrawalRequests[withdrawalId];
     }
 
     /* ============================================================================================ */
     /*                                    INTERNAL HELPERS                                         */
     /* ============================================================================================ */
+
+    /// @dev Returns collateral currently free (not reserved by active queue requests).
+    function _availableCollateralForWithdrawal() internal view returns (uint256) {
+        uint256 balance = ERC20(collateralToken).balanceOf(address(this));
+        if (balance <= queuedCollateralTotal) return 0;
+        return balance - queuedCollateralTotal;
+    }
+
+    /// @dev Returns true when CDS debt-bearing brokers must use delayed withdrawal queue.
+    function _requiresWithdrawalQueue() internal view returns (bool) {
+        if (settlementModule == address(0)) return false;
+        return _currentDebtPrincipal() > 0;
+    }
+
+    /// @dev Returns current broker debt principal from Core.
+    function _currentDebtPrincipal() internal view returns (uint128) {
+        return IRLDCore(CORE).getPosition(marketId, address(this)).debtPrincipal;
+    }
+
+    /// @dev Returns true if the market has already entered global settlement.
+    function _isGlobalSettlementActive() internal view returns (bool) {
+        return
+            IRLDCore(CORE).getMarketState(marketId).globalSettlementTimestamp !=
+            0;
+    }
 
     /// @dev Encodes data for V4_MODULE.getValue() and seize()
     /// @param id The V4 position NFT ID

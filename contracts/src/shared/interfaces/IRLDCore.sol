@@ -20,17 +20,19 @@ interface IRLDCore {
         address curator; // Renamed from feeHook
         address liquidationModule;
         address positionToken; // ERC20 token representing debt (WrappedRLP)
+        address settlementModule; // Optional CDS settlement module (0 = standard RLP market)
     }
 
     struct MarketConfig {
         uint64 minColRatio;
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor; // e.g., 50% (5e17)
-        uint32 fundingPeriod; // Configurable Funding Period (e.g. 30 days)
+        uint32 fundingPeriod; // Standard funding model period (seconds)
         uint32 badDebtPeriod; // Period over which bad debt is socialized via NF (e.g. 7 days)
         uint128 debtCap; // Max TRUE debt in economic USD (type(uint128).max = unlimited)
         uint128 minLiquidation; // Minimum liquidation amount in collateral decimals
         bytes32 liquidationParams; // Packed params for the module
+        uint96 decayRateWad; // CDS decay model parameter F in annualized WAD
         address brokerVerifier; // Trusted Verifier for Prime Brokers (Immutable)
     }
 
@@ -38,6 +40,7 @@ interface IRLDCore {
         uint128 normalizationFactor; // Debt Scaler (starts at 1e18)
         uint128 totalDebt; // Total debt principal across all positions
         uint48 lastUpdateTimestamp;
+        uint48 globalSettlementTimestamp; // Non-zero once market enters global settlement
         uint128 badDebt; // Unbacked wRLP principal, socialized via NF over 7 days
     }
 
@@ -52,6 +55,7 @@ interface IRLDCore {
         uint64 liquidationCloseFactor;
         uint32 fundingPeriod;
         uint32 badDebtPeriod;
+        uint96 decayRateWad;
         uint128 debtCap;
         uint128 minLiquidation;
         bytes32 liquidationParams;
@@ -89,6 +93,8 @@ interface IRLDCore {
         uint64 maintenanceMargin,
         uint64 liquidationCloseFactor,
         uint32 fundingPeriod,
+        uint32 badDebtPeriod,
+        uint96 decayRateWad,
         uint128 debtCap,
         uint128 minLiquidation,
         bytes32 liquidationParams,
@@ -140,6 +146,19 @@ interface IRLDCore {
         uint128 newNormFactor
     );
 
+    /// @notice Emitted when a market enters terminal global settlement mode
+    event GlobalSettlementEntered(
+        MarketId indexed marketId,
+        uint48 settlementTimestamp
+    );
+
+    /// @notice Emitted when settlement invalidates a broker's queued withdrawals
+    event BrokerWithdrawalQueueInvalidated(
+        MarketId indexed marketId,
+        address indexed broker,
+        uint64 newEpoch
+    );
+
     /// @notice Emitted for account state verification
     event AccountStateHash(
         MarketId indexed marketId,
@@ -161,6 +180,7 @@ interface IRLDCore {
     error InvalidBroker(address user);
     error SlippageExceeded();
     error CloseFactorExceeded();
+    error MarketInGlobalSettlement();
 
     /* ============================================================================================ */
     /*                                          FUNCTIONS                                           */
@@ -240,6 +260,18 @@ interface IRLDCore {
     ) external;
 
     /* ============================================================================================ */
+    /*                                     GLOBAL SETTLEMENT                                        */
+    /* ============================================================================================ */
+
+    /// @notice Enters terminal global settlement mode for a market.
+    /// @dev Callable only by the market's settlementModule address.
+    function enterGlobalSettlement(MarketId id) external;
+
+    /// @notice Invalidates queued broker withdrawals during settlement sweeps.
+    /// @dev Callable only by the market's settlementModule address.
+    function invalidateBrokerWithdrawalQueue(MarketId id, address broker) external;
+
+    /* ============================================================================================ */
     /*                                      CURATOR FUNCTIONS                                       */
     /* ============================================================================================ */
 
@@ -249,6 +281,8 @@ interface IRLDCore {
     /// @param maintenanceMargin New maintenance margin
     /// @param liquidationCloseFactor New liquidation close factor
     /// @param fundingPeriod New funding period (1 day to 365 days)
+    /// @param badDebtPeriod New bad debt socialization period (1 day to 90 days)
+    /// @param decayRateWad New CDS decay parameter F (annualized WAD; 0 allowed for non-CDS)
     /// @param debtCap New debt cap in economic USD (0 = unlimited)
     /// @param minLiquidation New minimum liquidation amount in collateral decimals
     /// @param liquidationParams New liquidation parameters
@@ -259,6 +293,7 @@ interface IRLDCore {
         uint64 liquidationCloseFactor,
         uint32 fundingPeriod,
         uint32 badDebtPeriod,
+        uint96 decayRateWad,
         uint128 debtCap,
         uint128 minLiquidation,
         bytes32 liquidationParams

@@ -170,6 +170,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             normalizationFactor: 1e18, // Start at 1:1 (no accrued interest)
             totalDebt: 0, // No debt initially
             lastUpdateTimestamp: uint48(block.timestamp),
+            globalSettlementTimestamp: 0, // Settlement disabled at market genesis
             badDebt: 0 // No bad debt initially
         });
 
@@ -210,6 +211,14 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param id The market ID to check curator for
     modifier onlyCurator(MarketId id) {
         if (msg.sender != marketAddresses[id].curator) revert Unauthorized();
+        _;
+    }
+
+    /// @notice Modifier requiring caller to be the market settlement module.
+    /// @param id The market ID to check settlement authority for
+    modifier onlySettlementModule(MarketId id) {
+        if (msg.sender != marketAddresses[id].settlementModule)
+            revert Unauthorized();
         _;
     }
 
@@ -306,6 +315,10 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         int256 deltaCollateral,
         int256 deltaDebt
     ) external onlyLock onlyLockHolder {
+        if (marketStates[id].globalSettlementTimestamp != 0) {
+            revert MarketInGlobalSettlement();
+        }
+
         // Note: deltaCollateral is unused - collateral is managed by PrimeBroker
         // Parameter kept for interface compatibility
 
@@ -890,6 +903,52 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     }
 
     /* ============================================================================================ */
+    /*                                     GLOBAL SETTLEMENT                                        */
+    /* ============================================================================================ */
+
+    /// @notice Activates terminal global settlement mode for a CDS market.
+    /// @dev Once active, regular `modifyPosition` flow is halted for the market.
+    /// @dev Callable only by the market's configured settlementModule.
+    function enterGlobalSettlement(
+        MarketId id
+    ) external override onlySettlementModule(id) nonReentrant {
+        if (!marketExists[id]) revert InvalidMarket();
+
+        MarketState storage state = marketStates[id];
+        if (state.globalSettlementTimestamp != 0) {
+            revert InvalidParam("Settlement already active");
+        }
+
+        uint48 ts = uint48(block.timestamp);
+        state.globalSettlementTimestamp = ts;
+        emit GlobalSettlementEntered(id, ts);
+    }
+
+    /// @notice Invalidates queued broker withdrawals during settlement sweeps.
+    /// @dev Callable only by the market settlement module.
+    /// @dev Settlement module should invoke this as part of broker confiscation flow.
+    function invalidateBrokerWithdrawalQueue(
+        MarketId id,
+        address broker
+    ) external override onlySettlementModule(id) nonReentrant {
+        if (!marketExists[id]) revert InvalidMarket();
+        if (marketStates[id].globalSettlementTimestamp == 0) {
+            revert InvalidParam("Settlement not active");
+        }
+
+        MarketConfig memory config = _peekEffectiveConfig(id);
+        if (
+            config.brokerVerifier == address(0) ||
+            !IBrokerVerifier(config.brokerVerifier).isValidBroker(broker)
+        ) {
+            revert InvalidBroker(broker);
+        }
+
+        uint64 newEpoch = IPrimeBroker(broker).invalidateWithdrawalQueue();
+        emit BrokerWithdrawalQueueInvalidated(id, broker, newEpoch);
+    }
+
+    /* ============================================================================================ */
     /*                                         VIEW FUNCTIONS                                       */
     /* ============================================================================================ */
 
@@ -1043,6 +1102,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @param maintenanceMargin New maintenance margin (must be >= 100%)
     /// @param liquidationCloseFactor New liquidation close factor (must be > 0 and <= 100%)
     /// @param fundingPeriod New funding period (must be between 1 day and 365 days)
+    /// @param badDebtPeriod New bad debt socialization period (must be between 1 and 90 days)
+    /// @param decayRateWad New CDS decay parameter F in annualized WAD (0 allowed for non-CDS)
     /// @param debtCap New debt cap in economic USD (0 = unlimited)
     /// @param minLiquidation New minimum liquidation amount in collateral decimals
     /// @param liquidationParams New liquidation parameters
@@ -1053,6 +1114,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint64 liquidationCloseFactor,
         uint32 fundingPeriod,
         uint32 badDebtPeriod,
+        uint96 decayRateWad,
         uint128 debtCap,
         uint128 minLiquidation,
         bytes32 liquidationParams
@@ -1083,6 +1145,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             liquidationCloseFactor: liquidationCloseFactor,
             fundingPeriod: fundingPeriod,
             badDebtPeriod: badDebtPeriod,
+            decayRateWad: decayRateWad,
             debtCap: debtCap,
             minLiquidation: minLiquidation,
             liquidationParams: liquidationParams,
@@ -1096,6 +1159,8 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             maintenanceMargin,
             liquidationCloseFactor,
             fundingPeriod,
+            badDebtPeriod,
+            decayRateWad,
             debtCap,
             minLiquidation,
             liquidationParams,
@@ -1202,6 +1267,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             config.liquidationCloseFactor = pending.liquidationCloseFactor;
             config.fundingPeriod = pending.fundingPeriod;
             config.badDebtPeriod = pending.badDebtPeriod;
+            config.decayRateWad = pending.decayRateWad;
             config.debtCap = pending.debtCap;
             config.minLiquidation = pending.minLiquidation;
             config.liquidationParams = pending.liquidationParams;
@@ -1227,6 +1293,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
             config.liquidationCloseFactor = pending.liquidationCloseFactor;
             config.fundingPeriod = pending.fundingPeriod;
             config.badDebtPeriod = pending.badDebtPeriod;
+            config.decayRateWad = pending.decayRateWad;
             config.debtCap = pending.debtCap;
             config.minLiquidation = pending.minLiquidation;
             config.liquidationParams = pending.liquidationParams;

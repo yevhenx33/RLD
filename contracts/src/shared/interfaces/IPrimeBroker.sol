@@ -9,6 +9,13 @@ pragma solidity ^0.8.26;
 ///      and tracking functions (setActiveV4Position, setActiveTwammOrder) to register
 ///      positions for solvency calculations.
 interface IPrimeBroker {
+    struct WithdrawalRequest {
+        uint256 amount;
+        address recipient;
+        uint48 unlockAt;
+        uint64 queueEpoch;
+    }
+
     struct TwammOrderInfo {
         bytes32 marketId;
         bytes32 orderId;
@@ -75,6 +82,31 @@ interface IPrimeBroker {
         uint256 newBalance,
         bytes32 reason // keccak256("deposit"), keccak256("withdraw"), etc.
     );
+
+    /// @notice Emitted when collateral is queued for delayed withdrawal.
+    event WithdrawalRequested(
+        uint256 indexed withdrawalId,
+        address indexed recipient,
+        uint256 amount,
+        uint48 unlockAt,
+        uint64 queueEpoch
+    );
+
+    /// @notice Emitted when a queued withdrawal is cancelled by the broker owner/operator.
+    event WithdrawalCancelled(uint256 indexed withdrawalId);
+
+    /// @notice Emitted when queued collateral is released after the delay period.
+    event WithdrawalExecuted(
+        uint256 indexed withdrawalId,
+        address indexed recipient,
+        uint256 amount
+    );
+
+    /// @notice Emitted when a stale withdrawal entry is pruned.
+    event WithdrawalPruned(uint256 indexed withdrawalId, uint64 staleQueueEpoch);
+
+    /// @notice Emitted when settlement invalidates the active withdrawal queue epoch.
+    event WithdrawalQueueInvalidated(uint64 newQueueEpoch);
 
 
     /// @notice Sets an operator for the Prime Broker.
@@ -146,6 +178,34 @@ interface IPrimeBroker {
     /// @param recipient The address to receive the tokens
     /// @param amount The amount to withdraw
     function withdrawToken(address token, address recipient, uint256 amount) external;
+
+    /// @notice Requests delayed collateral withdrawal for CDS markets with active debt.
+    /// @param amount Amount of collateral to queue.
+    /// @param recipient Recipient for delayed release.
+    /// @return withdrawalId Unique request identifier.
+    function requestWithdrawal(
+        uint256 amount,
+        address recipient
+    ) external returns (uint256 withdrawalId);
+
+    /// @notice Cancels a queued withdrawal request.
+    function cancelWithdrawal(uint256 withdrawalId) external;
+
+    /// @notice Executes a queued withdrawal once delay has elapsed.
+    function executeWithdrawal(uint256 withdrawalId) external;
+
+    /// @notice Deletes stale queue entries after settlement invalidation.
+    function pruneWithdrawal(uint256 withdrawalId) external;
+
+    /// @notice Invalidates all active queue entries by bumping queue epoch.
+    /// @dev Only callable by RLDCore during settlement processing.
+    /// @return newQueueEpoch The incremented queue epoch.
+    function invalidateWithdrawalQueue() external returns (uint64 newQueueEpoch);
+
+    /// @notice Returns a queued withdrawal request by id.
+    function getWithdrawalRequest(
+        uint256 withdrawalId
+    ) external view returns (WithdrawalRequest memory request);
 
     /* ============================================================================================ */
     /*                                      BOND FREEZE                                            */

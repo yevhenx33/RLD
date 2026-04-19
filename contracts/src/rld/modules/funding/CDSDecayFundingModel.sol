@@ -7,7 +7,7 @@ import {IRLDCore, MarketId} from "../../../shared/interfaces/IRLDCore.sol";
 
 /// @title CDSDecayFundingModel
 /// @notice Implements continuous absolute rate decay for CDS markets.
-/// @dev Normalization Factor *= exp(-F * dt). Unlike Mark-Index divergence models, 
+/// @dev Normalization Factor *= exp(-F * dt). Unlike Mark-Index divergence models,
 ///      this applies a mathematically constant depreciation parameter independent of spot price.
 contract CDSDecayFundingModel is IFundingModel {
 
@@ -31,7 +31,7 @@ contract CDSDecayFundingModel is IFundingModel {
     /*                                      EXTERNAL FUNCTIONS                                     */
     /* ============================================================================================ */
 
-    /// @notice Calculates the deterministically decayed normalization factor based on F.
+    /// @notice Calculates deterministically decayed NF using per-market `decayRateWad`.
     /// @param marketId The market identifier
     /// @param core The RLDCore contract address
     /// @param currentNormalizationFactor The current normalization factor (WAD)
@@ -53,11 +53,10 @@ contract CDSDecayFundingModel is IFundingModel {
         }
         
         // 1. Fetch market configuration
-        // We architecturally interpret the 'fundingPeriod' framework slot as the 'F' parameter
         IRLDCore.MarketConfig memory config = IRLDCore(core).getMarketConfig(MarketId.wrap(marketId));
-        uint256 F = config.fundingPeriod; 
-        
-        // POKA-YOKE: Ensure market config is explicitly set before execution
+        uint256 F = uint256(config.decayRateWad);
+
+        // Ensure decay parameter is explicitly configured for CDS markets.
         if (F == 0) revert InvalidDecayParameter();
 
         // 2. Continuous State Decay (The Physics)

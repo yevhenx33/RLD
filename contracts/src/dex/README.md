@@ -5,6 +5,7 @@ It is written against the current implementation in this folder:
 
 - `GhostRouter.sol` (hub/vault/router)
 - `TwapEngine.sol` (TWAMM spoke engine)
+- `LimitEngine.sol` (Limit-order spoke engine)
 - `TwapEngineLens.sol` (read-only helper)
 - `interfaces/*`
 
@@ -24,6 +25,10 @@ It is written against the current implementation in this folder:
   - Maintains TWAMM stream state and O(1)-style accounting.
   - Never escrows user funds itself.
   - Commands vault transfers through router (`pullMarketFunds` / `pushMarketFunds`).
+- **Spoke (`LimitEngine`)**
+  - Maintains dormant limit buckets keyed by trigger price.
+  - Activates buckets only on router demand paths (`sync`, `netting`, `takeGhost`).
+  - Once activated, inventory is one-way merged into a global active pool per direction.
 
 Think of the engine as deterministic accounting + entitlement tracking, and the router as custody + execution.
 
@@ -337,4 +342,46 @@ forge test --match-path "test/twamm_v3/*.t.sol" -vv
   - `GlobalNettingExecuted`
   - `GhostSettledViaAMM`
   - `SwapExecuted`
+
+## 14) Limit Engine (Activation-Only Global Merge)
+
+`LimitEngine` is a second spoke implementing `IGhostEngine`.
+
+- User entrypoint:
+  - `submitLimitOrder(marketId, zeroForOne, triggerPrice, amountIn)`
+- User settlement:
+  - `claimTokens(marketId, orderId)`
+  - `cancelOrder(marketId, orderId)`
+- Router hooks:
+  - `syncAndFetchGhost`
+  - `applyNettingResult`
+  - `takeGhost`
+
+### 14.1 Trigger Semantics
+
+- `zeroForOne=true` (sell token0) activates when `spot >= triggerPrice`.
+- `zeroForOne=false` (sell token1) activates when `spot <= triggerPrice`.
+- Activation is **demand-triggered** and **one-way**:
+  - no autonomous background crossing loop,
+  - no deactivation after price reversion.
+
+### 14.2 Post-Activation Accounting
+
+- Activated inventory merges into one active pool per direction:
+  - `remainingInput`,
+  - `totalShares`,
+  - `earningsFactor`,
+  - `depletionFactor`.
+- `applyNettingResult` and `takeGhost`:
+  - consume sell-side inventory (`depletionFactor`),
+  - credit proceeds in buy token (`earningsFactor`).
+- Order claims/cancels are pro-rata via accumulator deltas.
+
+### 14.3 Current Trade-off
+
+- Design is intentionally simple and faithful to the selected model:
+  - global merge after activation,
+  - activation on demand.
+- Because activation scans indexed trigger buckets, gas scales with bucket count in a market/direction.
+  A future optimization can replace sparse array scans with bitmap/range-index traversal.
 

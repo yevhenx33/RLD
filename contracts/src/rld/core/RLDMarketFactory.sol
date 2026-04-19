@@ -156,6 +156,10 @@ contract RLDMarketFactory is ReentrancyGuard {
      * @param maintenanceMargin Maintenance collateralization ratio in WAD (e.g., 1.1e18 = 110%)
      * @param liquidationCloseFactor Max portion liquidatable in single tx in WAD (e.g., 0.5e18 = 50%)
      * @param liquidationModule Contract handling liquidation logic
+     * @param fundingModel Optional custom funding model (address(0) => factory default)
+     * @param fundingPeriod Optional initial funding period (0 => factory default)
+     * @param decayRateWad Optional CDS decay parameter F in annualized WAD (0 => unused/default)
+     * @param settlementModule Optional CDS settlement module (address(0) = standard RLP)
      * @param liquidationParams Encoded parameters for the liquidation module
      * @param spotOracle External oracle for spot price (e.g., Chainlink)
      * @param rateOracle External oracle for interest rates (e.g., Aave rates)
@@ -177,6 +181,10 @@ contract RLDMarketFactory is ReentrancyGuard {
         uint64 maintenanceMargin;
         uint64 liquidationCloseFactor;
         address liquidationModule;
+        address fundingModel;
+        uint32 fundingPeriod;
+        uint96 decayRateWad;
+        address settlementModule;
         bytes32 liquidationParams;
         // --- Oracle Configuration ---
         address spotOracle;
@@ -386,6 +394,14 @@ contract RLDMarketFactory is ReentrancyGuard {
         require(params.underlyingToken != address(0), "Invalid Underlying");
         require(params.collateralToken != address(0), "Invalid Collateral");
         require(params.liquidationModule != address(0), "Invalid LiqModule");
+        // Optional override; if provided must be non-zero and valid period constraints.
+        if (params.fundingPeriod != 0) {
+            require(
+                params.fundingPeriod >= 1 days &&
+                    params.fundingPeriod <= 365 days,
+                "Invalid period"
+            );
+        }
         //require(params.spotOracle != address(0), "Invalid SpotOracle");
         require(params.rateOracle != address(0), "Invalid RateOracle");
         require(params.curator != address(0), "Invalid Curator");
@@ -643,6 +659,13 @@ contract RLDMarketFactory is ReentrancyGuard {
         address verifier,
         address brokerFactory
     ) internal returns (MarketId marketId) {
+        address fundingModel = params.fundingModel == address(0)
+            ? STD_FUNDING_MODEL
+            : params.fundingModel;
+        uint32 fundingPeriod = params.fundingPeriod == 0
+            ? FUNDING_PERIOD
+            : params.fundingPeriod;
+
         // Compute canonical key (must match _precomputeId exactly)
         bytes32 canonicalKey = keccak256(
             abi.encode(
@@ -662,10 +685,11 @@ contract RLDMarketFactory is ReentrancyGuard {
             rateOracle: params.rateOracle,
             spotOracle: params.spotOracle,
             markOracle: GHOST_ORACLE,
-            fundingModel: STD_FUNDING_MODEL,
+            fundingModel: fundingModel,
             curator: params.curator,
             liquidationModule: params.liquidationModule,
-            positionToken: positionToken
+            positionToken: positionToken,
+            settlementModule: params.settlementModule
         });
 
         // Build config struct for RLDCore
@@ -673,11 +697,12 @@ contract RLDMarketFactory is ReentrancyGuard {
             minColRatio: params.minColRatio,
             maintenanceMargin: params.maintenanceMargin,
             liquidationCloseFactor: params.liquidationCloseFactor,
-            fundingPeriod: FUNDING_PERIOD,
+            fundingPeriod: fundingPeriod,
             badDebtPeriod: 7 days, // Default 7-day socialization period
             debtCap: type(uint128).max, // Unlimited by default (max sentinel = no cap)
             minLiquidation: 0, // Default 0. Curator must manually configure based on asset price.
             liquidationParams: params.liquidationParams,
+            decayRateWad: params.decayRateWad,
             brokerVerifier: verifier
         });
 
