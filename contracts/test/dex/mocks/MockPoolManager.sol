@@ -24,6 +24,11 @@ contract MockPoolManager {
         slot0Word = bytes32(uint256(sqrtPriceX96));
     }
 
+    function initialize(PoolKey memory, uint160 sqrtPriceX96) external returns (int24 tick) {
+        slot0Word = bytes32(uint256(sqrtPriceX96));
+        return 0;
+    }
+
     function setSwapOutputRatio(uint256 numerator, uint256 denominator) external {
         require(numerator > 0 && denominator > 0, "bad ratio");
         swapOutputNumerator = numerator;

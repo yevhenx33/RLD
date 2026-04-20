@@ -1,4 +1,8 @@
+import os
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 addrs = {
     'tBTC': '0x18084fba666a33d37592fa2633fd49a74dd93a88',
@@ -6,7 +10,7 @@ addrs = {
     'LBTC': '0x8236a87084f8b84306f72007f36f2618a5634494'
 }
 
-RPC_URL = "https://eth-mainnet.g.alchemy.com/v2/iEA4zlQuXkdZi0FNY5WrC"
+RPC_URL = os.getenv("MAINNET_RPC_URL", "http://localhost:8545")
 
 for name, a in addrs.items():
     payload = {"jsonrpc": "2.0", "method": "eth_call", "params": [{"to": a, "data": "0x313ce567"}, "latest"], "id": 1} # decimals()

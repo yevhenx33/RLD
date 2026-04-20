@@ -1,10 +1,14 @@
+import os
 import clickhouse_connect
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 ch = clickhouse_connect.get_client(host='localhost', port=8123)
 df = ch.query_df("SELECT DISTINCT substring(topic1, 27) as vault FROM fluid_events WHERE topic1 != ''")
 
-RPC_URL = "https://eth-mainnet.g.alchemy.com/v2/iEA4zlQuXkdZi0FNY5WrC"
+RPC_URL = os.getenv("MAINNET_RPC_URL", "http://localhost:8545")
 
 # Fluid Vaults usually have functions like "supplyToken()" and "borrowToken()"
 # Let's check signatures: supplyToken() -> 0x82b9ce70, borrowToken() -> 0xac65f02c,

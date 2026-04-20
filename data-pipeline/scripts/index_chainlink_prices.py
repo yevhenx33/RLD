@@ -13,12 +13,16 @@ AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt
   - data:   updatedAt (uint256)
 """
 
+import os
 import requests
 import time
 import subprocess
 import clickhouse_connect
+from dotenv import load_dotenv
 
-RPC = "https://eth-mainnet.g.alchemy.com/v2/iEA4zlQuXkdZi0FNY5WrC"
+load_dotenv()
+
+RPC = os.getenv("MAINNET_RPC_URL", "http://localhost:8545")
 ANSWER_UPDATED_TOPIC = "0x0559884fd3a460db3073b7fc896cc77986f16e378210ded43186175bf646fc5f"
 
 # Chainlink proxy addresses (stable, never change)

@@ -1,8 +1,12 @@
+import os
 import requests
 import json
 import clickhouse_connect
+from dotenv import load_dotenv
 
-RPC_URL = "https://eth-mainnet.g.alchemy.com/v2/iEA4zlQuXkdZi0FNY5WrC"
+load_dotenv()
+
+RPC_URL = os.getenv("MAINNET_RPC_URL", "http://localhost:8545")
 
 ch = clickhouse_connect.get_client(host='localhost', port=8123)
 res = ch.query_df("SELECT DISTINCT substring(topic2, 27) as addr FROM fluid_events WHERE topic2 != ''")
