@@ -715,8 +715,8 @@ export default function Markets() {
 
   // Shared chart controls
   const controls = useChartControls({
-    defaultRange: "1Y",
-    defaultDays: 365,
+    defaultRange: "2Y",
+    defaultDays: 730,
     defaultResolution: "1D",
   });
   const { appliedStart, appliedEnd, resolution } = controls;
