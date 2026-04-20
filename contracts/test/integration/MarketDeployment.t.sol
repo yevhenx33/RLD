@@ -66,8 +66,8 @@ contract MarketDeploymentTest is Test {
             address(0x4000)       // BrokerRouter Mock
         );
 
-        // Core args: factory, poolManager, twamm
-        core = new RLDCore(address(factory), address(poolManager), address(0));
+        // Core args: factory, poolManager
+        core = new RLDCore(address(factory), address(poolManager));
         factory.initializeCore(address(core));
         ghostOracle.transferOwnership(address(factory));
     }

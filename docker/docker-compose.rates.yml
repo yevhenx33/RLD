@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-# Aave V3 Rates Indexer (standalone)
+# Rates/Analytics Stack (Legacy Path)
 # ═══════════════════════════════════════════════════════════════
-# Scrapes live Aave V3 rates from mainnet, serves via /rates API.
-# Runs independently of the simulation stack — persistent across
-# simulation restarts.
+# DEPRECATED FOR V2 LAUNCH.
+# Use docker/docker-compose.infra.yml for launch-critical rates + bot.
+# Keep this file for optional analytics experiments only.
 #
 #  Usage:
 #    docker compose -f docker/docker-compose.rates.yml up -d
@@ -17,6 +17,7 @@
 
 services:
   rates-indexer:
+    profiles: ["analytics"]
     build:
       context: ..
       dockerfile: backend/Dockerfile.rates
@@ -42,6 +43,7 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
 
   fluid-indexer:
+    profiles: ["analytics"]
     build:
       context: ..
       dockerfile: data-pipeline/Dockerfile.fluid
@@ -56,4 +58,11 @@ services:
     restart: unless-stopped
 
 volumes:
-  rates-data: # Persistent SQLite DB for Aave rates
+  rates-data:
+    name: reth_rates-data
+    external: true
+
+networks:
+  default:
+    name: rld_shared
+    external: true

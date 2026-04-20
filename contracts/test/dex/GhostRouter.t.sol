@@ -133,6 +133,53 @@ contract GhostRouterIntegrationTest is Test {
         router.registerEngine(address(0xBEEF));
     }
 
+    function test_onlyFeeControllerOrOwnerCanSetMarketTradingFeeBps() external {
+        bytes32 marketId = router.initializeMarket(key, address(oracle));
+        address curator = address(0xB0B);
+        router.setMarketFeeController(marketId, curator);
+
+        vm.expectRevert(GhostRouter.InvalidFeeBps.selector);
+        router.setMarketTradingFeeBps(marketId, 10_001);
+
+        vm.prank(address(0xDEAD));
+        vm.expectRevert(GhostRouter.UnauthorizedFeeController.selector);
+        router.setMarketTradingFeeBps(marketId, 100);
+
+        vm.prank(curator);
+        router.setMarketTradingFeeBps(marketId, 100);
+        assertEq(router.marketTradingFeeBps(marketId), 100, "fee bps mismatch");
+    }
+
+    function test_swapAppliesMarketTradingFeeAndControllerCanClaim() external {
+        bytes32 marketId = router.initializeMarket(key, address(oracle));
+        oracle.setPrice(marketId, 1e18);
+
+        address curator = address(0xB0B);
+        router.setMarketFeeController(marketId, curator);
+        vm.prank(curator);
+        router.setMarketTradingFeeBps(marketId, 100); // 1%
+
+        engine.setGhost(0, 1_000e18);
+        engine.setTakeBehavior(true, 0, 0);
+        _fundSwapPath(100e18, 1_000e18);
+
+        vm.prank(taker);
+        uint256 amountOut = router.swap(marketId, true, 10e18, 1);
+        assertEq(amountOut, 9.9e18, "fee-adjusted output mismatch");
+        assertEq(engine.lastTakeAmountIn(), 9.9e18, "engine should receive net input");
+
+        address tokenIn = token0;
+        assertEq(router.accruedTradingFees(marketId, tokenIn), 0.1e18, "accrued fee mismatch");
+
+        MockERC20 t0 = _token0Contract();
+        uint256 curatorBefore = t0.balanceOf(curator);
+        vm.prank(curator);
+        router.claimTradingFees(marketId, tokenIn, curator, 0.1e18);
+
+        assertEq(router.accruedTradingFees(marketId, tokenIn), 0, "fees should be fully claimed");
+        assertEq(t0.balanceOf(curator), curatorBefore + 0.1e18, "claim transfer mismatch");
+    }
+
     function test_swapSurvivesRevertingEngineAndFallsBackToV4() external {
         bytes32 marketId = router.initializeMarket(key, address(oracle));
         oracle.setPrice(marketId, 2e18);

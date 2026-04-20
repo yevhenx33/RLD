@@ -1,16 +1,14 @@
 # ═══════════════════════════════════════════════════════════════
-# Telegram Monitor Bot (standalone)
+# Telegram Monitor Bot (compatibility compose)
 # ═══════════════════════════════════════════════════════════════
-# Polls Telegram for /start and /status commands, sends hourly
-# reports with rates, block lag, and ETH price.
+# Preferred launch path: docker-compose.infra.yml (contains monitor-bot).
+# Keep this file for bot-only operations and backward compatibility.
 #
-#  Usage:
-#    docker compose -f docker/docker-compose.bot.yml up -d
+# Usage:
+#   docker compose -f docker/docker-compose.bot.yml --env-file docker/.env up -d
 #
-#  Health:
-#    http://localhost:8082/
-#
-#  Requires: rates-indexer running on port 8081
+# Health:
+#   http://localhost:${BOT_PORT:-8083}/
 # ═══════════════════════════════════════════════════════════════
 
 services:
@@ -19,7 +17,7 @@ services:
       context: ..
       dockerfile: backend/Dockerfile.bot
     ports:
-      - "${BOT_PORT:-8082}:8080"
+      - "127.0.0.1:8083:8080"
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
@@ -31,7 +29,7 @@ services:
       - ./bot-data:/data
     restart: unless-stopped
     networks:
-      - docker_default
+      - rld_shared
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
       interval: 30s
@@ -40,5 +38,6 @@ services:
       retries: 3
 
 networks:
-  docker_default:
+  rld_shared:
+    name: rld_shared
     external: true

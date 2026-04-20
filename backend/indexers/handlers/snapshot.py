@@ -24,6 +24,19 @@ class _DecimalEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def _deployment_index_price_fallback() -> float:
+    """Read deployment oracle index price (WAD) as a float fallback."""
+    try:
+        import bootstrap
+        cfg = bootstrap.load_deployment_json()
+        raw = cfg.get("oracle_index_price_wad")
+        if raw in (None, "", "0", 0):
+            return 0.0
+        return int(raw) / 1e18
+    except Exception:
+        return 0.0
+
+
 async def materialize_snapshot(
     conn: asyncpg.Connection,
     market_id: str,
@@ -57,6 +70,22 @@ async def materialize_snapshot(
     t1_balance = float(latest["token1_balance"] or 0)
     fg0 = str(latest["fee_growth_global0"] or "0")
     fg1 = str(latest["fee_growth_global1"] or "0")
+
+    # Some genesis-style deployments start from pre-seeded oracle state without a
+    # replayable RateUpdated event. Keep index price non-zero via DB/deployment
+    # fallback so snapshot consumers (dashboard, /api/latest) stay informative.
+    if index_price <= 0:
+        idx_row = await conn.fetchrow("""
+            SELECT index_price
+            FROM block_states
+            WHERE market_id = $1 AND index_price IS NOT NULL
+            ORDER BY block_number DESC
+            LIMIT 1
+        """, market_id)
+        if idx_row and idx_row["index_price"] is not None:
+            index_price = float(idx_row["index_price"])
+        else:
+            index_price = _deployment_index_price_fallback()
 
     # ── Volume 24H ──
     cutoff = block_timestamp - 86400
@@ -162,6 +191,7 @@ async def materialize_snapshot(
         "pool": {
             "poolId": pool_id,
             "markPrice": mark_price,
+            "indexPrice": index_price,
             "tick": tick,
             "liquidity": liquidity,
             "sqrtPriceX96": sqrt_price_x96,

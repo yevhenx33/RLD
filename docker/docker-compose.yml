@@ -1,6 +1,14 @@
 # ═══════════════════════════════════════════════════════════════
-# RLD Simulation Stack
+# RLD Simulation Stack (Legacy Anvil Path)
 # ═══════════════════════════════════════════════════════════════
+# DEPRECATED FOR V2 LAUNCH:
+#   This file is retained only for temporary Anvil-based genesis
+#   generation during restart-reth bootstrap internals.
+#   Canonical launch surface:
+#     - docker/reth/docker-compose.reth.yml
+#     - docker/docker-compose.infra.yml
+#     - docker/docker-compose.frontend.yml
+#
 # Anvil runs EXTERNALLY. Set RPC_URL in .env pointing to it.
 #
 #  Usage:
@@ -45,6 +53,7 @@ services:
       - DEPLOYMENT_JSON=/config/deployment.json
       - POLL_INTERVAL=${POLL_INTERVAL:-2}
       - BATCH_SIZE=${BATCH_SIZE:-100}
+      - INDEXER_ADMIN_TOKEN=${INDEXER_ADMIN_TOKEN:-}
     volumes:
       - ./deployment.json:/config/deployment.json:ro
     ports:
@@ -72,6 +81,7 @@ services:
       - ../contracts/src:/workspace/contracts/src
     environment:
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
+      - FORK_BLOCK=${FORK_BLOCK:-24660000}
       - ETH_RPC_URL=${ETH_RPC_URL}
       - DEPLOYER_KEY=${DEPLOYER_KEY}
       - USER_A_KEY=${USER_A_KEY}
@@ -79,7 +89,7 @@ services:
       - USER_C_KEY=${USER_C_KEY}
       - MM_KEY=${MM_KEY}
       - CHAOS_KEY=${CHAOS_KEY}
-      - API_URL=${API_URL:-http://rates-indexer:8080}
+      - API_URL=${API_URL:-http://host.docker.internal:5000}
       - API_KEY=${API_KEY}
       - DATABASE_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
       - SKIP_USER_SETUP=${SKIP_USER_SETUP:-true}
@@ -101,7 +111,7 @@ services:
       - PRIVATE_KEY=${MM_KEY}
       - MM_KEY=${MM_KEY}
       - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
-      - API_URL=${API_URL:-http://rates-indexer:8080}
+      - API_URL=${API_URL:-http://host.docker.internal:5000}
       - API_KEY=${API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -139,3 +149,8 @@ services:
 
 volumes:
   postgres-data: # Persistent PostgreSQL data
+
+networks:
+  default:
+    name: rld_shared
+    external: true

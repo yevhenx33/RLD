@@ -1,100 +1,53 @@
-# RLD Protocol — Documentation Index
+# RLD Docs Index
 
-Central index linking all component documentation across the repository. Each doc lives alongside its code — this page is the map.
+Operational docs are now aligned to a single Reth-only launch baseline.
 
----
+## Core Runbooks
 
-## Architecture
+| Area | Document |
+|---|---|
+| Docker/infra operations | [`docker/README.md`](../docker/README.md) |
+| Backend services + API contract | [`backend/README.md`](../backend/README.md) |
+| Contracts/tooling | [`contracts/README.md`](../contracts/README.md) |
+| Frontend app | [`frontend/README.md`](../frontend/README.md) |
+| Dashboard operations | [`docker/dashboard/README.md`](../docker/dashboard/README.md) |
 
-| Document | Description |
-|----------|-------------|
-| [Simulation Deployment](../docker/README.md) | Docker stack, services, networking, restart, env vars, CI/CD |
-| [Protocol Docs (VitePress)](../docs-site/index.md) | Public-facing documentation site at [docs.rld.fi](https://docs.rld.fi) |
+## Canonical Launch Surface
 
----
+Use only these compose files for V2 launch operations:
 
-## Backend Services
+- `docker/reth/docker-compose.reth.yml`
+- `docker/docker-compose.infra.yml`
+- `docker/docker-compose.frontend.yml`
 
-| Document | Description |
-|----------|-------------|
-| [Backend Overview](../backend/README.md) | All 3 Python services: sim indexer, rates indexer, Telegram bot |
-| [GraphQL API Reference](../backend/api/GRAPHQL_API.md) | Full query catalog, types, integration patterns, examples |
+Legacy compose paths are retained for compatibility but are not part of launch runbooks.
 
----
+## Quick Operations
 
-## Smart Contracts
-
-| Document | Description |
-|----------|-------------|
-| [Contracts README](../contracts/README.md) | Solidity contracts, build, test, deploy |
-| [Differential Fuzzing](../contracts/test/DIFFERENTIAL_FUZZING.md) | Fuzz testing methodology and results |
-
----
-
-## Frontend
-
-| Document | Description |
-|----------|-------------|
-| [Frontend README](../frontend/README.md) | React app structure, build, dev server |
-| [Design System](../frontend/DESIGN_SYSTEM.md) | CSS tokens, typography, color palette, components |
-
----
-
-## Simulation Infrastructure
-
-| Document | Description |
-|----------|-------------|
-| [Docker Deployment](../docker/README.md) | Full simulation stack setup and operations |
-| [Daemons](../docker/daemons/README.md) | MM daemon (rate sync, arb, clear auctions) + chaos trader |
-| [Dashboard](../docker/dashboard/README.md) | Infrastructure monitoring dashboard (port 8090) |
-
----
-
-## Operational Guides
-
-| Document | Description |
-|----------|-------------|
-| [Scripts README](../scripts/README.md) | Deployment and utility scripts |
-| [Rates Indexer](../indexer/README.md) | Standalone rates indexer documentation |
-
----
-
-## Quick Links
-
-### Starting a Simulation
 ```bash
-./docker/restart.sh              # Full clean restart
-./docker/restart.sh --no-build   # Fast restart (skip image rebuild)
+# Start always-on infra
+docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
+
+# Start/rebuild simulation (Reth)
+bash docker/reth/restart-reth.sh --fresh --with-users
+
+# Start frontend
+docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -d
 ```
 
-### Building Frontend
+## Health Checks
+
 ```bash
-cd frontend && npm run build     # Production build → dist/
+curl -sf http://localhost:8080/healthz
+curl -sf http://localhost:8081/
+curl -sf http://localhost:8083/
+curl -sf https://rld.fi/graphql
+curl -sf https://rld.fi/api/rates
+curl -sf https://rld.fi/rates-graphql
 ```
 
-### Running Tests
-```bash
-cd contracts && forge test       # Solidity tests
-cd frontend && npm run lint      # ESLint
-```
+## Scope Notes
 
-### Checking Service Health
-```bash
-curl http://localhost:8080/health   # Simulation indexer
-curl http://localhost:8081/         # Rates indexer
-curl http://localhost:8082/         # Monitor bot
-```
-
-### Key API Endpoints
-```bash
-# Simulation indexer (GraphQL)
-curl -X POST http://localhost:8080/graphql \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"{ latest { blockNumber market { totalDebt } pool { markPrice } } }"}'
-
-# Rates
-curl http://localhost:8081/rates?symbol=USDC&limit=10
-
-# Market info (REST)
-curl http://localhost:8080/api/market-info
-```
+- Reth simulation + rates + frontend + monitor bot are launch-critical.
+- `data-pipeline` analytics docs remain available but are non-launch-critical for V2.
+- GhostRouter/TWAP launch requires an in-house arb/route solver; do not assume external arbitrage keeps execution optimal.

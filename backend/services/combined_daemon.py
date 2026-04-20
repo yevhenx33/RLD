@@ -42,7 +42,7 @@ from dotenv import load_dotenv
 # Add backend to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.v4_pool import V4PoolReader
-from services.v4_swap import V4SwapExecutor
+from services.v4_swap import V4SwapExecutor, GhostRouterSwapExecutor
 
 # Configure logging with colors
 class ColoredFormatter(logging.Formatter):
@@ -75,11 +75,12 @@ load_dotenv("../.env")
 
 # Configuration — keys from env, contract addresses from indexer API
 RPC_URL = os.getenv("RPC_URL", "http://localhost:8545")
-API_URL = os.getenv("API_URL", "http://rates-indexer:8080")
+API_URL = os.getenv("API_URL", "http://127.0.0.1:5000")
 INDEXER_URL = os.getenv("INDEXER_URL", "http://indexer:8080")
 API_KEY = os.getenv("API_KEY")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")  # MM user key for swaps
 ORACLE_ADMIN_KEY = os.getenv("ORACLE_ADMIN_KEY", PRIVATE_KEY)  # Deployer key for oracle updates
+INDEXER_TIMEOUT = float(os.getenv("INDEXER_TIMEOUT", "3"))
 
 # These will be set by load_config_from_indexer()
 MOCK_ORACLE_ADDR = None
@@ -88,15 +89,25 @@ POSITION_TOKEN = None
 TWAMM_HOOK = None
 RLD_CORE = None
 MARKET_ID = None
+GHOST_MARKET_ID = None
 SWAP_ROUTER = None
+GHOST_ROUTER = None
 AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"       # Mainnet Aave V3 Pool (fork constant)
 UNDERLYING_TOKEN = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # Mainnet USDC (fork constant)
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
+
+def _is_zero_address(addr: str | None) -> bool:
+    if not addr:
+        return True
+    normalized = addr.lower()
+    return normalized in ("0x", "0x0", ZERO_ADDRESS.lower())
 
 
 def load_config_from_indexer():
     """Poll GET /config on the indexer until deployer has seeded the market."""
     global MOCK_ORACLE_ADDR, WAUSDC, POSITION_TOKEN, TWAMM_HOOK
-    global RLD_CORE, MARKET_ID, SWAP_ROUTER, AAVE_POOL, UNDERLYING_TOKEN
+    global RLD_CORE, MARKET_ID, GHOST_MARKET_ID, SWAP_ROUTER, GHOST_ROUTER, AAVE_POOL, UNDERLYING_TOKEN
 
     logger.info("⏳ Waiting for deployment config from indexer at %s/config ...", INDEXER_URL)
     while True:
@@ -107,18 +118,32 @@ def load_config_from_indexer():
                 MOCK_ORACLE_ADDR = cfg.get("mock_oracle")
                 WAUSDC = cfg.get("wausdc")
                 POSITION_TOKEN = cfg.get("position_token") or cfg.get("wrlp")
-                TWAMM_HOOK = cfg.get("twamm_hook")
+                raw_hook = cfg.get("twamm_hook") or cfg.get("twammHook")
+                if _is_zero_address(raw_hook):
+                    TWAMM_HOOK = ZERO_ADDRESS
+                else:
+                    TWAMM_HOOK = Web3.to_checksum_address(raw_hook)
                 RLD_CORE = cfg.get("rld_core")
-                MARKET_ID = cfg.get("market_id")
+                MARKET_ID = cfg.get("market_id") or cfg.get("marketId")
+                # GhostRouter market ID is PoolId (pool_id), not RLD market_id.
+                GHOST_MARKET_ID = cfg.get("pool_id") or cfg.get("poolId") or MARKET_ID
                 SWAP_ROUTER = cfg.get("swap_router")
+                GHOST_ROUTER = cfg.get("ghost_router") or cfg.get("ghostRouter")
                 ext = cfg.get("external_contracts", {})
                 AAVE_POOL = ext.get("aave_pool")
                 UNDERLYING_TOKEN = ext.get("usdc")
                 logger.info("✅ Config loaded from indexer:")
                 logger.info("   MARKET_ID=%s", MARKET_ID)
+                logger.info("   GHOST_MARKET_ID=%s", GHOST_MARKET_ID)
                 logger.info("   MOCK_ORACLE=%s", MOCK_ORACLE_ADDR)
                 logger.info("   WAUSDC=%s  POSITION_TOKEN=%s", WAUSDC, POSITION_TOKEN)
-                logger.info("   TWAMM_HOOK=%s  SWAP_ROUTER=%s", TWAMM_HOOK, SWAP_ROUTER)
+                logger.info(
+                    "   TWAMM_HOOK=%s (clear=%s)  GHOST_ROUTER=%s  SWAP_ROUTER=%s",
+                    TWAMM_HOOK,
+                    "enabled" if not _is_zero_address(TWAMM_HOOK) else "disabled",
+                    GHOST_ROUTER,
+                    SWAP_ROUTER,
+                )
                 return cfg
             else:
                 logger.info("   Indexer returned %d — deployer not done yet, retrying...", resp.status_code)
@@ -216,41 +241,90 @@ JTM_HOOK_ABI = [
 ]
 
 
-def fetch_latest_rate():
-    """Fetch latest USDC borrow rate — tries GraphQL first, REST second, on-chain fallback."""
-    # 1. Try GraphQL latestRates (most reliable — single query)
+def _normalize_rate_fraction(raw_rate):
+    """
+    Normalize to APY fraction r (e.g. 14% => 0.14).
+    Supports both:
+      - Envio style: 0.1399
+      - Legacy percent: 13.99
+    """
+    if raw_rate is None:
+        return None
     try:
-        gql_query = '{"query":"{ latestRates { usdc } }"}'
-        response = requests.post(
-            f"{API_URL}/graphql",
-            data=gql_query,
-            headers={"Content-Type": "application/json"},
-            timeout=5,
-        )
-        response.raise_for_status()
-        data = response.json()
-        usdc_rate = data.get("data", {}).get("latestRates", {}).get("usdc")
-        if usdc_rate:
-            logger.info(f"📡 Live USDC rate from indexer (GraphQL): {usdc_rate:.4f}%")
-            return usdc_rate
+        r = float(raw_rate)
     except Exception:
-        pass
+        return None
+    if r < 0:
+        return None
+    if r > 1:
+        return r / 100.0
+    return r
 
-    # 2. Try REST /rates endpoint
+
+def fetch_latest_rate():
+    """Fetch latest USDC borrow rate fraction r, preferring Envio/data-pipeline."""
+    graphql_endpoints = [f"{API_URL}/graphql", f"{API_URL}/envio-graphql"]
+
+    # 1) Envio/data-pipeline GraphQL
+    envio_query = {
+        "query": '{ historicalRates(symbols:["USDC"], resolution:"1H", limit:1){ apy timestamp symbol } }'
+    }
+    for endpoint in graphql_endpoints:
+        try:
+            response = requests.post(endpoint, json=envio_query, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            rows = data.get("data", {}).get("historicalRates", [])
+            if rows:
+                rate_fraction = _normalize_rate_fraction(rows[0].get("apy"))
+                if rate_fraction is not None:
+                    logger.info(
+                        "📡 Live USDC rate from Envio: r=%.6f (~%.4f%%)",
+                        rate_fraction,
+                        rate_fraction * 100,
+                    )
+                    return rate_fraction
+        except Exception:
+            pass
+
+    # 2) Legacy GraphQL latestRates
+    legacy_query = {"query": "{ latestRates { usdc } }"}
+    for endpoint in graphql_endpoints:
+        try:
+            response = requests.post(endpoint, json=legacy_query, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            usdc_rate = data.get("data", {}).get("latestRates", {}).get("usdc")
+            rate_fraction = _normalize_rate_fraction(usdc_rate)
+            if rate_fraction is not None:
+                logger.info(
+                    "📡 Live USDC rate (legacy GraphQL): r=%.6f (~%.4f%%)",
+                    rate_fraction,
+                    rate_fraction * 100,
+                )
+                return rate_fraction
+        except Exception:
+            pass
+
+    # 3) Legacy REST /rates endpoint
     try:
         headers = {"X-API-Key": API_KEY} if API_KEY else {}
         response = requests.get(f"{API_URL}/rates?limit=1&symbol=USDC", headers=headers, timeout=5)
         response.raise_for_status()
         data = response.json()
         if data and len(data) > 0:
-            apy = data[0].get("apy", 0)
-            if apy:
-                logger.info(f"📡 Live USDC rate from indexer (REST): {apy:.4f}%")
-                return apy
+            rate_fraction = _normalize_rate_fraction(data[0].get("apy"))
+            if rate_fraction is not None:
+                logger.info(
+                    "📡 Live USDC rate (legacy REST): r=%.6f (~%.4f%%)",
+                    rate_fraction,
+                    rate_fraction * 100,
+                )
+                return rate_fraction
     except Exception:
         pass
 
-    # 3. Fallback: read rate directly from Aave V3 on-chain (STALE on Reth fork!)
+    # 4) Fallback: read rate directly from Aave V3 on-chain (STALE on Reth fork!)
     try:
         w3 = Web3(Web3.HTTPProvider(RPC_URL))
         AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
@@ -278,16 +352,20 @@ def fetch_latest_rate():
         pool = w3.eth.contract(address=Web3.to_checksum_address(AAVE_POOL), abi=POOL_ABI)
         reserve_data = pool.functions.getReserveData(Web3.to_checksum_address(USDC_ADDR)).call()
         variable_borrow_rate_ray = reserve_data[4]
-        apy_percent = variable_borrow_rate_ray / 1e25
-        logger.warning(f"⚠️ Using STALE on-chain Aave rate: {apy_percent:.4f}% (indexer unavailable)")
-        return apy_percent
+        rate_fraction = variable_borrow_rate_ray / 1e27
+        logger.warning(
+            "⚠️ Using STALE on-chain Aave rate: r=%.6f (~%.4f%%)",
+            rate_fraction,
+            rate_fraction * 100,
+        )
+        return rate_fraction
     except Exception as e:
         logger.error(f"All rate sources failed: {e}")
         return None
 
 
-def apy_to_ray(apy_percent):
-    return int(apy_percent / 100 * 1e27)
+def rate_fraction_to_ray(rate_fraction):
+    return int(rate_fraction * 1e27)
 
 
 class CombinedDaemon:
@@ -332,18 +410,25 @@ class CombinedDaemon:
             TWAMM_HOOK, WAUSDC
         )
         
-        # V4 swap executor (replaces forge script LifecycleSwap)
-        if SWAP_ROUTER:
+        # Swap executor (prefer GhostRouter for hookless deployments)
+        if not _is_zero_address(GHOST_ROUTER) and GHOST_MARKET_ID:
+            self.swap_executor = GhostRouterSwapExecutor(
+                self.w3, self.token0, self.token1, GHOST_ROUTER, GHOST_MARKET_ID
+            )
+            logger.info("ℹ️  Swap path: GhostRouter (%s)", GHOST_ROUTER)
+        elif SWAP_ROUTER:
             self.swap_executor = V4SwapExecutor(
                 self.w3, self.token0, self.token1,
                 TWAMM_HOOK, SWAP_ROUTER
             )
+            logger.info("ℹ️  Swap path: LifecycleSwapRouter (%s)", SWAP_ROUTER)
         else:
             self.swap_executor = None
-            logger.warning("⚠️  SWAP_ROUTER not set — swaps will be skipped")
+            logger.warning("⚠️  No swap path configured (GhostRouter/SwapRouter missing) — swaps will be skipped")
         
         # JTM Hook contract for clear auctions
-        if TWAMM_HOOK:
+        self.jtm_enabled = not _is_zero_address(TWAMM_HOOK)
+        if self.jtm_enabled:
             self.jtm_hook = self.w3.eth.contract(
                 address=Web3.to_checksum_address(TWAMM_HOOK),
                 abi=JTM_HOOK_ABI
@@ -359,12 +444,14 @@ class CombinedDaemon:
         else:
             self.jtm_hook = None
             self.pool_key = None
+            logger.info("ℹ️  Hookless mode: JTM clear-auction loop disabled")
         
         self.running = True
         self.trades = 0
         self.clears = 0
         self.syncs = 0
         self.mark_price = 0.0
+        self.price_source = "onchain"
     
     # ── Timestamp Sync ────────────────────────────────────────────
 
@@ -526,6 +613,67 @@ class CombinedDaemon:
         except Exception as e:
             logger.warning(f"Index price fetch failed: {e}")
             return None
+
+    def get_prices_from_indexer(self):
+        """
+        Get mark/index from the event indexer API.
+
+        Returns:
+            (index_price, mark_price, source_label)
+        """
+        # Primary path: /api/latest (snapshot + top-level mark/index mirrors)
+        try:
+            response = requests.get(f"{INDEXER_URL}/api/latest", timeout=INDEXER_TIMEOUT)
+            if response.status_code == 200:
+                payload = response.json()
+
+                index_raw = payload.get("index_price")
+                mark_raw = payload.get("mark_price")
+
+                if index_raw is None:
+                    market = payload.get("market")
+                    if isinstance(market, dict):
+                        index_raw = market.get("indexPrice", market.get("index_price"))
+
+                if mark_raw is None:
+                    pool = payload.get("pool")
+                    if isinstance(pool, dict):
+                        mark_raw = pool.get("markPrice", pool.get("mark_price"))
+
+                index_price = None
+                mark_price = None
+                if index_raw not in (None, "", "0", 0):
+                    try:
+                        index_price = float(index_raw)
+                    except (TypeError, ValueError):
+                        index_price = None
+                if mark_raw not in (None, "", "0", 0):
+                    try:
+                        mark_price = float(mark_raw)
+                    except (TypeError, ValueError):
+                        mark_price = None
+
+                if index_price is not None or mark_price is not None:
+                    return index_price, mark_price, "indexer:/api/latest"
+        except Exception:
+            pass
+
+        # Secondary path: /api/status
+        try:
+            response = requests.get(f"{INDEXER_URL}/api/status", timeout=INDEXER_TIMEOUT)
+            if response.status_code == 200:
+                payload = response.json()
+                if payload.get("status") == "ok":
+                    index_raw = payload.get("index_price")
+                    mark_raw = payload.get("mark_price")
+                    index_price = float(index_raw) if index_raw not in (None, "", "0", 0) else None
+                    mark_price = float(mark_raw) if mark_raw not in (None, "", "0", 0) else None
+                    if index_price is not None or mark_price is not None:
+                        return index_price, mark_price, "indexer:/api/status"
+        except Exception:
+            pass
+
+        return None, None, "indexer:unavailable"
     
     def get_mark_price(self) -> float:
         """Get mark price from V4 pool via direct extsload."""
@@ -578,14 +726,16 @@ class CombinedDaemon:
     def cycle(self):
         """Run one combined cycle."""
         # 1. Fetch and update rate from API
-        apy = fetch_latest_rate()
-        if apy:
-            rate_ray = apy_to_ray(apy)
+        rate_fraction = fetch_latest_rate()
+        if rate_fraction is not None:
+            rate_ray = rate_fraction_to_ray(rate_fraction)
             self.update_oracle(rate_ray)
         
-        # 2. Get prices
-        index_price = self.get_index_price()
-        mark_price = self.get_mark_price()
+        # 2. Get prices (prefer event-indexer path, fallback to direct on-chain)
+        idx_from_indexer, mark_from_indexer, idx_source = self.get_prices_from_indexer()
+        index_price = idx_from_indexer if idx_from_indexer is not None else self.get_index_price()
+        mark_price = mark_from_indexer if mark_from_indexer is not None else self.get_mark_price()
+        self.price_source = idx_source if (idx_from_indexer is not None or mark_from_indexer is not None) else "onchain"
         self.mark_price = mark_price or 0.0
         
         if index_price is None or mark_price is None:
@@ -611,7 +761,11 @@ class CombinedDaemon:
         
         # 4. Log status
         status = "✅" if abs(spread) < MM_THRESHOLD else ("📈" if spread < 0 else "📉")
-        logger.info(f"📡 Index=${index_price:.4f} | 📊 Mark=${mark_price:.4f} | NF={norm_factor_display:.10f} | Spread={spread_bps:+.2f}bps {status}")
+        logger.info(
+            f"📡 Index=${index_price:.4f} | 📊 Mark=${mark_price:.4f} | "
+            f"NF={norm_factor_display:.10f} | Spread={spread_bps:+.2f}bps {status} "
+            f"[src={self.price_source}]"
+        )
 
         
         # 5. Execute arb if needed - use precise calculation
@@ -647,6 +801,7 @@ class CombinedDaemon:
         print("═" * 64)
         print(f"   Oracle:      {MOCK_ORACLE_ADDR}")
         print(f"   Hook:        {TWAMM_HOOK}")
+        print(f"   Clear path:  {'enabled' if self.jtm_enabled else 'disabled (hookless)'}")
         print(f"   MM threshold: {MM_THRESHOLD*100:.2f}%")
         print(f"   Fast loop:   {FAST_INTERVAL}s (sync + clear)")
         print(f"   Slow loop:   {SLOW_INTERVAL}s (rate + MM arb)")

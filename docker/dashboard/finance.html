@@ -708,6 +708,8 @@
         const [latest, setLatest] = useState(null);
         const [chartData, setChartData] = useState(null);
         const [events, setEvents] = useState([]);
+        const [marketInfo, setMarketInfo] = useState(null);
+        const [statusInfo, setStatusInfo] = useState(null);
         const [err, setErr] = useState(null);
         const [errCount, setErrCount] = useState(0);
         const [disconnected, setDisconnected] = useState(false);
@@ -763,6 +765,7 @@
                       liquidity token0Balance token1Balance
                       feeGrowthGlobal0 feeGrowthGlobal1
                     }
+                    snapshot
                     brokers(marketId: "${mId}") {
                       address wausdcBalance debtPrincipal
                     }
@@ -771,9 +774,20 @@
               }).then(r => r.json()).then(res2 => {
                  if (res2.errors) throw new Error(res2.errors[0].message);
                  const ps = res2.data.poolSnapshot || {};
+                 const snap = res2.data.snapshot || {};
                  const br = res2.data.brokers || [];
                  const nfRaw = m.normalizationFactor || "1000000000000000000";
                  const nfFloat = parseFloat(nfRaw) / 1e18;
+                 const indexFromSnapshot = Number(
+                   snap?.market?.indexPrice || snap?.market?.index_price || 0
+                 );
+                 const indexFromPoolSnapshot = Number(ps.indexPrice || 0);
+                 const indexForState =
+                   indexFromPoolSnapshot > 0
+                     ? indexFromPoolSnapshot
+                     : indexFromSnapshot > 0
+                       ? indexFromSnapshot
+                       : 0;
                  
                  const pMarkPrice = ps.markPrice || 0;
 
@@ -781,7 +795,7 @@
                    const d = {
                    block_number: ps.blockNumber || 0,
                    market_states: [{
-                     index_price: (ps.indexPrice || 0).toString(),
+                     index_price: indexForState > 0 ? indexForState.toString() : "",
                      normalization_factor: nfRaw,
                       total_debt: ps.totalDebt != null ? ps.totalDebt : Number(m.totalDebtRaw || 0)
                    }],
@@ -867,14 +881,32 @@
                  }
                `})
              }).then(r => r.json()).then(res2 => {
-               if (res2.data && res2.data.candles) {
-                 const data = res2.data.candles.map(c => ({
-                   timestamp: c.bucket,
-                   mark_price: c.markClose,
-                   index_price: c.indexClose
-                 })).reverse();
-                 setChartData(data);
+               const candles = res2?.data?.candles || [];
+               const candleData = candles.map(c => ({
+                 timestamp: c.bucket,
+                 mark_price: Number(c.markClose || 0),
+                 index_price: Number(c.indexClose || 0)
+               })).filter(p => p.mark_price > 0 || p.index_price > 0);
+               if (candleData.length >= 2) {
+                 setChartData(candleData);
+                 return;
                }
+
+               // Fallback for sparse deployments: chart directly from block_states.
+               return fetch("/api/price-history?limit=1000")
+                 .then(r => (r.ok ? r.json() : null))
+                 .then(hist => {
+                   const points = (hist?.points || [])
+                     .map(p => ({
+                       timestamp: p.block_timestamp || p.timestamp,
+                       block_number: p.block_number,
+                       mark_price: Number(p.mark_price || 0),
+                       index_price: Number(p.index_price || 0),
+                     }))
+                     .filter(p => p.mark_price > 0 || p.index_price > 0);
+                   if (points.length >= 2) setChartData(points);
+                   else if (candleData.length > 0) setChartData(candleData);
+                 });
              });
           }).catch(() => {});
         }, []);
@@ -910,19 +942,43 @@
           }).catch(() => {});
         }, []);
 
+        const loadMarketInfo = useCallback(() => {
+          fetch("/api/market-info?ts=" + Date.now())
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data && !data.status) setMarketInfo(data);
+            })
+            .catch(() => {});
+        }, []);
+
+        const loadStatus = useCallback(() => {
+          fetch("/api/status?ts=" + Date.now())
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data) => {
+              if (data && data.status === "ok") setStatusInfo(data);
+            })
+            .catch(() => {});
+        }, []);
+
         useEffect(() => {
           loadLatest();
           loadChart();
           loadEvents();
+          loadMarketInfo();
+          loadStatus();
           const iv1 = setInterval(loadLatest, 10000);
           const iv2 = setInterval(loadChart, 60000);
           const iv3 = setInterval(loadEvents, 30000);
+          const iv4 = setInterval(loadMarketInfo, 60000);
+          const iv5 = setInterval(loadStatus, 10000);
           return () => {
              clearInterval(iv1);
              clearInterval(iv2);
              clearInterval(iv3);
+             clearInterval(iv4);
+             clearInterval(iv5);
           };
-        }, [loadLatest, loadChart, loadEvents]);
+        }, [loadLatest, loadChart, loadEvents, loadMarketInfo, loadStatus]);
 
         useEffect(() => {
           const iv = setInterval(() => {
@@ -981,7 +1037,10 @@
         const bps = latest.broker_positions || [];
 
         const markPrice = ps.mark_price || 0;
-        const indexPrice = ms.index_price ? Number(ms.index_price) : 0;
+        const indexFromState = Number(ms.index_price || 0);
+        const indexPrice = indexFromState > 0
+          ? indexFromState
+          : Number(statusInfo?.index_price || 0);
         const normFactor = ms.normalization_factor
           ? Number(ms.normalization_factor) / 1e18
           : 1;
@@ -1013,8 +1072,9 @@
             : overCollat > 0
               ? (overCollat * 100).toFixed(1) + "%"
               : "—";
+        const hasIndexPrice = indexPrice > 0;
         const pegDev =
-          indexPrice > 0 ? ((markPrice - indexPrice) / indexPrice) * 100 : 0;
+          hasIndexPrice ? ((markPrice - indexPrice) / indexPrice) * 100 : 0;
 
         const swaps = events.filter((e) => e.event_name === "Swap");
         const totalVol = swaps.reduce(
@@ -1092,9 +1152,11 @@
                   Index Price
                   <span style={{ marginLeft: 8 }}>
                     <Badge
-                      text={fmtPct(pegDev)}
+                      text={hasIndexPrice ? fmtPct(pegDev) : "—"}
                       type={
-                        Math.abs(pegDev) < 1
+                        !hasIndexPrice
+                          ? "a"
+                          : Math.abs(pegDev) < 1
                           ? "g"
                           : Math.abs(pegDev) < 5
                             ? "a"
@@ -1104,7 +1166,7 @@
                   </span>
                 </div>
                 <div className="metric-value" style={{ color: "var(--p)" }}>
-                  {fmt(indexPrice, 4)}
+                  {hasIndexPrice ? fmt(indexPrice, 4) : "—"}
                 </div>
                 <div className="metric-sub">oracle · peg deviation</div>
               </div>
@@ -1173,6 +1235,79 @@
                 </div>
               </div>
             </div>
+
+            {/* ═══ SECTION 1.5: MARKET ARCHITECTURE ═══ */}
+            {marketInfo && (
+              <div className="section">
+                <div className="section-header">
+                  <span className="section-title">Market Architecture</span>
+                  <Badge
+                    text={
+                      !marketInfo.twammHook ||
+                      marketInfo.twammHook === "0x0000000000000000000000000000000000000000"
+                        ? "HOOKLESS V4"
+                        : "HOOKED POOL"
+                    }
+                    type={
+                      !marketInfo.twammHook ||
+                      marketInfo.twammHook === "0x0000000000000000000000000000000000000000"
+                        ? "g"
+                        : "a"
+                    }
+                  />
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                    gap: 2,
+                  }}
+                >
+                  {[
+                    { label: "Market ID", value: fmtAddr(marketInfo.marketId || marketInfo.market_id), color: "var(--tb)" },
+                    { label: "Pool ID", value: fmtAddr(marketInfo.poolId || marketInfo.pool_id), color: "var(--tb)" },
+                    { label: "Pool Params", value: `${marketInfo.poolFee ?? marketInfo.pool_fee ?? "—"} fee / ${marketInfo.tickSpacing ?? marketInfo.tick_spacing ?? "—"} tick`, color: "var(--c)" },
+                    { label: "Mock Oracle", value: fmtAddr(marketInfo.mockOracle || marketInfo.mock_oracle), color: "var(--p)" },
+                    { label: "Ghost Router", value: fmtAddr(marketInfo.ghostRouter || marketInfo.ghost_router), color: "var(--g)" },
+                    { label: "TWAP Engine", value: fmtAddr(marketInfo.twapEngine || marketInfo.twap_engine), color: "var(--g)" },
+                    { label: "TWAP Lens", value: fmtAddr(marketInfo.twapEngineLens || marketInfo.twap_engine_lens), color: "var(--g)" },
+                    { label: "TWAMM Hook", value: fmtAddr(marketInfo.twammHook || marketInfo.twamm_hook), color: "var(--a)" },
+                  ].map((item, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        background: "var(--s1)",
+                        border: "1px solid var(--bdr)",
+                        padding: "14px 16px",
+                        animation: `fadeIn 0.4s ease ${i * 30}ms both`,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          letterSpacing: "1.5px",
+                          textTransform: "uppercase",
+                          color: "var(--td)",
+                          marginBottom: 5,
+                        }}
+                      >
+                        {item.label}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 14,
+                          color: item.color,
+                          fontFamily: "JetBrains Mono",
+                        }}
+                      >
+                        {item.value || "—"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* ═══ SECTION 2: PRICE CHART ═══ */}
             <div className="section">

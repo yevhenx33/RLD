@@ -18,9 +18,6 @@ import {
 import {PositionToken} from "../tokens/PositionToken.sol";
 import {IBrokerVerifier} from "../../shared/interfaces/IBrokerVerifier.sol";
 import {IPrimeBroker} from "../../shared/interfaces/IPrimeBroker.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -89,28 +86,22 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
     /// @dev Set once in constructor. Immutable to prevent any changes post-deployment.
     address public immutable factory;
 
-    /// @notice The Uniswap V4 PoolManager address for fee updates
+    /// @notice The canonical Uniswap V4 PoolManager for this deployment
     address public immutable poolManager;
-
-    /// @notice The TWAMM hook address for V4 pool fee updates
-    address public immutable twamm;
 
     /// @dev Minimum chunk divisor: chunk floor = totalSupply / MIN_CHUNK_DIVISOR (0.0001%)
     uint256 constant MIN_CHUNK_DIVISOR = 1_000_000;
 
-    /// @notice Initializes RLDCore with the factory, poolManager, and TWAMM addresses
+    /// @notice Initializes RLDCore with the factory and PoolManager
     /// @dev Factory must be deployed first, then RLDCore is deployed with factory address.
     ///      This prevents front-running attacks on factory initialization.
     /// @param _factory The address of the RLDMarketFactory contract
     /// @param _poolManager The address of the V4 PoolManager
-    /// @param _twamm The address of the TWAMM hook contract
-    constructor(address _factory, address _poolManager, address _twamm) {
+    constructor(address _factory, address _poolManager) {
         require(_factory != address(0), "Invalid factory");
         require(_poolManager != address(0), "Invalid poolManager");
-        // TWAMM can be 0 for testing (pool fees won't work)
         factory = _factory;
         poolManager = _poolManager;
-        twamm = _twamm;
     }
 
     /* ============================================================================================ */
@@ -1179,60 +1170,6 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         delete pendingRiskUpdates[id];
         emit RiskUpdateCancelled(id);
-    }
-
-    /// @notice Updates the Uniswap V4 pool fee (immediate, no timelock).
-    /// @dev Only callable by market curator.
-    /// @dev Requires pool to support dynamic fees and TWAMM to be configured.
-    /// @param id The market ID
-    /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
-    /// @param tickSpacing The pool's tick spacing (must match the deployed pool)
-    function updatePoolFee(
-        MarketId id,
-        uint24 newFee,
-        int24 tickSpacing
-    ) external onlyCurator(id) nonReentrant {
-        if (!marketExists[id]) revert InvalidMarket();
-        if (twamm == address(0)) revert InvalidParam("TWAMM not configured");
-
-        // Validate fee (V4 max is 100% = 1000000)
-        if (newFee > 1000000) revert InvalidParam("Fee too high");
-
-        // Get market addresses to build PoolKey
-        MarketAddresses storage addresses = marketAddresses[id];
-
-        // Build PoolKey (currencies must be sorted)
-        address token0 = addresses.collateralToken;
-        address token1 = addresses.underlyingToken;
-        if (token0 > token1) {
-            (token0, token1) = (token1, token0);
-        }
-
-        // I-4 FIX: tickSpacing is now a parameter instead of hardcoded
-        PoolKey memory key = PoolKey({
-            currency0: Currency.wrap(token0),
-            currency1: Currency.wrap(token1),
-            fee: newFee,
-            tickSpacing: tickSpacing,
-            hooks: IHooks(twamm)
-        });
-
-        // Call TWAMM to update the dynamic LP fee
-        // TWAMM will call poolManager.updateDynamicLPFee()
-        (bool success, bytes memory reason) = twamm.call(
-            abi.encodeWithSignature(
-                "updateDynamicLPFee((address,address,uint24,int24,address),uint24)",
-                key,
-                newFee
-            )
-        );
-        if (!success) {
-            assembly {
-                revert(add(reason, 32), mload(reason))
-            }
-        }
-
-        emit PoolFeeUpdated(id, newFee);
     }
 
     /// @notice Gets the pending risk update for a market.

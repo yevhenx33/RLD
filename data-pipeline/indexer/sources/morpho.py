@@ -409,20 +409,24 @@ class MorphoSource(BaseSource):
         return None
 
     def _load_symbols(self, ch):
-        """Load market_id → loan_symbol mapping from ClickHouse."""
+        """Load market_id → loan_symbol and decimals mapping from ClickHouse."""
         try:
             params = ch.query_df(
-                "SELECT lower(market_id) AS market_id, loan_symbol "
+                "SELECT lower(market_id) AS market_id, loan_symbol, loan_decimals "
                 "FROM morpho_market_params"
             )
             self._market_symbols = dict(
                 zip(params["market_id"], params["loan_symbol"])
             )
+            self._market_decimals = dict(
+                zip(params["market_id"], params["loan_decimals"])
+            )
             # Also set symbols on existing market states
             for mid, sym in self._market_symbols.items():
                 if mid in self._markets:
                     self._markets[mid].loan_symbol = sym
-            log.info(f"Loaded {len(self._market_symbols)} Morpho market symbols")
+                    self._markets[mid].loan_decimals = self._market_decimals.get(mid, 18)
+            log.info(f"Loaded {len(self._market_symbols)} Morpho market symbols and decimals")
         except Exception as e:
             log.warning(f"Could not load market params: {e}")
         self._initialized = True

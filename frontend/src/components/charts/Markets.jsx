@@ -20,7 +20,7 @@ import {
   Download,
 } from "lucide-react";
 import useSWR from "swr";
-import { RATES_GQL_URL, DEPLOYMENT_DATE } from "../../utils/helpers";
+import { RATES_GQL_URL, ENVIO_GQL_URL, DEPLOYMENT_DATE } from "../../utils/helpers";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
 import { useChartControls } from "../../hooks/useChartControls";
 import RLDPerformanceChart from "./RLDChart";
@@ -715,8 +715,9 @@ export default function Markets() {
 
   // Shared chart controls
   const controls = useChartControls({
-    defaultRange: "2Y",
-    defaultDays: 730,
+    defaultRange: "2025",
+    deploymentDate: "2025-01-01",
+    defaultDays: 9999,
     defaultResolution: "1D",
   });
   const { appliedStart, appliedEnd, resolution } = controls;
@@ -770,7 +771,7 @@ export default function Markets() {
   useEffect(() => {
     const fetchAllData = async () => {
       try {
-        const gqlRes = await fetch(RATES_GQL_URL, {
+        const gqlRes = await fetch(ENVIO_GQL_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -834,29 +835,44 @@ export default function Markets() {
   const { data: chartGqlData } = useSWR(
     chartGqlKey,
     async () => {
-      const symbols = ["USDC", "DAI", "USDT", "SOFR"];
-      // Fetch each symbol's rates in parallel + ethPrices
-      const [ratesResults, ethRes] = await Promise.all([
-        Promise.all(symbols.map(async (sym) => {
-          const res = await fetch(RATES_GQL_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              query: `{ rates(symbol: "${sym}", limit: 10000, resolution: "${resolution}", startDate: "${appliedStart}", endDate: "${appliedEnd}") { timestamp apy ethPrice } }`,
-            }),
-          });
-          const json = await res.json();
-          return { symbol: sym, data: json?.data?.rates || [] };
-        })),
-        fetch(RATES_GQL_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `{ ethPrices(limit: 10000, resolution: "${resolution}") { timestamp price } }`,
-          }),
-        }).then(r => r.json()).then(j => j?.data?.ethPrices || []),
-      ]);
-      return { rates: ratesResults, ethPrices: ethRes };
+      const startUnix = Math.floor(new Date(appliedStart).getTime() / 1000);
+      const endObj = new Date(appliedEnd);
+      endObj.setUTCHours(23, 59, 59, 999);
+      const endUnix = Math.floor(endObj.getTime() / 1000);
+
+      const res = await fetch(ENVIO_GQL_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `{ historicalRates(symbols: ["USDC", "DAI", "USDT", "SOFR", "WETH"], resolution: "${resolution}", limit: 17520) { timestamp symbol apy price } }`,
+        }),
+      });
+      
+      const json = await res.json();
+      const nodes = json?.data?.historicalRates || [];
+      
+      const symbolGroups = {};
+      const ethPrices = [];
+      
+      // Map and filter exactly inside one loop
+      nodes.forEach(n => {
+        if (n.timestamp >= startUnix && n.timestamp <= endUnix) {
+          if (n.symbol === 'WETH') {
+            ethPrices.push({ timestamp: n.timestamp, price: n.price });
+          } else {
+            if (!symbolGroups[n.symbol]) symbolGroups[n.symbol] = [];
+            // Assuming processor already outputs standard decimals safely via the new Gateway
+            let scaledApy = n.symbol === 'SOFR' ? n.apy : n.apy * 100;
+            // Catch cases where math might be different based on offchain sources
+            if (scaledApy < 0.0001 && n.symbol !== 'SOFR') scaledApy = n.apy * 100 * 100; // Normalizing just in case 
+            symbolGroups[n.symbol].push({ timestamp: n.timestamp, apy: n.apy * 100 });
+          }
+        }
+      });
+      
+      const rates = Object.keys(symbolGroups).map(sym => ({ symbol: sym, data: symbolGroups[sym] }));
+      
+      return { rates, ethPrices };
     },
     { revalidateOnFocus: false },
   );

@@ -18,6 +18,7 @@ import asyncpg
 import json
 import logging
 import math
+from web3 import Web3
 
 log = logging.getLogger(__name__)
 
@@ -317,12 +318,64 @@ async def handle_modify_liquidity(
     wrlp: str,
     w3=None,
     pool_manager: str = "",
+    pool_id: str = "",
+    state_view: str = "",
 ) -> None:
     """Handle ModifyLiquidity event. Token balances are tracked by
     ERC20 Transfer events, so this handler only carry-forwards columns."""
     # Step 4: read-once carry-forward
     prev = await fetch_latest_state(conn, market_id)
-    mp = sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp) if sqrt_price_x96 else prev.get("mark_price")
+    slot0_sqrt = None
+    slot0_tick = None
+    liquidity_from_state = None
+    if w3 and state_view and pool_id:
+        try:
+            pool_id_bytes = bytes.fromhex(pool_id[2:] if pool_id.startswith("0x") else pool_id)
+            slot0_call = Web3.keccak(text="getSlot0(bytes32)")[:4] + pool_id_bytes
+            slot0_raw = w3.eth.call(
+                {
+                    "to": Web3.to_checksum_address(state_view),
+                    "data": "0x" + slot0_call.hex(),
+                },
+                block_identifier=block_number,
+            )
+            slot0_sqrt, slot0_tick, _, _ = w3.codec.decode(
+                ["uint160", "int24", "uint24", "uint24"],
+                bytes(slot0_raw),
+            )
+
+            pool_id_hex = pool_id[2:] if pool_id.startswith("0x") else pool_id
+            calldata = Web3.keccak(text="getLiquidity(bytes32)")[:4] + bytes.fromhex(pool_id_hex)
+            raw = w3.eth.call(
+                {
+                    "to": Web3.to_checksum_address(state_view),
+                    "data": "0x" + calldata.hex(),
+                },
+                block_identifier=block_number,
+            )
+            liquidity_from_state = int.from_bytes(bytes(raw)[-32:], "big")
+        except Exception as e:
+            log.debug("[pool] stateView read failed market=%s block=%d: %s", market_id, block_number, e)
+
+    effective_sqrt = (
+        str(slot0_sqrt)
+        if slot0_sqrt is not None
+        else (str(sqrt_price_x96) if sqrt_price_x96 else (str(prev.get("sqrt_price_x96")) if prev.get("sqrt_price_x96") is not None else None))
+    )
+    effective_tick = slot0_tick if slot0_tick is not None else prev.get("tick")
+    if slot0_sqrt is not None:
+        effective_mark = sqrt_price_x96_to_price(int(slot0_sqrt), wausdc, wrlp)
+    elif sqrt_price_x96:
+        effective_mark = sqrt_price_x96_to_price(sqrt_price_x96, wausdc, wrlp)
+    else:
+        effective_mark = prev.get("mark_price")
+
+    if liquidity_from_state is not None:
+        effective_liquidity = str(liquidity_from_state)
+    elif prev.get("liquidity") is not None:
+        effective_liquidity = str(prev.get("liquidity"))
+    else:
+        effective_liquidity = "0"
 
     await conn.execute("""
         INSERT INTO block_states
@@ -339,7 +392,7 @@ async def handle_modify_liquidity(
           mark_price          = COALESCE(block_states.mark_price,          EXCLUDED.mark_price),
           index_price         = COALESCE(block_states.index_price,         EXCLUDED.index_price),
           sqrt_price_x96      = COALESCE(block_states.sqrt_price_x96,      EXCLUDED.sqrt_price_x96),
-          liquidity           = COALESCE(block_states.liquidity,           EXCLUDED.liquidity),
+          liquidity           = EXCLUDED.liquidity,
           normalization_factor = COALESCE(block_states.normalization_factor, EXCLUDED.normalization_factor),
           total_debt          = COALESCE(block_states.total_debt,          EXCLUDED.total_debt),
           token0_balance      = COALESCE(block_states.token0_balance,      EXCLUDED.token0_balance),
@@ -347,8 +400,8 @@ async def handle_modify_liquidity(
           fee_growth_global0  = COALESCE(block_states.fee_growth_global0,  EXCLUDED.fee_growth_global0),
           fee_growth_global1  = COALESCE(block_states.fee_growth_global1,  EXCLUDED.fee_growth_global1)
     """, market_id, block_number, block_timestamp,
-         prev.get("tick"), mp,
-         prev.get("index_price"), prev.get("sqrt_price_x96"), prev.get("liquidity"),
+         effective_tick, effective_mark,
+         prev.get("index_price"), effective_sqrt, effective_liquidity,
          prev.get("normalization_factor"), prev.get("total_debt"),
          prev.get("token0_balance"), prev.get("token1_balance"),
          prev.get("fee_growth_global0"), prev.get("fee_growth_global1"))

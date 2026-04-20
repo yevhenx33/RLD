@@ -8,11 +8,12 @@ Health at: /healthz
 import os
 import json
 import math
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import strawberry
 from strawberry.fastapi import GraphQLRouter
 from strawberry.scalars import JSON
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Query as FastAPIQuery
+from fastapi.responses import JSONResponse
 import asyncpg
 
 # ── Pool singleton ─────────────────────────────────────────────────────────
@@ -189,6 +190,181 @@ def _lp(r) -> LpPosition:
         mint_block=r["mint_block"],
         is_active=r["is_active"], is_burned=r["is_burned"],
     )
+
+
+def _decode_event_data(raw_data: Any) -> Any:
+    if isinstance(raw_data, dict):
+        return raw_data
+    if isinstance(raw_data, str):
+        try:
+            return json.loads(raw_data)
+        except json.JSONDecodeError:
+            return raw_data
+    return raw_data
+
+
+def _format_usd_compact(value: float) -> str:
+    if value >= 1_000_000_000:
+        return f"${value / 1_000_000_000:.2f}B"
+    if value >= 1_000_000:
+        return f"${value / 1_000_000:.2f}M"
+    if value >= 1_000:
+        return f"${value / 1_000:.1f}K"
+    return f"${value:.2f}"
+
+
+def _deployment_index_price_fallback() -> Optional[float]:
+    """Fallback index price from deployment.json oracle_index_price_wad."""
+    try:
+        import bootstrap
+
+        cfg = bootstrap.load_deployment_json()
+        raw = cfg.get("oracle_index_price_wad")
+        if raw in (None, "", "0", 0):
+            return None
+        return int(raw) / 1e18
+    except Exception:
+        return None
+
+
+def _as_price_or_none(value: Any) -> Optional[float]:
+    """Parse numeric price and treat non-positive values as missing."""
+    if value in (None, ""):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _hydrate_snapshot_prices(snapshot: Any, mark_price: Optional[float], index_price: Optional[float]) -> None:
+    """
+    Backfill market/pool price fields inside snapshot payloads.
+
+    Keeps both camelCase and snake_case keys for frontend/back-compat routes.
+    """
+    if not isinstance(snapshot, dict):
+        return
+
+    market = snapshot.get("market")
+    if isinstance(market, dict):
+        resolved_index = _as_price_or_none(market.get("indexPrice", market.get("index_price")))
+        if resolved_index is None:
+            resolved_index = index_price
+        if resolved_index is not None:
+            market["indexPrice"] = resolved_index
+            market["index_price"] = resolved_index
+
+        resolved_mark = _as_price_or_none(market.get("markPrice", market.get("mark_price")))
+        if resolved_mark is None:
+            resolved_mark = mark_price
+        if resolved_mark is not None:
+            market["markPrice"] = resolved_mark
+            market["mark_price"] = resolved_mark
+
+    pool_obj = snapshot.get("pool")
+    if isinstance(pool_obj, dict):
+        resolved_mark = _as_price_or_none(pool_obj.get("markPrice", pool_obj.get("mark_price")))
+        if resolved_mark is None:
+            resolved_mark = mark_price
+        if resolved_mark is not None:
+            pool_obj["markPrice"] = resolved_mark
+            pool_obj["mark_price"] = resolved_mark
+
+        resolved_index = _as_price_or_none(pool_obj.get("indexPrice", pool_obj.get("index_price")))
+        if resolved_index is None:
+            resolved_index = index_price
+        if resolved_index is not None:
+            pool_obj["indexPrice"] = resolved_index
+            pool_obj["index_price"] = resolved_index
+
+
+def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
+    payload = {
+        "marketId": row["market_id"],
+        "brokerFactory": row["broker_factory"],
+        "mockOracle": row["mock_oracle"],
+        "twammHook": row["twamm_hook"],
+        "ghostRouter": row.get("ghost_router") or "",
+        "twapEngine": row.get("twap_engine") or "",
+        "twapEngineLens": row.get("twap_engine_lens") or "",
+        "wausdc": row["wausdc"],
+        "wrlp": row["wrlp"],
+        "poolId": row["pool_id"],
+        "poolFee": row["pool_fee"],
+        "tickSpacing": row["tick_spacing"],
+        "minColRatio": str(row["min_col_ratio"]),
+        "maintenanceMargin": str(row["maintenance_margin"]),
+        "debtCap": str(row["debt_cap"]),
+        "swapRouter": row["swap_router"],
+        "bondFactory": row["bond_factory"],
+        "basisTradeFactory": row["basis_trade_factory"],
+        "brokerExecutor": row["broker_executor"],
+        "fundingPeriodSec": row["funding_period_sec"],
+        "v4Quoter": row["v4_quoter"] or "",
+        "brokerRouter": row["broker_router"] or "",
+        "v4PositionManager": row["v4_position_manager"] or "",
+        "v4StateView": row["v4_state_view"] or "",
+        "poolManager": row["pool_manager"] or "",
+    }
+
+    # Legacy field aliases used by older UI code paths.
+    payload.update({
+        "market_id": payload["marketId"],
+        "broker_factory": payload["brokerFactory"],
+        "mock_oracle": payload["mockOracle"],
+        "twamm_hook": payload["twammHook"],
+        "ghost_router": payload["ghostRouter"],
+        "twap_engine": payload["twapEngine"],
+        "twap_engine_lens": payload["twapEngineLens"],
+        "pool_id": payload["poolId"],
+        "pool_fee": payload["poolFee"],
+        "tick_spacing": payload["tickSpacing"],
+        "min_col_ratio": payload["minColRatio"],
+        "maintenance_margin": payload["maintenanceMargin"],
+        "debt_cap": payload["debtCap"],
+        "swap_router": payload["swapRouter"],
+        "bond_factory": payload["bondFactory"],
+        "basis_trade_factory": payload["basisTradeFactory"],
+        "broker_executor": payload["brokerExecutor"],
+        "funding_period_sec": payload["fundingPeriodSec"],
+        "v4_quoter": payload["v4Quoter"],
+        "broker_router": payload["brokerRouter"],
+        "v4_position_manager": payload["v4PositionManager"],
+        "v4_state_view": payload["v4StateView"],
+        "pool_manager": payload["poolManager"],
+    })
+
+    payload["collateral"] = {"name": "waUSDC", "symbol": "waUSDC", "address": payload["wausdc"]}
+    payload["position_token"] = {"name": "wRLP", "symbol": "wRLP", "address": payload["wrlp"]}
+    payload["infrastructure"] = {
+        "brokerRouter": payload["brokerRouter"],
+        "brokerExecutor": payload["brokerExecutor"],
+        "twammHook": payload["twammHook"],
+        "twamm_hook": payload["twammHook"],
+        "ghostRouter": payload["ghostRouter"],
+        "ghost_router": payload["ghostRouter"],
+        "twapEngine": payload["twapEngine"],
+        "twap_engine": payload["twapEngine"],
+        "twapEngineLens": payload["twapEngineLens"],
+        "twap_engine_lens": payload["twapEngineLens"],
+        "bondFactory": payload["bondFactory"],
+        "basisTradeFactory": payload["basisTradeFactory"],
+        "poolFee": payload["poolFee"],
+        "tickSpacing": payload["tickSpacing"],
+        "poolManager": payload["poolManager"],
+        "v4Quoter": payload["v4Quoter"],
+        "v4PositionManager": payload["v4PositionManager"],
+        "v4StateView": payload["v4StateView"],
+    }
+    payload["risk_params"] = {
+        "min_col_ratio": payload["minColRatio"],
+        "maintenance_margin": payload["maintenanceMargin"],
+        "funding_period_sec": payload["fundingPeriodSec"],
+        "debt_cap": payload["debtCap"],
+    }
+    return payload
 
 
 # ── Query ──────────────────────────────────────────────────────────────────
@@ -459,9 +635,31 @@ class Query:
         pool = await get_pool()
         async with pool.acquire() as conn:
             val = await conn.fetchval("SELECT snapshot FROM markets LIMIT 1")
+            latest_prices = await conn.fetchrow("""
+                SELECT
+                    (SELECT mark_price FROM block_states
+                     WHERE mark_price IS NOT NULL
+                     ORDER BY block_number DESC
+                     LIMIT 1) AS mark_price,
+                    (SELECT index_price FROM block_states
+                     WHERE index_price IS NOT NULL
+                     ORDER BY block_number DESC
+                     LIMIT 1) AS index_price
+            """)
         if not val:
             return None
-        return json.loads(val) if isinstance(val, str) else val
+        snap = json.loads(val) if isinstance(val, str) else val
+        if not isinstance(snap, dict):
+            return snap
+
+        mark_price = _as_price_or_none(latest_prices["mark_price"]) if latest_prices else None
+        index_price = _as_price_or_none(latest_prices["index_price"]) if latest_prices else None
+        if index_price is None:
+            index_price = _deployment_index_price_fallback()
+
+        _hydrate_snapshot_prices(snap, mark_price, index_price)
+
+        return snap
 
     @strawberry.field
     async def liquidity_distribution(self) -> Optional[JSON]:
@@ -641,6 +839,7 @@ class Query:
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT market_id, broker_factory, mock_oracle, twamm_hook,
+                       ghost_router, twap_engine, twap_engine_lens,
                        wausdc, wrlp, pool_id, pool_fee, tick_spacing,
                        min_col_ratio, maintenance_margin, debt_cap,
                        swap_router, bond_factory, basis_trade_factory, broker_executor,
@@ -650,30 +849,7 @@ class Query:
             """)
         if not row:
             return None
-        return {
-            "marketId": row["market_id"],
-            "brokerFactory": row["broker_factory"],
-            "mockOracle": row["mock_oracle"],
-            "twammHook": row["twamm_hook"],
-            "wausdc": row["wausdc"],
-            "wrlp": row["wrlp"],
-            "poolId": row["pool_id"],
-            "poolFee": row["pool_fee"],
-            "tickSpacing": row["tick_spacing"],
-            "minColRatio": str(row["min_col_ratio"]),
-            "maintenanceMargin": str(row["maintenance_margin"]),
-            "debtCap": str(row["debt_cap"]),
-            "swapRouter": row["swap_router"],
-            "bondFactory": row["bond_factory"],
-            "basisTradeFactory": row["basis_trade_factory"],
-            "brokerExecutor": row["broker_executor"],
-            "fundingPeriodSec": row["funding_period_sec"],
-            "v4Quoter": row["v4_quoter"] or "",
-            "brokerRouter": row["broker_router"] or "",
-            "v4PositionManager": row["v4_position_manager"] or "",
-            "v4StateView": row["v4_state_view"] or "",
-            "poolManager": row["pool_manager"] or "",
-        }
+        return _market_info_payload(row)
 
 
 # ── Uniswap V4 math for on-demand position value resolution ────────────────
@@ -717,6 +893,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(graphql_app, prefix="/graphql")
+    admin_token = os.getenv("INDEXER_ADMIN_TOKEN", "").strip()
 
     @app.get("/healthz")
     async def healthz():
@@ -726,16 +903,21 @@ def create_app() -> FastAPI:
                 await conn.fetchval("SELECT 1")
             return {"status": "ok"}
         except Exception as e:
-            from fastapi.responses import JSONResponse
             return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
 
     @app.post("/admin/reset")
-    async def admin_reset():
+    async def admin_reset(x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token")):
         """Deployer calls this after writing deployment.json to wipe stale data."""
         import bootstrap
         import logging
         log = logging.getLogger("admin.reset")
         try:
+            if admin_token and x_admin_token != admin_token:
+                log.warning("Rejected /admin/reset call with invalid token")
+                return JSONResponse(
+                    {"status": "forbidden", "detail": "missing or invalid X-Admin-Token"},
+                    status_code=403,
+                )
             pool = await get_pool()
             log.info("POST /admin/reset — truncating all indexed data")
             await bootstrap.reset(pool)  # truncates + re-seeds from deployment.json
@@ -745,18 +927,17 @@ def create_app() -> FastAPI:
             return {"status": "ok", "market_id": market_id}
         except Exception as e:
             log.error("Reset failed: %s", e, exc_info=True)
-            from fastapi.responses import JSONResponse
             return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
     @app.get("/config")
     async def get_config():
         """Daemons poll this to get deployment config. 503 until deployer has run."""
-        from fastapi.responses import JSONResponse
         try:
             pool = await get_pool()
             async with pool.acquire() as conn:
                 row = await conn.fetchrow("""
                     SELECT market_id, broker_factory, mock_oracle, twamm_hook,
+                           ghost_router, twap_engine, twap_engine_lens,
                            wausdc, wrlp, pool_id, pool_fee, tick_spacing,
                            swap_router, bond_factory, basis_trade_factory, broker_executor
                     FROM markets LIMIT 1
@@ -774,12 +955,222 @@ def create_app() -> FastAPI:
                 for key in ("rpc_url", "rld_core", "pool_manager", "position_token",
                             "swap_router", "bond_factory", "basis_trade_factory",
                             "broker_executor", "broker_router", "token0", "token1",
-                            "zero_for_one_long", "v4_quoter", "v4_position_manager"):
+                            "zero_for_one_long", "v4_quoter", "v4_position_manager",
+                            "ghost_router", "twap_engine", "twap_engine_lens"):
                     if key in deploy_cfg and not cfg.get(key):
                         cfg[key] = deploy_cfg[key]
             except (FileNotFoundError, ValueError):
                 pass
             return cfg
+        except Exception as e:
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+    # Compatibility routes retained for older UI paths.
+    @app.get("/api/market-info")
+    async def api_market_info():
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT market_id, broker_factory, mock_oracle, twamm_hook,
+                           ghost_router, twap_engine, twap_engine_lens,
+                           wausdc, wrlp, pool_id, pool_fee, tick_spacing,
+                           min_col_ratio, maintenance_margin, debt_cap,
+                           swap_router, bond_factory, basis_trade_factory, broker_executor,
+                           funding_period_sec, v4_quoter, broker_router,
+                           v4_position_manager, v4_state_view, pool_manager
+                    FROM markets LIMIT 1
+                """)
+            if not row:
+                return JSONResponse(
+                    {"status": "waiting", "detail": "No market deployed yet"},
+                    status_code=503,
+                )
+            return _market_info_payload(row)
+        except Exception as e:
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+    @app.get("/api/status")
+    async def api_status():
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT
+                        COALESCE(MAX(last_indexed_block), 0) AS last_indexed_block,
+                        COALESCE(SUM(total_events), 0) AS total_events,
+                        (SELECT COUNT(*) FROM block_states) AS total_block_states,
+                        (SELECT mark_price FROM block_states
+                         WHERE mark_price IS NOT NULL
+                         ORDER BY block_number DESC
+                         LIMIT 1) AS mark_price,
+                        (SELECT index_price FROM block_states
+                         WHERE index_price IS NOT NULL
+                         ORDER BY block_number DESC
+                         LIMIT 1) AS index_price
+                    FROM indexer_state
+                """)
+            mark_price = float(row["mark_price"]) if row["mark_price"] is not None else None
+            index_price = float(row["index_price"]) if row["index_price"] is not None else None
+            if index_price is None:
+                index_price = _deployment_index_price_fallback()
+            return {
+                "status": "ok",
+                "last_indexed_block": int(row["last_indexed_block"] or 0),
+                "total_events": int(row["total_events"] or 0),
+                "total_block_states": int(row["total_block_states"] or 0),
+                "mark_price": mark_price,
+                "index_price": index_price,
+            }
+        except Exception as e:
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+    @app.get("/api/events")
+    async def api_events(limit: int = FastAPIQuery(default=100, ge=1, le=500)):
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT event_name, block_timestamp, block_number, tx_hash, data
+                    FROM events
+                    ORDER BY block_number DESC, log_index DESC
+                    LIMIT $1
+                """, limit)
+            return {
+                "events": [
+                    {
+                        "event_name": r["event_name"],
+                        "eventName": r["event_name"],
+                        "block_timestamp": r["block_timestamp"],
+                        "blockTimestamp": r["block_timestamp"],
+                        "block_number": r["block_number"],
+                        "blockNumber": r["block_number"],
+                        "tx_hash": r["tx_hash"],
+                        "txHash": r["tx_hash"],
+                        "data": _decode_event_data(r["data"]),
+                    }
+                    for r in rows
+                ]
+            }
+        except Exception as e:
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+    @app.get("/api/volume")
+    async def api_volume():
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT
+                        COALESCE(SUM(volume_usd), 0) AS volume_usd,
+                        COALESCE(SUM(swap_count), 0) AS swap_count
+                    FROM candles
+                    WHERE resolution IN ('1h', '1H')
+                      AND bucket >= (EXTRACT(EPOCH FROM NOW())::bigint - 86400)
+                """)
+            volume_usd = float(row["volume_usd"] or 0)
+            swap_count = int(row["swap_count"] or 0)
+            return {
+                "volume_usd": volume_usd,
+                "swap_count": swap_count,
+                "volume_formatted": _format_usd_compact(volume_usd),
+            }
+        except Exception as e:
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+    @app.get("/api/latest")
+    async def api_latest():
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                snapshot_raw = await conn.fetchval("SELECT snapshot FROM markets LIMIT 1")
+                last_indexed_block = await conn.fetchval(
+                    "SELECT COALESCE(MAX(last_indexed_block), 0) FROM indexer_state"
+                )
+                latest_prices = await conn.fetchrow("""
+                    SELECT
+                        (SELECT mark_price FROM block_states
+                         WHERE mark_price IS NOT NULL
+                         ORDER BY block_number DESC
+                         LIMIT 1) AS mark_price,
+                        (SELECT index_price FROM block_states
+                         WHERE index_price IS NOT NULL
+                         ORDER BY block_number DESC
+                         LIMIT 1) AS index_price
+                """)
+
+            snapshot = _decode_event_data(snapshot_raw)
+            mark_price = None
+            if latest_prices and latest_prices["mark_price"] is not None:
+                mark_price = float(latest_prices["mark_price"])
+
+            index_price = None
+            if latest_prices and latest_prices["index_price"] is not None:
+                index_price = float(latest_prices["index_price"])
+            if index_price is None:
+                index_price = _deployment_index_price_fallback()
+
+            _hydrate_snapshot_prices(snapshot, mark_price, index_price)
+
+            response = {
+                "block_number": int(last_indexed_block or 0),
+                "snapshot": snapshot,
+                "mark_price": mark_price,
+                "index_price": index_price,
+            }
+            if isinstance(snapshot, dict):
+                response["market"] = snapshot.get("market")
+                response["pool"] = snapshot.get("pool")
+                response["brokers"] = snapshot.get("brokers", [])
+            return response
+        except Exception as e:
+            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+
+    @app.get("/api/price-history")
+    async def api_price_history(
+        limit: int = FastAPIQuery(default=1000, ge=1, le=5000)
+    ):
+        """
+        Price history from event-indexed block_states.
+
+        Used by dashboard simulation tab when candle aggregation is sparse/empty.
+        """
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT block_number, block_timestamp, mark_price, index_price
+                    FROM block_states
+                    WHERE block_timestamp > 0
+                      AND (mark_price IS NOT NULL OR index_price IS NOT NULL)
+                    ORDER BY block_number DESC
+                    LIMIT $1
+                """, limit)
+
+            # Keep chronological order for chart rendering.
+            ordered = list(reversed(rows))
+            fallback_index = _deployment_index_price_fallback()
+            last_index = fallback_index
+            points: List[Dict[str, Any]] = []
+            for r in ordered:
+                mark = _as_price_or_none(r["mark_price"])
+                idx = _as_price_or_none(r["index_price"])
+                if idx is not None:
+                    last_index = idx
+                elif last_index is not None:
+                    idx = last_index
+
+                points.append({
+                    "block_number": int(r["block_number"]),
+                    "block_timestamp": int(r["block_timestamp"]),
+                    "mark_price": mark,
+                    "index_price": idx,
+                })
+
+            return {
+                "points": points,
+                "count": len(points),
+            }
         except Exception as e:
             return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
 

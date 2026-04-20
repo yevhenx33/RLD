@@ -25,10 +25,15 @@ async def run_all() -> None:
 
     rpc_url = os.environ["RPC_URL"]
     dsn = os.environ["DATABASE_URL"]
+    admin_token = os.getenv("INDEXER_ADMIN_TOKEN", "").strip()
 
     # Bootstrap: run migrations, load global config
     await db.init(dsn)
     global_cfg = await bootstrap.bootstrap(db.pool)
+    if admin_token:
+        log.info("Admin reset token protection enabled")
+    else:
+        log.warning("INDEXER_ADMIN_TOKEN is unset; /admin/reset accepts unauthenticated local calls")
 
     # Start indexer loop as background task
     import indexer

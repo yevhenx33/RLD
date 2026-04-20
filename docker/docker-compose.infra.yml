@@ -1,15 +1,17 @@
 # ═══════════════════════════════════════════════════════════════
-# RLD Infrastructure — Always-On Services
+# RLD Infrastructure — Reth V2 Launch Baseline
 # ═══════════════════════════════════════════════════════════════
-# Independent from the simulation. Runs 24/7, never restarted
-# by restart-reth.sh. Parses Ethereum mainnet for live rates.
+# Always-on services independent from simulation restarts.
 #
-#  Usage:
-#    docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
+# Launch-critical:
+#   - rates-indexer
+#   - monitor-bot
 #
-#  Services:
-#    rates-indexer  — Live Aave/sUSDe/ETH rate scraper (persistent SQLite)
-#    morpho-indexer — Morpho Blue market/vault/allocation indexer
+# Optional analytics profile:
+#   - morpho-indexer (enable with: --profile analytics)
+#
+# Usage:
+#   docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
 # ═══════════════════════════════════════════════════════════════
 
 services:
@@ -35,12 +37,39 @@ services:
       start_period: 30s
       retries: 3
 
+  monitor-bot:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.bot
+    ports:
+      - "127.0.0.1:8083:8080"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - RATES_API_URL=http://rates-indexer:8080
+      - MAINNET_RPC_URL=${BOT_RPC_URL:-https://eth.llamarpc.com}
+      - API_KEY=${API_KEY:-}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./bot-data:/data
+    depends_on:
+      rates-indexer:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
   morpho-indexer:
+    profiles: ["analytics"]
     build:
       context: ..
       dockerfile: backend/Dockerfile.morpho
     ports:
-      - "127.0.0.1:${MORPHO_PORT:-8082}:8080"
+      - "127.0.0.1:${MORPHO_PORT:-18082}:8080"
     volumes:
       - morpho-data:/app/data
     environment:
@@ -59,6 +88,7 @@ volumes:
   rates-data:
     name: reth_rates-data
     external: true
+  bot-data:
   morpho-data:
 
 networks:

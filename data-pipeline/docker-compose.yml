@@ -1,43 +1,23 @@
 version: '3.8'
 
 services:
-  timescale:
-    image: timescale/timescaledb-ha:pg16
-    container_name: rld_timescale
+  graphql_api:
+    image: rld_indexer_node
+    container_name: rld_graphql_api
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - POSTGRES_PASSWORD=rld_ts_f0729124f4aef67b
-      - POSTGRES_USER=postgres
-      - POSTGRES_DB=rld_data
-    ports:
-      - "127.0.0.1:5433:5432"
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+    command: ["uvicorn", "indexer.api.graphql:create_app", "--factory", "--host", "0.0.0.0", "--port", "5000", "--workers", "2", "--reload"]
     volumes:
-      - timescale_data:/home/postgres/pgdata/data
-      - ./init-schema.sql:/docker-entrypoint-initdb.d/01-init-schema.sql
-      - ./morpho-schema.sql:/docker-entrypoint-initdb.d/02-morpho-schema.sql
-
-  graphql:
-    image: graphile/postgraphile
-    container_name: rld_graphql
-    restart: on-failure
-    depends_on:
-      - timescale
+      - ./indexer:/app/indexer
     ports:
       - "127.0.0.1:5000:5000"
-    command:
-      - "--connection"
-      - "postgresql://postgres:rld_ts_f0729124f4aef67b@timescale:5432/rld_data"
-      - "--schema"
-      - "public"
-      - "--watch"
-      - "--cors"
-      - "--enhance-graphiql"
-      - "--dynamic-json"
-      - "--retry-on-init-fail"
 
   aave_collector:
-    build:
-      context: .
-      dockerfile: Dockerfile.indexer
+    image: rld_indexer_node
     container_name: rld_aave_collector
     restart: unless-stopped
     env_file:
@@ -50,9 +30,7 @@ services:
     network_mode: "host"
 
   aave_processor:
-    build:
-      context: .
-      dockerfile: Dockerfile.indexer
+    image: rld_indexer_node
     container_name: rld_aave_processor
     restart: unless-stopped
     env_file:
@@ -63,5 +41,65 @@ services:
       - SEND_MESSAGES=true
     command: ["python", "/app/scripts/run_indexer.py", "--source", "AAVE_MARKET", "--role", "processor"]
     network_mode: "host"
-volumes:
-  timescale_data:
+
+  morpho_collector:
+    image: rld_indexer_node
+    container_name: rld_morpho_collector
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+      - SEND_MESSAGES=true
+    command: ["python", "/app/scripts/run_indexer.py", "--source", "MORPHO_MARKET", "--role", "collector"]
+    network_mode: "host"
+
+  morpho_processor:
+    image: rld_indexer_node
+    container_name: rld_morpho_processor
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+      - SEND_MESSAGES=true
+    command: ["python", "/app/scripts/run_indexer.py", "--source", "MORPHO_MARKET", "--role", "processor"]
+    network_mode: "host"
+
+  sofr_collector:
+    image: rld_indexer_node
+    container_name: rld_sofr_collector
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+    command: ["python", "/app/scripts/run_indexer.py", "--source", "SOFR_RATES", "--role", "collector"]
+    network_mode: "host"
+
+  chainlink_collector:
+    image: rld_indexer_node
+    container_name: rld_chainlink_collector
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+    command: ["python", "/app/scripts/run_indexer.py", "--source", "CHAINLINK_PRICES", "--role", "collector"]
+    network_mode: "host"
+
+  chainlink_processor:
+    image: rld_indexer_node
+    container_name: rld_chainlink_processor
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+    command: ["python", "/app/scripts/run_indexer.py", "--source", "CHAINLINK_PRICES", "--role", "processor"]
+    network_mode: "host"

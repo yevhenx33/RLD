@@ -147,6 +147,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: () => "/graphql",
       },
+      "/envio-graphql": {
+        target: "http://127.0.0.1:5000",
+        changeOrigin: true,
+        rewrite: () => "/graphql",
+      },
     },
   },
   build: {

@@ -118,6 +118,48 @@ CUSTOM_TOPICS = {
         "ShortClosed",
     Web3.keccak(text="Deposited(address,uint256,uint256)").hex():
         "Deposited",
+    # TwapEngine (Ghost DEX)
+    Web3.keccak(text="StreamSubmitted(bytes32,bytes32,address,bool,uint256,uint256,uint256,uint256)").hex():
+        "StreamSubmitted",
+    Web3.keccak(text="AuctionCleared(bytes32,address,bool,uint256,uint256,uint256,uint256)").hex():
+        "AuctionCleared",
+    Web3.keccak(text="TokensClaimed(bytes32,bytes32,address,uint256)").hex():
+        "TokensClaimed",
+    Web3.keccak(text="OrderCancelled(bytes32,bytes32,address,uint256,uint256,bool,bool)").hex():
+        "OrderCancelled",
+    Web3.keccak(text="GhostSettled(bytes32,bool,uint8,uint256,uint256)").hex():
+        "GhostSettled",
+    Web3.keccak(text="NettingApplied(bytes32,uint256,uint256,uint256)").hex():
+        "NettingApplied",
+    Web3.keccak(text="GhostTaken(bytes32,bool,uint256,uint256,uint256,uint256)").hex():
+        "GhostTaken",
+    Web3.keccak(text="ForceSettled(bytes32,bool,uint256,uint256)").hex():
+        "ForceSettled",
+    # GhostRouter
+    Web3.keccak(text="EngineRegistered(address)").hex():
+        "EngineRegistered",
+    Web3.keccak(text="EngineDeregistered(address)").hex():
+        "EngineDeregistered",
+    Web3.keccak(text="EngineCallFailed(address,bytes32,uint8)").hex():
+        "EngineCallFailed",
+    Web3.keccak(text="MarketInitialized(bytes32,address,address,uint8,address)").hex():
+        "MarketInitialized",
+    Web3.keccak(text="OracleModeUpdated(bytes32,uint8,address)").hex():
+        "OracleModeUpdated",
+    Web3.keccak(text="MarketFeeControllerUpdated(bytes32,address)").hex():
+        "MarketFeeControllerUpdated",
+    Web3.keccak(text="MarketTradingFeeBpsUpdated(bytes32,uint16)").hex():
+        "MarketTradingFeeBpsUpdated",
+    Web3.keccak(text="TradingFeeAccrued(bytes32,address,address,uint256)").hex():
+        "TradingFeeAccrued",
+    Web3.keccak(text="TradingFeesClaimed(bytes32,address,address,uint256)").hex():
+        "TradingFeesClaimed",
+    Web3.keccak(text="SwapExecuted(bytes32,address,bool,uint256,uint256,uint256)").hex():
+        "SwapExecuted",
+    Web3.keccak(text="GlobalNettingExecuted(bytes32,uint256,uint256,uint256,uint256,uint256)").hex():
+        "GlobalNettingExecuted",
+    Web3.keccak(text="GhostSettledViaAMM(bytes32,address,bool,uint256,uint256)").hex():
+        "GhostSettledViaAMM",
 }
 
 EXTERNAL_TOPICS = {
@@ -128,6 +170,35 @@ EXTERNAL_TOPICS = {
 
 # Combined lookup for dispatch()
 TOPICS = {**CUSTOM_TOPICS, **EXTERNAL_TOPICS}
+
+# Events whose topic1 is RLD marketId and should override address-based routing.
+TOPIC1_MARKET_ID_EVENTS = {
+    "FundingApplied",
+    "MarketStateUpdated",
+    "PositionModified",
+    "BadDebtRegistered",
+}
+
+# Events whose topic1 is Ghost marketId (V4 pool_id). Resolve via markets.pool_id.
+TOPIC1_POOL_ID_TO_MARKET_EVENTS = {
+    "StreamSubmitted",
+    "AuctionCleared",
+    "TokensClaimed",
+    "OrderCancelled",
+    "GhostSettled",
+    "NettingApplied",
+    "GhostTaken",
+    "ForceSettled",
+    "MarketInitialized",
+    "OracleModeUpdated",
+    "MarketFeeControllerUpdated",
+    "MarketTradingFeeBpsUpdated",
+    "TradingFeeAccrued",
+    "TradingFeesClaimed",
+    "SwapExecuted",
+    "GlobalNettingExecuted",
+    "GhostSettledViaAMM",
+}
 
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "2"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "100"))  # max blocks per getLogs call
@@ -159,18 +230,30 @@ async def build_external_watch_set(conn: asyncpg.Connection, global_cfg: dict) -
 async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
     """Map contract address → market_id for routing logs."""
     rows = await conn.fetch("""
-        SELECT market_id, broker_factory, mock_oracle, twamm_hook, bond_factory, basis_trade_factory
+        SELECT market_id, broker_factory, mock_oracle, twamm_hook,
+               ghost_router, twap_engine, twap_engine_lens,
+               bond_factory, basis_trade_factory
         FROM markets
     """)
     mapping = {}
+    zero_addr = "0x0000000000000000000000000000000000000000"
     for r in rows:
-        mapping[r["broker_factory"].lower()] = r["market_id"]
-        mapping[r["mock_oracle"].lower()] = r["market_id"]
-        mapping[r["twamm_hook"].lower()] = r["market_id"]
-        if r.get("bond_factory"):
-            mapping[r["bond_factory"].lower()] = r["market_id"]
-        if r.get("basis_trade_factory"):
-            mapping[r["basis_trade_factory"].lower()] = r["market_id"]
+        def _remember(addr: str | None) -> None:
+            if not addr:
+                return
+            normalized = addr.lower()
+            if normalized in ("0x", "0x0", zero_addr):
+                return
+            mapping[normalized] = r["market_id"]
+
+        _remember(r["broker_factory"])
+        _remember(r["mock_oracle"])
+        _remember(r["twamm_hook"])
+        _remember(r.get("ghost_router"))
+        _remember(r.get("twap_engine"))
+        _remember(r.get("twap_engine_lens"))
+        _remember(r.get("bond_factory"))
+        _remember(r.get("basis_trade_factory"))
 
     # Broker → market_id
     broker_rows = await conn.fetch("SELECT address, market_id FROM brokers")
@@ -220,10 +303,24 @@ async def dispatch(
     log_index = log_entry["logIndex"]
 
     market_id = addr_market_map.get(contract)
-    # If not in map (singleton contracts), resolve via topics[1] if it looks like a market_id
-    if not market_id and len(topics) > 1:
-        tid = topics[1].hex() if isinstance(topics[1], bytes) else topics[1]
-        market_id = "0x" + tid if not tid.startswith("0x") else tid
+    if len(topics) > 1:
+        topic1 = topics[1].hex() if isinstance(topics[1], bytes) else topics[1]
+        topic1_hex = "0x" + topic1 if not topic1.startswith("0x") else topic1
+        # Prefer indexed marketId for singleton core emitters.
+        if event_name in TOPIC1_MARKET_ID_EVENTS:
+            market_id = topic1_hex.lower()
+        # GhostRouter/TwapEngine emit pool_id as topic1. Resolve back to RLD market_id.
+        elif event_name in TOPIC1_POOL_ID_TO_MARKET_EVENTS:
+            resolved_market_id = await conn.fetchval(
+                "SELECT market_id FROM markets WHERE pool_id = $1",
+                topic1_hex.lower(),
+            )
+            if resolved_market_id:
+                market_id = resolved_market_id
+            elif not market_id:
+                market_id = topic1_hex.lower()
+        elif not market_id:
+            market_id = topic1_hex.lower()
 
     # ── Record raw event ─────────────────────────────────────────────────
     await conn.execute("""
@@ -395,6 +492,7 @@ async def dispatch(
                     sqrt_price_x96=0,  # no sqrtPrice in ModifyLiquidity event
                     wausdc=market_info["wausdc"], wrlp=market_info["wrlp"],
                     w3=w3, pool_manager=global_cfg.get("v4_pool_manager", ""),
+                    pool_id=pool_id, state_view=global_cfg.get("v4_state_view", ""),
                 )
         except Exception as e:
             log.warning("[dispatch] ModifyLiquidity decode failed block=%d: %s", block_number, e)
@@ -482,6 +580,64 @@ async def dispatch(
         except Exception as e:
             log.warning("[dispatch] ActiveTwammOrderChanged decode failed: %s", e)
 
+    elif event_name == "StreamSubmitted" and market_id:
+        # TwapEngine: StreamSubmitted(
+        #   bytes32 indexed marketId, bytes32 indexed orderId, address indexed owner,
+        #   bool zeroForOne, uint256 amountIn, uint256 startEpoch, uint256 expiration, uint256 sellRate
+        # )
+        try:
+            order_id_bytes = topics[2] if isinstance(topics[2], bytes) else bytes.fromhex(topics[2].replace("0x", ""))
+            owner = "0x" + topics[3][-20:].hex() if isinstance(topics[3], bytes) else "0x" + topics[3][-40:]
+            decoded = w3.eth.codec.decode(["bool", "uint256", "uint256", "uint256", "uint256"], data_bytes)
+            pool_id = await conn.fetchval("SELECT pool_id FROM markets WHERE market_id = $1", market_id)
+            await twamm_handler.handle_submit_order(
+                conn,
+                pool_id=pool_id,
+                order_id="0x" + order_id_bytes.hex(),
+                owner=owner,
+                amount_in=decoded[1],
+                expiration=decoded[3],
+                zero_for_one=decoded[0],
+                sell_rate=decoded[4],
+                start_epoch=decoded[2],
+                nonce=None,
+                block_number=block_number,
+                tx_hash=tx_hash,
+            )
+        except Exception as e:
+            log.warning("[dispatch] StreamSubmitted decode failed: %s", e)
+
+    elif event_name == "TokensClaimed":
+        # TwapEngine: TokensClaimed(bytes32 indexed marketId, bytes32 indexed orderId, address indexed owner, uint256 earningsOut)
+        try:
+            order_id_bytes = topics[2] if isinstance(topics[2], bytes) else bytes.fromhex(topics[2].replace("0x", ""))
+            decoded = w3.eth.codec.decode(["uint256"], data_bytes)
+            await twamm_handler.handle_twamm_order_claimed(
+                conn,
+                "0x" + order_id_bytes.hex(),
+                decoded[0],
+                0,
+            )
+        except Exception as e:
+            log.warning("[dispatch] TokensClaimed decode failed: %s", e)
+
+    elif event_name == "OrderCancelled":
+        # TwapEngine: OrderCancelled(
+        #   bytes32 indexed marketId, bytes32 indexed orderId, address indexed owner,
+        #   uint256 refund, uint256 earnings, bool orderStarted, bool orderExpired
+        # )
+        try:
+            order_id_bytes = topics[2] if isinstance(topics[2], bytes) else bytes.fromhex(topics[2].replace("0x", ""))
+            decoded = w3.eth.codec.decode(["uint256", "uint256", "bool", "bool"], data_bytes)
+            await twamm_handler.handle_twamm_order_cancelled(
+                conn,
+                "0x" + order_id_bytes.hex(),
+                decoded[1],  # earnings
+                decoded[0],  # refund
+            )
+        except Exception as e:
+            log.warning("[dispatch] OrderCancelled decode failed: %s", e)
+
     elif event_name == "BrokerFrozen":
         await broker_handler.handle_broker_frozen(conn, contract)
 
@@ -542,8 +698,6 @@ async def dispatch(
         try:
             from_addr = ("0x" + topics[1][-20:].hex()) if isinstance(topics[1], bytes) else ("0x" + topics[1][-40:])
             to_addr   = ("0x" + topics[2][-20:].hex()) if isinstance(topics[2], bytes) else ("0x" + topics[2][-40:])
-            decoded   = w3.eth.codec.decode(["uint256"], data_bytes)
-            amount    = decoded[0]
             from_addr = from_addr.lower()
             to_addr   = to_addr.lower()
             contract_lower = contract.lower()
@@ -566,11 +720,23 @@ async def dispatch(
             v4_posm = ctx.get("v4_posm", (global_cfg.get("v4_position_manager") or "").lower())
             if contract_lower == v4_posm:
                 # ERC721 Transfer — route to LP handler
-                token_id = amount  # For ERC721, the uint256 IS the tokenId
+                if len(topics) < 4:
+                    raise ValueError("ERC721 Transfer missing tokenId topic")
+                token_topic = topics[3]
+                if isinstance(token_topic, bytes):
+                    token_id = int.from_bytes(token_topic, "big")
+                else:
+                    token_id = int(token_topic, 16)
                 await lp_handler.handle_lp_nft_transfer(
                     conn, from_addr, to_addr, token_id, block_number
                 )
                 return
+
+            # ERC20 Transfer amount is non-indexed and encoded in data.
+            if len(data_bytes) < 32:
+                raise ValueError("ERC20 Transfer data too short")
+            decoded   = w3.eth.codec.decode(["uint256"], data_bytes)
+            amount    = decoded[0]
 
             # Broker-level column
             col = "wausdc_balance" if contract_lower == wausdc else (
@@ -717,6 +883,18 @@ async def run(rpc_url: str, dsn: str) -> None:
 
     while True:
         try:
+            # Detect runtime rewind requests (e.g. /admin/reset) without restart.
+            # reset() seeds indexer_state to session_start_block; if that value drops
+            # below our in-memory cursor, rewind so replay starts again.
+            async with db.pool.acquire() as conn:
+                db_cursor = await conn.fetchval(
+                    "SELECT last_indexed_block FROM indexer_state WHERE market_id = $1",
+                    global_cfg["market_id"],
+                )
+            if db_cursor is not None and int(db_cursor) < int(last_block):
+                log.info("Detected cursor rewind request: %d -> %d", last_block, int(db_cursor))
+                last_block = int(db_cursor)
+
             latest = w3.eth.block_number
             if latest <= last_block:
                 await asyncio.sleep(POLL_INTERVAL)

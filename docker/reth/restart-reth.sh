@@ -14,6 +14,7 @@
 #   ./docker/reth/restart-reth.sh --no-build   # Skip Docker rebuilds
 #   ./docker/reth/restart-reth.sh --skip-genesis # Reuse existing genesis
 #   ./docker/reth/restart-reth.sh --fresh      # Wipe Reth datadir
+#   ./docker/reth/restart-reth.sh --with-bots  # Start mm/chaos bots too
 # ═══════════════════════════════════════════════════════════════
 
 set -euo pipefail
@@ -25,6 +26,7 @@ RLD_ROOT="$(dirname "$DOCKER_DIR")"
 
 COMPOSE_ANVIL="$DOCKER_DIR/docker-compose.yml"        # Existing Anvil compose (for deployer)
 COMPOSE_RETH="$SCRIPT_DIR/docker-compose.reth.yml"     # Reth services (no deployer)
+COMPOSE_INFRA="$DOCKER_DIR/docker-compose.infra.yml"
 ENV_FILE="$DOCKER_DIR/.env"
 DEPLOY_JSON="$DOCKER_DIR/deployment.json"
 GENESIS_FILE="$SCRIPT_DIR/genesis.json"
@@ -32,6 +34,7 @@ DEPLOY_SNAPSHOT="$SCRIPT_DIR/deployment-snapshot.json"
 
 RETH_PORT="${RETH_PORT:-8545}"
 RETH_RPC="http://localhost:$RETH_PORT"
+RETH_PROJECT="${COMPOSE_PROJECT_NAME:-reth}"
 
 ANVIL_PORT=8545
 ANVIL_RPC="http://localhost:$ANVIL_PORT"
@@ -44,6 +47,8 @@ NO_BUILD=false
 SKIP_GENESIS=false
 FRESH=false
 WITH_USERS=false
+WITH_BOTS=false
+SKIP_E2E=false
 FROM_SNAPSHOT=false
 
 for arg in "$@"; do
@@ -52,14 +57,19 @@ for arg in "$@"; do
         --skip-genesis)   SKIP_GENESIS=true ;;
         --fresh)          FRESH=true ;;
         --with-users)     WITH_USERS=true ;;
+        --with-bots)      WITH_BOTS=true ;;
+        --skip-e2e)       SKIP_E2E=true ;;
         --from-snapshot)  FROM_SNAPSHOT=true; SKIP_GENESIS=true ;;
         --help|-h)
-            echo "Usage: $0 [--no-build] [--skip-genesis] [--fresh] [--with-users] [--from-snapshot]"
+            echo "Usage: $0 [--no-build] [--skip-genesis] [--fresh] [--with-users] [--with-bots] [--skip-e2e] [--from-snapshot]"
             echo ""
             echo "  --no-build       Skip Docker image rebuilds"
             echo "  --skip-genesis   Reuse existing genesis.json (skip Anvil deploy)"
             echo "  --fresh          Wipe Reth datadir before starting"
-            echo "  --with-users     Run broker/LP setup on Reth (indexer captures events)"
+            echo "  --with-users     Run full user setup (LP + MM + CHAOS) on Reth"
+            echo "  --with-bots      Start mm-daemon and chaos-trader after deployment"
+            echo "  --skip-e2e       Skip read-only protocol e2e verification"
+            echo "                   (SimFunder faucet prep still runs)"
             echo "  --from-snapshot  Restore genesis from latest snapshot (fast restart)"
             exit 0
             ;;
@@ -92,6 +102,28 @@ info()    { echo -e "${CYAN}  ℹ $1${NC}"; }
 warn()    { echo -e "${YELLOW}  ⚠ $1${NC}"; }
 dim()     { echo -e "${DIM}    $1${NC}"; }
 
+# Running bots without provisioning users leaves bot wallets empty.
+if [ "$WITH_BOTS" = true ] && [ "$WITH_USERS" = false ]; then
+    WITH_USERS=true
+    info "--with-bots implies --with-users (provision MM/Chaos balances)"
+fi
+
+compose_cid() {
+    local compose_file="$1"
+    local service="$2"
+    docker compose -f "$compose_file" --env-file "$ENV_FILE" ps -q "$service" 2>/dev/null | head -1
+}
+
+service_container() {
+    local service="$1"
+    docker ps --filter "label=com.docker.compose.service=$service" --format '{{.Names}}' | head -1
+}
+
+volume_name() {
+    local short_name="$1"
+    echo "${RETH_PROJECT}_${short_name}"
+}
+
 # ═════════════════════════════════════════════════════════════
 # PREFLIGHT
 # ═════════════════════════════════════════════════════════════
@@ -107,7 +139,7 @@ ok "Docker compose v2 available"
 
 [ ! -f "$ENV_FILE" ] && { fail "$ENV_FILE not found"; exit 1; }
 
-source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|DEPLOYER_KEY|USER_A_KEY|USER_B_KEY|USER_C_KEY|MM_KEY|CHAOS_KEY|INDEXER_PORT|DB_PORT)=' "$ENV_FILE" | sed 's/^/export /')
+source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|DEPLOYER_KEY|USER_A_KEY|USER_B_KEY|USER_C_KEY|MM_KEY|CHAOS_KEY|INDEXER_PORT|DB_PORT|RATES_PORT|ENVIO_API_URL|ENVIO_API_PORT|INDEXER_ADMIN_TOKEN)=' "$ENV_FILE" | sed 's/^/export /')
 if [ -z "${FORK_BLOCK:-}" ] && [ -f "$RLD_ROOT/.env" ]; then
     FORK_BLOCK=$(grep -E '^FORK_BLOCK=' "$RLD_ROOT/.env" 2>/dev/null | cut -d= -f2 || echo "")
 fi
@@ -147,7 +179,7 @@ ok "deployment.json cleared"
 if [ "$FRESH" = true ]; then
     step "1d" "Wiping Reth data (--fresh)..."
     # Remove postgres volume too for a fully clean state
-    docker volume rm reth_reth-datadir reth_postgres-data-reth 2>/dev/null || true
+    docker volume rm "$(volume_name "reth-datadir")" "$(volume_name "postgres-data-reth")" 2>/dev/null || true
     rm -f "$GENESIS_FILE" "$DEPLOY_SNAPSHOT"
     ok "Clean slate (Docker volumes + genesis removed)"
 fi
@@ -190,59 +222,35 @@ if [ "$SKIP_GENESIS" = false ]; then
 
     BUILD_FLAG=""
     [ "$NO_BUILD" = false ] && BUILD_FLAG="--build"
-    docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" up -d $BUILD_FLAG 2>&1 | tail -3
+    # Only bring up services needed by host-run deploy orchestrator.
+    docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" up -d $BUILD_FLAG postgres indexer 2>&1 | tail -3
 
-    # Connect rates-indexer to the Anvil compose network so the deployer
-    # can resolve "rates-indexer:8080" and fetch the live Aave rate.
-    # Without this, MockRLDAaveOracle defaults to 5% and the pool initializes
-    # at $5.00 instead of the real rate (~$2.88).
-    RATES_CONTAINER="docker-rates-indexer-1"
-    ANVIL_NETWORK="docker_default"
-    if docker ps --format '{{.Names}}' | grep -q "$RATES_CONTAINER"; then
-        docker network connect "$ANVIL_NETWORK" "$RATES_CONTAINER" --alias rates-indexer 2>/dev/null || true
-        ok "Linked rates-indexer to deployer network (live Aave rate available)"
+    # Deployer now pulls index rate from Envio/data-pipeline GraphQL.
+    ENVIO_GRAPHQL_URL="${ENVIO_API_URL:-http://localhost:${ENVIO_API_PORT:-5000}}"
+    if curl -sf "${ENVIO_GRAPHQL_URL}/healthz" >/dev/null 2>&1; then
+        ok "Envio API reachable at ${ENVIO_GRAPHQL_URL}"
     else
-        warn "rates-indexer not running — oracle will use default 5% rate"
+        warn "Envio API not reachable at ${ENVIO_GRAPHQL_URL} — oracle will use default 5% rate"
     fi
 
-    # Wait for deployer to finish
-    DEPLOYER_STARTED=$(date +%s)
-    while true; do
-        ELAPSED=$(( $(date +%s) - DEPLOYER_STARTED ))
-        DEPLOYER_STATUS=$(docker inspect --format '{{.State.Status}}' docker-deployer-1 2>/dev/null || echo "missing")
-
-        if [ "$DEPLOYER_STATUS" = "exited" ]; then
-            EXIT_CODE=$(docker inspect --format '{{.State.ExitCode}}' docker-deployer-1 2>/dev/null || echo "?")
-            if [ "$EXIT_CODE" = "0" ]; then
-                ok "Deployer completed (${ELAPSED}s)"
-                cast rpc anvil_setChainId 31337 --rpc-url "$ANVIL_RPC" > /dev/null 2>&1 || true
-                break
-            else
-                # Check if deployment.json was populated (Phases 1-4 succeeded)
-                DEPLOY_KEYS=$(jq 'length' "$DEPLOY_JSON" 2>/dev/null || echo "0")
-                if [ "$DEPLOY_KEYS" -gt 5 ]; then
-                    warn "Deployer exited with code $EXIT_CODE but deployment.json has $DEPLOY_KEYS keys — treating as partial success"
-                    docker logs docker-deployer-1 --tail 5 2>&1
-                    cast rpc anvil_setChainId 31337 --rpc-url "$ANVIL_RPC" > /dev/null 2>&1 || true
-                    break
-                else
-                    fail "Deployer exited with code $EXIT_CODE"
-                    docker logs docker-deployer-1 --tail 30 2>&1
-                    kill "$ANVIL_PID" 2>/dev/null || true
-                    exit 1
-                fi
-            fi
-        fi
-
-        [ "$DEPLOYER_STATUS" = "missing" ] && { fail "Deployer container not found"; exit 1; }
-        [ "$ELAPSED" -ge "$DEPLOYER_TIMEOUT" ] && { fail "Deployer timed out"; exit 1; }
-
-        if [ $((ELAPSED % 30)) -eq 0 ] && [ "$ELAPSED" -gt 0 ]; then
-            CURRENT_LOG=$(docker logs docker-deployer-1 --tail 1 2>/dev/null | head -1 || echo "")
-            dim "[${ELAPSED}s] ${CURRENT_LOG:-Still running...}"
-        fi
-        sleep 5
-    done
+    # Run deployment orchestrator on host to avoid container→host RPC routing
+    # issues observed in this environment (host.docker.internal timeouts).
+    step "2b.1" "Running host deployment orchestrator..."
+    INDEXER_RESET_URL="http://localhost:${INDEXER_PORT:-8080}/admin/reset"
+    API_URL="$ENVIO_GRAPHQL_URL" \
+    INDEXER_RESET_URL="$INDEXER_RESET_URL" \
+    INDEXER_ADMIN_TOKEN="${INDEXER_ADMIN_TOKEN:-}" \
+    DEPLOYMENT_JSON_OUT="$DEPLOY_JSON" \
+    RPC_URL="$ANVIL_RPC" \
+    FORK_BLOCK="$FORK_BLOCK" \
+    DEPLOYER_KEY="$DEPLOYER_KEY" \
+    DEPLOY_BOND_FACTORY=true \
+    python3 "$DOCKER_DIR/deployer/deploy_protocol_snapshot.py" || {
+        fail "Host deploy orchestrator failed"
+        kill "$ANVIL_PID" 2>/dev/null || true
+        exit 1
+    }
+    ok "Host deploy orchestrator completed"
 
     # ── 2c. Warm up external contracts ──
     step "2c" "Warming up contract cache..."
@@ -264,7 +272,7 @@ if [ "$SKIP_GENESIS" = false ]; then
         "getReserveData(address)" "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" \
         --rpc-url "$ANVIL_RPC" > /dev/null 2>&1 || true
     # Warm deployed protocol contracts
-    for key in rld_core twamm_hook wausdc position_token broker_factory broker_router swap_router mock_oracle; do
+    for key in rld_core ghost_router twap_engine twap_engine_lens twamm_hook wausdc position_token broker_factory broker_router swap_router mock_oracle; do
         addr=$(jq -r ".$key // empty" "$DEPLOY_JSON" 2>/dev/null)
         [ -n "$addr" ] && [ "$addr" != "null" ] && cast code "$addr" --rpc-url "$ANVIL_RPC" > /dev/null 2>&1 || true
     done
@@ -302,6 +310,15 @@ print(f'  {len(accounts)} accounts dumped')
     for VAR in DEPLOYER_KEY USER_A_KEY USER_B_KEY USER_C_KEY MM_KEY CHAOS_KEY; do
         [ -n "${!VAR:-}" ] && FUND_ARGS="$FUND_ARGS ${!VAR}"
     done
+    WAUSDC_ADDR=$(jq -r '.wausdc // empty' "$DEPLOY_JSON" 2>/dev/null || echo "")
+    SIM_FUNDER_ADDR=$(jq -r '.sim_funder // empty' "$DEPLOY_JSON" 2>/dev/null || echo "")
+    SIMFUNDER_WAUSDC_RESERVE="${SIMFUNDER_WAUSDC_RESERVE:-1000000000000000}" # 1B waUSDC (6 decimals)
+
+    WAUSDC_PATCH_ARGS=""
+    if [ -n "$WAUSDC_ADDR" ] && [ "$WAUSDC_ADDR" != "null" ] && [ -n "$SIM_FUNDER_ADDR" ] && [ "$SIM_FUNDER_ADDR" != "null" ]; then
+        WAUSDC_PATCH_ARGS="--wausdc-address $WAUSDC_ADDR --wausdc-reserve-address $SIM_FUNDER_ADDR --wausdc-reserve-amount $SIMFUNDER_WAUSDC_RESERVE"
+        dim "waUSDC reserve patch: $SIM_FUNDER_ADDR <= $SIMFUNDER_WAUSDC_RESERVE"
+    fi
 
     python3 "$SCRIPT_DIR/convert_state.py" \
         --input /tmp/anvil-dump.json \
@@ -309,11 +326,17 @@ print(f'  {len(accounts)} accounts dumped')
         --chain-id 31337 \
         --fund-keys $FUND_ARGS \
         --anvil-rpc "$ANVIL_RPC" \
+        $WAUSDC_PATCH_ARGS \
         --patch-contracts \
+            0x000000000004444c5dc75cB358380D2e3dE08A90 \
+            0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e \
             0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203 \
             0x7ffe42c4a5deea5b0fec41c94c136cf115597227 \
             0xd1428ba554f4c8450b763a0b2040a4935c63f06c \
             0x66a9893cc07d91d95644aedd05d03f95e1dba8af \
+            0x000000000022D473030F116dDEE9F6B43aC78BA3 \
+            0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2 \
+            0x98C23E9d8f34FEFb1B7BD6a91B7FF122F4e16F5c \
             0x4c9EDD5852cd905f086C759E8383e09bff1E68B3 \
             0x6c3ea9036406852006290770BEdFcAbA0e23A0e8 \
             0x02950460E2b9529D0E00284A5fA2d7bDF3fA4d72 \
@@ -399,7 +422,7 @@ header "STEP 3: START RETH"
 
 # Wipe reth datadir volume if genesis was just regenerated
 if [ "$SKIP_GENESIS" = false ]; then
-    docker volume rm reth_reth-datadir 2>/dev/null || true
+    docker volume rm "$(volume_name "reth-datadir")" 2>/dev/null || true
 fi
 
 step "3a" "Starting Reth container..."
@@ -427,16 +450,48 @@ fi
 
 # Verify deployed contracts
 step "3c" "Verifying protocol contracts..."
-VERIFY_ADDR=$(jq -r '.twamm_hook // .rld_core // empty' "$DEPLOY_JSON")
-if [ -n "$VERIFY_ADDR" ]; then
+ZERO_ADDR="0x0000000000000000000000000000000000000000"
+VERIFY_KEYS="rld_core ghost_router twap_engine twamm_hook"
+FOUND_VERIFY=false
+for key in $VERIFY_KEYS; do
+    VERIFY_ADDR=$(jq -r ".$key // empty" "$DEPLOY_JSON")
+    [ -z "$VERIFY_ADDR" ] && continue
+    [ "$VERIFY_ADDR" = "null" ] && continue
+    [ "${VERIFY_ADDR,,}" = "${ZERO_ADDR,,}" ] && continue
+
     CODE_LEN=$(cast code "$VERIFY_ADDR" --rpc-url "$RETH_RPC" 2>/dev/null | wc -c)
     if [ "$CODE_LEN" -gt 4 ]; then
-        ok "Protocol verified at $VERIFY_ADDR"
+        ok "Verified $key at $VERIFY_ADDR"
+        FOUND_VERIFY=true
     else
-        fail "Contract at $VERIFY_ADDR has no code — genesis incomplete"
+        fail "Contract $key at $VERIFY_ADDR has no code — genesis incomplete"
         exit 1
     fi
+done
+
+if [ "$FOUND_VERIFY" = false ]; then
+    fail "No protocol contract addresses found in deployment.json"
+    exit 1
 fi
+
+# Verify critical Uniswap V4 dependencies expected in genesis snapshot.
+step "3d" "Verifying Uniswap V4 dependency contracts..."
+for addr in \
+    "0x000000000004444c5dc75cB358380D2e3dE08A90" \
+    "0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e" \
+    "0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203" \
+    "0x7ffe42c4a5deea5b0fec41c94c136cf115597227" \
+    "0xd1428ba554f4c8450b763a0b2040a4935c63f06c" \
+    "0x66a9893cc07d91d95644aedd05d03f95e1dba8af" \
+    "0x000000000022D473030F116dDEE9F6B43aC78BA3"; do
+    CODE_LEN=$(cast code "$addr" --rpc-url "$RETH_RPC" 2>/dev/null | wc -c)
+    if [ "$CODE_LEN" -gt 4 ]; then
+        ok "Verified V4 dependency at $addr"
+    else
+        fail "Missing V4 dependency code at $addr — regenerate genesis with --fresh"
+        exit 1
+    fi
+done
 
 # ═════════════════════════════════════════════════════════════
 # STEP 4: LAUNCH SERVICES
@@ -452,7 +507,11 @@ docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG postg
 step "4b" "Waiting for indexer health..."
 INDEXER_URL="http://localhost:${INDEXER_PORT:-8080}"
 for i in $(seq 1 120); do
-    STATUS=$(docker inspect --format '{{.State.Health.Status}}' reth-indexer-1 2>/dev/null || echo "starting")
+    INDEXER_CID="$(compose_cid "$COMPOSE_RETH" indexer)"
+    STATUS="missing"
+    if [ -n "$INDEXER_CID" ]; then
+        STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$INDEXER_CID" 2>/dev/null || echo "starting")
+    fi
     if [ "$STATUS" = "healthy" ]; then
         ok "Indexer healthy (${i}s)"
         break
@@ -465,8 +524,12 @@ done
 # The indexer reads deployment.json from its mounted /config/deployment.json
 # and seeds the markets table so /config returns 200 (not 503).
 step "4c" "Seeding indexer DB (POST /admin/reset)..."
+RESET_HEADERS=()
+if [ -n "${INDEXER_ADMIN_TOKEN:-}" ]; then
+    RESET_HEADERS=(-H "X-Admin-Token: ${INDEXER_ADMIN_TOKEN}")
+fi
 for i in $(seq 1 30); do
-    RESET_STATUS=$(curl -sf -X POST "$INDEXER_URL/admin/reset" -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
+    RESET_STATUS=$(curl -sf -X POST "${RESET_HEADERS[@]}" "$INDEXER_URL/admin/reset" -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
     if [ "$RESET_STATUS" = "200" ]; then
         ok "Indexer DB seeded successfully"
         break
@@ -557,9 +620,10 @@ print(f'{sqrt_price}|{tick}|{mark}|{liq}|{t0}|{t1}')
     LIQUIDITY=$(echo "$POOL_STATE" | cut -d'|' -f4)
     T0_SCALED=$(echo "$POOL_STATE" | cut -d'|' -f5)
     T1_SCALED=$(echo "$POOL_STATE" | cut -d'|' -f6)
+    PG_CID="$(compose_cid "$COMPOSE_RETH" postgres)"
 
-    if [ -n "$T0_SCALED" ] && [ -n "$T1_SCALED" ] && [ -n "$SQRT_PRICE" ]; then
-        docker exec reth-postgres-1 psql -U rld -d rld_indexer -c "
+    if [ -n "$T0_SCALED" ] && [ -n "$T1_SCALED" ] && [ -n "$SQRT_PRICE" ] && [ -n "$PG_CID" ]; then
+        docker exec "$PG_CID" psql -U rld -d rld_indexer -c "
             INSERT INTO block_states
               (market_id, block_number, block_timestamp,
                sqrt_price_x96, tick, mark_price, liquidity,
@@ -590,18 +654,38 @@ else
     warn "No market_id in deployment.json — skipping pool state seed"
 fi
 
-# ── 4f. Optional user setup (brokers, LP, swaps) ─────────────
-if [ "$WITH_USERS" = true ]; then
-    step "4f" "Running simulation user setup (--with-users)..."
-    python3 "$SCRIPT_DIR/setup_simulation.py"
+# ── 4f. E2E protocol verification ─────────────────────────────
+if [ "$SKIP_E2E" = true ]; then
+    info "E2E protocol verification skipped (--skip-e2e)"
 else
-    info "User setup skipped (use --with-users to create brokers/LP on Reth)"
+    step "4f" "Running full protocol e2e verification..."
+    python3 "$SCRIPT_DIR/verify_protocol_e2e.py" \
+        --rpc-url "$RETH_RPC" \
+        --indexer-url "$INDEXER_URL" \
+        --deployment-json "$DEPLOY_JSON"
 fi
 
-# ── 4g. Start trading bots (after users are funded) ───────────
-step "4g" "Starting mm-daemon + chaos-trader + faucet..."
-docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG mm-daemon chaos-trader faucet 2>&1 | tail -5
-ok "Trading bots + faucet started"
+# ── 4f.1 Optional user setup (LP/MM/CHAOS) ───────────────────
+if [ "$WITH_USERS" = true ]; then
+    step "4f.1" "Running full simulation user setup (--with-users)..."
+    python3 "$SCRIPT_DIR/setup_simulation.py"
+else
+    step "4f.1" "Ensuring SimFunder reserve for faucet..."
+    python3 "$SCRIPT_DIR/setup_simulation.py" --sim-funder-only --prime-wausdc-reserve
+    info "User setup skipped (use --with-users when you want LP/MM/CHAOS accounts)"
+fi
+
+# ── 4g. Start runtime services ────────────────────────────────
+if [ "$WITH_BOTS" = true ]; then
+    step "4g" "Starting mm-daemon + chaos-trader + faucet..."
+    docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG mm-daemon chaos-trader faucet 2>&1 | tail -5
+    ok "Trading bots + faucet started"
+else
+    step "4g" "Starting faucet (bots deferred)..."
+    docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG faucet 2>&1 | tail -5
+    ok "Faucet started"
+    info "MM/Chaos bots skipped (use --with-bots when ready)"
+fi
 
 # ═════════════════════════════════════════════════════════════
 # STATUS REPORT

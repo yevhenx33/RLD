@@ -461,6 +461,10 @@
               ? v.toLocaleString()
               : String(v);
       };
+      const fmtAddr = (a) =>
+        a && typeof a === "string" && a.startsWith("0x") && a.length >= 10
+          ? `${a.slice(0, 8)}…${a.slice(-6)}`
+          : "—";
       const fmtBytes = (s) => {
         if (!s) return "—";
         const m = s.match(/([\d.]+)\s*(B|kB|KB|MiB|GiB|MB|GB)/i);
@@ -713,7 +717,7 @@
             port: "443",
           },
           {
-            n: "Rates Indexer",
+            n: "Rates Pipeline",
             ok: svc.rates_indexer.healthy,
             ms: svc.rates_indexer.response_ms,
             port: "8081",
@@ -1369,8 +1373,10 @@
                         <div style={{ fontSize: 9, color: "var(--td)", marginBottom: 4, letterSpacing: "1px" }}>POSTGRES INDEXER</div>
                         {d.databases?.pool_state && d.databases?.pool_state?.healthy ? (
                           <>
-                            <MetricRow label="Mark Price" value={d.databases.pool_state.mark_price ? `$${d.databases.pool_state.mark_price}` : "—"} color="var(--g)" mono />
-                            <MetricRow label="Index Price" value={d.databases.pool_state.index_price ? `$${d.databases.pool_state.index_price}` : "—"} mono />
+                            <MetricRow label="Mark Price" value={d.databases.pool_state.mark_price != null ? `$${d.databases.pool_state.mark_price}` : "—"} color="var(--g)" mono />
+                            <MetricRow label="Index Price" value={d.databases.pool_state.index_price != null ? `$${d.databases.pool_state.index_price}` : "—"} mono />
+                            <MetricRow label="Index Source" value={d.databases.pool_state.index_price_source || "—"} />
+                            <MetricRow label="Price Feed" value={d.databases.pool_state.price_source || "—"} />
                             <MetricRow label="Total Debt" value={d.databases.pool_state.total_debt || "—"} mono />
                             <MetricRow label="Liquidity" value={d.databases.pool_state.liquidity || "—"} mono />
                             <MetricRow label="Token 0" value={d.databases.pool_state.token0_balance || "—"} mono />
@@ -1383,6 +1389,68 @@
                     </div>
                   );
                 })()}
+              </Card>
+            )}
+
+            {/* ══ ROW 4.6: Market Architecture ══ */}
+            {d.market && d.market.market_id && (
+              <Card
+                title="MARKET ARCHITECTURE"
+                badge={
+                  <Badge
+                    text={d.market.hookless_pool ? "HOOKLESS V4" : "HOOKED"}
+                    type={d.market.hookless_pool ? "g" : "a"}
+                  />
+                }
+                style={{ marginBottom: 1 }}
+                delay={9}
+              >
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>component</th>
+                      <th>value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>market_id</td>
+                      <td style={{ color: "var(--tb)" }}>{fmtAddr(d.market.market_id)}</td>
+                    </tr>
+                    <tr>
+                      <td>pool_id</td>
+                      <td style={{ color: "var(--tb)" }}>{fmtAddr(d.market.pool_id)}</td>
+                    </tr>
+                    <tr>
+                      <td>pool params</td>
+                      <td>{d.market.pool_fee ?? "—"} fee / {d.market.tick_spacing ?? "—"} tick</td>
+                    </tr>
+                    <tr>
+                      <td>mock oracle</td>
+                      <td>{fmtAddr(d.market.mock_oracle)}</td>
+                    </tr>
+                    <tr>
+                      <td>ghost router</td>
+                      <td>{fmtAddr(d.market.ghost_router)}</td>
+                    </tr>
+                    <tr>
+                      <td>twap engine</td>
+                      <td>{fmtAddr(d.market.twap_engine)}</td>
+                    </tr>
+                    <tr>
+                      <td>twap lens</td>
+                      <td>{fmtAddr(d.market.twap_engine_lens)}</td>
+                    </tr>
+                    <tr>
+                      <td>twamm hook</td>
+                      <td>{fmtAddr(d.market.twamm_hook)}</td>
+                    </tr>
+                    <tr>
+                      <td>pool manager</td>
+                      <td>{fmtAddr(d.market.pool_manager)}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </Card>
             )}
 

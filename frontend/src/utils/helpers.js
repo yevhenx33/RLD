@@ -9,6 +9,7 @@ export const API_URL = API_BASE;
 export const authHeaders = {};
 
 export const RATES_GQL_URL = "/rates-graphql";
+export const ENVIO_GQL_URL = "/envio-graphql";
 
 // Earliest date the indexer has data for (protocol deployment date)
 export const DEPLOYMENT_DATE = "2026-03-03";

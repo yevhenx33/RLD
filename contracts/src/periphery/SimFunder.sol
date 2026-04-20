@@ -26,6 +26,8 @@ interface IAavePool {
 
 interface IWrappedAToken {
     function wrap(uint256 aTokenAmount) external returns (uint256 shares);
+    function getSharesByAToken(uint256 aTokenAmount) external view returns (uint256 shares);
+    function getATokenByShares(uint256 shares) external view returns (uint256 aTokenAmount);
 }
 
 contract SimFunder {
@@ -35,12 +37,19 @@ contract SimFunder {
     ERC20 public immutable AUSDC;
     ERC20 public immutable WAUSDC;
     IAavePool public immutable AAVE_POOL;
+    address public owner;
 
     constructor(address usdc, address ausdc, address wausdc, address aavePool) {
         USDC = ERC20(usdc);
         AUSDC = ERC20(ausdc);
         WAUSDC = ERC20(wausdc);
         AAVE_POOL = IAavePool(aavePool);
+        owner = msg.sender;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
     }
 
     /**
@@ -52,6 +61,15 @@ contract SimFunder {
      *      OR this contract must already hold sufficient USDC balance.
      */
     function fund(address user, uint256 amount) external {
+        // Fast path: if reserve already holds enough waUSDC, transfer directly.
+        // This allows Reth snapshot mode to fund users without relying on live
+        // Aave state at runtime.
+        uint256 waReserve = WAUSDC.balanceOf(address(this));
+        if (waReserve >= amount) {
+            WAUSDC.safeTransfer(user, amount);
+            return;
+        }
+
         // 1. Pull USDC from caller (if caller has approved us)
         uint256 bal = USDC.balanceOf(address(this));
         if (bal < amount) {
@@ -84,5 +102,45 @@ contract SimFunder {
         for (uint256 i = 0; i < users.length; i++) {
             this.fund(users[i], amounts[i]);
         }
+    }
+
+    /**
+     * @notice Owner-only reserve top-up path that mints waUSDC from USDC already
+     *         held by this contract and keeps the resulting waUSDC inside reserve.
+     * @dev Used by faucet in Reth mode to avoid per-request Aave dependency.
+     */
+    function primeReserve(uint256 amount) external onlyOwner returns (uint256 mintedShares) {
+        require(amount > 0, "amount=0");
+        uint256 bal = USDC.balanceOf(address(this));
+        require(bal >= amount, "Insufficient USDC reserve");
+
+        USDC.approve(address(AAVE_POOL), amount);
+        AAVE_POOL.supply(address(USDC), amount, address(this), 0);
+
+        uint256 aBalance = AUSDC.balanceOf(address(this));
+        AUSDC.approve(address(WAUSDC), aBalance);
+        mintedShares = IWrappedAToken(address(WAUSDC)).wrap(aBalance);
+    }
+
+    /**
+     * @notice Owner-only direct reserve transfer path.
+     */
+    function transferReserve(address user, uint256 amount) external onlyOwner {
+        WAUSDC.safeTransfer(user, amount);
+    }
+
+    /**
+     * @notice View helper for off-chain health checks.
+     */
+    function availableWAUSDC() external view returns (uint256) {
+        return WAUSDC.balanceOf(address(this));
+    }
+
+    /**
+     * @notice View helper: estimate waUSDC shares for given USDC amount.
+     * @dev Assumes 1 aUSDC minted per 1 USDC supplied at 6 decimals.
+     */
+    function previewSharesFromUSDC(uint256 usdcAmount) external view returns (uint256 shares) {
+        shares = IWrappedAToken(address(WAUSDC)).getSharesByAToken(usdcAmount);
     }
 }

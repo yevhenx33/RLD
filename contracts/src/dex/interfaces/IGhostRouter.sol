@@ -20,6 +20,24 @@ interface IGhostRouter {
     /// @notice Set the market oracle to Uniswap V4 pool price.
     function setUniswapOracle(bytes32 marketId) external;
 
+    /// @notice Sets who can manage fees for a market (owner can always override).
+    function setMarketFeeController(bytes32 marketId, address controller) external;
+
+    /// @notice Updates the taker fee for a market in basis points.
+    function setMarketTradingFeeBps(bytes32 marketId, uint16 feeBps) external;
+
+    /// @notice Claims accrued fees for a market/token pair.
+    function claimTradingFees(bytes32 marketId, address token, address to, uint256 amount) external;
+
+    /// @notice Returns current taker fee in bps for a market.
+    function marketTradingFeeBps(bytes32 marketId) external view returns (uint16);
+
+    /// @notice Returns configured fee controller for a market.
+    function marketFeeController(bytes32 marketId) external view returns (address);
+
+    /// @notice Returns accrued trading fees for a market/token pair.
+    function accruedTradingFees(bytes32 marketId, address token) external view returns (uint256);
+
     /// @notice Read spot price for a market (token1 per token0, scaled by 1e18).
     function getSpotPrice(bytes32 marketId) external view returns (uint256 price);
 

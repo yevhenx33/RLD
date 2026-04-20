@@ -7,6 +7,88 @@ set -euo pipefail
 OUTPUT="/home/ubuntu/RLD/docker/dashboard/status.json"
 HISTORY="/home/ubuntu/RLD/docker/dashboard/history.json"
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+ENV_FILE="/home/ubuntu/RLD/docker/.env"
+DEPLOYMENT_JSON="/home/ubuntu/RLD/docker/deployment.json"
+BACKUP_SCRIPT="/home/ubuntu/RLD/docker/scripts/backup-databases.sh"
+STATUS_SCRIPT="/home/ubuntu/RLD/docker/scripts/generate-status.sh"
+
+read_env_value() {
+  local key="$1"
+  local default="$2"
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "$default"
+    return 0
+  fi
+  local value
+  value=$(awk -F= -v k="$key" '$1 == k {print substr($0, index($0, "=") + 1)}' "$ENV_FILE" | tail -1 | tr -d '"' | tr -d "'")
+  echo "${value:-$default}"
+}
+
+probe_http_time() {
+  local url="$1"
+  local result
+  if result=$(curl -sf -o /dev/null -w "%{time_total}" -m 3 "$url" 2>/dev/null); then
+    echo "$result"
+  else
+    echo "-1"
+  fi
+}
+
+seconds_to_ms() {
+  local seconds="$1"
+  if [ "$seconds" = "-1" ]; then
+    echo "-1"
+    return 0
+  fi
+  python3 -c "print(int(float('$seconds')*1000))" 2>/dev/null || echo "-1"
+}
+
+service_container() {
+  local service="$1"
+  local running_only="${2:-true}"
+  local scope="ps"
+  if [ "$running_only" != "true" ]; then
+    scope="ps -a"
+  fi
+  docker $scope --filter "label=com.docker.compose.service=${service}" --format '{{.Names}}' 2>/dev/null | head -1
+}
+
+cron_has_entry() {
+  local needle="$1"
+  if crontab -l 2>/dev/null | grep -qF "$needle"; then
+    return 0
+  fi
+  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+    if sudo -n crontab -l 2>/dev/null | grep -qF "$needle"; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+INDEXER_PORT=$(read_env_value "INDEXER_PORT" "8080")
+RATES_PORT=$(read_env_value "RATES_PORT" "8081")
+BOT_PORT="8083"
+
+# Fallback index price from deployment config (genesis-style deploys can have
+# oracle state without replayable RateUpdated events in block_states).
+deployment_index_price=$(python3 - "$DEPLOYMENT_JSON" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    raw = data.get("oracle_index_price_wad")
+    if raw in (None, "", "0", 0):
+        print("null")
+    else:
+        print(round(int(raw) / 1e18, 6))
+except Exception:
+    print("null")
+PY
+)
 
 # ── System ──
 DISK_TOTAL=$(df -BG / | awk 'NR==2{print $2}' | tr -d 'G')
@@ -78,17 +160,75 @@ done < <(docker ps -a --filter "status=created" --format "{{.Names}}|{{.Status}}
 containers_json+="]"
 
 # ── API health + response times ──
-rates_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 http://localhost:8081/ 2>/dev/null || echo "-1")
-indexer_rt=$(curl -sf -o /dev/null -w "%{time_total}" -m 3 http://localhost:8080/healthz 2>/dev/null) || indexer_rt="-1"
-bot_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 http://localhost:8082/health 2>/dev/null || echo "-1")
-nginx_rt=$(curl -so /dev/null -w "%{time_total}" -m 3 https://rld.fi/ 2>/dev/null || echo "-1")
+rates_rt=$(probe_http_time "http://localhost:${RATES_PORT}/")
+indexer_rt=$(probe_http_time "http://localhost:${INDEXER_PORT}/healthz")
+bot_rt=$(probe_http_time "http://localhost:${BOT_PORT}/")
+nginx_rt=$(probe_http_time "https://rld.fi/")
 
 rates_ok=$([ "$rates_rt" != "-1" ] && echo "true" || echo "false")
 indexer_ok=$([ "$indexer_rt" != "-1" ] && echo "true" || echo "false")
 bot_ok=$([ "$bot_rt" != "-1" ] && echo "true" || echo "false")
 nginx_ok=$([ "$nginx_rt" != "-1" ] && echo "true" || echo "false")
+rates_ms=$(seconds_to_ms "$rates_rt")
+indexer_ms=$(seconds_to_ms "$indexer_rt")
+bot_ms=$(seconds_to_ms "$bot_rt")
+nginx_ms=$(seconds_to_ms "$nginx_rt")
 
-rates_block=$(curl -sf -m 2 http://localhost:8081/ 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('last_indexed_block',''))" 2>/dev/null || echo "")
+rates_block=$(curl -sf -m 2 "http://localhost:${RATES_PORT}/" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('last_indexed_block',''))" 2>/dev/null || echo "")
+
+# Indexer API status (authoritative market metrics for dashboard)
+INDEXER_API_STATUS=$(python3 - "$INDEXER_PORT" <<'PY'
+import json
+import sys
+import urllib.request
+
+port = sys.argv[1]
+url = f"http://localhost:{port}/api/status"
+try:
+    with urllib.request.urlopen(url, timeout=2) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    if isinstance(payload, dict):
+        print(json.dumps(payload))
+    else:
+        print("{}")
+except Exception:
+    print("{}")
+PY
+)
+
+# ── Market architecture (indexer API) ──
+MARKET_INFO_JSON=$(python3 - "$INDEXER_PORT" <<'PY'
+import json
+import sys
+import urllib.request
+
+port = sys.argv[1]
+url = f"http://localhost:{port}/api/market-info"
+out = {}
+try:
+    with urllib.request.urlopen(url, timeout=2) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+    if isinstance(payload, dict) and payload.get("status") != "error":
+        hook = (payload.get("twammHook") or payload.get("twamm_hook") or "").lower()
+        out = {
+            "market_id": payload.get("marketId") or payload.get("market_id") or "",
+            "pool_id": payload.get("poolId") or payload.get("pool_id") or "",
+            "pool_fee": payload.get("poolFee") or payload.get("pool_fee"),
+            "tick_spacing": payload.get("tickSpacing") or payload.get("tick_spacing"),
+            "mock_oracle": payload.get("mockOracle") or payload.get("mock_oracle") or "",
+            "ghost_router": payload.get("ghostRouter") or payload.get("ghost_router") or "",
+            "twap_engine": payload.get("twapEngine") or payload.get("twap_engine") or "",
+            "twap_engine_lens": payload.get("twapEngineLens") or payload.get("twap_engine_lens") or "",
+            "twamm_hook": hook,
+            "pool_manager": payload.get("poolManager") or payload.get("pool_manager") or "",
+            "hookless_pool": hook in ("", "0x", "0x0", "0x0000000000000000000000000000000000000000"),
+        }
+except Exception:
+    out = {}
+
+print(json.dumps(out))
+PY
+)
 
 # ── Reth (sim chain) ──
 anvil_ok="false"
@@ -163,7 +303,11 @@ if [ -f "$CERT_FILE" ]; then
 fi
 
 # ── Nginx ──
-if sudo nginx -t >/dev/null 2>&1; then nginx_conf_ok="true"; else nginx_conf_ok="false"; fi
+if [ "$(id -u)" -eq 0 ]; then
+  if nginx -t >/dev/null 2>&1; then nginx_conf_ok="true"; else nginx_conf_ok="false"; fi
+else
+  if sudo -n nginx -t >/dev/null 2>&1; then nginx_conf_ok="true"; else nginx_conf_ok="false"; fi
+fi
 
 # ── Git ──
 GIT_COMMIT=$(cd /home/ubuntu/RLD && git log -1 --format="%h" 2>/dev/null || echo "?")
@@ -189,9 +333,15 @@ fi
 
 # ── Backups ──
 BACKUP_JSON=$(cat /home/ubuntu/RLD/backups/last_backup.json 2>/dev/null || echo '{"status":"never","timestamp":"never","size":"0","retained":0}')
+BACKUP_CRON_OK=false
+STATUS_CRON_OK=false
+if cron_has_entry "$BACKUP_SCRIPT"; then BACKUP_CRON_OK=true; fi
+if cron_has_entry "$STATUS_SCRIPT"; then STATUS_CRON_OK=true; fi
 
 # ── Database Integrity ──
-DB_JSON=$(docker exec docker-rates-indexer-1 python3 -c "
+RATES_CONTAINER=$(service_container "rates-indexer" false)
+if [ -n "$RATES_CONTAINER" ]; then
+DB_JSON=$(docker exec "$RATES_CONTAINER" python3 -c "
 import sqlite3, os, json, time
 
 now = int(time.time())
@@ -254,16 +404,12 @@ except Exception as e:
 
 print(json.dumps(result))
 " 2>/dev/null) || DB_JSON='{}'
+else
+  DB_JSON='{}'
+fi
 
 # --- Pool state from rld_indexer postgres ---
-# Try reth-postgres-1 (Reth mode) first, fallback to docker-postgres-1 (Anvil mode)
-PG_CONTAINER=""
-for pg_name in reth-postgres-1 docker-postgres-1; do
-  if docker inspect "$pg_name" >/dev/null 2>&1; then
-    PG_CONTAINER="$pg_name"
-    break
-  fi
-done
+PG_CONTAINER=$(service_container "postgres" false)
 if [ -n "$PG_CONTAINER" ]; then
 POOL_JSON=$(docker exec "$PG_CONTAINER" psql -U rld -d rld_indexer -t -A -c "
 SELECT json_build_object(
@@ -289,6 +435,32 @@ DB_JSON=$(python3 -c "
 import json, sys
 rates = json.loads('''$DB_JSON''') if '''$DB_JSON'''.strip() else {}
 pool = json.loads('''$POOL_JSON''') if '''$POOL_JSON'''.strip() else {'healthy': False}
+idx = json.loads('''$INDEXER_API_STATUS''') if '''$INDEXER_API_STATUS'''.strip() else {}
+if idx.get('status') == 'ok':
+    if idx.get('last_indexed_block') is not None:
+        pool['last_indexed_block'] = idx.get('last_indexed_block')
+    if idx.get('total_events') is not None:
+        pool['total_events'] = idx.get('total_events')
+    if idx.get('total_block_states') is not None:
+        pool['block_states_rows'] = idx.get('total_block_states')
+    if idx.get('mark_price') is not None:
+        pool['mark_price'] = idx.get('mark_price')
+    if idx.get('index_price') is not None:
+        pool['index_price'] = idx.get('index_price')
+    pool['price_source'] = 'indexer_api'
+
+fallback_raw = '''$deployment_index_price'''.strip()
+fallback = None
+if fallback_raw and fallback_raw not in ('null', 'None'):
+    try:
+        fallback = float(fallback_raw)
+    except ValueError:
+        fallback = None
+if pool.get('index_price') is None and fallback is not None:
+    pool['index_price'] = fallback
+    pool['index_price_source'] = 'deployment_json'
+elif pool.get('index_price') is not None:
+    pool['index_price_source'] = 'indexer_api' if pool.get('price_source') == 'indexer_api' else 'block_states'
 rates['pool_state'] = pool
 print(json.dumps(rates))
 " 2>/dev/null) || DB_JSON='{}'
@@ -333,17 +505,20 @@ cat > "$TMPOUT" << ENDJSON
   },
   "containers": $containers_json,
   "services": {
-    "nginx": {"healthy":$nginx_conf_ok,"response_ms":$(python3 -c "print(int(float('${nginx_rt}')*1000))" 2>/dev/null || echo -1)},
-    "rates_indexer": {"healthy":$rates_ok,"response_ms":$(python3 -c "print(int(float('${rates_rt}')*1000))" 2>/dev/null || echo -1),"last_block":"$rates_block"},
-    "indexer": {"healthy":$indexer_ok,"response_ms":$(python3 -c "print(int(float('${indexer_rt}')*1000))" 2>/dev/null || echo -1)},
-    "monitor_bot": {"healthy":$bot_ok,"response_ms":$(python3 -c "print(int(float('${bot_rt}')*1000))" 2>/dev/null || echo -1)},
+    "nginx": {"healthy":$nginx_conf_ok,"response_ms":$nginx_ms},
+    "rates_indexer": {"healthy":$rates_ok,"response_ms":$rates_ms,"last_block":"$rates_block"},
+    "indexer": {"healthy":$indexer_ok,"response_ms":$indexer_ms},
+    "monitor_bot": {"healthy":$bot_ok,"response_ms":$bot_ms},
+    "reth": {"healthy":$anvil_ok,"block":"$anvil_block","mem_mb":${reth_mem_mb:-0},"uptime":"$reth_uptime","db_mb":${reth_db_mb:-0},"chain_id":"${reth_chain_id}","gas_gwei":"${reth_gas_price}","block_ts":${reth_block_ts:-0},"txpool_pending":${reth_txpool_pending:-0},"txpool_queued":${reth_txpool_queued:-0}},
     "anvil": {"healthy":$anvil_ok,"block":"$anvil_block","mem_mb":${reth_mem_mb:-0},"uptime":"$reth_uptime","db_mb":${reth_db_mb:-0},"chain_id":"${reth_chain_id}","gas_gwei":"${reth_gas_price}","block_ts":${reth_block_ts:-0},"txpool_pending":${reth_txpool_pending:-0},"txpool_queued":${reth_txpool_queued:-0}}
   },
   "ssl": {"expiry":"$SSL_EXPIRY","days_remaining":${SSL_DAYS:-0}},
   "git": {"commit":"$GIT_COMMIT","message":"$GIT_MSG","time":"$GIT_TIME","author":"$GIT_AUTHOR"},
   "docker": {"dangling_images":$DANGLING,"images_size":"$IMG_SIZE","active":$IMG_ACTIVE,"total":$IMG_TOTAL},
   "databases": $DB_JSON,
+  "market": $MARKET_INFO_JSON,
   "nodes": $NODE_METRICS_JSON,
+  "automation": {"status_job_scheduled":$STATUS_CRON_OK,"backup_job_scheduled":$BACKUP_CRON_OK},
   "backups": $BACKUP_JSON,
   "history": $HIST
 }

@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv jq curl bash \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps for deploy_swap_router.py and market DB registration
-RUN pip3 install --no-cache-dir web3 python-dotenv psycopg2-binary
+# Install Python deps for deploy scripts and DB registration
+RUN pip3 install --no-cache-dir web3 eth-abi python-dotenv psycopg2-binary
 
 WORKDIR /workspace
 
@@ -25,11 +25,14 @@ COPY scripts/ /workspace/scripts/
 # Copy deploy_swap_router.py
 COPY backend/tools/deploy_swap_router.py /workspace/backend/tools/deploy_swap_router.py
 
+# Copy the new snapshot deploy orchestrator
+COPY docker/deployer/deploy_protocol_snapshot.py /workspace/deploy_protocol_snapshot.py
+
 # Copy the master deploy script + modular phases
 COPY docker/deployer/deploy_all.sh /workspace/deploy_all.sh
 COPY docker/deployer/phases/ /workspace/phases/
 COPY docker/deployer/lib_setup.sh /workspace/lib_setup.sh
-RUN chmod +x /workspace/deploy_all.sh /workspace/phases/*.sh
+RUN chmod +x /workspace/deploy_all.sh /workspace/deploy_protocol_snapshot.py /workspace/phases/*.sh
 
 # Pre-install forge dependencies
 WORKDIR /workspace/contracts
@@ -39,4 +42,4 @@ WORKDIR /workspace
 
 # Reset Foundry's ENTRYPOINT which is ["/bin/sh", "-c"]
 ENTRYPOINT []
-CMD ["bash", "/workspace/deploy_all.sh"]
+CMD ["python3", "/workspace/deploy_protocol_snapshot.py"]

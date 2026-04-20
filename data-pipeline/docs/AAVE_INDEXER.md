@@ -1,5 +1,7 @@
 # Aave V3 Deterministic Indexer Architecture
 
+> Launch scope note: this data-pipeline track is **non-launch-critical** for the Reth V2 baseline and is maintained separately from the core launch path.
+
 ## System Overview
 The Aave V3 indexer breaks away from fragile snapshot-based RPC polling models and replaces them with a highly-precise, 100% deterministic physical event accumulator. By extracting un-indexed raw memory pool logs and parsing hexadecimal vectors mathematically, the system natively reconstructs the physical capital state of the Aave Ethereum Mainnet deployment without relying on third-party aggregators.
 

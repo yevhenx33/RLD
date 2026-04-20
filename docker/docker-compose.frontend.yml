@@ -18,9 +18,9 @@
 
 services:
   frontend:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:80"
     volumes:
       - /home/ubuntu/RLD/frontend/dist:/usr/share/nginx/html:ro
       - /home/ubuntu/RLD/frontend/public/fonts.css:/usr/share/nginx/html/fonts.css:ro

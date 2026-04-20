@@ -1,7 +1,10 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# Anvil Rotate — Dump state, restart with fresh process
+# Anvil Rotate (Legacy Utility)
 # ═══════════════════════════════════════════════════════════════
+# Reth is the canonical V2 runtime. This script is kept only for
+# optional legacy Anvil workflows and exits cleanly in Reth mode.
+#
 # Anvil fork instances leak memory over time (500MB+/hour) because
 # every storage slot accessed from mainnet is cached in-process.
 # This script:
@@ -31,6 +34,18 @@ ANVIL_RPC="http://localhost:$ANVIL_PORT"
 MAX_RSS_KB=12582912
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+# Skip in Reth-only runtime (launch baseline).
+if pgrep -x reth >/dev/null 2>&1 || docker ps --filter "label=com.docker.compose.service=reth" --format '{{.Names}}' | grep -q .; then
+    log "INFO: Reth runtime detected. Skipping legacy Anvil rotation."
+    exit 0
+fi
+
+# If Anvil is not installed, do not fail cron loops.
+if ! command -v anvil >/dev/null 2>&1; then
+    log "INFO: Anvil binary not found. Skipping legacy rotation."
+    exit 0
+fi
 
 # ── Load env ──────────────────────────────────────────────────
 if [[ -f "$ENV_FILE" ]]; then

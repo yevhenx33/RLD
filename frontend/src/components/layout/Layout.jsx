@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Outlet } from "react-router-dom";
 import Header from "./Header";
-import axios from "axios";
-import { API_BASE, authHeaders } from "../../utils/helpers";
+import { API_BASE, ENVIO_GQL_URL, authHeaders } from "../../utils/helpers";
 
 export default function Layout() {
   const [headerData, setHeaderData] = useState({
@@ -14,20 +13,23 @@ export default function Layout() {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        // Lightweight fetch for status only
-        const res = await axios.get(
-          `${API_BASE}/rates?resolution=RAW&limit=1`,
-          { headers: authHeaders },
-        );
-        const data = res.data;
+        const res = await fetch(ENVIO_GQL_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: `{ historicalRates(symbols: ["USDC"], resolution: "1D", limit: 1) { timestamp } }`
+          }),
+        });
+        const json = await res.json();
 
-        if (data && data.length > 0) {
-          const latest = data[data.length - 1];
+        if (json?.data?.historicalRates) {
           setHeaderData({
-            latest: latest,
-            isCapped: false, // In layout check we assume false/irrelevant for global header unless strictly needed
+            latest: { block_number: json.data.historicalRates[0]?.timestamp || 0 },
+            isCapped: false, // Legacy header constraint parameter mapping
             ratesLoaded: true,
           });
+        } else {
+          setHeaderData((prev) => ({ ...prev, ratesLoaded: false }));
         }
       } catch (err) {
         console.error("Global Layout Status Fetch Error:", err);

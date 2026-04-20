@@ -102,8 +102,6 @@ interface IRLDCore {
     );
     event RiskUpdateCancelled(MarketId indexed id);
     event RiskUpdateApplied(MarketId indexed id);
-    event PoolFeeUpdated(MarketId indexed id, uint24 newFee);
-
     /// @notice Emitted when a liquidation is executed
     event Liquidation(
         MarketId indexed id,
@@ -302,16 +300,6 @@ interface IRLDCore {
     /// @notice Cancels a pending risk parameter update
     /// @param id The market ID
     function cancelRiskUpdate(MarketId id) external;
-
-    /// @notice Updates the Uniswap V4 pool fee (immediate, no timelock)
-    /// @param id The market ID
-    /// @param newFee New fee in hundredths of bips (e.g., 3000 = 0.3%)
-    /// @param tickSpacing The pool's tick spacing (must match the deployed pool)
-    function updatePoolFee(
-        MarketId id,
-        uint24 newFee,
-        int24 tickSpacing
-    ) external;
 
     /// @notice Gets the pending risk update for a market
     /// @param id The market ID

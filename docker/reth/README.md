@@ -75,10 +75,41 @@ All accounts get 10,000 ETH in genesis. Keys are Anvil/Hardhat defaults.
 | Script | Purpose |
 |--------|---------|
 | `restart-reth.sh` | Main entry point — full lifecycle |
+| `docker/deployer/deploy_protocol_snapshot.py` | One-shot Python deployer used during Anvil snapshot bootstrap |
 | `start_reth.sh` | Start Reth node (called by restart) |
 | `00_warmup.sh` | Standalone: Anvil dump → genesis.json |
 | `convert_state.py` | Anvil JSON → Reth genesis format |
 | `05_setup_users_reth.sh` | Post-genesis broker/LP setup on Reth |
+
+## GhostRouter Solver Requirement
+
+For GhostRouter markets, execution quality is not "set and forget". A solver must evaluate:
+
+1. Direct vanilla V4 pool swap.
+2. `GhostRouter.swap` (netting/intercept first, then pool fallback).
+
+Recent benchmark snapshot (`contracts/test/dex/GasBench.RouterExecutionProfiles.t.sol`):
+
+- No engines: direct `142,698` gas vs router `176,566` gas.
+- Idle TWAP engine: direct `142,698` gas vs router `244,146` gas.
+- Active passive TWAP inventory: direct `140,195` gas / out `95` vs router `228,673` gas / out `100`.
+
+Decision rule:
+
+- Route through router only when output improvement is worth the gas premium.
+- `value(routerOut - directOut) > (routerGas - directGas) * gasPrice`
+
+Operational policy:
+
+- We must run our own first-party arb/route solver for production.
+- External arbitrage participation is beneficial but cannot be a launch dependency.
+
+### Reproduce the gas profile
+
+```bash
+cd contracts
+forge test --match-path "test/dex/GasBench.RouterExecutionProfiles.t.sol" -vv
+```
 
 ## Flags
 

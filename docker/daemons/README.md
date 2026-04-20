@@ -44,12 +44,12 @@ Runs four sub-systems at two speeds:
 ### How Arb Works
 
 ```
-1. Read index price from MockRLDAaveOracle.getIndexPrice()
-2. Read mark price from V4 pool via extsload (slot0 → sqrtPriceX96 → tick → price)
+1. Read mark/index from simulation indexer (`/api/latest`, fallback `/api/status`)
+2. Fallback to on-chain reads (oracle + V4 slot0) if indexer is unavailable
 3. If |spread| > 1%:
    - Calculate exact swap amount to move mark to index (Python V4 math)
    - Cap at $500k per trade
-   - Execute via SwapRouter
+   - Execute via GhostRouter or SwapRouter (depending on deployment config)
 ```
 
 ### Clear Auction Logic
@@ -74,8 +74,10 @@ Executes random trades every 10–15 seconds to simulate organic market activity
 
 - Randomly picks direction: buy wRLP or sell wRLP
 - Random size: 1–10% of available balance
+- Chooses only feasible direction when one side inventory is low
+- Optional faucet auto-topup when waUSDC is depleted
 - Logs all operations to `/tmp/chaos_trader.log`
-- Skips trades if balance < 1,000 tokens
+- Trade thresholds are configurable via env vars
 
 ### Configuration
 
@@ -88,6 +90,14 @@ Executes random trades every 10–15 seconds to simulate organic market activity
 | `TWAMM_HOOK` | JTM hook address |
 | `SWAP_ROUTER` | V4 swap router |
 | `RPC_URL` | Anvil RPC |
+| `FAUCET_URL` | Faucet endpoint (default `http://faucet:8088`) for auto-fund |
+| `CHAOS_AUTO_FUND` | Enable/disable faucet auto-funding (`true` by default) |
+| `CHAOS_TRADE_INTERVAL_MIN/MAX` | Seconds between random trades |
+| `CHAOS_TRADE_PCT_MIN/MAX` | Random trade size bounds (fraction of inventory) |
+| `CHAOS_MIN_WAUSDC_FOR_BUY` | Minimum waUSDC required to consider buy trades |
+| `CHAOS_MIN_WRLP_FOR_SELL` | Minimum wRLP required to consider sell trades |
+| `CHAOS_MIN_BUY_AMOUNT_WAUSDC` | Lower bound for buy size in waUSDC |
+| `CHAOS_MIN_SELL_AMOUNT_WRLP` | Lower bound for sell size in wRLP |
 
 ---
 

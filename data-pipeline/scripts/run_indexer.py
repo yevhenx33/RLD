@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from indexer.collector import ProtocolCollector
 from indexer.processor import ProtocolProcessor
-from indexer.sources import FluidSource, ChainlinkSource, AaveV3Source, MorphoSource, LidoRebaseSource, StaticPegsSource, PendleSwapSource
+from indexer.sources import FluidSource, ChainlinkSource, AaveV3Source, MorphoSource, LidoRebaseSource, StaticPegsSource, PendleSwapSource, SofrSource
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +36,7 @@ SOURCE_MAP = {
     "CHAINLINK_PRICES": ChainlinkSource,
     "LIDO_REBASE": LidoRebaseSource,
     "STATIC_PEGS": StaticPegsSource,
+    "SOFR_RATES": SofrSource,
 }
 
 async def run_worker(source_cls, role: str, genesis_override: int = None, poll_interval: int = 60):
@@ -61,8 +62,13 @@ async def run_worker(source_cls, role: str, genesis_override: int = None, poll_i
     log.info("═" * 60)
 
     if role == "collector":
-        worker = ProtocolCollector(source)
-        loop_func = worker.run_collector_cycle
+        if getattr(source, "is_offchain", False):
+            from indexer.offchain import OffchainCollector
+            worker = OffchainCollector(source)
+            loop_func = worker.run_collector_cycle
+        else:
+            worker = ProtocolCollector(source)
+            loop_func = worker.run_collector_cycle
     elif role == "processor":
         if not source.raw_table:
             log.warning(f"[{source.name}] Protocol has no raw_table. Processor role invalid.")

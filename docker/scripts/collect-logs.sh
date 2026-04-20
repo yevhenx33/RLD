@@ -23,25 +23,31 @@ TIMESTAMP=$(date +%Y-%m-%d_%H:%M:%S)
 # Create log directory
 mkdir -p "$LOG_DIR"
 
-# Containers to collect from
-CONTAINERS=(
-    "docker-indexer-1"
-    "docker-rates-indexer-1"
-    "docker-monitor-bot-1"
-    "docker-mm-daemon-1"
-    "docker-chaos-trader-1"
+# Compose service names (container names are resolved dynamically)
+SERVICES=(
+    "reth"
+    "postgres"
+    "indexer"
+    "mm-daemon"
+    "chaos-trader"
+    "faucet"
+    "rates-indexer"
+    "monitor-bot"
+    "frontend"
 )
 
-for CONTAINER in "${CONTAINERS[@]}"; do
-    # Extract short name (e.g., "indexer" from "docker-indexer-1")
-    NAME=$(echo "$CONTAINER" | sed 's/docker-\(.*\)-1/\1/')
-    LOG_FILE="$LOG_DIR/${NAME}_${DATE}.log"
+for SERVICE in "${SERVICES[@]}"; do
+    SERVICE_FILE="${SERVICE//-/_}"
+    LOG_FILE="$LOG_DIR/${SERVICE_FILE}_${DATE}.log"
+    SERVICE_CONTAINERS=$(docker ps --filter "label=com.docker.compose.service=${SERVICE}" --format '{{.Names}}' || true)
 
-    # Append recent logs (since last hour)
-    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
-        echo "--- $TIMESTAMP ---" >> "$LOG_FILE"
+    [ -z "$SERVICE_CONTAINERS" ] && continue
+
+    while IFS= read -r CONTAINER; do
+        [ -z "$CONTAINER" ] && continue
+        echo "--- $TIMESTAMP [$CONTAINER] ---" >> "$LOG_FILE"
         docker logs "$CONTAINER" --since 1h 2>&1 >> "$LOG_FILE" 2>/dev/null || true
-    fi
+    done <<< "$SERVICE_CONTAINERS"
 done
 
 # Aggregate health status

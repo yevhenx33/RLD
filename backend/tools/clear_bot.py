@@ -65,6 +65,7 @@ POLL_INTERVAL = 2        # seconds between checks (aggressive)
 MIN_CLEAR_USD = 0.001    # minimum $ value to bother clearing
 MIN_DISCOUNT_BPS = 1     # minimum discount to accept (0.01%)
 MAX_GAS = 500_000        # gas limit for clear()
+ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
 
 # ── ABIs ────────────────────────────────────────────────────────────
 
@@ -157,7 +158,11 @@ class ClearBot:
 
         self.col_addr = Web3.to_checksum_address(mi["collateral"]["address"])
         self.pos_addr = Web3.to_checksum_address(mi["position_token"]["address"])
-        self.hook_addr = Web3.to_checksum_address(mi["infrastructure"]["twamm_hook"])
+        infra = mi.get("infrastructure", {})
+        raw_hook = infra.get("twamm_hook") or infra.get("twammHook")
+        if not raw_hook or raw_hook.lower() in ("0x", "0x0", ZERO_ADDRESS.lower()):
+            raise RuntimeError("Hookless deployment detected (twamm_hook=0x0); clear bot is disabled.")
+        self.hook_addr = Web3.to_checksum_address(raw_hook)
         self.mark_price = float(mi.get("mark_price", mi.get("index_price", "3.38")))
 
         # Build pool key (token0 < token1)

@@ -22,6 +22,9 @@ contract MockGhostRouterForEngine is IGhostRouter {
     }
 
     mapping(bytes32 => Market) public markets;
+    mapping(bytes32 => uint16) public marketTradingFeeBps;
+    mapping(bytes32 => address) public marketFeeController;
+    mapping(bytes32 => mapping(address => uint256)) public accruedTradingFees;
 
     function setMarket(bytes32 marketId, address token0, address token1) external {
         markets[marketId].token0 = token0;
@@ -53,6 +56,23 @@ contract MockGhostRouterForEngine is IGhostRouter {
     function setExternalOracle(bytes32, address) external pure override {}
 
     function setUniswapOracle(bytes32) external pure override {}
+
+    function setMarketFeeController(bytes32 marketId, address controller) external override {
+        marketFeeController[marketId] = controller;
+    }
+
+    function setMarketTradingFeeBps(bytes32 marketId, uint16 feeBps) external override {
+        marketTradingFeeBps[marketId] = feeBps;
+    }
+
+    function claimTradingFees(bytes32 marketId, address token, address to, uint256 amount) external override {
+        uint256 accrued = accruedTradingFees[marketId][token];
+        if (amount > accrued) amount = accrued;
+        if (amount > 0) {
+            accruedTradingFees[marketId][token] = accrued - amount;
+            IERC20Like(token).transfer(to, amount);
+        }
+    }
 
     function getSpotPrice(bytes32 marketId) external view override returns (uint256 price) {
         return markets[marketId].spotPrice;

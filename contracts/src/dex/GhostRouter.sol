@@ -31,6 +31,7 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
     using StateLibrary for IPoolManager;
 
     uint256 public constant PRICE_SCALE = 1e18;
+    uint16 public constant BPS_DENOMINATOR = 10_000;
 
     enum OracleMode {
         External,
@@ -64,6 +65,15 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
 
     /// @notice Registry of Sovereign Markets
     mapping(bytes32 => Market) public markets;
+
+    /// @notice Per-market taker fee charged on swap input, in bps.
+    mapping(bytes32 => uint16) public marketTradingFeeBps;
+
+    /// @notice Per-market fee controller allowed to update fee bps and claim accrued fees.
+    mapping(bytes32 => address) public marketFeeController;
+
+    /// @notice Accrued fees by market and token.
+    mapping(bytes32 => mapping(address => uint256)) public accruedTradingFees;
 
     /// @notice Registry of approved engines allowed to command the vault
     mapping(address => bool) public isEngine;
@@ -117,6 +127,11 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
     error ObservationTooOld();
     error InvalidPoolManager();
     error InvalidOwner();
+    error UnauthorizedFeeController();
+    error InvalidFeeBps();
+    error InvalidFeeController();
+    error InvalidFeeRecipient();
+    error InsufficientAccruedFees();
 
     uint8 internal constant ENGINE_OP_SYNC = 1;
     uint8 internal constant ENGINE_OP_APPLY_NETTING = 2;
@@ -129,6 +144,12 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
         bytes32 indexed marketId, address indexed token0, address indexed token1, OracleMode oracleMode, address oracle
     );
     event OracleModeUpdated(bytes32 indexed marketId, OracleMode oracleMode, address oracle);
+    event MarketFeeControllerUpdated(bytes32 indexed marketId, address indexed controller);
+    event MarketTradingFeeBpsUpdated(bytes32 indexed marketId, uint16 feeBps);
+    event TradingFeeAccrued(
+        bytes32 indexed marketId, address indexed payer, address indexed token, uint256 feeAmount
+    );
+    event TradingFeesClaimed(bytes32 indexed marketId, address indexed token, address indexed to, uint256 amount);
     event SwapExecuted(
         bytes32 indexed marketId,
         address indexed sender,
@@ -153,6 +174,14 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
 
     modifier onlyEngine() {
         if (!isEngine[msg.sender]) revert UnauthorizedEngine();
+        _;
+    }
+
+    modifier onlyFeeController(bytes32 marketId) {
+        _requireMarket(marketId);
+        if (msg.sender != owner && msg.sender != marketFeeController[marketId]) {
+            revert UnauthorizedFeeController();
+        }
         _;
     }
 
@@ -238,6 +267,35 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
         market.oracleMode = OracleMode.UniswapV4Spot;
         market.oracle = address(0);
         emit OracleModeUpdated(marketId, OracleMode.UniswapV4Spot, address(0));
+    }
+
+    /// @inheritdoc IGhostRouter
+    function setMarketFeeController(bytes32 marketId, address controller) external override onlyOwner {
+        _requireMarket(marketId);
+        if (controller == address(0)) revert InvalidFeeController();
+        marketFeeController[marketId] = controller;
+        emit MarketFeeControllerUpdated(marketId, controller);
+    }
+
+    /// @inheritdoc IGhostRouter
+    function setMarketTradingFeeBps(bytes32 marketId, uint16 feeBps) external override onlyFeeController(marketId) {
+        if (feeBps > BPS_DENOMINATOR) revert InvalidFeeBps();
+        marketTradingFeeBps[marketId] = feeBps;
+        emit MarketTradingFeeBpsUpdated(marketId, feeBps);
+    }
+
+    /// @inheritdoc IGhostRouter
+    function claimTradingFees(bytes32 marketId, address token, address to, uint256 amount)
+        external
+        override
+        onlyFeeController(marketId)
+    {
+        if (to == address(0)) revert InvalidFeeRecipient();
+        uint256 accrued = accruedTradingFees[marketId][token];
+        if (amount > accrued) revert InsufficientAccruedFees();
+        accruedTradingFees[marketId][token] = accrued - amount;
+        IERC20(token).safeTransfer(to, amount);
+        emit TradingFeesClaimed(marketId, token, to, amount);
     }
 
     /// @inheritdoc IGhostRouter
@@ -338,10 +396,11 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
         if (market.token0 == address(0)) revert MarketNotFound();
 
         address tokenIn = zeroForOne ? market.token0 : market.token1;
-        address tokenOut = zeroForOne ? market.token1 : market.token0;
-
         // 1. Pull Taker Tokens into Vault
         IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
+
+        // 1b. Accrue per-market input fee in-router (ghost-level fee layer).
+        uint256 remainingIn = _collectSwapFee(marketId, tokenIn, amountIn, msg.sender);
 
         // 2. Fetch Oracle Spot Price (Token1 per Token0, scaled by 1e18)
         uint256 spotPrice = getSpotPrice(marketId);
@@ -350,7 +409,6 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
         _executeGlobalNetting(marketId, spotPrice);
 
         // 4. [Layer 2] Taker Intercept — fill from remaining ghost
-        uint256 remainingIn = amountIn;
         (uint256 ghostFilled, uint256 inputUsed) = _takerIntercept(marketId, zeroForOne, remainingIn, spotPrice);
         amountOut += ghostFilled;
         remainingIn -= inputUsed;
@@ -364,6 +422,7 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
 
         // 6. Deliver output to Taker
         if (amountOut > 0) {
+            address tokenOut = zeroForOne ? market.token1 : market.token0;
             IERC20(tokenOut).safeTransfer(msg.sender, amountOut);
         }
 
@@ -371,6 +430,21 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
         _writeObservation(marketId, spotPrice);
 
         emit SwapExecuted(marketId, msg.sender, zeroForOne, amountIn, amountOut, amountOutMinimum);
+    }
+
+    function _collectSwapFee(bytes32 marketId, address tokenIn, uint256 amountIn, address payer)
+        internal
+        returns (uint256 netAmountIn)
+    {
+        uint16 feeBps = marketTradingFeeBps[marketId];
+        if (feeBps == 0) return amountIn;
+
+        uint256 feeAmount = (amountIn * feeBps) / BPS_DENOMINATOR;
+        if (feeAmount == 0) return amountIn;
+
+        accruedTradingFees[marketId][tokenIn] += feeAmount;
+        emit TradingFeeAccrued(marketId, payer, tokenIn, feeAmount);
+        return amountIn - feeAmount;
     }
 
     /// @inheritdoc IGhostRouter

@@ -1,5 +1,7 @@
 # Morpho Blue Deterministic Indexer Architecture
 
+> Launch scope note: this data-pipeline track is **non-launch-critical** for the Reth V2 baseline and is maintained separately from the core launch path.
+
 ## System Overview
 The Morpho Blue indexer implements a deterministic, event-driven state machine that reconstructs per-market TVL (`totalSupplyAssets`, `totalBorrowAssets`) by replaying raw EVM event logs from the immutable Morpho Blue singleton contract (`0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`). The system achieves **0.000% drift** against archival on-chain state across 627 out of 733 active Chainlink-backed markets, with all meaningful-TVL markets (>$1K) tracking at sub-0.1%.
 

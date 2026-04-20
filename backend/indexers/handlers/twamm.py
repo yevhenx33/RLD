@@ -13,6 +13,11 @@ PrimeBroker events (watched at broker address):
   - TwammOrderCancelled(bytes32 indexed orderId, uint256 buyTokensOut, uint256 sellTokensRefund)
   - TwammOrderClaimed(bytes32 indexed orderId, uint256 claimed0, uint256 claimed1)
 
+TwapEngine events (watched at twap_engine address):
+  - StreamSubmitted(bytes32 indexed marketId, bytes32 indexed orderId, address indexed owner, ...)
+  - OrderCancelled(bytes32 indexed marketId, bytes32 indexed orderId, address indexed owner, ...)
+  - TokensClaimed(bytes32 indexed marketId, bytes32 indexed orderId, address indexed owner, ...)
+
 All values stored as raw uint256 strings. Frontend handles decimal conversion.
 """
 import asyncpg

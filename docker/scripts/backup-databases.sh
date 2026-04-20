@@ -18,24 +18,49 @@ BACKUP_DIR="$BACKUP_ROOT/$DATE"
 LOG="$BACKUP_ROOT/backup.log"
 STATUS_FILE="$BACKUP_ROOT/last_backup.json"
 
-# Databases to back up: name|container|path
+# Databases to back up: name|service|path
 DATABASES=(
-  "aave_rates|docker-rates-indexer-1|/app/data/aave_rates.db"
-  "clean_rates|docker-rates-indexer-1|/app/data/clean_rates.db"
+  "aave_rates|rates-indexer|/app/data/aave_rates.db"
+  "clean_rates|rates-indexer|/app/data/clean_rates.db"
 )
 
 # ── Functions ──
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 
+resolve_container() {
+  local service="$1"
+  local container=""
+
+  container=$(docker ps --filter "label=com.docker.compose.service=${service}" --format '{{.Names}}' | head -1 || true)
+  if [ -n "$container" ]; then
+    echo "$container"
+    return 0
+  fi
+
+  container=$(docker ps -a --filter "label=com.docker.compose.service=${service}" --format '{{.Names}}' | head -1 || true)
+  if [ -n "$container" ]; then
+    echo "$container"
+    return 0
+  fi
+
+  return 1
+}
+
 backup_db() {
-  local name="$1" container="$2" db_path="$3"
+  local name="$1" service="$2" db_path="$3"
+  local container=""
   local out_file="$BACKUP_DIR/${name}.db"
   local gz_file="${out_file}.gz"
 
-  log "  Backing up $name from $container:$db_path ..."
+  if ! container=$(resolve_container "$service"); then
+    log "  ❌ FAILED: service $service not found"
+    return 1
+  fi
+
+  log "  Backing up $name from ${service} (${container}):$db_path ..."
 
   # Check container is running
-  if ! docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
+  if [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || echo false)" != "true" ]; then
     log "  ⚠️  Container $container not running, trying direct volume access..."
     # Try direct file copy as fallback
     local vol_path
@@ -87,9 +112,9 @@ success=0
 failed_list=""
 
 for entry in "${DATABASES[@]}"; do
-  IFS='|' read -r name container db_path <<< "$entry"
+  IFS='|' read -r name service db_path <<< "$entry"
   total=$((total + 1))
-  if backup_db "$name" "$container" "$db_path"; then
+  if backup_db "$name" "$service" "$db_path"; then
     success=$((success + 1))
   else
     failed_list="$failed_list $name"

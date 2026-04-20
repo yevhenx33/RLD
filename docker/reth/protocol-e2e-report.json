@@ -1,0 +1,20 @@
+{
+  "rpc_url": "http://localhost:8545",
+  "indexer_url": "http://localhost:8080",
+  "chain_id": 31337,
+  "block_number": 14,
+  "market_id": "0xd2a7ab40e88ffdca504c85f47dfbbb9dfd4e12733ed8a10836dce59381a1fa01",
+  "pool_id": "0x12f358312396d5c534512491ddf8a43467c50f7513484a8020eb14fc50964172",
+  "token0": "0xB692e0F130944a302D1e5E07c1F6b0a0D94d9fC3",
+  "token1": "0xF20822cB6ca26C873F3d35949A518D12eFa832d3",
+  "pool_fee": 500,
+  "tick_spacing": 5,
+  "oracle_index_price_wad": "13999993444404604000",
+  "expected_pool_spot_wad": "13999993444404604000",
+  "router_spot_wad": "13999993438825380099",
+  "spot_delta": "5579223901",
+  "spot_tolerance": "13999993444",
+  "indexer_config_market_id": "0xd2a7ab40e88ffdca504c85f47dfbbb9dfd4e12733ed8a10836dce59381a1fa01",
+  "indexer_market_info_market_id": "0xd2a7ab40e88ffdca504c85f47dfbbb9dfd4e12733ed8a10836dce59381a1fa01",
+  "indexer_market_info_ghost_router": "0xa18a0ba162620af2262EE0020734cC13b618D9B2"
+}

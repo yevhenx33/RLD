@@ -1,0 +1,26 @@
+{
+  "rpc_url": "http://localhost:8545",
+  "chain_id": 31337,
+  "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "pool_manager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+  "ghost_router": "0x49a77825cCD2B59AbBeeC2C2043004d345199c24",
+  "token_a": "0x174a35AE4E26b547a2f31dB2DBDaac08fDe9dC41",
+  "token_b": "0x465c8bC38aF52912372625CbF3336EfeEC3D210c",
+  "token0": "0x174a35AE4E26b547a2f31dB2DBDaac08fDe9dC41",
+  "token1": "0x465c8bC38aF52912372625CbF3336EfeEC3D210c",
+  "price_ratio_token1_per_token0": "5:1",
+  "sqrt_price_x96": "177159557114295710296101716160",
+  "target_spot_wad": "5000000000000000000",
+  "slot0_spot_wad": "4999999999999999999",
+  "initialize_tick": 16095,
+  "router_spot_wad": "4999999999999999999",
+  "pool_key": {
+    "currency0": "0x174a35AE4E26b547a2f31dB2DBDaac08fDe9dC41",
+    "currency1": "0x465c8bC38aF52912372625CbF3336EfeEC3D210c",
+    "fee": 3000,
+    "tickSpacing": 60,
+    "hooks": "0x0000000000000000000000000000000000000000"
+  },
+  "pool_id": "0xb7d1607840125a3555bbb254336aacfff925bc98f229d1578617e1cb3c2759b8",
+  "market_id": "0xb7d1607840125a3555bbb254336aacfff925bc98f229d1578617e1cb3c2759b8"
+}

@@ -28,6 +28,7 @@ import time
 import urllib.request
 import urllib.error
 from eth_account import Account
+from eth_utils import keccak
 
 
 # 10,000 ETH in wei (hex)
@@ -128,6 +129,26 @@ def fetch_contract_state(rpc_url: str, address: str) -> dict | None:
     except Exception as e:
         print(f"    ⚠️  Storage fetch incomplete for {addr}: {e}", file=sys.stderr)
 
+    # Some large/proxy contracts return sparse/empty pages via storageRange.
+    # Always probe critical EIP-1967 proxy slots directly so proxy contracts
+    # remain callable after genesis conversion.
+    proxy_slots = {
+        # bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1)
+        "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+        # bytes32(uint256(keccak256("eip1967.proxy.admin")) - 1)
+        "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103",
+        # bytes32(uint256(keccak256("eip1967.proxy.beacon")) - 1)
+        "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50",
+    }
+    for slot in proxy_slots:
+        try:
+            r = _rpc_call(rpc_url, "eth_getStorageAt", [addr, slot, "latest"])
+            value = r.get("result", "")
+            if value and value != "0x" and value != "0x" + "00" * 32:
+                storage[slot] = "0x" + value[2:].zfill(64)
+        except Exception:
+            continue
+
     return {
         "balance": balance,
         "nonce": hex(nonce),
@@ -153,9 +174,11 @@ def patch_contracts_from_rpc(
         addr_lower = addr.lower()
         addr_key = addr_lower[2:] if addr_lower.startswith("0x") else addr_lower
 
-        if addr_key in alloc and "code" in alloc[addr_key]:
-            print(f"    ⏭️  {addr_lower} already in dump, skipping")
-            continue
+        # Always refresh explicitly requested patch contracts from live fork RPC.
+        # Some addresses appear in anvil_dumpState with code but missing critical
+        # proxy storage slots (implementation/admin), which would make them
+        # non-functional on Reth if we skipped patching.
+        existed = addr_key in alloc
 
         state = fetch_contract_state(rpc_url, addr_lower)
         if state is None:
@@ -165,20 +188,56 @@ def patch_contracts_from_rpc(
         slot_count = len(state.get("storage", {}))
         code_len = len(state.get("code", "")) // 2  # hex chars → bytes
 
+        existing_entry = alloc.get(addr_key, {}) if existed else {}
+        existing_storage = existing_entry.get("storage", {}) if isinstance(existing_entry, dict) else {}
+        fetched_storage = state.get("storage", {}) or {}
+
         # Build alloc entry
         entry = {
             "balance": state["balance"],
             "nonce": state["nonce"],
             "code": state["code"],
         }
-        if state["storage"]:
-            entry["storage"] = state["storage"]
+
+        # Preserve storage from dump when RPC storage enumeration is sparse/empty.
+        # This is critical for contracts like PoolManager where debug_storageRangeAt
+        # may miss slots, but anvil_dumpState already captured the full state.
+        if fetched_storage:
+            entry["storage"] = (
+                {**existing_storage, **fetched_storage} if existing_storage else fetched_storage
+            )
+        elif existing_storage:
+            entry["storage"] = existing_storage
 
         alloc[addr_key] = entry
         patched += 1
-        print(f"    ✅  {addr_lower} patched (code={code_len}B, slots={slot_count})")
+        print(
+            f"    ✅  {addr_lower} patched"
+            f"{' (refreshed)' if existed else ''} (code={code_len}B, slots={slot_count})"
+        )
 
     return patched
+
+
+def _to_alloc_key(address: str) -> str:
+    addr = address.lower()
+    return addr[2:] if addr.startswith("0x") else addr
+
+
+def _mapping_slot(address: str, slot_index: int) -> str:
+    """
+    keccak256(abi.encode(address, slot_index)) for mapping(address => uint256).
+    """
+    addr = address.lower()
+    if addr.startswith("0x"):
+        addr = addr[2:]
+    addr_bytes = bytes.fromhex(addr.zfill(40)).rjust(32, b"\x00")
+    slot_bytes = int(slot_index).to_bytes(32, byteorder="big")
+    return "0x" + keccak(addr_bytes + slot_bytes).hex()
+
+
+def _hex32(value: int) -> str:
+    return "0x" + value.to_bytes(32, byteorder="big").hex()
 
 
 def convert_anvil_dump_to_genesis(
@@ -187,6 +246,9 @@ def convert_anvil_dump_to_genesis(
     chain_id: int = 31337,
     anvil_rpc: str | None = None,
     patch_contracts: list[str] | None = None,
+    wausdc_address: str | None = None,
+    wausdc_reserve_address: str | None = None,
+    wausdc_reserve_amount: int = 0,
 ) -> dict:
     """
     Convert Anvil state dump to Reth genesis.json format.
@@ -323,6 +385,45 @@ def convert_anvil_dump_to_genesis(
     else:
         print("  ⚠️  USDC contract not in dump — faucet not configured", file=sys.stderr)
 
+    # ── Optional waUSDC reserve patch for SimFunder ────────────
+    # WrappedAToken inherits solmate ERC20 layout:
+    #   slot 2 => totalSupply
+    #   slot 3 => balanceOf mapping(address => uint256)
+    if wausdc_address and wausdc_reserve_address and wausdc_reserve_amount > 0:
+        wa_key = _to_alloc_key(wausdc_address)
+        reserve_addr = wausdc_reserve_address.lower()
+        if reserve_addr.startswith("0x"):
+            reserve_addr = reserve_addr[2:]
+        reserve_addr = "0x" + reserve_addr
+
+        if wa_key in alloc and "code" in alloc[wa_key]:
+            if "storage" not in alloc[wa_key]:
+                alloc[wa_key]["storage"] = {}
+
+            storage = alloc[wa_key]["storage"]
+            total_supply_slot = "0x" + (2).to_bytes(32, byteorder="big").hex()
+            reserve_slot = _mapping_slot(reserve_addr, 3)
+
+            prev_supply = int(storage.get(total_supply_slot, "0x0"), 16)
+            prev_reserve = int(storage.get(reserve_slot, "0x0"), 16)
+
+            new_supply = prev_supply + wausdc_reserve_amount
+            new_reserve = prev_reserve + wausdc_reserve_amount
+
+            storage[total_supply_slot] = _hex32(new_supply)
+            storage[reserve_slot] = _hex32(new_reserve)
+
+            print(
+                "  💧 waUSDC reserve patched: "
+                f"{wausdc_reserve_amount/1e6:,.0f} to {reserve_addr} "
+                f"(totalSupply={new_supply}, reserveBalance={new_reserve})"
+            )
+        else:
+            print(
+                "  ⚠️  waUSDC contract not found in alloc — reserve patch skipped",
+                file=sys.stderr,
+            )
+
     # Build genesis config
     genesis = {
         "config": {
@@ -389,6 +490,22 @@ def main():
         default=[],
         help="Extra contract addresses to fetch from Anvil RPC and include in genesis",
     )
+    parser.add_argument(
+        "--wausdc-address",
+        default="",
+        help="waUSDC contract address to patch reserve balance into.",
+    )
+    parser.add_argument(
+        "--wausdc-reserve-address",
+        default="",
+        help="Address that should receive waUSDC reserve in genesis (e.g. SimFunder).",
+    )
+    parser.add_argument(
+        "--wausdc-reserve-amount",
+        type=int,
+        default=0,
+        help="waUSDC raw amount (6 decimals) to pre-mint into reserve address.",
+    )
     args = parser.parse_args()
 
     # Load Anvil dump
@@ -404,6 +521,9 @@ def main():
         chain_id=args.chain_id,
         anvil_rpc=args.anvil_rpc,
         patch_contracts=args.patch_contracts,
+        wausdc_address=args.wausdc_address,
+        wausdc_reserve_address=args.wausdc_reserve_address,
+        wausdc_reserve_amount=args.wausdc_reserve_amount,
     )
 
     account_count = len(genesis["alloc"])

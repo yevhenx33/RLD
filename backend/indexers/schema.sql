@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS markets (
   broker_factory      TEXT NOT NULL,
   mock_oracle         TEXT NOT NULL,
   twamm_hook          TEXT NOT NULL,
+  ghost_router        TEXT,
+  twap_engine         TEXT,
+  twap_engine_lens    TEXT,
   swap_router         TEXT,
   bond_factory        TEXT,
   basis_trade_factory TEXT,
@@ -48,6 +51,11 @@ CREATE TABLE IF NOT EXISTS markets (
   total_broker_wrlp   NUMERIC DEFAULT 0,  -- SUM of all broker wrlp_balance
   created_at          TIMESTAMPTZ NOT NULL
 );
+
+-- Backward-compatible migration for already initialized databases.
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS ghost_router TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS twap_engine TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS twap_engine_lens TEXT;
 
 -- ── INDEXER PROGRESS ────────────────────────────────────────────────────────
 

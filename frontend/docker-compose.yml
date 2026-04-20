@@ -1,8 +1,11 @@
+# DEPRECATED FOR V2 LAUNCH.
+# Use /home/ubuntu/RLD/docker/docker-compose.frontend.yml instead.
+# This file is kept only for legacy local workflows.
 services:
   frontend:
     build:
       context: ..
       dockerfile: frontend/Dockerfile
     ports:
-      - "3001:80"
+      - "127.0.0.1:3001:80"
     restart: always

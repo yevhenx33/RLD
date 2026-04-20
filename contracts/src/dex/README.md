@@ -173,6 +173,36 @@ Router path:
 5. **Layer 3**: fallback remainder through vanilla V4 swap.
 6. Enforce slippage, deliver output to taker.
 
+## 5.5.1 Solver Routing Decision (Direct Pool vs GhostRouter)
+
+For solver-driven execution, there are two valid taker paths:
+
+1. Direct vanilla V4 pool swap (lowest baseline gas).
+2. `GhostRouter.swap` (can access Layer 1/2 passive inventory before pool fallback).
+
+Measured profile from `test/dex/GasBench.RouterExecutionProfiles.t.sol`:
+
+| Mode | Direct pool gas | GhostRouter gas | Delta (router-direct) | Direct out | Router out |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| no engines registered | 142,698 | 176,566 | +33,868 | 100 | 100 |
+| idle TWAP engine registered | 142,698 | 244,146 | +101,448 | 100 | 100 |
+| active passive TWAP liquidity | 140,195 | 228,673 | +88,478 | 95 | 100 |
+
+Implication:
+
+- Direct pool is the gas-minimal path when prices are equivalent.
+- Router can be economically better when passive TWAP inventory improves output.
+
+Execution rule for solvers:
+
+- Prefer router iff value gain beats gas premium:
+  - `value(routerOut - directOut) > (routerGas - directGas) * gasPrice`
+
+Launch requirement:
+
+- RLD must run a first-party arb/route solver that continuously compares both paths and executes the best one.
+- Third-party arbs are helpful but not relied on for protocol health, spread quality, or clearing cadence.
+
 ## 5.6 Claim Earnings
 
 User calls:
@@ -295,6 +325,8 @@ Before production rollout:
 3. Configure `expirationInterval`, `discountRateScaled`, `maxDiscountBps` conservatively.
 4. Load test long idle periods and bitmap event density behavior.
 5. Monitor ghost levels and clear cadence.
+6. Run `GasBench.RouterExecutionProfiles.t.sol` and calibrate route-selection thresholds per market.
+7. Operate a first-party arb solver for routing and clearing; treat external arbs as opportunistic.
 
 ## 11) Testing Coverage (Current)
 
