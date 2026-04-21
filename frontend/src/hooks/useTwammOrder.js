@@ -4,125 +4,29 @@ import { getSigner } from "../utils/connection";
 
 // ── ABI fragments ────────────────────────────────────────────────
 
-const POOL_KEY_TUPLE = {
-  name: "key",
-  type: "tuple",
-  components: [
-    { name: "currency0", type: "address" },
-    { name: "currency1", type: "address" },
-    { name: "fee", type: "uint24" },
-    { name: "tickSpacing", type: "int24" },
-    { name: "hooks", type: "address" },
-  ],
-};
-
-const SUBMIT_ORDER_PARAMS_TUPLE = {
-  name: "params",
-  type: "tuple",
-  components: [
-    POOL_KEY_TUPLE,
-    { name: "zeroForOne", type: "bool" },
-    { name: "duration", type: "uint256" },
-    { name: "amountIn", type: "uint256" },
-  ],
-};
-
-const ORDER_KEY_TUPLE = {
-  name: "orderKey",
-  type: "tuple",
-  components: [
-    { name: "owner", type: "address" },
-    { name: "expiration", type: "uint160" },
-    { name: "zeroForOne", type: "bool" },
-    { name: "nonce", type: "uint256" },
-  ],
-};
-
 const PRIME_BROKER_TWAMM_ABI = [
-  {
-    name: "submitTwammOrder",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "twammHook", type: "address" },
-      SUBMIT_ORDER_PARAMS_TUPLE,
-    ],
-    outputs: [
-      { name: "orderId", type: "bytes32" },
-      ORDER_KEY_TUPLE,
-    ],
-  },
-  {
-    name: "cancelTwammOrder",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [],
-    outputs: [
-      { name: "buyTokensOut", type: "uint256" },
-      { name: "sellTokensRefund", type: "uint256" },
-    ],
-  },
-  {
-    name: "claimExpiredTwammOrder",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [],
-    outputs: [
-      { name: "claimed0", type: "uint256" },
-      { name: "claimed1", type: "uint256" },
-    ],
-  },
-  {
-    name: "claimExpiredTwammOrderWithKey",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "twammHook", type: "address" },
-      POOL_KEY_TUPLE,
-      ORDER_KEY_TUPLE,
-    ],
-    outputs: [
-      { name: "claimed0", type: "uint256" },
-      { name: "claimed1", type: "uint256" },
-    ],
-  },
-  {
-    name: "setActiveTwammOrder",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      {
-        name: "info",
-        type: "tuple",
-        components: [
-          POOL_KEY_TUPLE,
-          ORDER_KEY_TUPLE,
-          { name: "orderId", type: "bytes32" },
-        ],
-      },
-    ],
-    outputs: [],
-  },
+  "function submitTwammOrder(address twapEngine, bytes32 marketId, bool zeroForOne, uint256 duration, uint256 amountIn) external returns (bytes32 orderId)",
+  "function cancelTwammOrder() external returns (uint256 buyTokensOut, uint256 sellTokensRefund)",
+  "function claimExpiredTwammOrder() external returns (uint256 claimedBuyToken)",
+  "function claimExpiredTwammOrderWithId(address twapEngine, bytes32 marketId, bytes32 orderId) external returns (uint256 claimedBuyToken)",
+  "function setActiveTwammOrder(address twapEngine, (bytes32 marketId, bytes32 orderId) info) external",
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────
 
-function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
-  const token0 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? collateralAddr
-      : positionAddr;
-  const token1 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? positionAddr
-      : collateralAddr;
-  return {
-    currency0: token0,
-    currency1: token1,
-    fee: infrastructure.pool_fee || 500,
-    tickSpacing: infrastructure.tick_spacing || 5,
-    hooks: infrastructure.twamm_hook,
-  };
+function getTwapEngine(infra) {
+  return infra?.twapEngine || infra?.twap_engine || null;
+}
+
+function getTwammMarketId(marketId, infra) {
+  return infra?.poolId || infra?.pool_id || marketId || null;
+}
+
+function normalizeOrderId(orderId) {
+  if (!orderId) return null;
+  const value = String(orderId);
+  const hex = value.startsWith("0x") ? value : `0x${value}`;
+  return /^0x[0-9a-fA-F]{64}$/.test(hex) ? hex : null;
 }
 
 // ── Hook ──────────────────────────────────────────────────────────
@@ -143,6 +47,7 @@ function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
 export function useTwammOrder(
   account,
   brokerAddress,
+  marketId,
   infrastructure,
   collateralAddr,
   positionAddr,
@@ -152,6 +57,8 @@ export function useTwammOrder(
   const [error, setError] = useState(null);
   const [step, setStep] = useState("");
   const [txHash, setTxHash] = useState(null);
+  const twapEngine = getTwapEngine(infrastructure);
+  const twammMarketId = getTwammMarketId(marketId, infrastructure);
 
    
   const _syncAndNotify = useCallback(async (successStep, onSuccess, receipt) => {
@@ -171,14 +78,13 @@ export function useTwammOrder(
    */
   const submitOrder = useCallback(
     async (amountIn, durationHours, zeroForOne, onSuccess) => {
-      if (
-        !account ||
-        !brokerAddress ||
-        !infrastructure?.twamm_hook ||
-        !collateralAddr ||
-        !positionAddr
-      ) {
-        setError("Missing required addresses");
+      const missing = [];
+      if (!account) missing.push("account");
+      if (!brokerAddress) missing.push("broker");
+      if (!twapEngine) missing.push("twapEngine");
+      if (!twammMarketId) missing.push("marketId/poolId");
+      if (missing.length > 0) {
+        setError(`Missing required addresses: ${missing.join(", ")}`);
         return;
       }
       if (!window.ethereum) {
@@ -199,11 +105,6 @@ export function useTwammOrder(
           signer,
         );
 
-        const poolKey = buildPoolKey(
-          infrastructure,
-          collateralAddr,
-          positionAddr,
-        );
         const amountInWei = ethers.parseUnits(String(amountIn), 6);
         // Option E (deferred start): the contract starts at the next epoch
         // boundary and streams for exactly `duration` seconds. No extra
@@ -211,16 +112,9 @@ export function useTwammOrder(
         const EXPIRATION_INTERVAL = 3600n; // must match JTM's expirationInterval
         const durationSeconds = BigInt(Math.round(durationHours)) * EXPIRATION_INTERVAL;
 
-        const params = {
-          key: poolKey,
-          zeroForOne,
-          duration: durationSeconds,
-          amountIn: amountInWei,
-        };
-
         console.log("[TWAMM] submitTwammOrder params:", {
-          twammHook: infrastructure.twamm_hook,
-          poolKey,
+          twapEngine,
+          marketId: twammMarketId,
           zeroForOne,
           durationSeconds: durationSeconds.toString(),
           amountIn: amountInWei.toString(),
@@ -228,8 +122,11 @@ export function useTwammOrder(
 
         setStep("Confirm TWAMM order in wallet...");
         const tx = await broker.submitTwammOrder(
-          infrastructure.twamm_hook,
-          params,
+          twapEngine,
+          twammMarketId,
+          zeroForOne,
+          durationSeconds,
+          amountInWei,
           { gasLimit: 2_000_000n },
         );
         setTxHash(tx.hash);
@@ -262,7 +159,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
+    [account, brokerAddress, twammMarketId, twapEngine, _syncAndNotify],
   );
 
   /**
@@ -334,7 +231,7 @@ export function useTwammOrder(
    *
    * If the order is currently tracked (activeTwammOrder), uses the simpler
    * claimExpiredTwammOrder() which reads from storage.
-   * If untracked, uses claimExpiredTwammOrderWithKey(hook, key, orderKey)
+   * If untracked, uses claimExpiredTwammOrderWithId(twapEngine, marketId, orderId)
    * which can claim any order owned by this broker.
    *
    * @param {object}   order     Enriched order object (needs .tracked, .expiration, .zeroForOne)
@@ -371,28 +268,22 @@ export function useTwammOrder(
           // Tracked order: use parameterless version (reads activeTwammOrder from storage)
           tx = await broker.claimExpiredTwammOrder({ gasLimit: 1_000_000n });
         } else {
-          // Untracked order: must pass explicit key data
-          if (!infrastructure?.twamm_hook || !collateralAddr || !positionAddr) {
-            setError("Missing pool/hook addresses for untracked claim");
+          // Untracked order: claim by explicit order id
+          const orderId = normalizeOrderId(order?.orderId);
+          if (!twapEngine || !twammMarketId || !orderId) {
+            setError("Missing twap engine, market id, or order id");
             setExecuting(false);
             return;
           }
-          const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
-          const orderKey = {
-            owner: brokerAddress,
-            expiration: BigInt(order.expiration),
-            zeroForOne: order.zeroForOne,
-            nonce: BigInt(order.nonce ?? 0),
-          };
-          console.log("[TWAMM] claimWithKey params:", {
-            hook: infrastructure.twamm_hook,
-            poolKey,
-            orderKey: { ...orderKey, expiration: orderKey.expiration.toString(), nonce: orderKey.nonce.toString() },
+          console.log("[TWAMM] claimWithId params:", {
+            twapEngine,
+            marketId: twammMarketId,
+            orderId,
           });
-          tx = await broker.claimExpiredTwammOrderWithKey(
-            infrastructure.twamm_hook,
-            poolKey,
-            orderKey,
+          tx = await broker.claimExpiredTwammOrderWithId(
+            twapEngine,
+            twammMarketId,
+            orderId,
             { gasLimit: 1_000_000n },
           );
         }
@@ -426,7 +317,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
+    [account, brokerAddress, twammMarketId, twapEngine, _syncAndNotify],
   );
 
   /**
@@ -437,7 +328,7 @@ export function useTwammOrder(
    */
   const trackTwammOrder = useCallback(
     async (order, onSuccess) => {
-      if (!account || !brokerAddress || !infrastructure?.twamm_hook) {
+      if (!account || !brokerAddress || !twapEngine || !twammMarketId) {
         setError("Missing required addresses");
         return;
       }
@@ -451,21 +342,17 @@ export function useTwammOrder(
       try {
         const signer = await getSigner();
         const broker = new ethers.Contract(brokerAddress, PRIME_BROKER_TWAMM_ABI, signer);
-        const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
-
-        const orderId = order.orderId.startsWith("0x") ? order.orderId : `0x${order.orderId}`;
+        const orderId = normalizeOrderId(order?.orderId);
+        if (!orderId) {
+          throw new Error("Invalid order id");
+        }
         const info = {
-          key: poolKey,
-          orderKey: {
-            owner: brokerAddress,
-            expiration: BigInt(order.expiration),
-            zeroForOne: order.zeroForOne,
-          },
+          marketId: twammMarketId,
           orderId,
         };
 
         setStep("Confirm in wallet...");
-        const tx = await broker.setActiveTwammOrder(info, { gasLimit: 500_000n });
+        const tx = await broker.setActiveTwammOrder(twapEngine, info, { gasLimit: 500_000n });
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -486,7 +373,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, collateralAddr, positionAddr, _syncAndNotify],
+    [account, brokerAddress, twammMarketId, twapEngine, _syncAndNotify],
   );
 
   /**
@@ -496,7 +383,7 @@ export function useTwammOrder(
    */
   const untrackTwammOrder = useCallback(
     async (onSuccess) => {
-      if (!account || !brokerAddress || !infrastructure?.twamm_hook) {
+      if (!account || !brokerAddress || !twapEngine || !twammMarketId) {
         setError("Missing required addresses");
         return;
       }
@@ -513,23 +400,12 @@ export function useTwammOrder(
 
         // Pass zeroed-out info to clear the active order
         const emptyInfo = {
-          key: {
-            currency0: ethers.ZeroAddress,
-            currency1: ethers.ZeroAddress,
-            fee: 0,
-            tickSpacing: 0,
-            hooks: ethers.ZeroAddress,
-          },
-          orderKey: {
-            owner: ethers.ZeroAddress,
-            expiration: 0n,
-            zeroForOne: false,
-          },
+          marketId: twammMarketId,
           orderId: ethers.ZeroHash,
         };
 
         setStep("Confirm in wallet...");
-        const tx = await broker.setActiveTwammOrder(emptyInfo, { gasLimit: 300_000n });
+        const tx = await broker.setActiveTwammOrder(twapEngine, emptyInfo, { gasLimit: 300_000n });
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -550,7 +426,7 @@ export function useTwammOrder(
         setExecuting(false);
       }
     },
-    [account, brokerAddress, infrastructure, _syncAndNotify],
+    [account, brokerAddress, twammMarketId, twapEngine, _syncAndNotify],
   );
 
   return {

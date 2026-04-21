@@ -40,7 +40,9 @@ const SIM_QUERY = `
 function _remapMarketInfo(mi) {
   if (!mi) return null;
   return {
-    marketId: mi.marketId || null,
+    marketId: mi.marketId || mi.market_id || null,
+    poolId: mi.poolId || mi.pool_id || null,
+    pool_id: mi.poolId || mi.pool_id || null,
     collateral: mi.collateral || { name: mi.wausdc ? "waUSDC" : "Unknown", symbol: "waUSDC", address: mi.wausdc || "" },
     position_token: mi.positionToken || mi.position_token || { name: "wRLP", symbol: "wRLP", address: mi.wrlp || "" },
     broker_factory: mi.brokerFactory || mi.broker_factory || "",
@@ -48,6 +50,10 @@ function _remapMarketInfo(mi) {
       broker_router: mi.infrastructure?.brokerRouter || mi.infrastructure?.broker_router || mi.brokerRouter || mi.swapRouter || "",
       broker_executor: mi.infrastructure?.brokerExecutor || mi.infrastructure?.broker_executor || mi.brokerExecutor || "",
       twamm_hook: mi.infrastructure?.twammHook || mi.infrastructure?.twamm_hook || mi.twammHook || "",
+      twapEngine: mi.infrastructure?.twapEngine || mi.infrastructure?.twap_engine || mi.twapEngine || mi.twap_engine || "",
+      twap_engine: mi.infrastructure?.twapEngine || mi.infrastructure?.twap_engine || mi.twapEngine || mi.twap_engine || "",
+      poolId: mi.infrastructure?.poolId || mi.infrastructure?.pool_id || mi.poolId || mi.pool_id || "",
+      pool_id: mi.infrastructure?.poolId || mi.infrastructure?.pool_id || mi.poolId || mi.pool_id || "",
       bond_factory: mi.infrastructure?.bondFactory || mi.infrastructure?.bond_factory || mi.bondFactory || "",
       basis_trade_factory: mi.infrastructure?.basisTradeFactory || mi.infrastructure?.basis_trade_factory || mi.basisTradeFactory || "",
       pool_fee: mi.infrastructure?.poolFee || mi.poolFee || 0,

@@ -142,3 +142,9 @@ new-front/
 - [x] Refactored downstream dependencies (`BondFactory.sol`, `BasisTradeFactory.sol`) to interact safely with the V3 parameters format (fetching expiration and TwapEngine addresses natively).
 - [x] Completed full parity integration verification, resolving compilation errors and ensuring test suite passes.
 - [ ] Needs Review: Verify full end-to-end functionality of V3 in staging configuration.
+
+## Code Review: Faucet Hardening
+* Review Docker networking changes (`rld_shared` bridge integration vs `network_mode: host`)
+* Review Nginx upstream proxy pointing to `http://faucet:8088` instead of `host.docker.internal`
+* Review `ThreadingHTTPServer` upgrade to prevent TCP backlog congestion
+* Verify removal of Anvil storage overrides in `useFaucet.js`

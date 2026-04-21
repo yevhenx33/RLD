@@ -8,6 +8,8 @@ import {PrimeBroker} from "../rld/broker/PrimeBroker.sol";
 import {PrimeBrokerFactory} from "../rld/core/PrimeBrokerFactory.sol";
 import {IERC20} from "../shared/interfaces/IERC20.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
@@ -226,9 +228,16 @@ contract BondFactory is ReentrancyGuard {
         // ── 5. Send proceeds to broker → TWAMM buy-back order ──────────
         IERC20(COLLATERAL).transfer(broker, proceeds);
 
+        // TwapEngine / GhostRouter key markets by the **hookless** V4 pool id (see
+        // GhostRouter._initializeMarket). Core marketId != ghost marketId.
         bool sellCollateral = Currency.unwrap(poolKey.currency0) == COLLATERAL;
-        bytes32 marketId = MarketId.unwrap(pb.marketId());
-        pb.submitTwammOrder(TWAP_ENGINE, marketId, sellCollateral, duration, proceeds);
+        pb.submitTwammOrder(
+            TWAP_ENGINE,
+            _ghostPoolId(poolKey),
+            sellCollateral,
+            duration,
+            proceeds
+        );
 
         // ── 6. Freeze broker + track ownership ──────────────────────────
         pb.freeze();
@@ -370,6 +379,13 @@ contract BondFactory is ReentrancyGuard {
     }
 
     /* ========================= INTERNAL HELPERS ========================== */
+
+    /// @dev GhostRouter registers `markets` under the hookless V4 pool id (hooks must be zero there).
+    function _ghostPoolId(PoolKey calldata poolKey) internal pure returns (bytes32) {
+        PoolKey memory k = poolKey;
+        k.hooks = IHooks(address(0));
+        return PoolId.unwrap(k.toId());
+    }
 
     /// @notice Helper to handle TWAMM cancellation to bypass deep stack limits natively.
     function _handleTwammClose(PrimeBroker pb) internal {

@@ -171,12 +171,13 @@ services:
     environment:
       - WHALE_KEY=${WHALE_KEY}
       - SIMFUNDER_ADMIN_KEY=${DEPLOYER_KEY}
-      - RPC_URL=http://localhost:8545
+      - RPC_URL=http://reth:8545
       - DEPLOYMENT_FILE=/config/deployment-snapshot.json
       - FAUCET_PORT=8088
+    ports:
+      - "127.0.0.1:8088:8088"
     volumes:
       - ./deployment-snapshot.json:/config/deployment-snapshot.json:ro
-    network_mode: host
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8088\"' || exit 1"]

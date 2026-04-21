@@ -169,8 +169,26 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh
   const [direction, setDirection] = useState("BUY");
 
   const infrastructure = marketInfo?.infrastructure;
+  // GhostRouter/TwapEngine use poolId as market key (not Core marketId).
+  const twammMarketId =
+    marketInfo?.poolId ||
+    marketInfo?.pool_id ||
+    marketInfo?.marketId ||
+    marketInfo?.market_id ||
+    "";
+  const twapEngineAddr =
+    infrastructure?.twapEngine ||
+    infrastructure?.twap_engine ||
+    marketInfo?.twapEngine ||
+    marketInfo?.twap_engine ||
+    "";
   const collateralAddr = marketInfo?.collateral?.address;
   const positionAddr = marketInfo?.position_token?.address;
+  const twammInfra = {
+    ...infrastructure,
+    twapEngine: twapEngineAddr,
+    twap_engine: twapEngineAddr,
+  };
 
   const {
     submitOrder,
@@ -180,7 +198,8 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh
   } = useTwammOrder(
     account,
     brokerAddress,
-    infrastructure,
+    twammMarketId,
+    twammInfra,
     collateralAddr,
     positionAddr,
   );
@@ -209,7 +228,8 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh
     Number.isInteger(durationNum) &&
     account &&
     brokerAddress &&
-    infrastructure?.twamm_hook;
+    twammMarketId &&
+    twapEngineAddr;
 
   const handleSubmit = () => {
     submitOrder(amountNum, durationNum, zeroForOne, () => {
@@ -372,6 +392,9 @@ const ROUTER_LONG_ABI = [{
 const BROKER_ADD_LP_ABI = [
   "function addPoolLiquidity(address twammHook, int24 tickLower, int24 tickUpper, uint128 liquidity, uint128 amount0Max, uint128 amount1Max) external returns (uint256 tokenId)",
 ];
+
+// Keep a small buffer so LP sizing stays below quoted swap output.
+const SWAP_QUOTE_BUFFER_BPS = 9950n; // 99.50%
 
 /**
  * Compute the token split for a concentrated LP position.
@@ -541,11 +564,37 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       const waUSDC_raw = ethers.parseUnits(split.waUSDC.toFixed(6), 6);
       const swapAmount_raw = ethers.parseUnits(split.swapAmount.toFixed(6), 6);
 
+      if (swapAmount_raw > 0n && depositMode !== "USDC") {
+        throw new Error("Atomic LP for wRLP input is not implemented yet");
+      }
+
+      // Size LP from a conservative swap quote to avoid over-asking wRLP.
+      let positionForLp_raw = wRLP_raw;
+      if (swapAmount_raw > 0n) {
+        setLpStep("Quoting swap output...");
+        try {
+          const routerForQuote = new ethers.Contract(routerAddr, ROUTER_LONG_ABI, signer);
+          const quotedOut = await routerForQuote.executeLong.staticCall(
+            brokerAddress,
+            swapAmount_raw,
+            poolKey,
+          );
+          const bufferedOut = (quotedOut * SWAP_QUOTE_BUFFER_BPS) / 10_000n;
+          if (bufferedOut <= 0n) throw new Error("Swap quote returned zero output");
+          if (bufferedOut < positionForLp_raw) {
+            positionForLp_raw = bufferedOut;
+          }
+        } catch (quoteErr) {
+          console.warn("[LP] Swap quote failed, applying fallback haircut:", quoteErr);
+          positionForLp_raw = (positionForLp_raw * SWAP_QUOTE_BUFFER_BPS) / 10_000n;
+        }
+      }
+
       // Compute liquidity from amounts
       const currentTick = Math.log(price) / Math.log(1.0001);
       // Map to token0/token1 order
-      const amt0_raw = token0IsPosition ? wRLP_raw : waUSDC_raw;
-      const amt1_raw = token0IsPosition ? waUSDC_raw : wRLP_raw;
+      const amt0_raw = token0IsPosition ? positionForLp_raw : waUSDC_raw;
+      const amt1_raw = token0IsPosition ? waUSDC_raw : positionForLp_raw;
       const liquidity = computeLiquidity(Number(amt0_raw), Number(amt1_raw), tickLower, tickUpper, currentTick);
 
       if (liquidity <= 0n) throw new Error("Computed liquidity is zero — increase amount");
@@ -560,8 +609,9 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
           const routerIface = new ethers.Interface(ROUTER_LONG_ABI);
           const swapData = routerIface.encodeFunctionData("executeLong", [brokerAddress, swapAmount_raw, poolKey]);
           calls.push({ target: routerAddr, data: swapData });
+        } else {
+          throw new Error("Atomic LP for wRLP input is not implemented yet");
         }
-        // TODO: wRLP deposit mode would use closeLong
       }
 
       // Call 2: addPoolLiquidity
@@ -621,7 +671,14 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       onStateChange?.();
     } catch (err) {
       console.error("[LP] Atomic execution failed:", err);
-      setLpError(err.reason || err.shortMessage || err.message || "Transaction failed");
+      const reason = err?.revert?.args?.[0]
+        || err?.info?.error?.data?.message
+        || err?.info?.error?.message
+        || err?.reason
+        || err?.shortMessage
+        || err?.message
+        || "Transaction failed";
+      setLpError(reason);
     } finally {
       setLpExecuting(false);
       if (txPauseRef) txPauseRef.current = false;

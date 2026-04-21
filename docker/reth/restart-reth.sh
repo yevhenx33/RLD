@@ -27,6 +27,7 @@ RLD_ROOT="$(dirname "$DOCKER_DIR")"
 COMPOSE_ANVIL="$DOCKER_DIR/docker-compose.yml"        # Existing Anvil compose (for deployer)
 COMPOSE_RETH="$SCRIPT_DIR/docker-compose.reth.yml"     # Reth services (no deployer)
 COMPOSE_INFRA="$DOCKER_DIR/docker-compose.infra.yml"
+ENVIO_COMPOSE="$RLD_ROOT/data-pipeline/docker-compose.yml"
 ENV_FILE="$DOCKER_DIR/.env"
 DEPLOY_JSON="$DOCKER_DIR/deployment.json"
 GENESIS_FILE="$SCRIPT_DIR/genesis.json"
@@ -117,6 +118,45 @@ compose_cid() {
 service_container() {
     local service="$1"
     docker ps --filter "label=com.docker.compose.service=$service" --format '{{.Names}}' | head -1
+}
+
+envio_health_ok() {
+    local base_url="$1"
+    curl -sf --connect-timeout 2 --max-time 4 "${base_url}/healthz" >/dev/null 2>&1
+}
+
+ensure_envio_api() {
+    local base_url="$1"
+    local max_attempts="${2:-45}"
+
+    # Ensure the canonical Envio GraphQL service is up (idempotent).
+    if [ -f "$ENVIO_COMPOSE" ]; then
+        docker compose -f "$ENVIO_COMPOSE" up -d graphql_api >/dev/null 2>&1 || true
+    fi
+
+    for i in $(seq 1 "$max_attempts"); do
+        if envio_health_ok "$base_url"; then
+            return 0
+        fi
+
+        # Self-heal common failure mode (EMFILE / stuck listener).
+        if [ "$i" -eq 10 ]; then
+            if docker ps -a --format '{{.Names}}' | awk '$0=="rld_graphql_api"{found=1} END{exit !found}'; then
+                warn "Envio API unhealthy; restarting rld_graphql_api"
+                docker restart rld_graphql_api >/dev/null 2>&1 || true
+            fi
+        fi
+
+        # Last recovery attempt: re-up the compose service.
+        if [ "$i" -eq 20 ] && [ -f "$ENVIO_COMPOSE" ]; then
+            warn "Envio API still unavailable; re-creating graphql_api service"
+            docker compose -f "$ENVIO_COMPOSE" up -d --force-recreate graphql_api >/dev/null 2>&1 || true
+        fi
+
+        [ "$i" -lt "$max_attempts" ] && sleep 1
+    done
+
+    return 1
 }
 
 volume_name() {
@@ -227,10 +267,12 @@ if [ "$SKIP_GENESIS" = false ]; then
 
     # Deployer now pulls index rate from Envio/data-pipeline GraphQL.
     ENVIO_GRAPHQL_URL="${ENVIO_API_URL:-http://localhost:${ENVIO_API_PORT:-5000}}"
-    if curl -sf "${ENVIO_GRAPHQL_URL}/healthz" >/dev/null 2>&1; then
+    if ensure_envio_api "$ENVIO_GRAPHQL_URL" 45; then
         ok "Envio API reachable at ${ENVIO_GRAPHQL_URL}"
     else
-        warn "Envio API not reachable at ${ENVIO_GRAPHQL_URL} — oracle will use default 5% rate"
+        fail "Envio API unavailable at ${ENVIO_GRAPHQL_URL} (required for live index rate). Failing fast."
+        kill "$ANVIL_PID" 2>/dev/null || true
+        exit 1
     fi
 
     # Run deployment orchestrator on host to avoid container→host RPC routing
@@ -238,6 +280,7 @@ if [ "$SKIP_GENESIS" = false ]; then
     step "2b.1" "Running host deployment orchestrator..."
     INDEXER_RESET_URL="http://localhost:${INDEXER_PORT:-8080}/admin/reset"
     API_URL="$ENVIO_GRAPHQL_URL" \
+    REQUIRE_LIVE_RATE=1 \
     INDEXER_RESET_URL="$INDEXER_RESET_URL" \
     INDEXER_ADMIN_TOKEN="${INDEXER_ADMIN_TOKEN:-}" \
     DEPLOYMENT_JSON_OUT="$DEPLOY_JSON" \

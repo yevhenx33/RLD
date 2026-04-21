@@ -21,7 +21,7 @@ import os
 import sys
 import time
 import logging
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from web3 import Web3
 from eth_account import Account
 
@@ -391,7 +391,7 @@ class FaucetHandler(BaseHTTPRequestHandler):
 
 def main():
     init()
-    server = HTTPServer(('0.0.0.0', FAUCET_PORT), FaucetHandler)
+    server = ThreadingHTTPServer(('0.0.0.0', FAUCET_PORT), FaucetHandler)
     logger.info(f"🚰 Faucet server listening on port {FAUCET_PORT}")
     logger.info(f"   POST /faucet  {{\"address\": \"0x...\"}}")
     logger.info(f"   GET  /health")

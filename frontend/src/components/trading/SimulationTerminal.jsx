@@ -228,6 +228,7 @@ export default function SimulationTerminal() {
   } = useTwammOrder(
     account,
     brokerAddress,
+    marketInfo?.poolId || marketInfo?.pool_id || marketInfo?.marketId || marketInfo?.market_id,
     marketInfo?.infrastructure,
     marketInfo?.collateral?.address,
     marketInfo?.position_token?.address,

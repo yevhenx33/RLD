@@ -395,6 +395,7 @@ def main() -> None:
     rpc_url = os.getenv("RPC_URL", "http://host.docker.internal:8545")
     deployer_key = os.getenv("DEPLOYER_KEY", "").strip()
     api_url = os.getenv("API_URL", "").strip() or None
+    require_live_rate = os.getenv("REQUIRE_LIVE_RATE", "1").strip().lower() not in {"0", "false", "no"}
     fork_block = int(os.getenv("FORK_BLOCK", "0"))
 
     if not deployer_key:
@@ -440,7 +441,7 @@ def main() -> None:
     )
     _ok(f"Mock oracle: {mock_oracle}")
 
-    # Best-effort live APY sync from Envio/data-pipeline (or legacy fallback).
+    # Live APY sync from Envio/data-pipeline.
     live_rate_fraction = _fetch_live_rate_fraction(api_url)
     if live_rate_fraction is not None:
         rate_ray = _rate_fraction_to_ray(live_rate_fraction)
@@ -451,6 +452,11 @@ def main() -> None:
             f"Live APY synced: r={live_rate_fraction} -> P={implied_index_price} (K=100) -> ray {rate_ray}"
         )
     else:
+        if require_live_rate:
+            _fatal(
+                "Rates API unavailable or returned no usable APY. "
+                "Live index rate is required (set REQUIRE_LIVE_RATE=0 to allow fallback)."
+            )
         _info("Rates API unavailable; using default mock rate")
 
     oracle_contract = w3.eth.contract(address=_checksum(mock_oracle), abi=MOCK_ORACLE_ABI)
@@ -542,6 +548,12 @@ def main() -> None:
         rpc_url,
         [twap_engine],
     )
+    broker_executor = _forge_create(
+        "src/periphery/BrokerExecutor.sol:BrokerExecutor",
+        deployer_key,
+        rpc_url,
+        [],
+    )
 
     funding_period = int(os.getenv("FUNDING_PERIOD", str(30 * 24 * 60 * 60)))
     factory = _forge_create(
@@ -572,6 +584,7 @@ def main() -> None:
     _info(f"Factory={factory}")
     _info(f"GhostRouter={ghost_router}")
     _info(f"TwapEngine={twap_engine}")
+    _info(f"BrokerExecutor={broker_executor}")
 
     _step("Wire core + market infrastructure")
     factory_contract = w3.eth.contract(address=_checksum(factory), abi=FACTORY_ABI)
@@ -759,7 +772,7 @@ def main() -> None:
         "swap_router": "",
         "bond_factory": _checksum(bond_factory) if bond_factory else "",
         "basis_trade_factory": "",
-        "broker_executor": "",
+        "broker_executor": _checksum(broker_executor),
         "pool_manager": _checksum(POOL_MANAGER),
         "v4_pool_manager": _checksum(POOL_MANAGER),
         "pool_id": pool_id,
