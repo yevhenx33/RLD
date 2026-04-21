@@ -5,28 +5,25 @@ import { rpcProvider } from "../utils/provider";
 const GQL_URL = `${SIM_API}/graphql`;
 
 // ── Minimal ABI for TWAMM enrichment only ───────────────────────────
-const JTM_VIEW_ABI = [
-  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
+const TWAP_ENGINE_VIEW_ABI = [
+  "function getCancelOrderState(bytes32 marketId, bytes32 orderId) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
-  const token0 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? collateralAddr
-      : positionAddr;
-  const token1 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? positionAddr
-      : collateralAddr;
-  return [
-    token0,
-    token1,
-    infrastructure.pool_fee || 500,
-    infrastructure.tick_spacing || 5,
-    infrastructure.twamm_hook,
-  ];
+function normalizeOrderId(orderId) {
+  if (!orderId) return null;
+  const value = String(orderId);
+  const hex = value.startsWith("0x") ? value : `0x${value}`;
+  return /^0x[0-9a-fA-F]{64}$/.test(hex) ? hex : null;
+}
+
+function isUsableAddress(addr) {
+  return (
+    !!addr &&
+    ethers.isAddress(addr) &&
+    addr.toLowerCase() !== ethers.ZeroAddress.toLowerCase()
+  );
 }
 
 function formatTimeLeft(seconds) {
@@ -128,7 +125,12 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
   const fetchingRef = useRef(false);
 
   const marketId = marketInfo?.marketId || marketInfo?.market_id;
-  const hookAddr = marketInfo?.infrastructure?.twammHook || marketInfo?.infrastructure?.twamm_hook;
+  const twammMarketId = marketInfo?.poolId || marketInfo?.pool_id || marketId;
+  const twapEngineAddr =
+    marketInfo?.infrastructure?.twapEngine ||
+    marketInfo?.infrastructure?.twap_engine ||
+    marketInfo?.infrastructure?.twammHook ||
+    marketInfo?.infrastructure?.twamm_hook;
   const collateralAddr = marketInfo?.collateral?.address;
   const positionAddr = marketInfo?.positionToken?.address || marketInfo?.position_token?.address;
 
@@ -173,18 +175,18 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
       if (
         activeTwamm.length > 0 &&
         profile?.address &&
-        hookAddr &&
+        isUsableAddress(twapEngineAddr) &&
+        twammMarketId &&
         collateralAddr &&
         positionAddr
       ) {
         const now = blockTimestamp || Math.floor(Date.now() / 1000);
-        const poolKey = buildPoolKey(
-          marketInfo.infrastructure,
-          collateralAddr,
-          positionAddr,
-        );
         const provider = rpcProvider;
-        const hook = new ethers.Contract(hookAddr, JTM_VIEW_ABI, provider);
+        const twapEngine = new ethers.Contract(
+          twapEngineAddr,
+          TWAP_ENGINE_VIEW_ABI,
+          provider,
+        );
 
         // Read tracked TWAMM order ID from GQL response (no RPC needed)
         let trackedOrderId = profile?.activeTwammOrderId || null;
@@ -193,23 +195,19 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
 
         enrichedOrders = await Promise.all(
           activeTwamm.map(async (evt) => {
-            const orderKeyTuple = [
-              evt.owner,
-              parseInt(evt.expiration),
-              evt.zeroForOne,
-              parseInt(evt.nonce || "0"),
-            ];
-
             let buyTokensOwed = 0n;
             let sellTokensRefund = 0n;
 
             try {
-              const cancelState = await hook.getCancelOrderState(
-                poolKey,
-                orderKeyTuple,
-              );
-              buyTokensOwed = cancelState[0];
-              sellTokensRefund = cancelState[1];
+              const orderId = normalizeOrderId(evt.orderId);
+              if (orderId) {
+                const cancelState = await twapEngine.getCancelOrderState(
+                  twammMarketId,
+                  orderId,
+                );
+                buyTokensOwed = cancelState[0];
+                sellTokensRefund = cancelState[1];
+              }
             } catch (e) {
               console.warn("[BrokerData] getCancelOrderState failed:", e.message);
             }
@@ -453,7 +451,17 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
     } finally {
       fetchingRef.current = false;
     }
-  }, [account, marketId, hookAddr, collateralAddr, positionAddr, marketInfo, blockTimestamp, pauseRef]);
+  }, [
+    account,
+    marketId,
+    twammMarketId,
+    twapEngineAddr,
+    collateralAddr,
+    positionAddr,
+    marketInfo,
+    blockTimestamp,
+    pauseRef,
+  ]);
 
   // ── Block-driven: refresh when new block arrives ──────────────
   useEffect(() => {

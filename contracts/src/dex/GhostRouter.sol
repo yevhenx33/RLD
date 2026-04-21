@@ -85,9 +85,9 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
     // ─── ORACLE ACCUMULATOR ──────────────────────────────────────────────────
 
     /// @notice Ring buffer capacity for price observations per market.
-    /// @dev 256 slots. At ~12s blocks, covers ~51 minutes of per-block history.
+    /// @dev 1024 slots. At ~12s blocks, covers ~3.4 hours of per-block history.
     ///      At lower swap frequency, covers proportionally longer windows.
-    uint16 public constant ORACLE_CARDINALITY = 256;
+    uint16 public constant ORACLE_CARDINALITY = 1024;
 
     /// @notice A single price observation: cumulative (price × elapsed_seconds).
     /// @dev price is token1-per-token0, scaled by 1e18 (matches PRICE_SCALE).

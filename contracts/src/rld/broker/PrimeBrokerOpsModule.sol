@@ -32,6 +32,9 @@ contract PrimeBrokerOpsModule {
     /*                            STORAGE LAYOUT (MUST MATCH BROKER)                                */
     /* ============================================================================================ */
 
+    // Slot 0 reserved for ReentrancyGuard._status in PrimeBroker.
+    // Keep this placeholder to preserve exact delegatecall storage alignment.
+    uint256 private _status;
     address public CORE;
     address public factory;
     MarketId public marketId;

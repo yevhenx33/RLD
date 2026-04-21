@@ -26,7 +26,21 @@ const ERC20_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
 ];
 
-
+/**
+ * V4 PoolKey.hooks must exactly match the on-chain pool initialization.
+ * In this stack pools are initialized hookless, so we should pass twamm_hook
+ * as-is (including address(0)).
+ */
+function v4PoolHooksAddress(infra) {
+  if (!infra) return null;
+  const explicit = infra.twamm_hook ?? infra.twammHook;
+  if (explicit == null || explicit === "") return null;
+  try {
+    return ethers.getAddress(explicit);
+  } catch {
+    return null;
+  }
+}
 
 // ── Hook ──────────────────────────────────────────────────────────
 
@@ -87,8 +101,9 @@ export function useBondExecution(
 
       // Bond factory address (from indexer API — no fallback)
       const bondFactoryAddr = infrastructure?.bond_factory;
+      const poolHooks = v4PoolHooksAddress(infrastructure);
 
-      if (!bondFactoryAddr || !infrastructure?.twamm_hook) {
+      if (!bondFactoryAddr || poolHooks == null) {
         setError("Bond factory not available — waiting for config");
         return;
       }
@@ -111,7 +126,7 @@ export function useBondExecution(
           currency1: sorted ? collateralAddr : positionAddr,
           fee: infrastructure.pool_fee || 500,
           tickSpacing: infrastructure.tick_spacing || 5,
-          hooks: infrastructure.twamm_hook,
+          hooks: poolHooks,
         };
 
         // ── Compute debt amount (wRLP tokens to mint) ────────────
@@ -316,7 +331,8 @@ export function useBondExecution(
         return;
       }
 
-      if (!infrastructure?.twamm_hook) {
+      const poolHooks = v4PoolHooksAddress(infrastructure);
+      if (poolHooks == null) {
         setError("Missing infrastructure");
         return;
       }
@@ -336,7 +352,7 @@ export function useBondExecution(
           sorted ? collateralAddr : positionAddr,
           infrastructure.pool_fee || 500,
           infrastructure.tick_spacing || 5,
-          infrastructure.twamm_hook,
+          poolHooks,
         ];
 
         // ── 2. Close bond (single TX, no approval needed) ──────────
