@@ -20,7 +20,7 @@ import {
   Download,
 } from "lucide-react";
 import useSWR from "swr";
-import { RATES_GQL_URL, ENVIO_GQL_URL, DEPLOYMENT_DATE } from "../../utils/helpers";
+import { ENVIO_GQL_URL, DEPLOYMENT_DATE } from "../../utils/helpers";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
 import { useChartControls } from "../../hooks/useChartControls";
 import RLDPerformanceChart from "./RLDChart";
@@ -286,7 +286,7 @@ function ProtocolBreakdown({ marketData, navigate }) {
     const fetchHistory = async () => {
       setHistoryLoading(true);
       try {
-        const res = await fetch(RATES_GQL_URL, {
+        const res = await fetch(ENVIO_GQL_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

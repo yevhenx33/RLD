@@ -7,7 +7,7 @@ import {
 import {
   Loader2, ArrowLeft, ExternalLink,
 } from "lucide-react";
-import { RATES_GQL_URL } from "../../utils/helpers";
+import { ENVIO_GQL_URL } from "../../utils/helpers";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
 
 const PROTOCOL_MAP = {
@@ -52,7 +52,7 @@ export default function MarketDetail() {
     const fetch_ = async () => {
       setLoading(true);
       try {
-        const res = await fetch(RATES_GQL_URL, {
+        const res = await fetch(ENVIO_GQL_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -89,7 +89,7 @@ export default function MarketDetail() {
           marketTimeseries(entityId: "${entityId}", resolution: "${resolution}", limit: 500) { timestamp supplyApy borrowApy utilization supplyUsd borrowUsd }
           ${isMorpho ? `marketVaultAllocations(entityId: "${entityId}", limit: 90) { timestamp allocations { name vaultAddress shares } }` : ''}
         }`;
-        const res = await fetch(RATES_GQL_URL, {
+        const res = await fetch(ENVIO_GQL_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query: queryStr }),

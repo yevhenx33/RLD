@@ -431,7 +431,7 @@
   <body>
     <div id="root"></div>
     <script type="text/babel">
-      const { useState, useEffect, useCallback } = React;
+      const { useState, useEffect, useCallback, useRef } = React;
 
       // ── Utils ──
       const fmtUp = (s) => {
@@ -483,6 +483,18 @@
             : ms < 200
               ? "var(--a)"
               : "var(--r)";
+      const stackBadgeType = (status) => {
+        if (status === "healthy" || status === "removed") return "g";
+        if (status === "degraded") return "a";
+        if (status === "deprecated-running") return "a";
+        return "r";
+      };
+      const stackDotOk = (status) =>
+        status === "healthy" || status === "removed"
+          ? true
+          : status === "degraded" || status === "deprecated-running"
+            ? "degraded"
+            : false;
 
       // ── Components ──
       const Dot = ({ ok }) => (
@@ -557,97 +569,227 @@
         const [tick, setTick] = useState(0);
         const [now, setNow] = useState(new Date());
         const [dataAge, setDataAge] = useState(0);
+        const [streamMode, setStreamMode] = useState("BOOTSTRAP");
+        const streamRef = useRef(null);
+        const reconnectRef = useRef(null);
+        const pollRef = useRef(null);
+        const lastLogAtRef = useRef(0);
 
-        const load = useCallback(() => {
-          fetch("/status.json?_=" + Date.now())
+        const appendLogsFromSnapshot = useCallback((j, force = false) => {
+          const nowMs = Date.now();
+          if (!force && nowMs - lastLogAtRef.current < 10000) return;
+          lastLogAtRef.current = nowMs;
+
+          const services = j.services || {};
+          const containers = Array.isArray(j.containers) ? j.containers : [];
+          const active = containers.filter(
+            (c) => c.status !== "stopped" && c.status !== "created",
+          );
+          const up = active.filter(
+            (c) => c.status === "healthy" || c.status === "running",
+          ).length;
+          const total = active.length;
+          const ts = new Date().toLocaleTimeString("en-GB", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          });
+          const envioSvc = services.envio_indexer || services.rates_indexer || {};
+          const anvilSvc = services.anvil || {};
+          const msgs = [
+            {
+              ts,
+              msg: `health check complete — ${up}/${total} services ok`,
+              cls: up === total ? "ok" : "warn",
+            },
+            j.stacks?.gates
+              ? {
+                  ts,
+                  msg: j.stacks.gates.production_ready
+                    ? "stack gate: production-ready"
+                    : "stack gate: readiness checks failing",
+                  cls: j.stacks.gates.production_ready ? "ok" : "warn",
+                }
+              : null,
+            envioSvc.last_block
+              ? {
+                  ts,
+                  msg: `envio latest timestamp: ${fmtN(envioSvc.last_block)}`,
+                  cls: "ok",
+                }
+              : null,
+            anvilSvc.block
+              ? {
+                  ts,
+                  msg: `reth block: ${fmtN(anvilSvc.block)}`,
+                  cls: "ok",
+                }
+              : null,
+            j.databases?.pool_state?.last_indexed_block > 0
+              ? {
+                  ts,
+                  msg: `indexer block: ${fmtN(j.databases.pool_state.last_indexed_block)} (${fmtN(j.databases.pool_state.events_rows)} events)`,
+                  cls: "ok",
+                }
+              : j.databases?.pool_state?.healthy === false
+                ? { ts, msg: "indexer postgres: unreachable", cls: "err" }
+                : null,
+            (j.system || {}).errors_today > 0
+              ? {
+                  ts,
+                  msg: `⚠ ${(j.system || {}).errors_today} errors in today's logs`,
+                  cls: "warn",
+                }
+              : null,
+          ].filter(Boolean);
+          setLogs((prev) => [...msgs, ...prev].slice(0, 50));
+        }, []);
+
+        const applySnapshot = useCallback((j, forceLog = false) => {
+          setD(j);
+          setErr(null);
+          setErrCount(0);
+          if (j.timestamp) {
+            const age = Math.max(
+              0,
+              Math.floor((Date.now() - new Date(j.timestamp).getTime()) / 1000),
+            );
+            setDataAge(age);
+          }
+          appendLogsFromSnapshot(j, forceLog);
+        }, [appendLogsFromSnapshot]);
+
+        const loadBootstrap = useCallback(() => {
+          return fetch("live-status?_=" + Date.now())
+            .then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.json();
+            })
+            .then((j) => applySnapshot(j, true))
+            .catch((e) => {
+              return fetch("status.json?_=" + Date.now())
+                .then((r) => {
+                  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                  return r.json();
+                })
+                .then((j) => {
+                  applySnapshot(j, true);
+                  setStreamMode("BOOTSTRAP_SNAPSHOT");
+                })
+                .catch((fallbackErr) => {
+                  const message = `live bootstrap failed: ${e.message}; snapshot fallback failed: ${fallbackErr.message}`;
+                  setErr(message);
+                  setErrCount((c) => c + 1);
+                  const ts = new Date().toLocaleTimeString("en-GB", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  });
+                  setLogs((prev) =>
+                    [
+                      { ts, msg: message, cls: "err" },
+                      ...prev,
+                    ].slice(0, 50),
+                  );
+                });
+            });
+        }, [applySnapshot]);
+
+        const fetchLiveOnce = useCallback((forceLog = false) => {
+          return fetch("live-status?_=" + Date.now())
             .then((r) => {
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return r.json();
             })
             .then((j) => {
-              setD(j);
-              setErr(null);
-              setErrCount(0);
-              // Calculate data age (how old is status.json)
-              if (j.timestamp) {
-                const age = Math.floor(
-                  (Date.now() - new Date(j.timestamp).getTime()) / 1000,
-                );
-                setDataAge(age);
-              }
-              const ts = new Date().toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              });
-              const active = j.containers.filter(
-                (c) => c.status !== "stopped" && c.status !== "created",
-              );
-              const up = active.filter(
-                (c) => c.status === "healthy" || c.status === "running",
-              ).length;
-              const total = active.length;
-              const msgs = [
-                {
-                  ts,
-                  msg: `health check complete — ${up}/${total} services ok`,
-                  cls: up === total ? "ok" : "warn",
-                },
-                j.services.rates_indexer.last_block
-                  ? {
-                      ts,
-                      msg: `rates-indexer block: ${fmtN(j.services.rates_indexer.last_block)}`,
-                      cls: "ok",
-                    }
-                  : null,
-                j.services.anvil.block
-                  ? {
-                      ts,
-                      msg: `reth block: ${fmtN(j.services.anvil.block)}`,
-                      cls: "ok",
-                    }
-                  : null,
-                j.databases?.pool_state?.last_indexed_block > 0
-                  ? {
-                      ts,
-                      msg: `indexer block: ${fmtN(j.databases.pool_state.last_indexed_block)} (${fmtN(j.databases.pool_state.events_rows)} events)`,
-                      cls: "ok",
-                    }
-                  : j.databases?.pool_state?.healthy === false
-                    ? { ts, msg: "indexer postgres: unreachable", cls: "err" }
-                    : null,
-                j.system.errors_today > 0
-                  ? {
-                      ts,
-                      msg: `⚠ ${j.system.errors_today} errors in today's logs`,
-                      cls: "warn",
-                    }
-                  : null,
-              ].filter(Boolean);
-              setLogs((prev) => [...msgs, ...prev].slice(0, 50));
+              applySnapshot(j, forceLog);
+              return true;
             })
             .catch((e) => {
-              setErr(e.message);
+              setErr((prev) => prev || e.message);
               setErrCount((c) => c + 1);
-              const ts = new Date().toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              });
-              setLogs((prev) =>
-                [
-                  { ts, msg: `fetch failed: ${e.message}`, cls: "err" },
-                  ...prev,
-                ].slice(0, 50),
-              );
+              return false;
             });
-        }, []);
+        }, [applySnapshot]);
 
         useEffect(() => {
-          load();
-          const iv = setInterval(load, 12000);
-          return () => clearInterval(iv);
-        }, [load]);
+          let cancelled = false;
+
+          const stopPolling = () => {
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+          };
+
+          const scheduleReconnect = () => {
+            if (cancelled) return;
+            if (reconnectRef.current) clearTimeout(reconnectRef.current);
+            reconnectRef.current = setTimeout(connectStream, 3000);
+          };
+
+          const startPolling = () => {
+            stopPolling();
+            setStreamMode("POLLING");
+            pollRef.current = setInterval(() => {
+              fetchLiveOnce(false);
+            }, 1000);
+          };
+
+          const connectStream = () => {
+            if (cancelled) return;
+            if (streamRef.current) {
+              streamRef.current.close();
+              streamRef.current = null;
+            }
+            try {
+              const es = new EventSource("live-status/stream");
+              streamRef.current = es;
+              setStreamMode("STREAM_CONNECTING");
+              es.onopen = () => {
+                if (cancelled) return;
+                setStreamMode("STREAM_1S");
+                stopPolling();
+              };
+              es.onmessage = (evt) => {
+                if (cancelled) return;
+                try {
+                  const payload = JSON.parse(evt.data);
+                  applySnapshot(payload, false);
+                } catch (parseErr) {
+                  setErr(`live parse error: ${parseErr.message}`);
+                }
+              };
+              es.onerror = () => {
+                if (cancelled) return;
+                if (streamRef.current === es) {
+                  es.close();
+                  streamRef.current = null;
+                }
+                startPolling();
+                scheduleReconnect();
+              };
+            } catch (_err) {
+              startPolling();
+              scheduleReconnect();
+            }
+          };
+
+          loadBootstrap().finally(() => {
+            if (!cancelled) connectStream();
+          });
+
+          return () => {
+            cancelled = true;
+            stopPolling();
+            if (reconnectRef.current) clearTimeout(reconnectRef.current);
+            if (streamRef.current) {
+              streamRef.current.close();
+              streamRef.current = null;
+            }
+          };
+        }, [applySnapshot, fetchLiveOnce, loadBootstrap]);
+
         useEffect(() => {
           const iv = setInterval(() => {
             setTick((t) => t + 1);
@@ -696,7 +838,9 @@
           docker: dk,
           backups: bk,
           history: hist,
+          stacks: stackDataRaw,
         } = d;
+        const stackData = stackDataRaw || {};
         const running = cts.filter(
           (c) => c.status === "healthy" || c.status === "running",
         );
@@ -709,6 +853,7 @@
             !c.name.includes("deployer") && !c.uptime?.includes("Exited (0)"),
         );
         const allUp = problemStopped.length === 0 && running.length > 0;
+        const envioSvc = svc.envio_indexer || svc.rates_indexer || {};
         const svcList = [
           {
             n: "Nginx",
@@ -717,12 +862,12 @@
             port: "443",
           },
           {
-            n: "Rates Pipeline",
-            ok: svc.rates_indexer.healthy,
-            ms: svc.rates_indexer.response_ms,
-            port: "8081",
-            extra: svc.rates_indexer.last_block
-              ? `blk ${fmtN(svc.rates_indexer.last_block)}`
+            n: "Envio Pipeline",
+            ok: envioSvc.healthy,
+            ms: envioSvc.response_ms,
+            port: "5000",
+            extra: envioSvc.last_block
+              ? `ts ${fmtN(envioSvc.last_block)}`
               : "",
           },
           {
@@ -747,7 +892,7 @@
             n: "Monitor Bot",
             ok: svc.monitor_bot.healthy,
             ms: svc.monitor_bot.response_ms,
-            port: "8082",
+            port: "8083",
           },
           {
             n: "Reth (sim)",
@@ -778,6 +923,74 @@
               totalResp / svcList.filter((s) => s.ms && s.ms > 0).length,
             )
           : 0;
+        const stackOrder = [
+          "protocol_rates",
+          "simulation",
+          "execution",
+          "frontend_edge",
+          "legacy_rates",
+        ];
+        const stackRows = stackOrder
+          .map((key) => ({ key, ...(stackData[key] || {}) }))
+          .filter((row) => row.status);
+        const stackGate = stackData.gates || {};
+        const productionReady =
+          stackGate.production_ready !== undefined
+            ? stackGate.production_ready
+            : allUp;
+        const stackInfo = (row) => {
+          if (row.key === "protocol_rates") {
+            const failing = Array.isArray(row.failingProtocols)
+              ? row.failingProtocols
+              : [];
+            return {
+              signal: row.latestTimestamp ? `ts ${fmtN(row.latestTimestamp)}` : "ts —",
+              detail: failing.length
+                ? `failing: ${failing.join(", ")}`
+                : row.readyReason
+                  ? row.readyReason
+                  : `lag threshold ${fmtN(row.lagThreshold || 0)}`,
+            };
+          }
+          if (row.key === "simulation") {
+            return {
+              signal:
+                row.blockGap !== null && row.blockGap !== undefined
+                  ? `gap ${fmtN(row.blockGap)} blk`
+                  : "gap —",
+              detail:
+                row.indexerBlock !== null && row.indexerBlock !== undefined
+                  ? `idx ${fmtN(row.indexerBlock)} / chain ${fmtN(row.chainBlock)}`
+                  : "indexer/chain unavailable",
+            };
+          }
+          if (row.key === "execution") {
+            const cmp = row.components || {};
+            const up = Object.values(cmp).filter(Boolean).length;
+            const total = Object.keys(cmp).length;
+            return {
+              signal: `${up}/${total} components`,
+              detail: cmp.monitor_bot_api ? "bot API healthy" : "bot API down",
+            };
+          }
+          if (row.key === "frontend_edge") {
+            return {
+              signal: row.components?.edge_nginx ? "nginx ok" : "nginx down",
+              detail: row.components?.frontend_container
+                ? "frontend container running"
+                : "frontend container missing",
+            };
+          }
+          if (row.key === "legacy_rates") {
+            return {
+              signal: row.running ? "deprecated live" : "removed",
+              detail: row.containers?.matched
+                ? `${row.containers.matched} container(s) detected`
+                : "no legacy containers",
+            };
+          }
+          return { signal: "—", detail: "—" };
+        };
 
         return (
           <div className="wrap">
@@ -789,16 +1002,16 @@
               </div>
               <div className="hdr-r">
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <Dot ok={allUp} />
+                  <Dot ok={productionReady} />
                   <span
                     style={{
-                      color: allUp ? "var(--g)" : "var(--r)",
+                      color: productionReady ? "var(--g)" : "var(--r)",
                       fontSize: 11,
                       fontWeight: 500,
                     }}
-                    className={allUp ? "glow-g" : "glow-r"}
+                    className={productionReady ? "glow-g" : "glow-r"}
                   >
-                    {allUp ? "ALL SYSTEMS OPERATIONAL" : "DEGRADED"}
+                    {productionReady ? "PRODUCTION READY" : "HARDENING REQUIRED"}
                   </span>
                 </div>
                 {dataAge > 180 && (
@@ -828,6 +1041,24 @@
                 </span>
                 <span
                   style={{
+                    color:
+                      streamMode === "STREAM_1S"
+                        ? "var(--g)"
+                        : streamMode === "POLLING"
+                          ? "var(--a)"
+                          : "var(--td)",
+                    fontSize: 9,
+                    letterSpacing: "1px",
+                  }}
+                >
+                  {streamMode === "STREAM_1S"
+                    ? "LIVE 1S"
+                    : streamMode === "POLLING"
+                      ? "POLL 1S"
+                      : streamMode}
+                </span>
+                <span
+                  style={{
                     color: "var(--g)",
                     fontSize: 9,
                     animation: "blink 1.2s step-end infinite",
@@ -840,10 +1071,10 @@
 
             {/* ══ TABS ══ */}
             <div className="tabs">
-              <a className="tab active" href="/">
+              <a className="tab active" href="index.html">
                 INFRA STATUS
               </a>
-              <a className="tab" href="/finance.html">
+              <a className="tab" href="finance.html">
                 SIMULATION
               </a>
             </div>
@@ -1220,6 +1451,67 @@
               </table>
             </Card>
 
+            <Card
+              title="PROTOCOL STACK MAP"
+              badge={
+                <Badge
+                  text={productionReady ? "PRODUCTION READY" : "HARDENING NEEDED"}
+                  type={productionReady ? "g" : "a"}
+                />
+              }
+              style={{ marginBottom: 1 }}
+              delay={8}
+            >
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: 16 }}></th>
+                    <th>stack</th>
+                    <th>status</th>
+                    <th className="r">signal</th>
+                    <th>detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stackRows.map((row) => {
+                    const info = stackInfo(row);
+                    return (
+                      <tr key={row.key}>
+                        <td>
+                          <Dot ok={stackDotOk(row.status)} />
+                        </td>
+                        <td style={{ color: "var(--tb)" }}>
+                          {row.label || row.key}
+                        </td>
+                        <td>
+                          <Badge
+                            text={String(row.status || "unknown").toUpperCase()}
+                            type={stackBadgeType(row.status)}
+                          />
+                        </td>
+                        <td
+                          className="r"
+                          style={{ color: "var(--td)", fontSize: 10 }}
+                        >
+                          {info.signal}
+                        </td>
+                        <td style={{ color: "var(--td)", fontSize: 10 }}>
+                          {info.detail}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!stackRows.length && (
+                    <tr>
+                      <td colSpan="5" style={{ color: "var(--td)", fontSize: 10 }}>
+                        Stack mapping unavailable
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </Card>
+
             {/* ══ ROW 5: Services + Security ══ */}
             <div className="grid g2" style={{ marginBottom: 1 }}>
               <Card
@@ -1454,448 +1746,132 @@
               </Card>
             )}
 
-            {/* ══ ROW 4.5: Data Integrity ══ */}
+            {/* ══ ROW 4.5: Data Planes ══ */}
             {d.databases && (
               <div className="grid g2" style={{ marginBottom: 1 }}>
                 <Card
-                  title="DATABASE HEALTH"
-                  badge={(() => {
-                    const db = d.databases;
-                    const ar = db.aave_rates;
-                    const cr = db.clean_rates;
-                    if (!ar || !cr || ar.error || cr.error)
-                      return <Badge text="ERROR" type="r" />;
-                    const rt = ar.tables || {};
-                    const realtimeAge = Math.max(
-                      ...[rt.rates, rt.rates_dai, rt.rates_usdt]
-                        .filter(Boolean)
-                        .map((t) => t.latest_age_secs || 0),
-                    );
-                    const hourlyAge = Math.max(
-                      rt.eth_prices?.latest_age_secs || 0,
-                      cr.freshness_secs || 0,
-                    );
-                    if (realtimeAge > 7200 || hourlyAge > 9000)
-                      return <Badge text="CRITICAL" type="r" />;
-                    if (realtimeAge > 1800 || hourlyAge > 4500)
-                      return <Badge text="STALE" type="a" />;
-                    return <Badge text="FRESH" type="g" />;
-                  })()}
+                  title="ENVIO DATA PLANE"
+                  badge={
+                    <Badge
+                      text={svc.envio_indexer?.ready ? "READY" : "DEGRADED"}
+                      type={svc.envio_indexer?.ready ? "g" : "a"}
+                    />
+                  }
                   delay={9}
                 >
                   {(() => {
-                    const ar = d.databases.aave_rates;
-                    const cr = d.databases.clean_rates;
-                    if (!ar || ar.error)
-                      return (
-                        <div style={{ color: "var(--r)", fontSize: 11 }}>
-                          ⚠ aave_rates.db: {ar?.error || "unavailable"}
-                        </div>
-                      );
-
-                    const ageColor = (s) =>
-                      s < 0
-                        ? "var(--td)"
-                        : s < 1800
-                          ? "var(--g)"
-                          : s < 7200
-                            ? "var(--a)"
-                            : "var(--r)";
-                    const hourlyAgeColor = (s) =>
-                      s < 0
-                        ? "var(--td)"
-                        : s < 4500
-                          ? "var(--g)"
-                          : s < 9000
-                            ? "var(--a)"
-                            : "var(--r)";
-                    const ageFmt = (s) =>
-                      s < 0
-                        ? "—"
-                        : s < 60
-                          ? `${s}s`
-                          : s < 3600
-                            ? `${Math.floor(s / 60)}m`
-                            : `${(s / 3600).toFixed(1)}h`;
-
+                    const envioDb = d.databases?.envio_indexer || {};
+                    const lag = envioDb.processingLag || {};
+                    const rows = Object.entries(lag);
                     return (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 10,
-                        }}
-                      >
-                        {/* aave_rates.db */}
-                        <div>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              marginBottom: 6,
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: 10,
-                                color: "var(--tb)",
-                                fontWeight: 500,
-                              }}
-                            >
-                              aave_rates.db
-                            </span>
-                            <span style={{ fontSize: 9, color: "var(--td)" }}>
-                              {ar.size_mb} MB
-                            </span>
-                          </div>
-                          <table className="tbl">
-                            <thead>
-                              <tr>
-                                <th>table</th>
-                                <th className="r">rows</th>
-                                <th className="r">freshness</th>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                          <span>healthz</span>
+                          <span style={{ color: envioDb.status === "ok" ? "var(--g)" : "var(--r)" }}>
+                            {envioDb.status || "unknown"}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                          <span>readyz</span>
+                          <span style={{ color: svc.envio_indexer?.ready ? "var(--g)" : "var(--a)" }}>
+                            HTTP {svc.envio_indexer?.ready_http ?? "—"} {svc.envio_indexer?.ready ? "(ready)" : "(not ready)"}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                          <span>latest timestamp</span>
+                          <span style={{ color: "var(--tb)" }}>
+                            {svc.envio_indexer?.last_block ? fmtN(svc.envio_indexer.last_block) : "—"}
+                          </span>
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 9, color: "var(--td)", letterSpacing: "1px" }}>
+                          PROCESSING LAG (BLOCKS)
+                        </div>
+                        <table className="tbl">
+                          <thead>
+                            <tr>
+                              <th>protocol</th>
+                              <th className="r">lag</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.length ? rows.map(([proto, value]) => (
+                              <tr key={proto}>
+                                <td style={{ fontSize: 10 }}>{proto}</td>
+                                <td
+                                  className="r"
+                                  style={{
+                                    fontSize: 10,
+                                    color:
+                                      Number(value) <= 250000
+                                        ? "var(--g)"
+                                        : Number(value) <= 1000000
+                                          ? "var(--a)"
+                                          : "var(--r)",
+                                  }}
+                                >
+                                  {fmtN(value)}
+                                </td>
                               </tr>
-                            </thead>
-                            <tbody>
-                              {Object.entries(ar.tables || {}).map(
-                                ([name, info], i) => (
-                                  <tr key={i}>
-                                    <td
-                                      style={{
-                                        fontSize: 10,
-                                        color: "var(--tb)",
-                                      }}
-                                    >
-                                      {name.replace("rates_", "")}
-                                    </td>
-                                    <td className="r" style={{ fontSize: 10 }}>
-                                      {info.rows?.toLocaleString()}
-                                    </td>
-                                    <td
-                                      className="r"
-                                      style={{
-                                        fontSize: 10,
-                                        color: (name === "eth_prices"
-                                          ? hourlyAgeColor
-                                          : ageColor)(info.latest_age_secs),
-                                        fontWeight: 600,
-                                      }}
-                                    >
-                                      {ageFmt(info.latest_age_secs)} ago
-                                    </td>
-                                  </tr>
-                                ),
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                        {/* clean_rates.db */}
-                        <div>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              marginBottom: 4,
-                            }}
-                          >
-                            <span
-                              style={{
-                                fontSize: 10,
-                                color: "var(--tb)",
-                                fontWeight: 500,
-                              }}
-                            >
-                              clean_rates.db
-                            </span>
-                            <span style={{ fontSize: 9, color: "var(--td)" }}>
-                              {cr?.size_mb} MB
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              fontSize: 10,
-                              padding: "4px 6px",
-                              borderBottom: "1px solid rgba(255,255,255,0.02)",
-                            }}
-                          >
-                            <span>freshness</span>
-                            <span
-                              style={{
-                                color: hourlyAgeColor(cr?.freshness_secs),
-                                fontWeight: 600,
-                              }}
-                            >
-                              {ageFmt(cr?.freshness_secs)} ago
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              fontSize: 10,
-                              padding: "4px 6px",
-                              borderBottom: "1px solid rgba(255,255,255,0.02)",
-                            }}
-                          >
-                            <span>rows (24h)</span>
-                            <span
-                              style={{
-                                color:
-                                  cr?.rows_24h >= 23
-                                    ? "var(--g)"
-                                    : cr?.rows_24h >= 20
-                                      ? "var(--a)"
-                                      : "var(--r)",
-                              }}
-                            >
-                              {cr?.rows_24h} / 24
-                            </span>
-                          </div>
-                        </div>
+                            )) : (
+                              <tr>
+                                <td colSpan="2" style={{ fontSize: 10, color: "var(--td)" }}>
+                                  lag data unavailable
+                                </td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
                       </div>
                     );
                   })()}
                 </Card>
 
-
-
                 <Card
-                  title="DATA QUALITY"
-                  badge={(() => {
-                    const db = d.databases;
-                    const cr = db?.clean_rates;
-                    const ar = db?.aave_rates;
-                    if (!cr || !ar) return <Badge text="—" type="c" />;
-                    const totalNulls = cr.nulls_7d
-                      ? Object.values(cr.nulls_7d).reduce((a, b) => a + b, 0)
-                      : 0;
-                    const hasCorrupt = (ar.corrupt_rows || 0) > 0;
-                    const syncStale = (cr.sync_age_secs || 0) > 300;
-                    if (hasCorrupt || totalNulls > 5 || syncStale)
-                      return <Badge text="ISSUES" type="r" />;
-                    if (totalNulls > 0 || cr.missing_hours_7d > 0)
-                      return <Badge text="MINOR" type="a" />;
-                    return <Badge text="CLEAN" type="g" />;
-                  })()}
+                  title="SIMULATION DATA PLANE"
+                  badge={
+                    <Badge
+                      text={d.databases?.pool_state?.healthy ? "HEALTHY" : "DEGRADED"}
+                      type={d.databases?.pool_state?.healthy ? "g" : "r"}
+                    />
+                  }
                   delay={10}
                 >
                   {(() => {
-                    const cr = d.databases?.clean_rates;
-                    const ar = d.databases?.aave_rates;
-                    if (!cr || cr.error)
-                      return (
-                        <div style={{ color: "var(--r)", fontSize: 11 }}>
-                          ⚠ {cr?.error || "unavailable"}
-                        </div>
-                      );
-
-                    const nulls = cr.nulls_7d || {};
-                    const totalNulls = Object.values(nulls).reduce(
-                      (a, b) => a + b,
-                      0,
-                    );
-
+                    const pool = d.databases?.pool_state || {};
+                    const legacy = stackData?.legacy_rates || {};
+                    const gap =
+                      svc?.anvil?.block && pool?.last_indexed_block
+                        ? Number(svc.anvil.block) - Number(pool.last_indexed_block)
+                        : null;
                     return (
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 8,
-                        }}
-                      >
-                        {/* NULL counts */}
-                        <div>
-                          <div
-                            style={{
-                              fontSize: 9,
-                              color: "var(--td)",
-                              textTransform: "uppercase",
-                              letterSpacing: "1.5px",
-                              marginBottom: 4,
-                            }}
-                          >
-                            null values (7d)
-                          </div>
-                          <div
-                            style={{
-                              display: "grid",
-                              gridTemplateColumns: "1fr 1fr",
-                              gap: "2px 16px",
-                            }}
-                          >
-                            {Object.entries(nulls).map(([col, cnt], i) => (
-                              <div
-                                key={i}
-                                style={{
-                                  display: "flex",
-                                  justifyContent: "space-between",
-                                  padding: "3px 0",
-                                  borderBottom:
-                                    "1px solid rgba(255,255,255,0.02)",
-                                }}
-                              >
-                                <span style={{ fontSize: 10 }}>
-                                  {col
-                                    .replace("_rate", "")
-                                    .replace("eth_price", "ETH")}
-                                </span>
-                                <span
-                                  style={{
-                                    fontSize: 10,
-                                    fontWeight: 600,
-                                    color:
-                                      cnt === 0
-                                        ? "var(--g)"
-                                        : cnt <= 3
-                                          ? "var(--a)"
-                                          : "var(--r)",
-                                  }}
-                                >
-                                  {cnt}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                          <span>indexed block</span>
+                          <span style={{ color: "var(--tb)" }}>{fmtN(pool.last_indexed_block)}</span>
                         </div>
-                        {/* Corrupt + Sync + Missing */}
-                        <div
-                          style={{
-                            borderTop: "1px solid var(--bdr)",
-                            paddingTop: 6,
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              fontSize: 10,
-                            }}
-                          >
-                            <span
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                              }}
-                            >
-                              <span
-                                style={{
-                                  color:
-                                    (ar?.corrupt_rows || 0) > 0
-                                      ? "var(--a)"
-                                      : "var(--g)",
-                                  fontSize: 10,
-                                }}
-                              >
-                                {(ar?.corrupt_rows || 0) > 0 ? "⚠" : "✓"}
-                              </span>
-                              corrupt rows
-                            </span>
-                            <span
-                              style={{
-                                color:
-                                  (ar?.corrupt_rows || 0) > 0
-                                    ? "var(--a)"
-                                    : "var(--gd)",
-                                fontWeight: 600,
-                              }}
-                            >
-                              {(ar?.corrupt_rows || 0).toLocaleString()}
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              fontSize: 10,
-                            }}
-                          >
-                            <span
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                              }}
-                            >
-                              <span
-                                style={{
-                                  color:
-                                    (cr.sync_age_secs || 0) > 300
-                                      ? "var(--r)"
-                                      : (cr.sync_age_secs || 0) > 120
-                                        ? "var(--a)"
-                                        : "var(--g)",
-                                  fontSize: 10,
-                                }}
-                              >
-                                {(cr.sync_age_secs || 0) > 300 ? "⚠" : "✓"}
-                              </span>
-                              sync age
-                            </span>
-                            <span
-                              style={{
-                                color:
-                                  (cr.sync_age_secs || 0) > 300
-                                    ? "var(--r)"
-                                    : (cr.sync_age_secs || 0) > 120
-                                      ? "var(--a)"
-                                      : "var(--gd)",
-                                fontWeight: 600,
-                              }}
-                            >
-                              {cr.sync_age_secs < 60
-                                ? `${cr.sync_age_secs}s`
-                                : `${Math.floor(cr.sync_age_secs / 60)}m`}
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              fontSize: 10,
-                            }}
-                          >
-                            <span
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                              }}
-                            >
-                              <span
-                                style={{
-                                  color:
-                                    (cr.missing_hours_7d || 0) > 3
-                                      ? "var(--r)"
-                                      : (cr.missing_hours_7d || 0) > 0
-                                        ? "var(--a)"
-                                        : "var(--g)",
-                                  fontSize: 10,
-                                }}
-                              >
-                                {(cr.missing_hours_7d || 0) > 0 ? "⚠" : "✓"}
-                              </span>
-                              missing hours (7d)
-                            </span>
-                            <span
-                              style={{
-                                color:
-                                  (cr.missing_hours_7d || 0) > 0
-                                    ? "var(--a)"
-                                    : "var(--gd)",
-                                fontWeight: 600,
-                              }}
-                            >
-                              {cr.missing_hours_7d || 0}
-                            </span>
-                          </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                          <span>chain block</span>
+                          <span style={{ color: "var(--tb)" }}>{fmtN(svc?.anvil?.block)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                          <span>indexer gap</span>
+                          <span style={{ color: gap === null ? "var(--td)" : gap <= 200 ? "var(--g)" : "var(--a)" }}>
+                            {gap === null ? "—" : `${fmtN(gap)} blocks`}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                          <span>events rows</span>
+                          <span style={{ color: "var(--tb)" }}>{fmtN(pool.events_rows)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
+                          <span>block state rows</span>
+                          <span style={{ color: "var(--tb)" }}>{fmtN(pool.block_states_rows)}</span>
+                        </div>
+                        <div style={{ borderTop: "1px dashed rgba(255,255,255,0.08)", paddingTop: 6, fontSize: 10 }}>
+                          <span style={{ color: "var(--td)" }}>legacy rates container:</span>{" "}
+                          <span style={{ color: legacy.running ? "var(--a)" : "var(--g)" }}>
+                            {legacy.running ? "still running (remove before prod)" : "not running"}
+                          </span>
                         </div>
                       </div>
                     );

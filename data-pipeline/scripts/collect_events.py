@@ -18,7 +18,19 @@ import pandas as pd
 import hypersync
 from pathlib import Path
 
-ENVIO_TOKEN = os.getenv("ENVIO_API_TOKEN", "7a850568-160d-4cd5-bf06-2961bd383cc6")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from indexer.aave_constants import (
+    AAVE_V3_POOL,
+    AAVE_V3_DEPLOY_BLOCK,
+    AAVE_TOPIC_RESERVE_DATA_UPDATED,
+    AAVE_TOPIC_SUPPLY,
+    AAVE_TOPIC_BORROW,
+    AAVE_TOPIC_REPAY,
+    AAVE_TOPIC_LIQUIDATION_CALL,
+    AAVE_TOPIC_FLASH_LOAN,
+)
+
+ENVIO_TOKEN = os.getenv("ENVIO_API_TOKEN", "").strip()
 OUTPUT_DIR = Path("/mnt/data/hypersync_events")
 BATCH_SIZE = 1_000_000  # 1M blocks per query
 
@@ -26,15 +38,15 @@ BATCH_SIZE = 1_000_000  # 1M blocks per query
 
 PROTOCOLS = {
     "aave_v3": {
-        "contract": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
-        "start_block": 16_291_127,
+        "contract": AAVE_V3_POOL,
+        "start_block": AAVE_V3_DEPLOY_BLOCK,
         "events": {
-            "ReserveDataUpdated": "0x804c9b842b2748a22bb64b345453a3de7ca54a6ca45ce00d415894979e22897a",
-            "Supply":             "0x19934336214300e008d5162a033d451152a225c56d77c44931f6f87d7b329606",
-            "Borrow":             "0xb71761a295c376711082260662615435860bbe7fca65d95d180241f71a5e9b11",
-            "Repay":              "0x4cdde6e09bb755c9a5589ebaec640bbfedff1362d4b255ebf8339782b9942faa",
-            "LiquidationCall":    "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286",
-            "FlashLoan":          "0xefefaba5e921573100900a3ad9cf29f222d995fb3b6045797eaea7521bd8d6f0",
+            "ReserveDataUpdated": AAVE_TOPIC_RESERVE_DATA_UPDATED,
+            "Supply": AAVE_TOPIC_SUPPLY,
+            "Borrow": AAVE_TOPIC_BORROW,
+            "Repay": AAVE_TOPIC_REPAY,
+            "LiquidationCall": AAVE_TOPIC_LIQUIDATION_CALL,
+            "FlashLoan": AAVE_TOPIC_FLASH_LOAN,
         },
     },
     "morpho_blue": {
@@ -184,6 +196,9 @@ async def main():
     print("Output: %s" % OUTPUT_DIR, flush=True)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    if not ENVIO_TOKEN:
+        print("ERROR: ENVIO_API_TOKEN is required", flush=True)
+        sys.exit(1)
 
     client = hypersync.HypersyncClient(hypersync.ClientConfig(
         url="https://eth.hypersync.xyz",

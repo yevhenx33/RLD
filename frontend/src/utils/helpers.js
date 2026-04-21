@@ -2,13 +2,11 @@ import axios from "axios";
 
 export const API_BASE =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
-// Backwards compatibility alias if needed, but better to refactor consumers
 export const API_URL = API_BASE;
 
 // API auth is handled server-side by Nginx proxy — no client-side key needed
 export const authHeaders = {};
 
-export const RATES_GQL_URL = "/rates-graphql";
 export const ENVIO_GQL_URL = "/envio-graphql";
 
 // Earliest date the indexer has data for (protocol deployment date)

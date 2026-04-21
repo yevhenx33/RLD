@@ -311,9 +311,7 @@ def _normalize_rate_fraction(raw_rate: Decimal) -> Decimal | None:
     """Normalize feed value to APY rate fraction r (e.g., 14% => 0.14)."""
     if raw_rate < 0:
         return None
-    # Backward compatibility:
-    # - legacy rates-indexer often returns percent (13.99)
-    # - Envio data-pipeline returns rate fraction (0.1399)
+    # Support both percent-like and fraction-like payloads.
     if raw_rate > 1:
         return raw_rate / Decimal(100)
     return raw_rate
@@ -337,10 +335,8 @@ def _fetch_live_rate_fraction(api_url: str | None) -> Decimal | None:
     """
     Fetch live USDC borrow rate fraction r (e.g., 0.1399 for 13.99% APY).
 
-    Priority:
-      1) Envio/data-pipeline GraphQL historicalRates
-      2) Legacy rates-indexer GraphQL latestRates
-      3) Legacy rates-indexer REST /rates
+    Source:
+      Envio/data-pipeline GraphQL historicalRates
     """
     if not api_url:
         return None
@@ -361,29 +357,6 @@ def _fetch_live_rate_fraction(api_url: str | None) -> Decimal | None:
             apy = rows[0].get("apy")
             if apy is not None:
                 return _normalize_rate_fraction(Decimal(str(apy)))
-
-    # 2) Legacy GraphQL latestRates
-    legacy_query = {"query": "{ latestRates { usdc } }"}
-    for endpoint in graphql_endpoints:
-        payload = _post_json(endpoint, legacy_query)
-        if not isinstance(payload, dict):
-            continue
-        usdc_rate = payload.get("data", {}).get("latestRates", {}).get("usdc")
-        if usdc_rate is not None:
-            return _normalize_rate_fraction(Decimal(str(usdc_rate)))
-
-    # 3) Legacy REST /rates endpoint
-    endpoint = f"{base}/rates?limit=1&symbol=USDC"
-    try:
-        req = urllib.request.Request(endpoint, method="GET")
-        with urllib.request.urlopen(req, timeout=4) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-        if isinstance(payload, list) and payload:
-            apy = payload[0].get("apy")
-            if apy is not None:
-                return _normalize_rate_fraction(Decimal(str(apy)))
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
-        return None
 
     return None
 

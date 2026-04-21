@@ -1,0 +1,18 @@
+[Unit]
+Description=RLD Dashboard Live Status Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/RLD
+Environment=PYTHONUNBUFFERED=1
+Environment=DASHBOARD_LIVE_PORT=8091
+Environment=DASHBOARD_LIVE_INTERVAL_SEC=1.0
+ExecStart=/home/ubuntu/RLD/docker/dashboard/start-live-status.sh
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

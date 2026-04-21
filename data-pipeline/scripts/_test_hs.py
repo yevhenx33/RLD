@@ -1,11 +1,15 @@
 import hypersync, asyncio, time, sys
+import os
 
 async def main():
+    token = os.getenv("ENVIO_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("ENVIO_API_TOKEN is required")
     sys.stdout.write("Creating client...\n")
     sys.stdout.flush()
     client = hypersync.HypersyncClient(hypersync.ClientConfig(
         url="https://eth.hypersync.xyz",
-        bearer_token="7a850568-160d-4cd5-bf06-2961bd383cc6",
+        bearer_token=token,
     ))
     head = await client.get_height()
     sys.stdout.write("Head: %d\n" % head)

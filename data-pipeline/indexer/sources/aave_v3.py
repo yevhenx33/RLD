@@ -12,27 +12,39 @@ combining it with Reserve indices to calculate true accounting TVL organically.
 
 import datetime
 import logging
+import os
 from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
 
 from ..base import BaseSource, forward_fill_hourly
+from ..aave_constants import (
+    AAVE_V3_POOL,
+    AAVE_V3_GENESIS_ANCHOR_BLOCK,
+    AAVE_TOPIC_RESERVE_DATA_UPDATED,
+    AAVE_TOPIC_SUPPLY,
+    AAVE_TOPIC_WITHDRAW,
+    AAVE_TOPIC_BORROW,
+    AAVE_TOPIC_REPAY,
+    AAVE_TOPIC_LIQUIDATION_CALL,
+    AAVE_TOPIC_MINTED_TO_TREASURY,
+)
 from ..tokens import (TOKENS as RESERVE_MAP, STABLES, ETH_ASSETS, BTC_ASSETS,
                       PRICE_MULTIPLIERS, get_chainlink_prices, get_usd_price)
 from ..sources.morpho import SYM_DECIMALS  # Reusing shared dictionary for simplicity
 
 log = logging.getLogger("indexer.aave_v3")
 
-AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
+AAVE_POOL = AAVE_V3_POOL
 
-TOPIC_RESERVE_DATA_UPDATED = "0x804c9b842b2748a22bb64b345453a3de7ca54a6ca45ce00d415894979e22897a"
-TOPIC_SUPPLY = "0x2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61"
-TOPIC_WITHDRAW = "0x3115d1449a7b732c986cba18244e897a450f61e1bb8d589cd2e69e6c8924f9f7"
-TOPIC_BORROW = "0xb3d084820fb1a9decffb176436bd02558d15fac9b0ddfed8c465bc7359d7dce0"
-TOPIC_REPAY = "0xa534c8dbe71f871f9f3530e97a74601fea17b426cae02e1c5aee42c96c784051"
-TOPIC_LIQUIDATION_CALL = "0xe413a321e8681d831f4dbccbca790d2952b56f977908e45be37335533e005286"
-TOPIC_MINTED_TO_TREASURY = "0xbfa21aa5d5f9a1f0120a95e7c0749f389863cbdbfff531aa7339077a5bc919de"
+TOPIC_RESERVE_DATA_UPDATED = AAVE_TOPIC_RESERVE_DATA_UPDATED
+TOPIC_SUPPLY = AAVE_TOPIC_SUPPLY
+TOPIC_WITHDRAW = AAVE_TOPIC_WITHDRAW
+TOPIC_BORROW = AAVE_TOPIC_BORROW
+TOPIC_REPAY = AAVE_TOPIC_REPAY
+TOPIC_LIQUIDATION_CALL = AAVE_TOPIC_LIQUIDATION_CALL
+TOPIC_MINTED_TO_TREASURY = AAVE_TOPIC_MINTED_TO_TREASURY
 
 RAY = 10**27
 
@@ -59,7 +71,7 @@ class AaveReserveState:
 # created via direct variableDebtToken.mint() without emitting Borrow events.
 # Values obtained via eth_call to aToken.scaledTotalSupply() and
 # variableDebtToken.scaledTotalSupply() at the anchor block.
-GENESIS_ANCHOR_BLOCK = 17_700_000
+GENESIS_ANCHOR_BLOCK = AAVE_V3_GENESIS_ANCHOR_BLOCK
 GENESIS_SEEDS = {
     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": (307376798754970392718879, 167045603813717742595917),    # WETH
     "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": (262854201852641, 227564742571021),                    # USDC
@@ -79,6 +91,11 @@ class AaveV3Source(BaseSource):
 
     def __init__(self):
         self._reserves: dict[str, AaveReserveState] = {}
+        self._unknown_reserves: set[str] = set()
+        self._strict_reserve_coverage = (
+            os.getenv("AAVE_STRICT_RESERVE_COVERAGE", "false").strip().lower()
+            in {"1", "true", "yes"}
+        )
         # Seed accumulators from on-chain anchor
         for eid, (sup_seed, bor_seed) in GENESIS_SEEDS.items():
             self._reserves[eid] = AaveReserveState(
@@ -165,6 +182,15 @@ class AaveV3Source(BaseSource):
         eid = "0x" + reserve_addr
 
         if reserve_addr not in RESERVE_MAP:
+            if reserve_addr not in self._unknown_reserves:
+                self._unknown_reserves.add(reserve_addr)
+                msg = (
+                    f"[AAVE_MARKET] Unknown reserve detected: {eid}. "
+                    "Add this asset to indexer/tokens.py to prevent silent coverage gaps."
+                )
+                if self._strict_reserve_coverage:
+                    raise RuntimeError(msg)
+                log.warning(msg)
             return None
 
         if eid not in self._reserves:

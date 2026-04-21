@@ -31,7 +31,7 @@ SERVICES=(
     "mm-daemon"
     "chaos-trader"
     "faucet"
-    "rates-indexer"
+    "envio-graphql"
     "monitor-bot"
     "frontend"
 )

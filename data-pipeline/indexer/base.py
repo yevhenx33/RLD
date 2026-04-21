@@ -158,10 +158,11 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
             merged['sup_multiplier'] = merged.groupby('segment')['sup_factor'].cumprod()
             merged['bor_multiplier'] = merged.groupby('segment')['bor_factor'].cumprod()
 
-            # Since `supply_usd` is ffilled, it holds the absolute flat anchor. 
-            # Multiplying it by the cumulative factor perfectly synthesizes mechanical compounding.
-            # Morpho Markets trace native AccrueInterest physical flows, so we ONLY synthetically compound legacy Aave gaps.
-            if len(group["protocol"]) > 0 and group["protocol"].iloc[0] != "MORPHO_MARKET":
+            # Since `supply_usd` is ffilled, it holds the absolute flat anchor.
+            # Multiplying it by the cumulative factor synthesizes gap compounding.
+            # Morpho tracks physical accrual events natively, so it should not be
+            # synthetically compounded.
+            if protocol != "MORPHO_MARKET":
                 merged['supply_usd'] = merged['supply_usd'] * merged['sup_multiplier']
                 merged['borrow_usd'] = merged['borrow_usd'] * merged['bor_multiplier']
 

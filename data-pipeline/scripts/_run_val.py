@@ -5,7 +5,7 @@ import numpy as np
 import hypersync
 import clickhouse_connect
 
-ENVIO_TOKEN = os.getenv("ENVIO_API_TOKEN", "7a850568-160d-4cd5-bf06-2961bd383cc6")
+ENVIO_TOKEN = os.getenv("ENVIO_API_TOKEN", "").strip()
 RAY = 10**27
 BATCH_SIZE = 1_000_000
 
@@ -38,6 +38,8 @@ RESERVE_MAP = {
 }
 
 async def download():
+    if not ENVIO_TOKEN:
+        raise RuntimeError("ENVIO_API_TOKEN is required")
     print("Creating client...", flush=True)
     try:
         client = hypersync.HypersyncClient(hypersync.ClientConfig(

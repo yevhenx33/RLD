@@ -4,7 +4,7 @@
 # Always-on services independent from simulation restarts.
 #
 # Launch-critical:
-#   - rates-indexer
+#   - envio-graphql (data-pipeline)
 #   - monitor-bot
 #
 # Optional analytics profile:
@@ -15,28 +15,6 @@
 # ═══════════════════════════════════════════════════════════════
 
 services:
-  rates-indexer:
-    build:
-      context: ..
-      dockerfile: backend/Dockerfile.rates
-    ports:
-      - "127.0.0.1:${RATES_PORT:-8081}:8080"
-    volumes:
-      - rates-data:/app/data
-    environment:
-      - MAINNET_RPC_URL=${MAINNET_RPC_URL:-https://eth.llamarpc.com}
-      - RESERVE_RPC_URL=${RESERVE_RPC_URL:-}
-      - ETH_PRICE_GRAPH_URL=${ETH_PRICE_GRAPH_URL:-}
-      - DB_DIR=/app/data
-      - PYTHONUNBUFFERED=1
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8080\"' || exit 1"]
-      interval: 30s
-      timeout: 5s
-      start_period: 30s
-      retries: 3
-
   monitor-bot:
     build:
       context: ..
@@ -46,15 +24,14 @@ services:
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      - RATES_API_URL=http://rates-indexer:8080
+      - RATES_API_URL=http://host.docker.internal:5000
       - MAINNET_RPC_URL=${BOT_RPC_URL:-https://eth.llamarpc.com}
       - API_KEY=${API_KEY:-}
       - PYTHONUNBUFFERED=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./bot-data:/data
-    depends_on:
-      rates-indexer:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
@@ -85,9 +62,6 @@ services:
       retries: 3
 
 volumes:
-  rates-data:
-    name: reth_rates-data
-    external: true
   bot-data:
   morpho-data:
 

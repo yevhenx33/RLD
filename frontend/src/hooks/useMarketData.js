@@ -1,16 +1,55 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import useSWR from "swr";
-import { API_URL, fetcher, getPastDate, getToday } from "../utils/helpers";
+import { ENVIO_GQL_URL, getPastDate, getToday } from "../utils/helpers";
+
+const MAX_POINTS = 17520;
+
+const fetchMarketRates = async ([url, resolution, startDate, endDate]) => {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: `{
+        historicalRates(symbols: ["USDC"], resolution: "${resolution}", limit: ${MAX_POINTS}) {
+          timestamp
+          symbol
+          apy
+          price
+        }
+      }`,
+    }),
+  });
+
+  const json = await res.json();
+  if (json.errors) throw new Error(json.errors[0]?.message || "GraphQL query failed");
+
+  const nodes = json?.data?.historicalRates || [];
+  const startUnix = Math.floor(new Date(startDate).getTime() / 1000);
+  const endDateObj = new Date(endDate);
+  endDateObj.setUTCHours(23, 59, 59, 999);
+  const endUnix = Math.floor(endDateObj.getTime() / 1000);
+
+  return nodes
+    .filter((node) => node.symbol === "USDC" && node.timestamp >= startUnix && node.timestamp <= endUnix)
+    .map((node) => ({
+      timestamp: node.timestamp,
+      apy: node.apy,
+      eth_price: node.price,
+    }))
+    .sort((a, b) => a.timestamp - b.timestamp);
+};
 
 export function useMarketData(resolution = "4H") {
   const [dates] = useState({ start: getPastDate(90), end: getToday() });
-  const getUrl = () =>
-    `${API_URL}/rates?resolution=${resolution}&start_date=${dates.start}&end_date=${dates.end}`;
   const {
     data: rates,
     error,
     isLoading,
-  } = useSWR(getUrl(), fetcher, { refreshInterval: 10000 });
+  } = useSWR(
+    [ENVIO_GQL_URL, resolution, dates.start, dates.end],
+    fetchMarketRates,
+    { refreshInterval: 10000, revalidateOnFocus: false },
+  );
 
   const stats = useMemo(() => {
     if (!rates || rates.length === 0)
@@ -27,51 +66,12 @@ export function useMarketData(resolution = "4H") {
     };
   }, [rates]);
 
-  // --- WebSocket Real-Time Updates ---
-  const [realtimeLatest, setRealtimeLatest] = useState(null);
-
-  useEffect(() => {
-    // Build WS URL — works for both absolute (http://...) and relative (/api) base URLs
-    let wsUrl;
-    if (API_URL.startsWith("http")) {
-      const protocol = API_URL.startsWith("https") ? "wss" : "ws";
-      const host = API_URL.replace(/^https?:\/\//, "");
-      wsUrl = `${protocol}://${host}/ws/rates`;
-    } else {
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      wsUrl = `${protocol}://${window.location.host}${API_URL}/ws/rates`;
-    }
-
-    const ws = new WebSocket(wsUrl);
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.type === "UPDATE" && msg.data) {
-          // Assume this hook tracks USDC (Default)
-          setRealtimeLatest({
-            apy: msg.data.USDC,
-            timestamp: msg.data.timestamp,
-            eth_price: msg.data.ETH,
-          });
-        }
-      } catch (e) {
-        console.error("WS Parse Error", e);
-      }
-    };
-
-    return () => {
-      if (ws.readyState === 1) ws.close();
-    };
-  }, []);
-
-  // Merge SWR data with Real-Time WS data
   const swrLatest =
     rates && rates.length > 0
       ? rates[rates.length - 1]
       : { apy: 0, block_number: 0, timestamp: 0 };
 
-  const latest = realtimeLatest || swrLatest;
+  const latest = swrLatest;
 
   const dailyChange = useMemo(() => {
     if (!rates || rates.length < 2) return 0;

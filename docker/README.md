@@ -7,7 +7,7 @@ Single operational truth for launch-grade backend/infra orchestration.
 Use only:
 
 1. `docker/reth/docker-compose.reth.yml` - simulation runtime (reth, postgres, indexer, bots, faucet)
-2. `docker/docker-compose.infra.yml` - always-on infra (rates-indexer, monitor-bot)
+2. `docker/docker-compose.infra.yml` - always-on infra (Envio GraphQL + monitor-bot)
 3. `docker/docker-compose.frontend.yml` - frontend nginx container
 
 ## Launch-Critical Services
@@ -16,7 +16,7 @@ Use only:
 |---|---|---|
 | Frontend | `docker-compose.frontend.yml` | `3000` |
 | Simulation indexer | `reth/docker-compose.reth.yml` | `8080` |
-| Rates API | `docker-compose.infra.yml` | `8081` |
+| Envio GraphQL API | `docker-compose.infra.yml` | `5000` |
 | Monitor bot | `docker-compose.infra.yml` | `8083` |
 | Reth RPC | `reth/docker-compose.reth.yml` | `8545` |
 | Faucet | `reth/docker-compose.reth.yml` | `8088` |
@@ -50,9 +50,11 @@ docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env ps
 - Host nginx config: `docker/nginx/rld-frontend.conf`
 - `https://rld.fi/` proxies to `127.0.0.1:3000`
 - `https://rld.fi/dashboard/` proxies to `127.0.0.1:8090`
+- Dashboard real-time API is provided by `docker/dashboard/live_status_server.py` on `127.0.0.1:8091` and proxied through `/dashboard/live-status*`
+- Optional systemd unit for live API: `docker/dashboard/rld-dashboard-live.service`
 - Frontend container proxy contract:
   - `/graphql` -> indexer
-  - `/api/rates` and `/rates-graphql` -> rates-indexer
+  - `/envio-graphql` -> Envio GraphQL API
   - `/api/faucet` -> host faucet service
   - only explicit simulation compatibility `/api/*` routes are allowed
 

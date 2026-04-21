@@ -9,9 +9,13 @@ Infrastructure status dashboard served from `docker/dashboard`.
 
 ## Data Sources
 
-`docker/scripts/generate-status.sh` writes:
+`docker/scripts/generate-status.sh` writes baseline snapshots:
 - `docker/dashboard/status.json`
 - `docker/dashboard/history.json`
+
+`docker/dashboard/live_status_server.py` provides real-time updates:
+- `GET /live-status` (latest merged status JSON)
+- `GET /live-status/stream` (SSE stream, ~1s cadence)
 
 Collected signals include:
 - system health (cpu/memory/disk/load)
@@ -39,6 +43,11 @@ Collected signals include:
 
 Dashboard nginx config:
 - `docker/dashboard/nginx-dashboard.conf` (listens on `8090`)
+- proxies `/live-status*` to local live status service on `127.0.0.1:8091`
+
+Live status process:
+- launcher: `docker/dashboard/start-live-status.sh`
+- optional unit: `docker/dashboard/rld-dashboard-live.service`
 
 Host routing:
 - `docker/nginx/rld-frontend.conf` routes `/dashboard/` to `127.0.0.1:8090`
@@ -48,6 +57,14 @@ Host routing:
 ```bash
 # Regenerate status immediately
 bash /home/ubuntu/RLD/docker/scripts/generate-status.sh
+
+# Run live status service in foreground
+python3 /home/ubuntu/RLD/docker/dashboard/live_status_server.py --host 127.0.0.1 --port 8091 --interval-sec 1.0
+
+# Optional: install systemd service
+sudo cp /home/ubuntu/RLD/docker/dashboard/rld-dashboard-live.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now rld-dashboard-live
 
 # Verify automation flags
 python3 - <<'PY'

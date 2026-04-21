@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════════
 # RLD Frontend (Nginx + Vite SPA)
 # ═══════════════════════════════════════════════════════════════
-# Independently deployable. Proxies to indexer and rates-indexer
+# Independently deployable. Proxies to simulation indexer and Envio GraphQL
 # via Docker DNS on the shared rld_shared network.
 #
 #  Usage:

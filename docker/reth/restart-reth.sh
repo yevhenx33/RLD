@@ -159,7 +159,7 @@ fi
 header "STEP 1: TEAR DOWN"
 
 step "1a" "Stopping simulation stack..."
-# Only tear down the simulation compose — infra (rates-indexer) and frontend are independent
+# Only tear down the simulation compose — infra (Envio + monitor-bot) and frontend are independent
 docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" down 2>/dev/null || true
 docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" down -v 2>/dev/null || true
 # Ensure shared network exists (infra + frontend depend on it)

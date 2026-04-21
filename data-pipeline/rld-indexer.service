@@ -1,12 +1,15 @@
 [Unit]
-Description=RLD Unified Protocol Indexer (Fluid + Chainlink + Aave + Morpho)
+Description=RLD Protocol Worker (isolated source/role)
 After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/RLD/data-pipeline
-ExecStart=/home/ubuntu/RLD/data-pipeline/.venv/bin/python scripts/run_indexer.py
+EnvironmentFile=-/home/ubuntu/RLD/data-pipeline/.env
+Environment=INDEXER_SOURCE=AAVE_MARKET
+Environment=INDEXER_ROLE=collector
+ExecStart=/bin/bash -lc '/home/ubuntu/RLD/data-pipeline/.venv/bin/python scripts/run_indexer.py --source "${INDEXER_SOURCE}" --role "${INDEXER_ROLE}" --poll-interval "${POLL_INTERVAL}"'
 Restart=always
 RestartSec=30
 Environment=CLICKHOUSE_HOST=localhost

@@ -1,6 +1,6 @@
 import useSWR from "swr";
 
-import { RATES_GQL_URL } from "../utils/helpers";
+import { ENVIO_GQL_URL } from "../utils/helpers";
 
 const SUSDE_QUERY = `{ latestRates { susde } }`;
 
@@ -16,11 +16,11 @@ const gqlFetcher = async (url) => {
 };
 
 /**
- * Fetches real-time sUSDe staking yield from the rates-indexer GraphQL API.
+ * Fetches real-time sUSDe staking yield from the Envio GraphQL API.
  * Returns { stakingYield, protocolYield, avg30d, avg90d, isLoading, error }
  */
 export function useSusdeYield() {
-  const { data, error, isLoading } = useSWR(RATES_GQL_URL, gqlFetcher, {
+  const { data, error, isLoading } = useSWR(ENVIO_GQL_URL, gqlFetcher, {
     refreshInterval: 60000,
     dedupingInterval: 30000,
     revalidateOnFocus: false,

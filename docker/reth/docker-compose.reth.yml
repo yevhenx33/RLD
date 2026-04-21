@@ -91,8 +91,15 @@ services:
       - POLL_INTERVAL=${POLL_INTERVAL:-2}
       - BATCH_SIZE=${BATCH_SIZE:-100}
       - INDEXER_ADMIN_TOKEN=${INDEXER_ADMIN_TOKEN:-}
+      - SIM_CLICKHOUSE_DUAL_WRITE=${SIM_CLICKHOUSE_DUAL_WRITE:-false}
+      - SIM_CLICKHOUSE_HOST=${SIM_CLICKHOUSE_HOST:-host.docker.internal}
+      - SIM_CLICKHOUSE_PORT=${SIM_CLICKHOUSE_PORT:-8123}
+      - SIM_CLICKHOUSE_DATABASE=${SIM_CLICKHOUSE_DATABASE:-default}
+      - SIM_CLICKHOUSE_DUAL_WRITE_STRICT=${SIM_CLICKHOUSE_DUAL_WRITE_STRICT:-false}
     volumes:
       - ../deployment.json:/config/deployment.json:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${INDEXER_PORT:-8080}:8080"
     restart: unless-stopped

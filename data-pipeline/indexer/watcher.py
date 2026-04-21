@@ -9,7 +9,7 @@ import clickhouse_connect
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from indexer.sources.aave_v3 import AaveV3Source
+from indexer.aave_constants import AAVE_V3_POOL
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("watcher")
@@ -19,20 +19,17 @@ DEVIATION_THRESHOLD_APY = 0.0005  # 0.05% APY acceptable drift
 
 # Aave V3 USDC Address for the test
 USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-AAVE_POOL = "0x87870Bca3F3fD622A016d4xc6A13b632D06" # from config
 
 def get_aave_rpc_borrow_apy(block_number: int, asset_address: str) -> float:
     # getReserveData(address)
     clean_addr = asset_address[2:] if asset_address.startswith("0x") else asset_address
     calldata = "0x35ea6a75" + clean_addr.zfill(64)
-    # Aave pool contract
-    AAVE_POOL_CONTRACT = "0x87870Bca3F3fD622A016d4A561d6A13b632d44f6"
     
     payload = {
         "jsonrpc": "2.0",
         "method": "eth_call",
         "params": [
-            {"to": AAVE_POOL_CONTRACT, "data": calldata},
+            {"to": AAVE_V3_POOL, "data": calldata},
             hex(block_number)
         ],
         "id": 1

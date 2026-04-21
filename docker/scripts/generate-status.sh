@@ -67,7 +67,7 @@ cron_has_entry() {
 }
 
 INDEXER_PORT=$(read_env_value "INDEXER_PORT" "8080")
-RATES_PORT=$(read_env_value "RATES_PORT" "8081")
+ENVIO_PORT=$(read_env_value "ENVIO_PORT" "5000")
 BOT_PORT="8083"
 
 # Fallback index price from deployment config (genesis-style deploys can have
@@ -160,7 +160,7 @@ done < <(docker ps -a --filter "status=created" --format "{{.Names}}|{{.Status}}
 containers_json+="]"
 
 # ── API health + response times ──
-rates_rt=$(probe_http_time "http://localhost:${RATES_PORT}/")
+rates_rt=$(probe_http_time "http://localhost:${ENVIO_PORT}/healthz")
 indexer_rt=$(probe_http_time "http://localhost:${INDEXER_PORT}/healthz")
 bot_rt=$(probe_http_time "http://localhost:${BOT_PORT}/")
 nginx_rt=$(probe_http_time "https://rld.fi/")
@@ -174,7 +174,50 @@ indexer_ms=$(seconds_to_ms "$indexer_rt")
 bot_ms=$(seconds_to_ms "$bot_rt")
 nginx_ms=$(seconds_to_ms "$nginx_rt")
 
-rates_block=$(curl -sf -m 2 "http://localhost:${RATES_PORT}/" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('last_indexed_block',''))" 2>/dev/null || echo "")
+rates_block=$(curl -sf -m 3 "http://localhost:${ENVIO_PORT}/graphql" \
+  -H "Content-Type: application/json" \
+  --data '{"query":"{ latestRates { timestamp } }"}' 2>/dev/null \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('data',{}).get('latestRates',{}).get('timestamp',''))" 2>/dev/null || echo "")
+
+ENVIO_HEALTH=$(curl -sf -m 2 "http://localhost:${ENVIO_PORT}/healthz" 2>/dev/null || echo '{}')
+
+ENVIO_READY_TMP=$(mktemp)
+ENVIO_READY_HTTP=$(curl -s -m 3 -o "$ENVIO_READY_TMP" -w "%{http_code}" "http://localhost:${ENVIO_PORT}/readyz" 2>/dev/null || echo "000")
+eval "$(python3 - "$ENVIO_READY_HTTP" "$ENVIO_READY_TMP" <<'PY'
+import json
+import pathlib
+import shlex
+import sys
+
+code_raw = sys.argv[1]
+path = pathlib.Path(sys.argv[2])
+body = path.read_text(encoding="utf-8", errors="ignore") if path.exists() else ""
+try:
+    payload = json.loads(body) if body.strip() else {}
+except Exception:
+    payload = {"raw": body.strip()[:500]}
+
+code = int(code_raw) if str(code_raw).isdigit() else 0
+ready = bool(code == 200 and payload.get("status") in ("ready", "ok"))
+reason = str(payload.get("reason", ""))
+failing = payload.get("failingProtocols") if isinstance(payload.get("failingProtocols"), list) else []
+proc_lag = payload.get("processingLag") if isinstance(payload.get("processingLag"), dict) else {}
+max_lag = -1
+for value in proc_lag.values():
+    try:
+        max_lag = max(max_lag, int(value))
+    except Exception:
+        pass
+
+print(f"ENVIO_READY={str(ready).lower()}")
+print(f"ENVIO_READY_HTTP={code}")
+print(f"ENVIO_READY_REASON={shlex.quote(reason)}")
+print(f"ENVIO_READY_FAILING={shlex.quote(','.join(str(x) for x in failing))}")
+print(f"ENVIO_READY_MAX_LAG={max_lag}")
+print("ENVIO_READY_PAYLOAD=" + shlex.quote(json.dumps(payload, separators=(',', ':'))))
+PY
+)"
+rm -f "$ENVIO_READY_TMP"
 
 # Indexer API status (authoritative market metrics for dashboard)
 INDEXER_API_STATUS=$(python3 - "$INDEXER_PORT" <<'PY'
@@ -339,74 +382,17 @@ if cron_has_entry "$BACKUP_SCRIPT"; then BACKUP_CRON_OK=true; fi
 if cron_has_entry "$STATUS_SCRIPT"; then STATUS_CRON_OK=true; fi
 
 # ── Database Integrity ──
-RATES_CONTAINER=$(service_container "rates-indexer" false)
-if [ -n "$RATES_CONTAINER" ]; then
-DB_JSON=$(docker exec "$RATES_CONTAINER" python3 -c "
-import sqlite3, os, json, time
-
-now = int(time.time())
-result = {}
-
-# --- aave_rates.db ---
-try:
-    db = '/app/data/aave_rates.db'
-    sz = round(os.path.getsize(db) / 1024 / 1024, 1)
-    conn = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
-    c = conn.cursor()
-    tables = {}
-    for t in ['rates', 'eth_prices', 'rates_dai', 'rates_usdt']:
-        try:
-            c.execute(f'SELECT COUNT(*) FROM {t}')
-            cnt = c.fetchone()[0]
-            c.execute(f'SELECT MAX(timestamp) FROM {t}')
-            mx = c.fetchone()[0] or 0
-            tables[t] = {'rows': cnt, 'latest_age_secs': now - mx if mx > 1000000 else -1}
-        except: pass
-    c.execute('SELECT COUNT(*) FROM eth_prices WHERE timestamp < 100000000')
-    corrupt = c.fetchone()[0]
-    conn.close()
-    result['aave_rates'] = {'size_mb': sz, 'tables': tables, 'corrupt_rows': corrupt}
-except Exception as e:
-    result['aave_rates'] = {'error': str(e)}
-
-# --- clean_rates.db ---
-try:
-    db2 = '/app/data/clean_rates.db'
-    sz2 = round(os.path.getsize(db2) / 1024 / 1024, 1)
-    conn2 = sqlite3.connect(f'file:{db2}?mode=ro', uri=True)
-    c2 = conn2.cursor()
-    c2.execute('SELECT MAX(timestamp) FROM hourly_stats')
-    mx2 = c2.fetchone()[0] or 0
-    fresh = now - mx2 if mx2 > 0 else -1
-    nulls = {}
-    for col in ['eth_price', 'usdc_rate', 'dai_rate', 'usdt_rate']:
-        c2.execute(f'SELECT COUNT(*) FROM hourly_stats WHERE timestamp > ? AND {col} IS NULL', (now - 7*86400,))
-        nulls[col] = c2.fetchone()[0]
-    c2.execute('SELECT COUNT(*) FROM hourly_stats WHERE timestamp > ?', (now - 7*86400,))
-    rows_7d = c2.fetchone()[0]
-    c2.execute('SELECT COUNT(*) FROM hourly_stats WHERE timestamp > ?', (now - 86400,))
-    rows_24h = c2.fetchone()[0]
-    # Sync age
-    sync_age = -1
-    try:
-        c2.execute(\"SELECT value FROM sync_state WHERE key='last_synced_timestamp'\")
-        r = c2.fetchone()
-        if r: sync_age = now - int(r[0])
-    except: pass
-    conn2.close()
-    result['clean_rates'] = {
-        'size_mb': sz2, 'freshness_secs': fresh, 'rows_24h': rows_24h,
-        'nulls_7d': nulls, 'missing_hours_7d': max(0, 168 - rows_7d),
-        'sync_age_secs': sync_age
-    }
-except Exception as e:
-    result['clean_rates'] = {'error': str(e)}
-
-print(json.dumps(result))
-" 2>/dev/null) || DB_JSON='{}'
-else
-  DB_JSON='{}'
-fi
+DB_JSON=$(python3 -c "
+import json
+health = json.loads('''$ENVIO_HEALTH''') if '''$ENVIO_HEALTH'''.strip() else {}
+readyz = json.loads('''$ENVIO_READY_PAYLOAD''') if '''$ENVIO_READY_PAYLOAD'''.strip() else {}
+health['ready'] = '''$ENVIO_READY'''.strip().lower() == 'true'
+health['readyHttp'] = int('''$ENVIO_READY_HTTP''' or 0)
+health['readyReason'] = '''$ENVIO_READY_REASON'''
+if isinstance(readyz, dict) and readyz:
+    health['readyz'] = readyz
+print(json.dumps({'envio_indexer': health}))
+" 2>/dev/null || echo '{"envio_indexer":{"status":"unknown"}}')
 
 # --- Pool state from rld_indexer postgres ---
 PG_CONTAINER=$(service_container "postgres" false)
@@ -465,6 +451,154 @@ rates['pool_state'] = pool
 print(json.dumps(rates))
 " 2>/dev/null) || DB_JSON='{}'
 
+# ── Stack map (production-facing topology health) ──
+STACKS_JSON=$(python3 -c "
+import json
+
+def to_bool(value):
+    return str(value).strip().lower() == 'true'
+
+def to_int(value, default=None):
+    try:
+        if value in (None, '', 'None'):
+            return default
+        return int(value)
+    except Exception:
+        return default
+
+def group_state(containers, needles):
+    matched = [c for c in containers if any(n in (c.get('name') or '').lower() for n in needles)]
+    running = [c for c in matched if (c.get('status') or '').lower() in ('running', 'healthy')]
+    healthy = [c for c in matched if (c.get('status') or '').lower() == 'healthy']
+    return {
+        'matched': len(matched),
+        'running': len(running),
+        'healthy': len(healthy),
+        'names': [c.get('name') for c in matched][:8],
+    }
+
+containers = json.loads('''$containers_json''') if '''$containers_json'''.strip() else []
+db = json.loads('''$DB_JSON''') if '''$DB_JSON'''.strip() else {}
+envio = db.get('envio_indexer', {}) if isinstance(db.get('envio_indexer'), dict) else {}
+pool = db.get('pool_state', {}) if isinstance(db.get('pool_state'), dict) else {}
+
+legacy = group_state(containers, ['rates-indexer'])
+frontend_container = group_state(containers, ['frontend'])
+mm_container = group_state(containers, ['mm-daemon'])
+chaos_container = group_state(containers, ['chaos-trader'])
+faucet_container = group_state(containers, ['faucet'])
+
+processing_lag = envio.get('processingLag', {}) if isinstance(envio.get('processingLag'), dict) else {}
+lag_threshold = to_int((envio.get('readyz') or {}).get('maxLagBlocks'), 250000) if isinstance(envio.get('readyz'), dict) else 250000
+failing_protocols = []
+if isinstance(envio.get('readyz'), dict) and isinstance(envio['readyz'].get('failingProtocols'), list):
+    failing_protocols = envio['readyz']['failingProtocols']
+
+protocol_components = {
+    'graphql_api': to_bool('''$rates_ok'''),
+    'clickhouse': str(envio.get('clickhouse', '')).lower() == 'ok',
+    'readiness': to_bool('''$ENVIO_READY'''),
+}
+if all(protocol_components.values()):
+    protocol_status = 'healthy'
+elif protocol_components['graphql_api'] and protocol_components['clickhouse']:
+    protocol_status = 'degraded'
+else:
+    protocol_status = 'critical'
+
+chain_block = to_int('''$anvil_block''')
+indexer_block = to_int(pool.get('last_indexed_block'))
+block_gap = (chain_block - indexer_block) if (chain_block is not None and indexer_block is not None) else None
+simulation_components = {
+    'sim_indexer_api': to_bool('''$indexer_ok'''),
+    'postgres_state': bool(pool.get('healthy')),
+    'reth_rpc': to_bool('''$anvil_ok'''),
+}
+if all(simulation_components.values()) and (block_gap is None or block_gap <= 200):
+    simulation_status = 'healthy'
+elif all(simulation_components.values()):
+    simulation_status = 'degraded'
+else:
+    simulation_status = 'critical'
+
+execution_components = {
+    'monitor_bot_api': to_bool('''$bot_ok'''),
+    'mm_daemon': mm_container['running'] > 0,
+    'chaos_trader': chaos_container['running'] > 0,
+    'faucet': faucet_container['running'] > 0,
+}
+if all(execution_components.values()):
+    execution_status = 'healthy'
+elif execution_components['monitor_bot_api'] and (execution_components['mm_daemon'] or execution_components['chaos_trader']):
+    execution_status = 'degraded'
+else:
+    execution_status = 'critical'
+
+frontend_components = {
+    'edge_nginx': to_bool('''$nginx_ok'''),
+    'frontend_container': frontend_container['running'] > 0,
+}
+frontend_status = 'healthy' if all(frontend_components.values()) else 'degraded'
+
+legacy_running = legacy['running'] > 0
+legacy_status = 'deprecated-running' if legacy_running else 'removed'
+
+gates = {
+    'protocol_rates_ready': protocol_status == 'healthy',
+    'simulation_ready': simulation_status == 'healthy',
+    'execution_ready': execution_status != 'critical',
+    'frontend_ready': frontend_status == 'healthy',
+    'legacy_removed': not legacy_running,
+}
+gates['production_ready'] = all(gates.values())
+
+stacks = {
+    'protocol_rates': {
+        'label': 'Protocol Rates',
+        'status': protocol_status,
+        'components': protocol_components,
+        'latestTimestamp': '''$rates_block''',
+        'processingLag': processing_lag,
+        'lagThreshold': lag_threshold,
+        'failingProtocols': failing_protocols,
+        'readyReason': '''$ENVIO_READY_REASON''',
+    },
+    'simulation': {
+        'label': 'Simulation',
+        'status': simulation_status,
+        'components': simulation_components,
+        'chainBlock': chain_block,
+        'indexerBlock': indexer_block,
+        'blockGap': block_gap,
+    },
+    'execution': {
+        'label': 'Execution/Bots',
+        'status': execution_status,
+        'components': execution_components,
+        'containers': {
+            'mmDaemon': mm_container,
+            'chaosTrader': chaos_container,
+            'faucet': faucet_container,
+        },
+    },
+    'frontend_edge': {
+        'label': 'Frontend/Edge',
+        'status': frontend_status,
+        'components': frontend_components,
+        'containers': frontend_container,
+    },
+    'legacy_rates': {
+        'label': 'Legacy Rates Indexer',
+        'status': legacy_status,
+        'running': legacy_running,
+        'containers': legacy,
+    },
+    'gates': gates,
+}
+
+print(json.dumps(stacks))
+" 2>/dev/null || echo '{}')
+
 # ── History tracking (keep last 60 data points = ~1 hour) ──
 if [ -f "$HISTORY" ]; then
   HIST=$(python3 -c "
@@ -506,7 +640,16 @@ cat > "$TMPOUT" << ENDJSON
   "containers": $containers_json,
   "services": {
     "nginx": {"healthy":$nginx_conf_ok,"response_ms":$nginx_ms},
-    "rates_indexer": {"healthy":$rates_ok,"response_ms":$rates_ms,"last_block":"$rates_block"},
+    "envio_indexer": {
+      "healthy":$rates_ok,
+      "response_ms":$rates_ms,
+      "last_block":"$rates_block",
+      "ready":$ENVIO_READY,
+      "ready_http":$ENVIO_READY_HTTP,
+      "ready_reason":"$ENVIO_READY_REASON",
+      "ready_max_lag":$ENVIO_READY_MAX_LAG,
+      "failing_protocols":"$ENVIO_READY_FAILING"
+    },
     "indexer": {"healthy":$indexer_ok,"response_ms":$indexer_ms},
     "monitor_bot": {"healthy":$bot_ok,"response_ms":$bot_ms},
     "reth": {"healthy":$anvil_ok,"block":"$anvil_block","mem_mb":${reth_mem_mb:-0},"uptime":"$reth_uptime","db_mb":${reth_db_mb:-0},"chain_id":"${reth_chain_id}","gas_gwei":"${reth_gas_price}","block_ts":${reth_block_ts:-0},"txpool_pending":${reth_txpool_pending:-0},"txpool_queued":${reth_txpool_queued:-0}},
@@ -518,6 +661,7 @@ cat > "$TMPOUT" << ENDJSON
   "databases": $DB_JSON,
   "market": $MARKET_INFO_JSON,
   "nodes": $NODE_METRICS_JSON,
+  "stacks": $STACKS_JSON,
   "automation": {"status_job_scheduled":$STATUS_CRON_OK,"backup_job_scheduled":$BACKUP_CRON_OK},
   "backups": $BACKUP_JSON,
   "history": $HIST

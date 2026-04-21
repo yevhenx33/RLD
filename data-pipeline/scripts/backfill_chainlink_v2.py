@@ -4,13 +4,12 @@ Resumable: reads max(block_number) from chainlink_prices to continue.
 
 Usage: python scripts/backfill_chainlink_v2.py
 """
-import asyncio, datetime, logging, pickle, time, sys
+import asyncio, datetime, logging, os, pickle, time, sys
 import clickhouse_connect, hypersync, pandas as pd
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger()
 
-TOKEN = "7a850568-160d-4cd5-bf06-2961bd383cc6"
 ANSWER_UPDATED = "0x0559884fd3a460db3073b7fc896cc77986f16e378210ded43186175bf646fc5f"
 CHUNK = 50_000
 MORPHO_GENESIS = 18_900_000
@@ -37,8 +36,11 @@ def load_metadata():
 
 
 async def backfill(addresses, meta, from_block, ch):
+    token = os.getenv("ENVIO_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("ENVIO_API_TOKEN is required")
     client = hypersync.HypersyncClient(
-        hypersync.ClientConfig(url="https://eth.hypersync.xyz", bearer_token=TOKEN)
+        hypersync.ClientConfig(url="https://eth.hypersync.xyz", bearer_token=token)
     )
     head = await client.get_height()
     log.info(f"Range: {from_block:,} → {head:,} ({len(addresses)} addresses)")

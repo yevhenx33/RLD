@@ -9,7 +9,7 @@ import {
   ArrowLeft,
   Zap,
 } from "lucide-react";
-import { RATES_GQL_URL } from "../../utils/helpers";
+import { ENVIO_GQL_URL } from "../../utils/helpers";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
 
 const PAGE_SIZE = 25;
@@ -52,7 +52,7 @@ export default function ProtocolMarkets() {
     const fetchMarkets = async () => {
       setLoading(true);
       try {
-        const res = await fetch(RATES_GQL_URL, {
+        const res = await fetch(ENVIO_GQL_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

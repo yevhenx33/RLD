@@ -25,6 +25,17 @@ BLOCK_FIELDS = [hypersync.BlockField.NUMBER, hypersync.BlockField.TIMESTAMP]
 CONFIRMATION_BLOCKS = 3
 BATCH_SIZE = 100_000
 
+
+def require_envio_token() -> str:
+    token = os.getenv("ENVIO_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError(
+            "ENVIO_API_TOKEN is required for HyperSync collection. "
+            "Set it in the environment before starting the collector."
+        )
+    return token
+
+
 def build_block_ts_map(blocks) -> dict:
     ts_map = {}
     for b in blocks:
@@ -42,7 +53,7 @@ class ProtocolCollector:
     """
     def __init__(self, source: BaseSource, clickhouse_host="localhost", clickhouse_port=8123):
         self.source = source
-        self.envio_token = os.getenv("ENVIO_API_TOKEN", "7a850568-160d-4cd5-bf06-2961bd383cc6")
+        self.envio_token = require_envio_token()
         self.ch_host = clickhouse_host
         self.ch_port = clickhouse_port
 

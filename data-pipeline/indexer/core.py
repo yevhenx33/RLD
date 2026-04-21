@@ -7,8 +7,6 @@ contract address, then calls decode() and merge() on each.
 """
 
 import os
-import sys
-import time
 import asyncio
 import logging
 import datetime
@@ -35,6 +33,16 @@ LOG_FIELDS = [
 BLOCK_FIELDS = [hypersync.BlockField.NUMBER, hypersync.BlockField.TIMESTAMP]
 
 CONFIRMATION_BLOCKS = 3
+
+
+def require_envio_token(explicit_token: str = "") -> str:
+    token = (explicit_token or os.getenv("ENVIO_API_TOKEN", "")).strip()
+    if not token:
+        raise RuntimeError(
+            "ENVIO_API_TOKEN is required for HyperSync access. "
+            "Set it in the environment before starting the indexer."
+        )
+    return token
 
 
 def build_block_ts_map(blocks) -> dict:
@@ -71,9 +79,7 @@ class IndexerEngine:
     ):
         self.sources = sources
         self.poll_interval = poll_interval
-        self.envio_token = envio_token or os.getenv(
-            "ENVIO_API_TOKEN", "7a850568-160d-4cd5-bf06-2961bd383cc6"
-        )
+        self.envio_token = require_envio_token(envio_token)
         self.ch_host = clickhouse_host
         self.ch_port = clickhouse_port
 

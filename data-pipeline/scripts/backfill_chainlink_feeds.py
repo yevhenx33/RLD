@@ -9,6 +9,7 @@ Usage:
 import asyncio
 import datetime
 import logging
+import os
 import sys
 import time
 from collections import defaultdict
@@ -20,7 +21,6 @@ import pandas as pd
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-ENVIO_TOKEN = "7a850568-160d-4cd5-bf06-2961bd383cc6"
 ANSWER_UPDATED = "0x0559884fd3a460db3073b7fc896cc77986f16e378210ded43186175bf646fc5f"
 
 # ── Known aggregator → feed mappings ──────────────────────────
@@ -87,8 +87,11 @@ CHUNK_SIZE = 50_000  # blocks per HyperSync query
 
 async def backfill(from_block: int, dry_run: bool = False):
     ch = clickhouse_connect.get_client(host="localhost", port=8123)
+    token = os.getenv("ENVIO_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("ENVIO_API_TOKEN is required")
     client = hypersync.HypersyncClient(
-        hypersync.ClientConfig(url="https://eth.hypersync.xyz", bearer_token=ENVIO_TOKEN)
+        hypersync.ClientConfig(url="https://eth.hypersync.xyz", bearer_token=token)
     )
 
     # Get latest block from HyperSync

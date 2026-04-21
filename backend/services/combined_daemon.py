@@ -22,8 +22,7 @@ Environment:
     TWAMM_HOOK        - TWAMM/V4 hook address
     PRIVATE_KEY       - Operator private key
     RPC_URL           - Anvil RPC
-    API_URL           - Rate API URL
-    API_KEY           - API key
+    API_URL           - Envio/data-pipeline API base URL
 """
 
 import json
@@ -77,7 +76,6 @@ load_dotenv("../.env")
 RPC_URL = os.getenv("RPC_URL", "http://localhost:8545")
 API_URL = os.getenv("API_URL", "http://127.0.0.1:5000")
 INDEXER_URL = os.getenv("INDEXER_URL", "http://indexer:8080")
-API_KEY = os.getenv("API_KEY")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")  # MM user key for swaps
 ORACLE_ADMIN_KEY = os.getenv("ORACLE_ADMIN_KEY", PRIVATE_KEY)  # Deployer key for oracle updates
 INDEXER_TIMEOUT = float(os.getenv("INDEXER_TIMEOUT", "3"))
@@ -262,7 +260,7 @@ def _normalize_rate_fraction(raw_rate):
 
 
 def fetch_latest_rate():
-    """Fetch latest USDC borrow rate fraction r, preferring Envio/data-pipeline."""
+    """Fetch latest USDC borrow rate fraction r from Envio/data-pipeline."""
     graphql_endpoints = [f"{API_URL}/graphql", f"{API_URL}/envio-graphql"]
 
     # 1) Envio/data-pipeline GraphQL
@@ -287,44 +285,7 @@ def fetch_latest_rate():
         except Exception:
             pass
 
-    # 2) Legacy GraphQL latestRates
-    legacy_query = {"query": "{ latestRates { usdc } }"}
-    for endpoint in graphql_endpoints:
-        try:
-            response = requests.post(endpoint, json=legacy_query, timeout=5)
-            response.raise_for_status()
-            data = response.json()
-            usdc_rate = data.get("data", {}).get("latestRates", {}).get("usdc")
-            rate_fraction = _normalize_rate_fraction(usdc_rate)
-            if rate_fraction is not None:
-                logger.info(
-                    "📡 Live USDC rate (legacy GraphQL): r=%.6f (~%.4f%%)",
-                    rate_fraction,
-                    rate_fraction * 100,
-                )
-                return rate_fraction
-        except Exception:
-            pass
-
-    # 3) Legacy REST /rates endpoint
-    try:
-        headers = {"X-API-Key": API_KEY} if API_KEY else {}
-        response = requests.get(f"{API_URL}/rates?limit=1&symbol=USDC", headers=headers, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        if data and len(data) > 0:
-            rate_fraction = _normalize_rate_fraction(data[0].get("apy"))
-            if rate_fraction is not None:
-                logger.info(
-                    "📡 Live USDC rate (legacy REST): r=%.6f (~%.4f%%)",
-                    rate_fraction,
-                    rate_fraction * 100,
-                )
-                return rate_fraction
-    except Exception:
-        pass
-
-    # 4) Fallback: read rate directly from Aave V3 on-chain (STALE on Reth fork!)
+    # Fallback: read rate directly from Aave V3 on-chain (STALE on Reth fork!)
     try:
         w3 = Web3(Web3.HTTPProvider(RPC_URL))
         AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"

@@ -21,12 +21,14 @@ services:
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      - RATES_API_URL=http://rates-indexer:8080
+      - RATES_API_URL=http://host.docker.internal:5000
       - MAINNET_RPC_URL=${BOT_RPC_URL:-https://eth.llamarpc.com}
       - API_KEY=${API_KEY:-}
       - PYTHONUNBUFFERED=1
     volumes:
       - ./bot-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - rld_shared

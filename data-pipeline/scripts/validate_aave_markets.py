@@ -7,12 +7,13 @@ import json
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from indexer.tokens import TOKENS, SYM_DECIMALS
+from indexer.aave_constants import AAVE_V3_POOL
 
 from dotenv import load_dotenv
 load_dotenv()
 
 RPC_URL = os.getenv("MAINNET_RPC_URL", "https://eth.llamarpc.com")
-DATA_PROVIDER = "0x0a16f2FCC0D44FaE41cc54e079281D84A363bECD"
+AAVE_POOL = AAVE_V3_POOL
 SELECTOR = "0x35ea6a75"
 
 def eth_call(to_addr, data, block_num):
@@ -21,7 +22,7 @@ def eth_call(to_addr, data, block_num):
         "method": "eth_call",
         "params": [
             {"to": to_addr, "data": data},
-            "latest"
+            hex(block_num)
         ],
         "id": 1
     }
@@ -91,7 +92,7 @@ def main():
             
         total += 1
         calldata = SELECTOR + addr.zfill(64)
-        raw = eth_call(DATA_PROVIDER, calldata, last_block)
+        raw = eth_call(AAVE_POOL, calldata, last_block)
         if not raw or raw == "0x" or len(raw) < 130:
             print(f"RPC failed or market inactive for {symbol} at block {last_block}")
             total -= 1

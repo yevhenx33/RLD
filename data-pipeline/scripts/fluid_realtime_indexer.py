@@ -21,7 +21,7 @@ import hypersync
 import clickhouse_connect
 
 # ── Configuration ────────────────────────────────────────────
-ENVIO_TOKEN = os.getenv("ENVIO_API_TOKEN", "7a850568-160d-4cd5-bf06-2961bd383cc6")
+ENVIO_TOKEN = os.getenv("ENVIO_API_TOKEN", "").strip()
 CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "localhost")
 CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))  # 5 minutes
@@ -103,6 +103,11 @@ log = logging.getLogger("fluid-indexer")
 
 # ── HyperSync client ─────────────────────────────────────────
 def create_hypersync_client():
+    if not ENVIO_TOKEN:
+        raise RuntimeError(
+            "ENVIO_API_TOKEN is required for HyperSync access. "
+            "Set it in the environment before starting fluid_realtime_indexer.py."
+        )
     return hypersync.HypersyncClient(hypersync.ClientConfig(
         url="https://eth.hypersync.xyz",
         bearer_token=ENVIO_TOKEN,

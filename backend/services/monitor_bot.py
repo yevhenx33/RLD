@@ -108,11 +108,12 @@ def answer_callback(callback_query_id, text=None):
 def check_api_health():
     try:
         start = time.time()
-        res = requests.get(f"{RATES_API_URL}/", headers=get_headers(), timeout=5)
+        res = requests.get(f"{RATES_API_URL}/healthz", headers=get_headers(), timeout=5)
         latency = (time.time() - start) * 1000
         if res.status_code == 200:
             data = res.json()
-            last_indexed = data.get("last_indexed_block")
+            # Envio health endpoint exposes lag, not canonical block number.
+            last_indexed = None
             return True, f"{int(latency)}ms", last_indexed
         else:
             return False, f"Status Code: {res.status_code}", None
@@ -132,23 +133,13 @@ def get_latest_block():
         return None
 
 def fetch_all_rates_graphql():
-    """Fetch all rate data in a single GraphQL request instead of 5+ REST calls."""
+    """Fetch all rate data from Envio GraphQL and reshape for reporting."""
     query = """
     {
-      usdc: rates(symbol: "USDC", limit: 96, resolution: "1H") {
+      historicalRates(symbols: ["USDC", "DAI", "USDT", "WETH"], resolution: "1H", limit: 96) {
         timestamp
+        symbol
         apy
-      }
-      dai: rates(symbol: "DAI", limit: 96, resolution: "1H") {
-        timestamp
-        apy
-      }
-      usdt: rates(symbol: "USDT", limit: 96, resolution: "1H") {
-        timestamp
-        apy
-      }
-      ethPrices(limit: 96, resolution: "1H") {
-        timestamp
         price
       }
       latestRates {
@@ -171,7 +162,41 @@ def fetch_all_rates_graphql():
             logger.error(f"GraphQL HTTP {res.status_code}")
             return None
         body = res.json()
-        return body.get("data")
+        payload = body.get("data")
+        if not payload:
+            return None
+
+        # Normalize Envio shape to monitor's legacy in-memory shape.
+        grouped = {"usdc": [], "dai": [], "usdt": [], "ethPrices": []}
+        for row in payload.get("historicalRates", []):
+            symbol = row.get("symbol")
+            ts = row.get("timestamp")
+            if ts is None:
+                continue
+
+            if symbol in ("USDC", "DAI", "USDT"):
+                apy = row.get("apy")
+                if apy is None:
+                    continue
+                apy_val = float(apy)
+                if apy_val <= 1:
+                    apy_val *= 100
+                grouped[symbol.lower()].append({"timestamp": ts, "apy": apy_val})
+            elif symbol == "WETH":
+                price = row.get("price")
+                if price is not None:
+                    grouped["ethPrices"].append({"timestamp": ts, "price": float(price)})
+
+        payload.update(grouped)
+
+        latest = payload.get("latestRates") or {}
+        for key in ("usdc", "dai", "usdt"):
+            if latest.get(key) is not None:
+                val = float(latest[key])
+                latest[key] = val * 100 if val <= 1 else val
+        payload["latestRates"] = latest
+
+        return payload
     except Exception as e:
         logger.error(f"GraphQL fetch error: {e}")
         return None

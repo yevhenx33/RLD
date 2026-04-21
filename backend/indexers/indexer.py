@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 import asyncpg
 from web3 import Web3
@@ -22,6 +22,7 @@ from web3.types import LogReceipt
 
 import db
 import bootstrap
+from clickhouse_writer import SimClickHouseMirrorWriter
 from handlers import market as market_handler
 from handlers import broker as broker_handler
 from handlers import pool as pool_handler
@@ -844,9 +845,124 @@ async def update_indexer_state(conn: asyncpg.Connection, market_id: str, block_n
     """, block_number, market_id)
 
 
+async def build_clickhouse_mirror_payload(
+    conn: asyncpg.Connection,
+    market_id: str,
+    from_block: int,
+    to_block: int,
+) -> dict[str, Any]:
+    cursor_row = await conn.fetchrow(
+        """
+        SELECT market_id, last_indexed_block, last_indexed_at, total_events
+        FROM indexer_state
+        WHERE market_id = $1
+        """,
+        market_id,
+    )
+
+    block_state_row = await conn.fetchrow(
+        """
+        SELECT
+            market_id,
+            block_number,
+            block_timestamp,
+            normalization_factor,
+            total_debt,
+            index_price,
+            mark_price,
+            liquidity,
+            token0_balance,
+            token1_balance,
+            swap_volume,
+            swap_count
+        FROM block_states
+        WHERE market_id = $1
+        ORDER BY block_number DESC
+        LIMIT 1
+        """,
+        market_id,
+    )
+
+    candle_rows = await conn.fetch(
+        """
+        SELECT
+            market_id,
+            resolution,
+            bucket,
+            index_open,
+            index_high,
+            index_low,
+            index_close,
+            mark_open,
+            mark_high,
+            mark_low,
+            mark_close,
+            volume_usd,
+            swap_count
+        FROM (
+            SELECT
+                market_id,
+                resolution,
+                bucket,
+                index_open,
+                index_high,
+                index_low,
+                index_close,
+                mark_open,
+                mark_high,
+                mark_low,
+                mark_close,
+                volume_usd,
+                swap_count,
+                ROW_NUMBER() OVER (
+                    PARTITION BY market_id, resolution
+                    ORDER BY bucket DESC
+                ) AS rn
+            FROM candles
+            WHERE market_id = $1
+        ) AS ranked
+        WHERE rn <= 50
+        """,
+        market_id,
+    )
+
+    event_rows_db = await conn.fetch(
+        """
+        SELECT
+            market_id,
+            block_number,
+            block_timestamp,
+            tx_hash,
+            log_index,
+            event_name,
+            contract_address,
+            data::text AS data
+        FROM events
+        WHERE market_id = $1
+          AND block_number >= $2
+          AND block_number <= $3
+        """,
+        market_id,
+        from_block,
+        to_block,
+    )
+    event_rows = [dict(row) for row in event_rows_db]
+
+    return {
+        "cursor": dict(cursor_row) if cursor_row else None,
+        "events": event_rows,
+        "block_state": dict(block_state_row) if block_state_row else None,
+        "candles": [dict(row) for row in candle_rows],
+    }
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────
 
-async def run(rpc_url: str, dsn: str) -> None:
+async def run(
+    rpc_url: str,
+    dsn: str,
+    clickhouse_writer: Optional[SimClickHouseMirrorWriter] = None,
+) -> None:
     await db.init(dsn)
     # Schema-only — no market config needed yet
     await bootstrap.bootstrap(db.pool)
@@ -880,6 +996,12 @@ async def run(rpc_url: str, dsn: str) -> None:
         log.info("Resuming from block %d (from DB)", last_block)
     else:
         log.info("Starting from block %d (no state in DB)", last_block)
+
+    strict_dual_write = os.getenv("SIM_CLICKHOUSE_DUAL_WRITE_STRICT", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     while True:
         try:
@@ -991,6 +1113,29 @@ async def run(rpc_url: str, dsn: str) -> None:
                         if logs:
                             await snapshot_handler.materialize_snapshot(conn, mid)
                 batch_ms = (time.monotonic() - batch_t0) * 1000
+
+                if clickhouse_writer is not None:
+                    try:
+                        mirror_payload = await build_clickhouse_mirror_payload(
+                            conn,
+                            global_cfg["market_id"],
+                            from_block,
+                            to_block,
+                        )
+                        await asyncio.to_thread(
+                            clickhouse_writer.write_batch,
+                            mirror_payload,
+                        )
+                    except Exception as mirror_exc:
+                        log.error(
+                            "ClickHouse dual-write failed for blocks %d→%d: %s",
+                            from_block,
+                            to_block,
+                            mirror_exc,
+                            exc_info=True,
+                        )
+                        if strict_dual_write:
+                            raise
 
             last_block = to_block
             log.info("Indexed blocks %d→%d (%d logs, %.1fms)", last_block - BATCH_SIZE + 1 if last_block > BATCH_SIZE else 0,

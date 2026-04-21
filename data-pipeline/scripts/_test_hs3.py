@@ -1,12 +1,13 @@
 """Download Aave events in explicit 1M-block batches (not relying on next_block)."""
 import hypersync, asyncio, time, sys, os
 
-os.environ.setdefault("ENVIO_API_TOKEN", "7a850568-160d-4cd5-bf06-2961bd383cc6")
-
 async def main():
+    token = os.getenv("ENVIO_API_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("ENVIO_API_TOKEN is required")
     client = hypersync.HypersyncClient(hypersync.ClientConfig(
         url="https://eth.hypersync.xyz",
-        bearer_token=os.environ["ENVIO_API_TOKEN"],
+        bearer_token=token,
     ))
     head = await client.get_height()
     print("Head: %d" % head, flush=True)

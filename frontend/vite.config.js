@@ -122,17 +122,6 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: () => "", // Strip /rpc path — Anvil expects POST to /
       },
-      "/api/rates": {
-        target: "http://127.0.0.1:8081",
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ""),
-      },
-      "/api/ws": {
-        target: "http://127.0.0.1:8081",
-        changeOrigin: true,
-        ws: true,
-        rewrite: (path) => path.replace(/^\/api/, ""),
-      },
       "/api/faucet": {
         target: "http://127.0.0.1:8088",
         changeOrigin: true,
@@ -141,11 +130,6 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:8080",
         changeOrigin: true,
-      },
-      "/rates-graphql": {
-        target: "http://127.0.0.1:8081",
-        changeOrigin: true,
-        rewrite: () => "/graphql",
       },
       "/envio-graphql": {
         target: "http://127.0.0.1:5000",

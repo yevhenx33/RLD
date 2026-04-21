@@ -6,11 +6,11 @@ After=network.target clickhouse-server.service
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/RLD/data-pipeline
-ExecStart=/home/ubuntu/RLD/data-pipeline/.venv/bin/python3 /home/ubuntu/RLD/data-pipeline/scripts/run_indexer.py
+EnvironmentFile=-/home/ubuntu/RLD/data-pipeline/.env
+ExecStart=/home/ubuntu/RLD/data-pipeline/.venv/bin/python3 /home/ubuntu/RLD/data-pipeline/scripts/fluid_realtime_indexer.py
 Restart=always
 RestartSec=30
 Environment=PYTHONUNBUFFERED=1
-Environment=ENVIO_API_TOKEN=7a850568-160d-4cd5-bf06-2961bd383cc6
 
 [Install]
 WantedBy=multi-user.target

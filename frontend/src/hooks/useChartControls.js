@@ -14,7 +14,7 @@ export function useChartControls({
   defaultRange = "ALL",
   defaultDays = 9999,
   defaultResolution = "1D",
-  deploymentDate = DEPLOYMENT_DATE,  // allow override for rates-indexer (older data)
+  deploymentDate = DEPLOYMENT_DATE,  // allow override for alternate data start anchors
 } = {}) {
   const clampedDefault = defaultDays >= 9999
     ? deploymentDate

@@ -175,7 +175,7 @@ def main():
         if not ok:
             failures += 1
     else:
-        print(f"  {WARN}  rates(USDC) returned no data (rates-indexer may be cold)")
+        print(f"  {WARN}  rates(USDC) returned no data (rate pipeline may be cold)")
 
     # ── 5. GQL bonds() (no enrichment, fast path) ────────────────────
     print("\n[5] GQL bonds(enrich: false)")

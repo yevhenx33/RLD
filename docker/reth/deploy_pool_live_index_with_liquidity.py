@@ -340,40 +340,6 @@ def fetch_live_rate_fraction(api_url: str) -> Decimal:
         except Exception:
             pass
 
-    # 2) Legacy GraphQL
-    legacy_query = {"query": "{ latestRates { usdc } }"}
-    for endpoint in graphql_endpoints:
-        try:
-            response = requests.post(endpoint, json=legacy_query, timeout=6)
-            response.raise_for_status()
-            raw = response.json().get("data", {}).get("latestRates", {}).get("usdc")
-            if raw is not None:
-                raw_rate = Decimal(str(raw))
-                rate_fraction = normalize_rate_fraction(raw_rate)
-                info(
-                    f"Fetched legacy GraphQL rate from {endpoint}: r={rate_fraction} (~{(rate_fraction * 100):.6f}%)"
-                )
-                return rate_fraction
-        except Exception:
-            pass
-
-    # 3) Legacy REST fallback
-    try:
-        response = requests.get(f"{base}/rates?limit=1&symbol=USDC", timeout=6)
-        response.raise_for_status()
-        payload = response.json()
-        if isinstance(payload, list) and payload:
-            raw = payload[0].get("apy")
-            if raw is not None:
-                raw_rate = Decimal(str(raw))
-                rate_fraction = normalize_rate_fraction(raw_rate)
-                info(
-                    f"Fetched legacy REST rate: r={rate_fraction} (~{(rate_fraction * 100):.6f}%)"
-                )
-                return rate_fraction
-    except Exception:
-        pass
-
     die(f"Could not fetch live rate from API_URL={api_url}")
     return Decimal(0)
 

@@ -4,13 +4,20 @@ import asyncio
 import hypersync
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from indexer.aave_constants import (
+    AAVE_V3_POOL,
+    AAVE_TOPIC_RESERVE_INITIALIZED,
+)
 from indexer.tokens import TOKENS
 
-AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-RESERVE_INITIALIZED = "0x3a0ca721fc364424566385a1aa271ed508cc2c0949c2272575fb3013a163a45f"
+AAVE_POOL = AAVE_V3_POOL
+RESERVE_INITIALIZED = AAVE_TOPIC_RESERVE_INITIALIZED
 
 async def main():
-    token = os.getenv("ENVIO_API_TOKEN", "7a850568-160d-4cd5-bf06-2961bd383cc6")
+    token = os.getenv("ENVIO_API_TOKEN", "").strip()
+    if not token:
+        print("ENVIO_API_TOKEN is required", flush=True)
+        sys.exit(1)
     client = hypersync.HypersyncClient(hypersync.ClientConfig(
         url="https://eth.hypersync.xyz",
         bearer_token=token,

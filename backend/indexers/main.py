@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 
 import uvicorn
 
@@ -22,10 +23,17 @@ log = logging.getLogger("main")
 async def run_all() -> None:
     import db
     import bootstrap
+    from clickhouse_writer import SimClickHouseMirrorWriter
 
     rpc_url = os.environ["RPC_URL"]
     dsn = os.environ["DATABASE_URL"]
     admin_token = os.getenv("INDEXER_ADMIN_TOKEN", "").strip()
+    clickhouse_writer = None
+    dual_write_enabled = os.getenv("SIM_CLICKHOUSE_DUAL_WRITE", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     # Bootstrap: run migrations, load global config
     await db.init(dsn)
@@ -35,10 +43,31 @@ async def run_all() -> None:
     else:
         log.warning("INDEXER_ADMIN_TOKEN is unset; /admin/reset accepts unauthenticated local calls")
 
+    if dual_write_enabled:
+        schema_path = os.getenv(
+            "SIM_CLICKHOUSE_SCHEMA_PATH",
+            str(Path(__file__).with_name("clickhouse_schema.sql")),
+        )
+        clickhouse_writer = SimClickHouseMirrorWriter(
+            host=os.getenv("SIM_CLICKHOUSE_HOST", "localhost"),
+            port=int(os.getenv("SIM_CLICKHOUSE_PORT", "8123")),
+            database=os.getenv("SIM_CLICKHOUSE_DATABASE", "default"),
+            schema_path=schema_path,
+        )
+        await asyncio.to_thread(clickhouse_writer.ensure_schema)
+        log.info(
+            "Simulation ClickHouse dual-write enabled (%s:%s/%s)",
+            clickhouse_writer.host,
+            clickhouse_writer.port,
+            clickhouse_writer.database,
+        )
+    else:
+        log.info("Simulation ClickHouse dual-write disabled")
+
     # Start indexer loop as background task
     import indexer
     indexer_task = asyncio.create_task(
-        indexer.run(rpc_url, dsn)
+        indexer.run(rpc_url, dsn, clickhouse_writer=clickhouse_writer)
     )
 
     # Start API server (uvicorn with asyncio loop)
@@ -70,6 +99,8 @@ async def run_all() -> None:
     finally:
         for task in [indexer_task, api_task]:
             task.cancel()
+        if clickhouse_writer is not None:
+            await asyncio.to_thread(clickhouse_writer.close)
         await db.close()
 
 
