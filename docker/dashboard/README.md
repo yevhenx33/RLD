@@ -25,6 +25,7 @@ Collected signals include:
 - indexer-driven simulation market metrics (`/api/status`, `/api/market-info`)
 - rates + simulation DB integrity checks
 - backup status (`backups/last_backup.json`)
+- restore validation status (`backups/last_restore_check.json`)
 - automation flags (`status_job_scheduled`, `backup_job_scheduled`)
 
 ## Cron Baseline
@@ -33,6 +34,8 @@ Collected signals include:
 * * * * * /home/ubuntu/RLD/docker/scripts/generate-status.sh >> /home/ubuntu/RLD/logs/status-gen.log 2>&1
 0 * * * * /home/ubuntu/RLD/docker/scripts/collect-logs.sh >> /home/ubuntu/RLD/logs/cron.log 2>&1
 0 3 * * * /home/ubuntu/RLD/docker/scripts/backup-databases.sh >> /home/ubuntu/RLD/logs/backup-cron.log 2>&1
+30 3 * * * bash /home/ubuntu/RLD/docker/scripts/validate-backup-restore.sh >> /home/ubuntu/RLD/logs/restore-check.log 2>&1
+*/5 * * * * /usr/bin/env python3 /home/ubuntu/RLD/docker/scripts/emit-alerts.py >> /home/ubuntu/RLD/logs/alerts.log 2>&1
 ```
 
 ## Non-Launch Pipeline Metrics
@@ -44,10 +47,12 @@ Collected signals include:
 Dashboard nginx config:
 - `docker/dashboard/nginx-dashboard.conf` (listens on `8090`)
 - proxies `/live-status*` to local live status service on `127.0.0.1:8091`
+- uses explicit `https://rld.fi` CORS headers (no wildcard)
 
 Live status process:
 - launcher: `docker/dashboard/start-live-status.sh`
 - optional unit: `docker/dashboard/rld-dashboard-live.service`
+- `DASHBOARD_CORS_ORIGIN` controls live API CORS origin (default `https://rld.fi`)
 
 Host routing:
 - `docker/nginx/rld-frontend.conf` routes `/dashboard/` to `127.0.0.1:8090`

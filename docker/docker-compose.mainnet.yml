@@ -35,7 +35,7 @@ services:
       - --http.addr=0.0.0.0
       - --http.port=8545
       - --http.api=eth,net,web3
-      - --http.corsdomain=*
+      - --http.corsdomain=${RETH_MAINNET_HTTP_CORS_DOMAIN:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}
       - --authrpc.addr=0.0.0.0
       - --authrpc.port=8551
       - --authrpc.jwtsecret=/jwt.hex

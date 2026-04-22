@@ -179,11 +179,15 @@ ok "Docker compose v2 available"
 
 [ ! -f "$ENV_FILE" ] && { fail "$ENV_FILE not found"; exit 1; }
 
-source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|DEPLOYER_KEY|USER_A_KEY|USER_B_KEY|USER_C_KEY|MM_KEY|CHAOS_KEY|INDEXER_PORT|DB_PORT|RATES_PORT|ENVIO_API_URL|ENVIO_API_PORT|INDEXER_ADMIN_TOKEN)=' "$ENV_FILE" | sed 's/^/export /')
+source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|DEPLOYER_KEY|USER_A_KEY|USER_B_KEY|USER_C_KEY|MM_KEY|CHAOS_KEY|INDEXER_PORT|DB_PORT|RATES_PORT|ENVIO_API_URL|ENVIO_API_PORT|INDEXER_ADMIN_TOKEN|INDEXER_ALLOW_UNSAFE_ADMIN_RESET)=' "$ENV_FILE" | sed 's/^/export /')
 if [ -z "${FORK_BLOCK:-}" ] && [ -f "$RLD_ROOT/.env" ]; then
     FORK_BLOCK=$(grep -E '^FORK_BLOCK=' "$RLD_ROOT/.env" 2>/dev/null | cut -d= -f2 || echo "")
 fi
 FORK_BLOCK="${FORK_BLOCK:-24660000}"
+if [ -z "${INDEXER_ADMIN_TOKEN:-}" ] && [ "${INDEXER_ALLOW_UNSAFE_ADMIN_RESET:-false}" != "true" ]; then
+    fail "INDEXER_ADMIN_TOKEN is required (set INDEXER_ALLOW_UNSAFE_ADMIN_RESET=true only for local unsafe workflows)"
+    exit 1
+fi
 
 if [ "$SKIP_GENESIS" = true ]; then
     ok "Will reuse existing genesis.json (--skip-genesis)"

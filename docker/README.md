@@ -47,7 +47,25 @@ docker network create rld_shared 2>/dev/null || true
 docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
 bash docker/reth/restart-reth.sh --fresh --with-users
 docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -d
+# equivalent steady-state control after bootstrap:
+bash docker/scripts/stack.sh ps
 ```
+
+## Required Security Environment
+
+Before first launch, ensure `docker/.env` defines strong non-default values:
+
+- `DB_PASSWORD`
+- `INDEXER_ADMIN_TOKEN`
+- `CLICKHOUSE_PASSWORD`
+- `INDEXER_CORS_ORIGINS` and `ENVIO_CORS_ORIGINS` (explicit origins only)
+- `RETH_HTTP_CORS_DOMAIN` (explicit browser origins)
+
+Production notes:
+
+- `INDEXER_ADMIN_TOKEN` is required by compose and enforced by the simulation indexer.
+- `INDEXER_ALLOW_UNSAFE_ADMIN_RESET` should remain `false` outside local development.
+- ClickHouse is expected to run with authentication enabled.
 
 ## Daily Ops
 
@@ -55,11 +73,17 @@ docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -
 # Fast simulation recycle from snapshot
 bash docker/reth/restart-reth.sh --from-snapshot --with-users
 
-# Infra status
-docker compose -f docker/docker-compose.infra.yml --env-file docker/.env ps
+# Canonical runtime status
+bash docker/scripts/stack.sh ps
+```
 
-# Simulation status
-docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env ps
+Canonical stack control commands:
+
+```bash
+bash docker/scripts/stack.sh up
+bash docker/scripts/stack.sh down
+bash docker/scripts/stack.sh restart
+bash docker/scripts/stack.sh logs indexer
 ```
 
 ## Frontend + Edge Routing
@@ -83,11 +107,15 @@ Canonical user cron entries:
 * * * * * /home/ubuntu/RLD/docker/scripts/generate-status.sh >> /home/ubuntu/RLD/logs/status-gen.log 2>&1
 0 * * * * /home/ubuntu/RLD/docker/scripts/collect-logs.sh >> /home/ubuntu/RLD/logs/cron.log 2>&1
 0 3 * * * /home/ubuntu/RLD/docker/scripts/backup-databases.sh >> /home/ubuntu/RLD/logs/backup-cron.log 2>&1
+30 3 * * * bash /home/ubuntu/RLD/docker/scripts/validate-backup-restore.sh >> /home/ubuntu/RLD/logs/restore-check.log 2>&1
+*/5 * * * * /usr/bin/env python3 /home/ubuntu/RLD/docker/scripts/emit-alerts.py >> /home/ubuntu/RLD/logs/alerts.log 2>&1
 ```
 
 Notes:
 - `anvil-rotate.sh` is legacy and intentionally skipped when Reth runtime is detected.
 - `generate-status.sh` now reports whether status/backup cron jobs are scheduled.
+- `validate-backup-restore.sh` performs a non-destructive restore drill on latest backup.
+- `emit-alerts.py` emits change-based alerts for critical/degraded stack states and recovery.
 
 ## Legacy/Deprecated Compose Files
 

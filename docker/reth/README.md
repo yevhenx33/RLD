@@ -35,6 +35,12 @@ Anvil fork (temporary)          Reth (persistent)
 | Data dir | `~/.local/share/reth-dev` | `RETH_DATADIR=/path` |
 | Genesis timestamp | Current real-world time | — |
 
+Production security defaults:
+
+- `INDEXER_ADMIN_TOKEN` must be set for simulation indexer reset protection.
+- `DB_PASSWORD` must be set explicitly (no weak fallback).
+- `RETH_HTTP_CORS_DOMAIN` should be explicit browser origins only.
+
 ## USDC Faucet
 
 Genesis includes **$10B USDC** on a single faucet address we control.

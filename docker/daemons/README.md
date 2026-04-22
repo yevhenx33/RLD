@@ -116,10 +116,10 @@ Both daemons use `wait-for-config.sh` as their Docker entrypoint:
 
 ```bash
 # Follow MM daemon
-docker compose -f docker/docker-compose.yml logs -f mm-daemon
+docker compose -f docker/reth/docker-compose.reth.yml logs -f mm-daemon
 
 # Follow chaos trader
-docker compose -f docker/docker-compose.yml logs -f chaos-trader
+docker compose -f docker/reth/docker-compose.reth.yml logs -f chaos-trader
 
 # Chaos trader also logs to file
 docker exec chaos-trader cat /tmp/chaos_trader.log

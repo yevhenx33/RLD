@@ -51,17 +51,64 @@ backup_postgres() {
   return 0
 }
 
+backup_clickhouse_schema() {
+  local service="$1"
+  local out_file="$BACKUP_DIR/clickhouse_schema.sql"
+  local gz_file="${out_file}.gz"
+
+  local container=""
+  container=$(resolve_container "$service" || true)
+  if [ -z "$container" ]; then
+    log "  ❌ FAILED: service ${service} not running"
+    return 1
+  fi
+
+  log "  Backing up ClickHouse schema from ${container} ..."
+  if ! docker exec "$container" clickhouse-client -q "
+SELECT concat('/* ', database, '.', name, ' */\n', create_table_query, ';\n')
+FROM system.tables
+WHERE database NOT IN ('system', 'information_schema', 'INFORMATION_SCHEMA')
+ORDER BY database, name
+FORMAT TSVRaw
+" > "$out_file" 2>>"$LOG"; then
+    log "  ❌ FAILED: clickhouse schema export"
+    rm -f "$out_file"
+    return 1
+  fi
+  if [ ! -s "$out_file" ]; then
+    log "  ❌ FAILED: empty ClickHouse schema export"
+    rm -f "$out_file"
+    return 1
+  fi
+
+  gzip -f "$out_file"
+  local size
+  size=$(du -sh "$gz_file" | awk '{print $1}')
+  log "  ✅ ClickHouse schema → ${gz_file} (${size})"
+  return 0
+}
+
 mkdir -p "$BACKUP_ROOT" "$BACKUP_DIR"
 log "═══ Starting daily backup ═══"
 
-total=1
+total=2
 success=0
 failed_list=""
 
 if backup_postgres "postgres" "rld_indexer" "rld"; then
-  success=1
+  success=$((success + 1))
 else
   failed_list="rld_indexer"
+fi
+
+if backup_clickhouse_schema "clickhouse"; then
+  success=$((success + 1))
+else
+  if [ -n "$failed_list" ]; then
+    failed_list="$failed_list clickhouse_schema"
+  else
+    failed_list="clickhouse_schema"
+  fi
 fi
 
 deleted=0

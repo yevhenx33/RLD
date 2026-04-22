@@ -1,16 +1,16 @@
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:24.12
     container_name: rld_clickhouse
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
     volumes:
       - /mnt/data/clickhouse/data:/var/lib/clickhouse
       - /mnt/data/clickhouse/log:/var/log/clickhouse-server
     environment:
       - CLICKHOUSE_USER=default
-      - CLICKHOUSE_PASSWORD=
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
       - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
     deploy:
       resources:

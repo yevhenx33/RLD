@@ -28,7 +28,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=rld
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-rld_dev_password}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set}
       - POSTGRES_DB=rld_indexer
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
@@ -48,12 +48,14 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
+      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:?DB_PASSWORD must be set}@postgres:5432/rld_indexer
       - RPC_URL=${RPC_URL:-http://host.docker.internal:8545}
       - DEPLOYMENT_JSON=/config/deployment.json
       - POLL_INTERVAL=${POLL_INTERVAL:-2}
       - BATCH_SIZE=${BATCH_SIZE:-100}
-      - INDEXER_ADMIN_TOKEN=${INDEXER_ADMIN_TOKEN:-}
+      - INDEXER_ADMIN_TOKEN=${INDEXER_ADMIN_TOKEN:?INDEXER_ADMIN_TOKEN must be set}
+      - INDEXER_ALLOW_UNSAFE_ADMIN_RESET=${INDEXER_ALLOW_UNSAFE_ADMIN_RESET:-false}
+      - INDEXER_CORS_ORIGINS=${INDEXER_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}
     volumes:
       - ./deployment.json:/config/deployment.json:ro
     ports:
@@ -91,7 +93,7 @@ services:
       - CHAOS_KEY=${CHAOS_KEY}
       - API_URL=${API_URL:-http://host.docker.internal:5000}
       - API_KEY=${API_KEY}
-      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
+      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:?DB_PASSWORD must be set}@postgres:5432/rld_indexer
       - SKIP_USER_SETUP=${SKIP_USER_SETUP:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -10,6 +10,7 @@ WorkingDirectory=/home/ubuntu/RLD
 Environment=PYTHONUNBUFFERED=1
 Environment=DASHBOARD_LIVE_PORT=8091
 Environment=DASHBOARD_LIVE_INTERVAL_SEC=1.0
+Environment=DASHBOARD_CORS_ORIGIN=https://rld.fi
 ExecStart=/home/ubuntu/RLD/docker/dashboard/start-live-status.sh
 Restart=always
 RestartSec=2

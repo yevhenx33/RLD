@@ -38,7 +38,7 @@ services:
       - --http.api
       - "eth,net,web3,txpool"
       - --http.corsdomain
-      - "*"
+      - "${RETH_HTTP_CORS_DOMAIN:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}"
       - --gpo.maxprice
       - "1000000"
       - --log.stdout.filter
@@ -63,7 +63,7 @@ services:
       - postgres-data-reth:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=rld
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-rld_dev_password}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?DB_PASSWORD must be set}
       - POSTGRES_DB=rld_indexer
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
@@ -85,12 +85,14 @@ services:
       reth:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:-rld_dev_password}@postgres:5432/rld_indexer
+      - DATABASE_URL=postgresql://rld:${DB_PASSWORD:?DB_PASSWORD must be set}@postgres:5432/rld_indexer
       - RPC_URL=http://reth:8545
       - DEPLOYMENT_JSON=/config/deployment.json
       - POLL_INTERVAL=${POLL_INTERVAL:-2}
       - BATCH_SIZE=${BATCH_SIZE:-100}
-      - INDEXER_ADMIN_TOKEN=${INDEXER_ADMIN_TOKEN:-}
+      - INDEXER_ADMIN_TOKEN=${INDEXER_ADMIN_TOKEN:?INDEXER_ADMIN_TOKEN must be set}
+      - INDEXER_ALLOW_UNSAFE_ADMIN_RESET=${INDEXER_ALLOW_UNSAFE_ADMIN_RESET:-false}
+      - INDEXER_CORS_ORIGINS=${INDEXER_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}
       - SIM_CLICKHOUSE_DUAL_WRITE=${SIM_CLICKHOUSE_DUAL_WRITE:-false}
       - SIM_CLICKHOUSE_HOST=${SIM_CLICKHOUSE_HOST:-host.docker.internal}
       - SIM_CLICKHOUSE_PORT=${SIM_CLICKHOUSE_PORT:-8123}
@@ -174,6 +176,7 @@ services:
       - RPC_URL=http://reth:8545
       - DEPLOYMENT_FILE=/config/deployment-snapshot.json
       - FAUCET_PORT=8088
+      - FAUCET_CORS_ORIGIN=${FAUCET_CORS_ORIGIN:-https://rld.fi}
     ports:
       - "127.0.0.1:8088:8088"
     volumes:

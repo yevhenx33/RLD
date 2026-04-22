@@ -11,6 +11,7 @@ ENV_FILE="/home/ubuntu/RLD/docker/.env"
 DEPLOYMENT_JSON="/home/ubuntu/RLD/docker/deployment.json"
 BACKUP_SCRIPT="/home/ubuntu/RLD/docker/scripts/backup-databases.sh"
 STATUS_SCRIPT="/home/ubuntu/RLD/docker/scripts/generate-status.sh"
+RESTORE_SCRIPT="/home/ubuntu/RLD/docker/scripts/validate-backup-restore.sh"
 
 read_env_value() {
   local key="$1"
@@ -376,10 +377,13 @@ fi
 
 # ── Backups ──
 BACKUP_JSON=$(cat /home/ubuntu/RLD/backups/last_backup.json 2>/dev/null || echo '{"status":"never","timestamp":"never","size":"0","retained":0}')
+RESTORE_JSON=$(cat /home/ubuntu/RLD/backups/last_restore_check.json 2>/dev/null || echo '{"status":"never","timestamp":"never"}')
 BACKUP_CRON_OK=false
 STATUS_CRON_OK=false
+RESTORE_CRON_OK=false
 if cron_has_entry "$BACKUP_SCRIPT"; then BACKUP_CRON_OK=true; fi
 if cron_has_entry "$STATUS_SCRIPT"; then STATUS_CRON_OK=true; fi
+if cron_has_entry "$RESTORE_SCRIPT"; then RESTORE_CRON_OK=true; fi
 
 # ── Database Integrity ──
 DB_JSON=$(python3 -c "
@@ -662,8 +666,9 @@ cat > "$TMPOUT" << ENDJSON
   "market": $MARKET_INFO_JSON,
   "nodes": $NODE_METRICS_JSON,
   "stacks": $STACKS_JSON,
-  "automation": {"status_job_scheduled":$STATUS_CRON_OK,"backup_job_scheduled":$BACKUP_CRON_OK},
+  "automation": {"status_job_scheduled":$STATUS_CRON_OK,"backup_job_scheduled":$BACKUP_CRON_OK,"restore_job_scheduled":$RESTORE_CRON_OK},
   "backups": $BACKUP_JSON,
+  "restore_checks": $RESTORE_JSON,
   "history": $HIST
 }
 ENDJSON

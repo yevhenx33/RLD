@@ -37,6 +37,7 @@ DEPLOYMENT_FILE = os.getenv(
     "DEPLOYMENT_FILE",
     "/home/ubuntu/RLD/docker/reth/deployment-snapshot.json"
 )
+FAUCET_CORS_ORIGIN = os.getenv("FAUCET_CORS_ORIGIN", "https://rld.fi")
 
 # Funding amounts per request
 WAUSDC_FUND = 50_000 * 10**6    # 50k waUSDC (via SimFunder)
@@ -346,21 +347,21 @@ class FaucetHandler(BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Origin', FAUCET_CORS_ORIGIN)
             self.end_headers()
             self.wfile.write(json.dumps({"success": True, **result}).encode())
 
         except Exception as e:
             self.send_response(400)
             self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Origin', FAUCET_CORS_ORIGIN)
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 
     def do_OPTIONS(self):
         """Handle CORS preflight."""
         self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Origin', FAUCET_CORS_ORIGIN)
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
