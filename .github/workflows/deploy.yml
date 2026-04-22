@@ -97,12 +97,13 @@ jobs:
             docker compose -f docker/docker-compose.frontend.yml up -d --no-deps --force-recreate frontend
             echo "✅ Frontend live"
 
-            # Rebuild backend containers if backend changed
+            # Rebuild canonical backend services if backend changed
             if git diff HEAD~1 --name-only | grep -q "^backend/"; then
-              echo "🔄 Backend changed — rebuilding indexer + bot..."
-              docker compose -f docker/docker-compose.yml build indexer
-              docker compose -f docker/docker-compose.yml up -d --no-deps indexer
-              docker compose -f docker/docker-compose.bot.yml up -d --force-recreate
+              echo "🔄 Backend changed — rebuilding simulation indexer + monitor-bot..."
+              docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env build indexer
+              docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env up -d --no-deps indexer
+              docker compose -f docker/docker-compose.infra.yml --env-file docker/.env build monitor-bot
+              docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d --no-deps --force-recreate monitor-bot
             fi
 
             echo "✅ Deploy complete"
