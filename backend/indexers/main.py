@@ -20,6 +20,16 @@ import uvicorn
 log = logging.getLogger("main")
 
 
+def _is_production_env() -> bool:
+    env = (
+        os.getenv("INDEXER_ENV")
+        or os.getenv("APP_ENV")
+        or os.getenv("ENVIRONMENT")
+        or "development"
+    ).strip().lower()
+    return env in {"prod", "production"}
+
+
 async def run_all() -> None:
     import db
     import bootstrap
@@ -28,6 +38,11 @@ async def run_all() -> None:
     rpc_url = os.environ["RPC_URL"]
     dsn = os.environ["DATABASE_URL"]
     admin_token = os.getenv("INDEXER_ADMIN_TOKEN", "").strip()
+    allow_unsafe_reset = os.getenv("INDEXER_ALLOW_UNSAFE_ADMIN_RESET", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     clickhouse_writer = None
     dual_write_enabled = os.getenv("SIM_CLICKHOUSE_DUAL_WRITE", "false").strip().lower() in {
         "1",
@@ -38,10 +53,16 @@ async def run_all() -> None:
     # Bootstrap: run migrations, load global config
     await db.init(dsn)
     global_cfg = await bootstrap.bootstrap(db.pool)
+    if _is_production_env() and not admin_token:
+        raise RuntimeError(
+            "INDEXER_ADMIN_TOKEN must be set in production; refusing to start without reset protection."
+        )
     if admin_token:
         log.info("Admin reset token protection enabled")
+    elif allow_unsafe_reset:
+        log.warning("Admin reset token is unset and unsafe reset override is enabled")
     else:
-        log.warning("INDEXER_ADMIN_TOKEN is unset; /admin/reset accepts unauthenticated local calls")
+        log.warning("INDEXER_ADMIN_TOKEN is unset; /admin/reset is fail-closed until token is configured")
 
     if dual_write_enabled:
         schema_path = os.getenv(

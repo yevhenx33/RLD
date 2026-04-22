@@ -26,7 +26,8 @@ Compatibility REST endpoints (kept for older UI paths):
 
 Admin/reset endpoint:
 - `POST /admin/reset`
-- If `INDEXER_ADMIN_TOKEN` is set, requests must include `X-Admin-Token`.
+- Requests must include `X-Admin-Token` matching `INDEXER_ADMIN_TOKEN`.
+- Unsafe reset bypass (`INDEXER_ALLOW_UNSAFE_ADMIN_RESET=true`) is for local-only workflows.
 
 ## Canonical Deployment Context
 
@@ -41,6 +42,7 @@ docker network create rld_shared 2>/dev/null || true
 docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
 bash docker/reth/restart-reth.sh --fresh --with-users
 docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -d
+bash docker/scripts/stack.sh ps
 ```
 
 ## Local Development

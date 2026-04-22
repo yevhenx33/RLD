@@ -875,6 +875,17 @@ def _liquidity_to_amounts(
     return amount0, amount1
 
 
+def _parse_cors_origins(env_name: str, default_origins: list[str]) -> list[str]:
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return default_origins
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if not origins:
+        return default_origins
+    # We intentionally disallow wildcard here to avoid permissive production CORS.
+    return [origin for origin in origins if origin != "*"] or default_origins
+
+
 # ── App factory ────────────────────────────────────────────────────────────
 
 def create_app() -> FastAPI:
@@ -883,17 +894,31 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="RLD Indexer GraphQL API", version="1.0.0")
 
+    cors_origins = _parse_cors_origins(
+        "INDEXER_CORS_ORIGINS",
+        [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "https://rld.fi",
+            "https://www.rld.fi",
+        ],
+    )
     from fastapi.middleware.cors import CORSMiddleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     app.include_router(graphql_app, prefix="/graphql")
     admin_token = os.getenv("INDEXER_ADMIN_TOKEN", "").strip()
+    allow_unsafe_reset = os.getenv("INDEXER_ALLOW_UNSAFE_ADMIN_RESET", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     @app.get("/healthz")
     async def healthz():
@@ -912,6 +937,12 @@ def create_app() -> FastAPI:
         import logging
         log = logging.getLogger("admin.reset")
         try:
+            if not admin_token and not allow_unsafe_reset:
+                log.warning("Rejected /admin/reset because INDEXER_ADMIN_TOKEN is not configured")
+                return JSONResponse(
+                    {"status": "forbidden", "detail": "admin reset token is not configured"},
+                    status_code=403,
+                )
             if admin_token and x_admin_token != admin_token:
                 log.warning("Rejected /admin/reset call with invalid token")
                 return JSONResponse(

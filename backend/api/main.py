@@ -25,6 +25,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+def _parse_origins(env_name: str, default_origins: list[str]) -> list[str]:
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return default_origins
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if not origins:
+        return default_origins
+    return [origin for origin in origins if origin != "*"] or default_origins
+
+
 # --- App ---
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -72,15 +82,18 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "https://rate-dashboard.netlify.app",
-        "https://rate-dashboard.onrender.com",
-        "https://www.rate-dashboard.onrender.com",
-        "https://rld.fi",
-        "https://www.rld.fi",
-    ],
+    allow_origins=_parse_origins(
+        "RATES_API_CORS_ORIGINS",
+        [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "https://rate-dashboard.netlify.app",
+            "https://rate-dashboard.onrender.com",
+            "https://www.rate-dashboard.onrender.com",
+            "https://rld.fi",
+            "https://www.rld.fi",
+        ],
+    ),
     allow_methods=["*"],
     allow_headers=["*"],
 )
