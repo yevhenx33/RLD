@@ -19,7 +19,7 @@ import requests
 
 import pandas as pd
 
-from ..base import BaseSource, forward_fill_hourly
+from ..base import BaseSource, forward_fill_hourly, insert_df_batched, insert_rows_batched, upsert_api_market_latest
 from ..tokens import (TOKENS as KNOWN_TOKENS, STABLES, ETH_ASSETS, BTC_ASSETS,
                       SYM_DECIMALS, get_usd_price, get_chainlink_prices)
 
@@ -98,6 +98,7 @@ class MorphoSource(BaseSource):
         self._vault_addrs: set[str] = set()           # known vault addresses (lowercase)
         self._vault_positions: dict[tuple[str, str], int] = {}  # (vault, market) -> supply_shares
         self._vault_meta: dict[str, dict] = {}        # vault_addr -> {name, asset_symbol, asset_address}
+        self._vault_alloc_table_ready = False
 
     def load_state_from_ch(self, ch):
         """Pre-seed cumulative market state from last known ClickHouse data.
@@ -431,6 +432,23 @@ class MorphoSource(BaseSource):
             log.warning(f"Could not load market params: {e}")
         self._initialized = True
 
+    def _ensure_vault_allocations_table(self, ch):
+        if self._vault_alloc_table_ready:
+            return
+        ch.command(
+            """
+            CREATE TABLE IF NOT EXISTS morpho_vault_allocations (
+                timestamp UInt64,
+                market_id String,
+                vault_address String,
+                supply_shares Float64,
+                inserted_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(inserted_at)
+            ORDER BY (market_id, vault_address, timestamp)
+            """
+        )
+        self._vault_alloc_table_ready = True
+
     def merge(self, ch, decoded_rows: list[dict]) -> int:
         """Merge decoded Morpho snapshots into unified_timeseries."""
         if not decoded_rows:
@@ -498,11 +516,12 @@ class MorphoSource(BaseSource):
             min_ts = final["timestamp"].min().strftime("%Y-%m-%d %H:%M:%S")
             max_ts = final["timestamp"].max().strftime("%Y-%m-%d %H:%M:%S")
             ch.command(
-                f"ALTER TABLE {self.output_table} DELETE "
+                f"DELETE FROM {self.output_table} "
                 f"WHERE protocol='MORPHO_MARKET' "
                 f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
             )
-            ch.insert_df(self.output_table, final)
+            insert_df_batched(ch, self.output_table, final)
+            upsert_api_market_latest(ch, final)
 
         total_rows = len(final)
 
@@ -510,6 +529,7 @@ class MorphoSource(BaseSource):
         if self._vault_addrs and self._vault_positions and len(hourly) > 0:
             batch_ts = hourly["ts"].max()  # latest hour in this batch
             alloc_rows = []
+            allocation_snapshot_rows = []
             vault_totals: dict[str, float] = {}  # vault -> total_supply_usd
 
             for (va, mid), supply_shares in self._vault_positions.items():
@@ -550,17 +570,33 @@ class MorphoSource(BaseSource):
                     "utilization": share_pct,  # share_pct stored in utilization field
                     "price_usd": 0.0,
                 })
+                allocation_snapshot_rows.append(
+                    [
+                        int(batch_ts.timestamp()),
+                        mid,
+                        va,
+                        float(supply_shares),
+                    ]
+                )
 
             if alloc_rows:
                 alloc_df = pd.DataFrame(alloc_rows)
                 ts_str = batch_ts.strftime("%Y-%m-%d %H:%M:%S")
                 ch.command(
-                    f"ALTER TABLE {self.output_table} DELETE "
+                    f"DELETE FROM {self.output_table} "
                     f"WHERE protocol='MORPHO_ALLOCATION' "
                     f"AND timestamp = '{ts_str}'"
                 )
-                ch.insert_df(self.output_table, alloc_df)
+                insert_df_batched(ch, self.output_table, alloc_df)
                 total_rows += len(alloc_df)
+            if allocation_snapshot_rows:
+                self._ensure_vault_allocations_table(ch)
+                insert_rows_batched(
+                    ch,
+                    "morpho_vault_allocations",
+                    allocation_snapshot_rows,
+                    ["timestamp", "market_id", "vault_address", "supply_shares"],
+                )
 
             # Vault-level rows
             vault_rows = []
@@ -587,11 +623,11 @@ class MorphoSource(BaseSource):
                 vault_df = pd.DataFrame(vault_rows)
                 ts_str = batch_ts.strftime("%Y-%m-%d %H:%M:%S")
                 ch.command(
-                    f"ALTER TABLE {self.output_table} DELETE "
+                    f"DELETE FROM {self.output_table} "
                     f"WHERE protocol='MORPHO_VAULT' "
                     f"AND timestamp = '{ts_str}'"
                 )
-                ch.insert_df(self.output_table, vault_df)
+                insert_df_batched(ch, self.output_table, vault_df)
                 total_rows += len(vault_df)
 
         return total_rows

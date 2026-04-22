@@ -12,7 +12,8 @@ import datetime
 import logging
 from typing import Optional
 
-from ..base import BaseSource
+from ..base import BaseSource, insert_rows_batched
+from ..protocols import CHAINLINK_PRICES
 
 log = logging.getLogger("indexer.chainlink")
 
@@ -119,7 +120,7 @@ FEED_DECIMALS = {
 
 
 class ChainlinkSource(BaseSource):
-    name = "CHAINLINK"
+    name = CHAINLINK_PRICES
     contracts = list(AGGREGATORS.keys())
     topics = [
         "0x0559884fd3a460db3073b7fc896cc77986f16e378210ded43186175bf646fc5f",  # AnswerUpdated
@@ -177,6 +178,9 @@ class ChainlinkSource(BaseSource):
             [d["block_number"], d["timestamp"], d["feed"], d["price"]]
             for d in decoded_rows
         ]
-        ch.insert("chainlink_prices", rows,
-                   column_names=["block_number", "timestamp", "feed", "price"])
-        return len(rows)
+        return insert_rows_batched(
+            ch,
+            "chainlink_prices",
+            rows,
+            ["block_number", "timestamp", "feed", "price"],
+        )

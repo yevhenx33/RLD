@@ -1,8 +1,11 @@
+import os
 import clickhouse_connect
 import requests
 import datetime
 import time
+from typing import Optional
 from indexer.base import BaseSource
+from indexer.base import insert_rows_batched
 
 class SofrSource(BaseSource):
     name = "SOFR_RATES"
@@ -12,6 +15,28 @@ class SofrSource(BaseSource):
 
     def __init__(self):
         super().__init__()
+
+    @staticmethod
+    def _normalize_last_timestamp(raw_value) -> Optional[datetime.datetime]:
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, dict):
+            if not raw_value:
+                return None
+            raw_value = next(iter(raw_value.values()))
+        if isinstance(raw_value, datetime.datetime):
+            return raw_value
+        if isinstance(raw_value, datetime.date):
+            return datetime.datetime.combine(raw_value, datetime.time.min)
+        if isinstance(raw_value, str):
+            text = raw_value.strip()
+            if not text:
+                return None
+            try:
+                return datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        return None
 
     async def poll_and_insert(self, ch: clickhouse_connect.driver.Client) -> int:
         # 1. Initialize table
@@ -25,7 +50,7 @@ class SofrSource(BaseSource):
         
         # 2. Get cursor
         res = ch.query(f"SELECT MAX(timestamp) FROM {self.raw_table}")
-        last_ts = res.first_item if res.result_rows and res.first_item else None
+        last_ts = self._normalize_last_timestamp(res.first_item if res.result_rows else None)
         
         start_date = self.genesis_date
         if last_ts and last_ts.year > 2000:
@@ -53,12 +78,15 @@ class SofrSource(BaseSource):
                 data.append([dt, apy])
                 
         if data:
-            ch.insert(self.raw_table, data, column_names=["timestamp", "apy"])
-            return len(data)
+            return insert_rows_batched(ch, self.raw_table, data, ["timestamp", "apy"])
         return 0
 
     def process(self, raw_events, block_map):
         pass # Optional if we need a processor step, but SOFR goes straight to timeseries format
+
+    def decode(self, log_entry, block_ts_map: dict) -> Optional[dict]:
+        # Offchain source path does not decode on-chain logs.
+        return None
 
     def merge(self, ch: clickhouse_connect.driver.Client, items: list):
         pass

@@ -11,7 +11,7 @@ from typing import Optional
 
 import pandas as pd
 
-from ..base import BaseSource, forward_fill_hourly
+from ..base import BaseSource, forward_fill_hourly, insert_df_batched, upsert_api_market_latest
 from ..tokens import (TOKENS as ADDR_MAP, STABLES, ETH_ASSETS, BTC_ASSETS,
                       PRICE_MULTIPLIERS, get_usd_price, get_chainlink_prices)
 
@@ -165,10 +165,11 @@ class FluidSource(BaseSource):
             min_ts = final['timestamp'].min().strftime('%Y-%m-%d %H:%M:%S')
             max_ts = final['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S')
             ch.command(
-                f"ALTER TABLE {self.output_table} DELETE "
+                f"DELETE FROM {self.output_table} "
                 f"WHERE protocol='FLUID_MARKET' "
                 f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
             )
-            ch.insert_df(self.output_table, final)
+            insert_df_batched(ch, self.output_table, final)
+            upsert_api_market_latest(ch, final)
 
         return len(final)

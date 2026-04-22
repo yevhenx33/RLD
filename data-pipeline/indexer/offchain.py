@@ -3,8 +3,16 @@ import asyncio
 import logging
 import clickhouse_connect
 from indexer.base import BaseSource
+from indexer.protocols import RAW_HEAD_QUERY_BY_PROTOCOL, SOFR_RATES
 
 log = logging.getLogger("offchain-collector")
+CLICKHOUSE_CONNECT_TIMEOUT = int(os.getenv("CLICKHOUSE_CONNECT_TIMEOUT", "5"))
+CLICKHOUSE_SEND_RECEIVE_TIMEOUT = int(os.getenv("CLICKHOUSE_SEND_RECEIVE_TIMEOUT", "30"))
+CLICKHOUSE_QUERY_RETRIES = int(os.getenv("CLICKHOUSE_QUERY_RETRIES", "1"))
+CLICKHOUSE_AUTOGENERATE_SESSION_ID = (
+    os.getenv("CLICKHOUSE_AUTOGENERATE_SESSION_ID", "false").strip().lower()
+    in {"1", "true", "yes"}
+)
 
 class OffchainCollector:
     """
@@ -15,9 +23,57 @@ class OffchainCollector:
         self.source = source
         self.ch_host = clickhouse_host
         self.ch_port = clickhouse_port
+        self._ch = None
 
     def _create_ch_client(self):
-        return clickhouse_connect.get_client(host=self.ch_host, port=self.ch_port)
+        return clickhouse_connect.get_client(
+            host=self.ch_host,
+            port=self.ch_port,
+            connect_timeout=CLICKHOUSE_CONNECT_TIMEOUT,
+            send_receive_timeout=CLICKHOUSE_SEND_RECEIVE_TIMEOUT,
+            query_retries=CLICKHOUSE_QUERY_RETRIES,
+            autogenerate_session_id=CLICKHOUSE_AUTOGENERATE_SESSION_ID,
+        )
+
+    def _get_ch_client(self):
+        if self._ch is None:
+            self._ch = self._create_ch_client()
+        return self._ch
+
+    def _reset_client(self):
+        if self._ch is not None:
+            try:
+                self._ch.close_connections()
+            except Exception:
+                pass
+            try:
+                self._ch.close()
+            except Exception:
+                pass
+        self._ch = None
+
+    def _ensure_collector_health_table(self, ch):
+        ch.command(
+            """
+            CREATE TABLE IF NOT EXISTS collector_state (
+                protocol String,
+                last_collected_block UInt64,
+                inserted_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(inserted_at)
+            ORDER BY protocol
+            """
+        )
+
+    def _set_last_collected_block(self, ch):
+        protocol = SOFR_RATES if self.source.name == SOFR_RATES else self.source.name
+        query = RAW_HEAD_QUERY_BY_PROTOCOL.get(self.source.name)
+        value = ch.command(query) if query else 0
+        head = int(value) if value not in (None, "", "None") else 0
+        ch.insert(
+            "collector_state",
+            [[protocol, head]],
+            column_names=["protocol", "last_collected_block"],
+        )
 
     async def run_collector_cycle(self):
         """Fetch raw offchain snapshots and dump to ClickHouse."""
@@ -25,14 +81,15 @@ class OffchainCollector:
             log.info(f"[{self.source.name}-Collector] No raw_table configured.")
             return
 
-        ch = self._create_ch_client()
+        ch = self._get_ch_client()
+        self._ensure_collector_health_table(ch)
         
         try:
             # Custom hook on the source itself for polling REST/chainlink
             num_inserted = await self.source.poll_and_insert(ch)
+            self._set_last_collected_block(ch)
             if num_inserted > 0:
                 log.info(f"[{self.source.name}-Collector] Dumped {num_inserted} events to {self.source.raw_table}")
         except Exception as e:
             log.error(f"[{self.source.name}-Collector] Sync failed: {e}")
-        finally:
-            ch.close()
+            self._reset_client()

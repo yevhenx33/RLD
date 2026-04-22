@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import threading
+import atexit
 from typing import List, Optional
 
 import clickhouse_connect
@@ -8,19 +10,44 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from strawberry.fastapi import GraphQLRouter
+from indexer.protocols import (
+    AAVE_MARKET,
+    MORPHO_MARKET,
+    FLUID_MARKET,
+    CHAINLINK_PRICES,
+    SOFR_RATES,
+    MORPHO_ALLOCATION,
+    MORPHO_VAULT,
+    READY_PROTOCOLS_DEFAULT,
+    RAW_TABLE_BY_PROTOCOL,
+    RAW_HEAD_QUERY_BY_PROTOCOL,
+    PROCESSOR_STATE_ALIASES,
+)
 
 MAX_LIMIT = 10000
-PROCESSING_TABLES = {
-    "AAVE_MARKET": "aave_events",
-    "MORPHO_MARKET": "morpho_events",
-    "FLUID_MARKET": "fluid_events",
-    "CHAINLINK_PRICES": "chainlink_prices",
-}
 MAX_READY_LAG_BLOCKS = int(os.getenv("INDEXER_MAX_READY_LAG_BLOCKS", "250000"))
+INDEXER_READY_PROTOCOLS = tuple(
+    protocol.strip()
+    for protocol in os.getenv(
+        "INDEXER_READY_PROTOCOLS", ",".join(READY_PROTOCOLS_DEFAULT)
+    ).split(",")
+    if protocol.strip()
+)
 MORPHO_ALLOCATION_DB_PATH = os.getenv(
     "MORPHO_ALLOCATION_DB_PATH",
     "/app/morpho_data/morpho_enriched_final.db",
 )
+CLICKHOUSE_CONNECT_TIMEOUT = int(os.getenv("CLICKHOUSE_CONNECT_TIMEOUT", "5"))
+CLICKHOUSE_SEND_RECEIVE_TIMEOUT = int(os.getenv("CLICKHOUSE_SEND_RECEIVE_TIMEOUT", "30"))
+CLICKHOUSE_QUERY_RETRIES = int(os.getenv("CLICKHOUSE_QUERY_RETRIES", "1"))
+CLICKHOUSE_AUTOGENERATE_SESSION_ID = (
+    os.getenv("CLICKHOUSE_AUTOGENERATE_SESSION_ID", "false").strip().lower()
+    in ("1", "true", "yes")
+)
+
+_CLICKHOUSE_CLIENT = None
+_CLICKHOUSE_LOCK = threading.Lock()
+_TABLES_READY = False
 
 
 @strawberry.type
@@ -99,11 +126,115 @@ class VaultAllocationPoint:
     allocations: list[VaultAllocationDetail]
 
 
-def get_clickhouse_client():
+def _new_clickhouse_client():
     return clickhouse_connect.get_client(
         host=os.getenv("CLICKHOUSE_HOST", "127.0.0.1"),
         port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
+        connect_timeout=CLICKHOUSE_CONNECT_TIMEOUT,
+        send_receive_timeout=CLICKHOUSE_SEND_RECEIVE_TIMEOUT,
+        query_retries=CLICKHOUSE_QUERY_RETRIES,
+        autogenerate_session_id=CLICKHOUSE_AUTOGENERATE_SESSION_ID,
     )
+
+
+def _ensure_support_tables(ch) -> None:
+    global _TABLES_READY
+    if _TABLES_READY:
+        return
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS processor_state (
+            protocol String,
+            last_processed_block UInt64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY protocol
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS collector_state (
+            protocol String,
+            last_collected_block UInt64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY protocol
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS api_market_latest (
+            protocol LowCardinality(String),
+            entity_id String,
+            symbol LowCardinality(String),
+            target_id String,
+            timestamp DateTime,
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY (protocol, entity_id)
+        """
+    )
+    # Bootstrap pre-aggregated latest table once on fresh deployments.
+    latest_count = _query_int(ch, "SELECT count() FROM api_market_latest")
+    if latest_count == 0:
+        ch.command(
+            """
+            INSERT INTO api_market_latest
+            (
+                protocol, entity_id, symbol, target_id, timestamp,
+                supply_usd, borrow_usd, supply_apy, borrow_apy, utilization, price_usd
+            )
+            SELECT
+                protocol,
+                entity_id,
+                argMax(symbol, timestamp) AS symbol,
+                argMax(target_id, timestamp) AS target_id,
+                max(timestamp) AS timestamp,
+                argMax(supply_usd, timestamp) AS supply_usd,
+                argMax(borrow_usd, timestamp) AS borrow_usd,
+                argMax(supply_apy, timestamp) AS supply_apy,
+                argMax(borrow_apy, timestamp) AS borrow_apy,
+                argMax(utilization, timestamp) AS utilization,
+                argMax(price_usd, timestamp) AS price_usd
+            FROM unified_timeseries
+            GROUP BY protocol, entity_id
+            """
+        )
+    _TABLES_READY = True
+
+
+def close_clickhouse_client() -> None:
+    global _CLICKHOUSE_CLIENT
+    with _CLICKHOUSE_LOCK:
+        if _CLICKHOUSE_CLIENT is None:
+            return
+        try:
+            _CLICKHOUSE_CLIENT.close_connections()
+        except Exception:
+            pass
+        try:
+            _CLICKHOUSE_CLIENT.close()
+        except Exception:
+            pass
+        _CLICKHOUSE_CLIENT = None
+
+
+def get_clickhouse_client():
+    global _CLICKHOUSE_CLIENT
+    with _CLICKHOUSE_LOCK:
+        if _CLICKHOUSE_CLIENT is None:
+            _CLICKHOUSE_CLIENT = _new_clickhouse_client()
+        _ensure_support_tables(_CLICKHOUSE_CLIENT)
+        return _CLICKHOUSE_CLIENT
+
+
+atexit.register(close_clickhouse_client)
 
 
 def _query_int(ch, sql: str) -> int:
@@ -113,16 +244,43 @@ def _query_int(ch, sql: str) -> int:
     return int(value)
 
 
-def _collect_processing_lag(ch) -> dict[str, int]:
+def _collect_processing_lag(ch, protocols: Optional[list[str]] = None) -> dict[str, int]:
+    monitored = protocols or list(RAW_TABLE_BY_PROTOCOL.keys())
     lag_by_protocol: dict[str, int] = {}
-    for protocol, raw_table in PROCESSING_TABLES.items():
+    for protocol in monitored:
+        raw_table = RAW_TABLE_BY_PROTOCOL.get(protocol)
+        state_protocols = PROCESSOR_STATE_ALIASES.get(protocol, (protocol,))
+        if raw_table is None:
+            lag_by_protocol[protocol] = -1
+            continue
+        state_in = ", ".join(f"'{_escape_sql_string(p)}'" for p in state_protocols)
         try:
             raw_head = _query_int(ch, f"SELECT max(block_number) FROM {raw_table}")
             proc_head = _query_int(
                 ch,
-                f"SELECT max(last_processed_block) FROM processor_state WHERE protocol = '{protocol}'",
+                f"SELECT max(last_processed_block) FROM processor_state WHERE protocol IN ({state_in})",
             )
             lag_by_protocol[protocol] = max(0, raw_head - proc_head)
+        except Exception:
+            lag_by_protocol[protocol] = -1
+    return lag_by_protocol
+
+
+def _collect_collector_lag(ch, protocols: Optional[list[str]] = None) -> dict[str, int]:
+    monitored = protocols or list(RAW_TABLE_BY_PROTOCOL.keys())
+    lag_by_protocol: dict[str, int] = {}
+    for protocol in monitored:
+        raw_head_query = RAW_HEAD_QUERY_BY_PROTOCOL.get(protocol)
+        if raw_head_query is None:
+            lag_by_protocol[protocol] = -1
+            continue
+        try:
+            raw_head = _query_int(ch, raw_head_query)
+            collected_head = _query_int(
+                ch,
+                f"SELECT max(last_collected_block) FROM collector_state WHERE protocol = '{_escape_sql_string(protocol)}'",
+            )
+            lag_by_protocol[protocol] = max(0, raw_head - collected_head)
         except Exception:
             lag_by_protocol[protocol] = -1
     return lag_by_protocol
@@ -230,18 +388,7 @@ def _query_market_snapshots(ch) -> list[MarketSnapshot]:
         supply_apy,
         borrow_apy,
         if(supply_usd > 0, borrow_usd / supply_usd, 0.0) AS utilization
-    FROM
-    (
-        SELECT
-            symbol,
-            protocol,
-            argMax(supply_usd, timestamp) AS supply_usd,
-            argMax(borrow_usd, timestamp) AS borrow_usd,
-            argMax(supply_apy, timestamp) AS supply_apy,
-            argMax(borrow_apy, timestamp) AS borrow_apy
-        FROM unified_timeseries
-        GROUP BY symbol, protocol
-    )
+    FROM api_market_latest FINAL
     WHERE supply_usd >= 1000 OR borrow_usd >= 1000 OR protocol LIKE 'AAVE%'
     ORDER BY supply_usd DESC
     """
@@ -312,12 +459,12 @@ def _query_latest_rates(ch) -> Optional[LatestRates]:
 
 def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
     allowed = {
-        "AAVE_MARKET",
-        "MORPHO_MARKET",
-        "MORPHO_VAULT",
-        "MORPHO_ALLOCATION",
+        AAVE_MARKET,
+        MORPHO_MARKET,
+        MORPHO_VAULT,
+        MORPHO_ALLOCATION,
         "EULER_MARKET",
-        "FLUID_MARKET",
+        FLUID_MARKET,
     }
     if protocol not in allowed:
         return []
@@ -331,16 +478,15 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
                COALESCE(p.lltv, 0) AS lltv
         FROM (
             SELECT entity_id,
-                   argMax(symbol, timestamp) AS symbol,
+                   symbol,
                    '{escaped_protocol}' AS proto,
-                   argMax(supply_usd, timestamp) AS supply_usd,
-                   argMax(borrow_usd, timestamp) AS borrow_usd,
-                   argMax(supply_apy, timestamp) AS supply_apy,
-                   argMax(borrow_apy, timestamp) AS borrow_apy,
-                   argMax(utilization, timestamp) AS utilization
-            FROM unified_timeseries
+                   supply_usd,
+                   borrow_usd,
+                   supply_apy,
+                   borrow_apy,
+                   utilization
+            FROM api_market_latest FINAL
             WHERE protocol = '{escaped_protocol}'
-            GROUP BY entity_id
         ) AS t
         LEFT JOIN morpho_market_params AS p ON t.entity_id = p.market_id
         WHERE t.supply_usd >= 1000 OR t.borrow_usd >= 1000
@@ -353,16 +499,15 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
                '' AS collateral_symbol, 0 AS lltv
         FROM (
             SELECT entity_id,
-                   argMax(symbol, timestamp) AS symbol,
+                   symbol,
                    '{escaped_protocol}' AS proto,
-                   argMax(supply_usd, timestamp) AS supply_usd,
-                   argMax(borrow_usd, timestamp) AS borrow_usd,
-                   argMax(supply_apy, timestamp) AS supply_apy,
-                   argMax(borrow_apy, timestamp) AS borrow_apy,
-                   argMax(utilization, timestamp) AS utilization
-            FROM unified_timeseries
+                   supply_usd,
+                   borrow_usd,
+                   supply_apy,
+                   borrow_apy,
+                   utilization
+            FROM api_market_latest FINAL
             WHERE protocol = '{escaped_protocol}'
-            GROUP BY entity_id
         )
         WHERE supply_usd >= 1000 OR borrow_usd >= 1000
         ORDER BY supply_usd DESC
@@ -387,6 +532,7 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
 
 
 def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
+    # Keep history on base table; api_market_latest is "latest-only".
     query = """
     SELECT day, protocol, sum(supply_usd) AS total_supply
     FROM (
@@ -455,10 +601,58 @@ def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) ->
     return points
 
 
-def _query_market_vault_allocations(entity_id: str, limit: int) -> list[VaultAllocationPoint]:
+def _query_market_vault_allocations(ch, entity_id: str, limit: int) -> list[VaultAllocationPoint]:
+    # Preferred path: ClickHouse table produced by Morpho processor.
+    try:
+        where_expr = f"market_id LIKE '{_escape_sql_string(entity_id)}%'" if len(entity_id) < 60 else f"market_id = '{_escape_sql_string(entity_id)}'"
+        rows = ch.query(
+            f"""
+            SELECT
+                toUInt64(intDiv(timestamp, 86400) * 86400) AS day_ts,
+                vault_address,
+                argMax(supply_shares, timestamp) AS shares
+            FROM morpho_vault_allocations
+            WHERE {where_expr}
+            GROUP BY day_ts, vault_address
+            ORDER BY day_ts DESC
+            LIMIT {_safe_limit(limit) * 128}
+            """
+        ).result_rows
+        meta_rows = ch.query(
+            "SELECT lower(vault_address), name FROM morpho_vault_meta"
+        ).result_rows
+        meta = {str(addr): str(name) for addr, name in meta_rows}
+    except Exception:
+        rows = []
+        meta = {}
+
+    if rows:
+        grouped: dict[int, list[VaultAllocationDetail]] = {}
+        for day_ts, vault_address, shares in rows:
+            day_ts_i = int(day_ts)
+            if day_ts_i not in grouped:
+                grouped[day_ts_i] = []
+            vault_str = str(vault_address)
+            grouped[day_ts_i].append(
+                VaultAllocationDetail(
+                    name=meta.get(vault_str.lower(), "Unknown Vault"),
+                    vault_address=vault_str,
+                    shares=str(float(shares or 0.0)),
+                )
+            )
+        for day_ts in grouped:
+            grouped[day_ts].sort(key=lambda item: float(item.shares), reverse=True)
+        selected_days = sorted(grouped.keys(), reverse=True)[: _safe_limit(limit)]
+        points = [
+            VaultAllocationPoint(timestamp=day_ts, allocations=grouped[day_ts])
+            for day_ts in selected_days
+        ]
+        points.reverse()
+        return points
+
+    # Legacy fallback to sqlite if historical table exists.
     if not os.path.exists(MORPHO_ALLOCATION_DB_PATH):
         return []
-
     conn = sqlite3.connect(MORPHO_ALLOCATION_DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
@@ -467,10 +661,8 @@ def _query_market_vault_allocations(entity_id: str, limit: int) -> list[VaultAll
         where_clause = "market_id LIKE ?" if len(entity_id) < 60 else "market_id = ?"
         if len(entity_id) < 60:
             db_entity_id += "%"
-
         cur.execute("SELECT lower(vault_address), name FROM vault_meta")
         meta = {row[0]: row[1] for row in cur.fetchall()}
-
         cur.execute(
             f"""
             SELECT timestamp, vault_address, supply_shares
@@ -480,7 +672,6 @@ def _query_market_vault_allocations(entity_id: str, limit: int) -> list[VaultAll
             (db_entity_id,),
         )
         rows = cur.fetchall()
-
         daily_latest: dict[tuple[int, str], dict[str, int | float]] = {}
         for row in rows:
             ts = int(row["timestamp"])
@@ -491,7 +682,6 @@ def _query_market_vault_allocations(entity_id: str, limit: int) -> list[VaultAll
             existing = daily_latest.get(key)
             if existing is None or int(existing["ts"]) < ts:
                 daily_latest[key] = {"ts": ts, "shares": shares}
-
         grouped: dict[int, list[VaultAllocationDetail]] = {}
         for (day_ts, vault_address), data in daily_latest.items():
             if day_ts not in grouped:
@@ -503,10 +693,8 @@ def _query_market_vault_allocations(entity_id: str, limit: int) -> list[VaultAll
                     shares=str(data["shares"]),
                 )
             )
-
         for day_ts in grouped:
             grouped[day_ts].sort(key=lambda item: float(item.shares), reverse=True)
-
         selected_days = sorted(grouped.keys(), reverse=True)[: _safe_limit(limit)]
         points = [
             VaultAllocationPoint(timestamp=day_ts, allocations=grouped[day_ts])
@@ -525,58 +713,41 @@ class Query:
         self, symbols: List[str], resolution: str, limit: int = 17520
     ) -> List[HistoricalRate]:
         ch = get_clickhouse_client()
-        try:
-            return _query_historical_rates(ch, symbols, resolution, limit)
-        finally:
-            ch.close()
+        return _query_historical_rates(ch, symbols, resolution, limit)
 
     @strawberry.field(name="marketSnapshots")
     def market_snapshots(self) -> List[MarketSnapshot]:
         ch = get_clickhouse_client()
-        try:
-            return _query_market_snapshots(ch)
-        finally:
-            ch.close()
+        return _query_market_snapshots(ch)
 
     @strawberry.field(name="latestRates")
     def latest_rates(self) -> Optional[LatestRates]:
         ch = get_clickhouse_client()
-        try:
-            return _query_latest_rates(ch)
-        finally:
-            ch.close()
+        return _query_latest_rates(ch)
 
     @strawberry.field(name="protocolMarkets")
     def protocol_markets(self, protocol: str = "AAVE_MARKET") -> list[MarketDetail]:
         ch = get_clickhouse_client()
-        try:
-            return _query_protocol_markets(ch, protocol)
-        finally:
-            ch.close()
+        return _query_protocol_markets(ch, protocol)
 
     @strawberry.field(name="protocolTvlHistory")
     def protocol_tvl_history(self) -> list[ProtocolTvlPoint]:
         ch = get_clickhouse_client()
-        try:
-            return _query_protocol_tvl_history(ch)
-        finally:
-            ch.close()
+        return _query_protocol_tvl_history(ch)
 
     @strawberry.field(name="marketTimeseries")
     def market_timeseries(
         self, entity_id: str, resolution: str = "1H", limit: int = 2000
     ) -> list[MarketTimeseriesPoint]:
         ch = get_clickhouse_client()
-        try:
-            return _query_market_timeseries(ch, entity_id, resolution, limit)
-        finally:
-            ch.close()
+        return _query_market_timeseries(ch, entity_id, resolution, limit)
 
     @strawberry.field(name="marketVaultAllocations")
     def market_vault_allocations(
         self, entity_id: str, limit: int = 365
     ) -> list[VaultAllocationPoint]:
-        return _query_market_vault_allocations(entity_id, limit)
+        ch = get_clickhouse_client()
+        return _query_market_vault_allocations(ch, entity_id, limit)
 
 
 schema = strawberry.Schema(query=Query)
@@ -595,44 +766,55 @@ app.include_router(graphql_app, prefix="/envio-graphql")
 
 @app.get("/healthz")
 def healthz():
-    ch = None
     try:
         ch = get_clickhouse_client()
         ch.command("SELECT 1")
         return {
             "status": "ok",
             "clickhouse": "ok",
+            "collectorLag": _collect_collector_lag(ch),
             "processingLag": _collect_processing_lag(ch),
         }
     except Exception as exc:
+        close_clickhouse_client()
         return JSONResponse(
             status_code=503,
             content={"status": "degraded", "clickhouse": "down", "error": str(exc)},
         )
-    finally:
-        if ch is not None:
-            ch.close()
+
+
+@app.get("/livez")
+def livez():
+    # Lightweight liveness check used by Docker healthcheck.
+    return {"status": "alive"}
 
 
 @app.get("/readyz")
 def readyz():
-    ch = None
     try:
         ch = get_clickhouse_client()
         ch.command("SELECT 1")
-        lag_by_protocol = _collect_processing_lag(ch)
-        failing = [
+        collector_lag_by_protocol = _collect_collector_lag(ch, list(INDEXER_READY_PROTOCOLS))
+        lag_by_protocol = _collect_processing_lag(ch, list(INDEXER_READY_PROTOCOLS))
+        failing_processing = [
             protocol
             for protocol, lag in lag_by_protocol.items()
             if lag >= 0 and lag > MAX_READY_LAG_BLOCKS
         ]
+        failing_collector = [
+            protocol
+            for protocol, lag in collector_lag_by_protocol.items()
+            if lag >= 0 and lag > MAX_READY_LAG_BLOCKS
+        ]
+        failing = sorted(set(failing_processing + failing_collector))
         if failing:
             return JSONResponse(
                 status_code=503,
                 content={
                     "status": "not_ready",
-                    "reason": "processor_lag_exceeded",
+                    "reason": "lag_exceeded",
                     "maxLagBlocks": MAX_READY_LAG_BLOCKS,
+                    "collectorLag": collector_lag_by_protocol,
                     "processingLag": lag_by_protocol,
                     "failingProtocols": failing,
                 },
@@ -640,16 +822,15 @@ def readyz():
         return {
             "status": "ready",
             "maxLagBlocks": MAX_READY_LAG_BLOCKS,
+            "collectorLag": collector_lag_by_protocol,
             "processingLag": lag_by_protocol,
         }
     except Exception as exc:
+        close_clickhouse_client()
         return JSONResponse(
             status_code=503,
             content={"status": "not_ready", "reason": "clickhouse_unavailable", "error": str(exc)},
         )
-    finally:
-        if ch is not None:
-            ch.close()
 
 
 def create_app():
