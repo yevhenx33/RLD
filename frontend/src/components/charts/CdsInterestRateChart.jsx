@@ -10,7 +10,6 @@ import {
   ReferenceDot,
   ReferenceLine
 } from "recharts";
-import { formatNum } from "../../utils/helpers";
 import { ArrowRight } from "lucide-react";
 
 const CustomTooltip = ({ active, payload }) => {
@@ -67,8 +66,6 @@ const CdsInterestRateChart = ({ currentRate = 2.71, theme = "cyan" }) => {
   currentU = Math.min(Math.max(currentU, 0), 100);
 
   const mainColor = theme === "cyan" ? "#22d3ee" : "#ec4899";
-  const textColor = theme === "cyan" ? "text-cyan-400" : "text-pink-500";
-  const bgColor = theme === "cyan" ? "bg-cyan-400" : "bg-pink-500";
 
   return (
     <div className="w-full h-full select-none bg-[#080808] border border-white/10 p-4 md:p-6 flex flex-col">

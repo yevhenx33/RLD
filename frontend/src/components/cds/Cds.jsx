@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { Terminal } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
 import { useSim } from "../../context/SimulationContext";

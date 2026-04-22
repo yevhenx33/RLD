@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import CdsInterestRateChart from "../charts/CdsInterestRateChart";
+import CdsInterestRateChart from "../../charts/primitives/CdsInterestRateChart";
 
-export default function CdsDataModule({ collateral, durationDays, latestApy, projectionData }) {
+export default function CdsDataModule({ latestApy }) {
   const [activeView, setActiveView] = useState("SIMULATION");
 
   // Empty state for future CDS logic
@@ -12,7 +12,7 @@ export default function CdsDataModule({ collateral, durationDays, latestApy, pro
       <div className="px-6 flex items-center gap-6 border-b border-white/10 pb-4">
         <button
           onClick={() => setActiveView("SIMULATION")}
-          className={`text-sm font-bold uppercase tracking-widest transition-colors pb-4 ${activeView === "SIMULATION" ? "text-cyan-400 border-cyan-400 -mb-[18px]" : "text-gray-500 hover:text-white=  -mb-[18px]"
+          className={`text-sm font-bold uppercase tracking-widest transition-colors pb-4 ${activeView === "SIMULATION" ? "text-cyan-400 border-cyan-400 -mb-[18px]" : "text-gray-500 hover:text-white -mb-[18px]"
             }`}
         >
           Payout Simulation

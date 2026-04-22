@@ -101,8 +101,8 @@ const TOKEN_NAMES = {
   USDR: "Real USD", USDU: "USDU", USR: "Resolv USR",
   USDTB: "Ethena USDtb", USDCV: "USDC Vault", EURCV: "EURC Vault",
   ZCHF: "Frankencoin", XAUT: "Tether Gold", SYRUPUSDT: "Syrup USDT",
-  PAXG: "Paxos Gold", SUSDS: "Staked Sky Dollar", CBBTC: "Coinbase BTC",
-  LBTC: "Lombard BTC", SYRUPUSDC: "Syrup USDC", BONDUSD: "BondUSD",
+  PAXG: "Paxos Gold", SUSDS: "Staked Sky Dollar", SYRUPUSDC: "Syrup USDC",
+  BONDUSD: "BondUSD",
 };
 
 /**
