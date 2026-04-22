@@ -13,8 +13,8 @@ import { useSimulation } from "../hooks/useSimulation";
  */
 const SimulationContext = createContext(null);
 
-export function SimulationProvider({ children }) {
-  const sim = useSimulation({ pollInterval: 2000 });
+export function SimulationProvider({ children, pollInterval = 2000 }) {
+  const sim = useSimulation({ pollInterval });
   return (
     <SimulationContext.Provider value={sim}>
       {children}

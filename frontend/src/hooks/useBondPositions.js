@@ -1,8 +1,8 @@
 import { useCallback, useMemo } from "react";
 import useSWR from "swr";
-import { SIM_API } from "../config/simulationConfig";
-
-const GQL_URL = `${SIM_API}/graphql`;
+import { SIM_GRAPHQL_URL } from "../api/endpoints";
+import { postGraphQL } from "../api/graphqlClient";
+import { queryKeys } from "../api/queryKeys";
 
 const BONDS_QUERY = `
   query BondPositions($owner: String!) {
@@ -10,15 +10,8 @@ const BONDS_QUERY = `
   }
 `;
 
-const gqlFetcher = async ([url, query, variables]) => {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables }),
-  });
-  const json = await res.json();
-  if (json.errors) throw new Error(json.errors[0].message);
-  return json.data;
+const gqlFetcher = async ([url, , variables]) => {
+  return postGraphQL(url, { query: BONDS_QUERY, variables });
 };
 
 /**
@@ -35,7 +28,7 @@ const gqlFetcher = async ([url, query, variables]) => {
  */
 export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterval = 15000, paused = false) {
   const swrKey = account
-    ? [GQL_URL, BONDS_QUERY, { owner: account.toLowerCase() }]
+    ? queryKeys.bondPositions(SIM_GRAPHQL_URL, account)
     : null;
 
   const { data: gqlData, error: _error, mutate, isLoading } = useSWR(

@@ -1,18 +1,13 @@
 import useSWR from "swr";
 
-import { ENVIO_GQL_URL } from "../utils/helpers";
+import { ENVIO_GRAPHQL_URL } from "../api/endpoints";
+import { postGraphQL } from "../api/graphqlClient";
+import { queryKeys } from "../api/queryKeys";
 
 const SUSDE_QUERY = `{ latestRates { susde } }`;
 
-const gqlFetcher = async (url) => {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: SUSDE_QUERY }),
-  });
-  const json = await res.json();
-  if (json.errors) throw new Error(json.errors[0].message);
-  return json.data;
+const gqlFetcher = async ([url]) => {
+  return postGraphQL(url, { query: SUSDE_QUERY });
 };
 
 /**
@@ -20,11 +15,15 @@ const gqlFetcher = async (url) => {
  * Returns { stakingYield, protocolYield, avg30d, avg90d, isLoading, error }
  */
 export function useSusdeYield() {
-  const { data, error, isLoading } = useSWR(ENVIO_GQL_URL, gqlFetcher, {
+  const { data, error, isLoading } = useSWR(
+    queryKeys.envioSusdeLatest(ENVIO_GRAPHQL_URL),
+    gqlFetcher,
+    {
     refreshInterval: 60000,
     dedupingInterval: 30000,
     revalidateOnFocus: false,
-  });
+    },
+  );
 
   const yieldPct = data?.latestRates?.susde ?? null;
 

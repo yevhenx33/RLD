@@ -1,13 +1,15 @@
-import React, { useState } from "react";
+import React, { Suspense, lazy, useState } from "react";
 
 import { Link, useLocation } from "react-router-dom";
 import { useWallet } from "../../context/WalletContext";
 import { useFaucet } from "../../hooks/useFaucet";
 import { useToast } from "../../hooks/useToast";
 import { useSim } from "../../context/SimulationContext";
-import WalletModal from "../modals/WalletModal";
 import { ToastContainer } from "../common/Toast";
 import { Menu, X, Droplets, Loader2 } from "lucide-react";
+import { prefetchRoute } from "../../app/prefetchRoutes";
+
+const WalletModal = lazy(() => import("../modals/WalletModal"));
 
 export default function Header({ isCapped, ratesLoaded, transparent = false }) {
   const { account, connectWallet, disconnect } = useWallet();
@@ -95,6 +97,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
 
               <Link
                 to="/bonds"
+                onMouseEnter={() => prefetchRoute("/bonds")}
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 BONDS
@@ -105,6 +108,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               <div className="relative group">
                 <Link
                   to="/markets"
+                  onMouseEnter={() => prefetchRoute("/markets/perps")}
                   className={`transition-colors px-2 tracking-widest flex items-center gap-1 ${location.pathname.startsWith("/markets") ? "text-cyan-400 cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
                 >
                   Markets
@@ -128,18 +132,21 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                   <div className="border border-white/10 bg-[#0a0a0a] min-w-[160px] shadow-2xl">
                     <Link
                       to="/markets/perps"
+                      onMouseEnter={() => prefetchRoute("/markets/perps")}
                       className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
                     >
                       Perps
                     </Link>
                     <Link
                       to="/markets/cds"
+                      onMouseEnter={() => prefetchRoute("/markets/cds")}
                       className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
                     >
                       CDS
                     </Link>
                     <Link
                       to="/markets/pools"
+                      onMouseEnter={() => prefetchRoute("/markets/pools")}
                       className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors"
                     >
                       LP Pools
@@ -152,6 +159,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
 
               <Link
                 to="/portfolio"
+                onMouseEnter={() => prefetchRoute("/portfolio")}
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/portfolio" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 PORTFOLIO
@@ -161,6 +169,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
 
               <Link
                 to="/strategies"
+                onMouseEnter={() => prefetchRoute("/strategies")}
                 className={`transition-colors px-2 tracking-widest ${location.pathname.startsWith("/strategies") ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 STRATEGIES
@@ -170,9 +179,20 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
 
               <Link
                 to="/explore"
+                onMouseEnter={() => prefetchRoute("/explore")}
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/explore" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
                 DATA
+              </Link>
+
+              <span className="text-white/10">|</span>
+
+              <Link
+                to="/brokers"
+                onMouseEnter={() => prefetchRoute("/brokers")}
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/brokers" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+              >
+                BROKERS
               </Link>
 
               <span className="text-white/10">|</span>
@@ -271,6 +291,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                 <div className="pl-4 flex flex-col gap-2 mt-1 border-l border-white/5 ml-1">
                   <Link
                     to="/markets/perps"
+                    onMouseEnter={() => prefetchRoute("/markets/perps")}
                     className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/perps") ? "text-cyan-400" : "text-gray-500"}`}
                   >
                     <div className="w-1 h-1 bg-cyan-500/50" />
@@ -278,6 +299,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                   </Link>
                   <Link
                     to="/markets/cds"
+                    onMouseEnter={() => prefetchRoute("/markets/cds")}
                     className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/cds") ? "text-cyan-400" : "text-gray-500"}`}
                   >
                     <div className="w-1 h-1 bg-cyan-500/50" />
@@ -285,6 +307,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                   </Link>
                   <Link
                     to="/markets/pools"
+                    onMouseEnter={() => prefetchRoute("/markets/pools")}
                     className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/pools") ? "text-cyan-400" : "text-gray-500"}`}
                   >
                     <div className="w-1 h-1 bg-cyan-500/50" />
@@ -294,21 +317,31 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               </div>
               <Link
                 to="/portfolio"
+                onMouseEnter={() => prefetchRoute("/portfolio")}
                 className={`py-2 ${location.pathname === "/portfolio" ? "text-white" : "text-gray-500"}`}
               >
                 PORTFOLIO
               </Link>
               <Link
                 to="/strategies"
+                onMouseEnter={() => prefetchRoute("/strategies")}
                 className={`py-2 ${location.pathname.startsWith("/strategies") ? "text-white" : "text-gray-500"}`}
               >
                 STRATEGIES
               </Link>
               <Link
                 to="/explore"
+                onMouseEnter={() => prefetchRoute("/explore")}
                 className={`py-2 ${location.pathname === "/explore" ? "text-white" : "text-gray-500"}`}
               >
                 DATA
+              </Link>
+              <Link
+                to="/brokers"
+                onMouseEnter={() => prefetchRoute("/brokers")}
+                className={`py-2 ${location.pathname === "/brokers" ? "text-white" : "text-gray-500"}`}
+              >
+                BROKERS
               </Link>
               <a
                 href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
@@ -340,21 +373,25 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
           </div>
         )}
       </div>
-      <WalletModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        account={account}
-        usdcBalance={usdcBalance}
-        waUsdcBalance={waUsdcBalance}
-        onFaucet={handleFaucetClick}
-        faucetLoading={faucetLoading}
-        faucetStep={faucetStep}
-        ethBalance={faucetEthBalance}
-        disconnect={() => {
-          disconnect();
-          setIsModalOpen(false);
-        }}
-      />
+      {isModalOpen && (
+        <Suspense fallback={null}>
+          <WalletModal
+            isOpen={isModalOpen}
+            onClose={() => setIsModalOpen(false)}
+            account={account}
+            usdcBalance={usdcBalance}
+            waUsdcBalance={waUsdcBalance}
+            onFaucet={handleFaucetClick}
+            faucetLoading={faucetLoading}
+            faucetStep={faucetStep}
+            ethBalance={faucetEthBalance}
+            disconnect={() => {
+              disconnect();
+              setIsModalOpen(false);
+            }}
+          />
+        </Suspense>
+      )}
       <ToastContainer toasts={toasts} removeToast={removeToast} />
     </>
   );
