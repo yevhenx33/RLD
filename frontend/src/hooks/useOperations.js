@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback } from "react";
 import { ethers } from "ethers";
+import useSWR from "swr";
 import { rpcProvider } from "../utils/provider";
 
 // BrokerRouter event ABIs
@@ -48,21 +49,12 @@ export function useOperations(
   brokerAddress,
   pollInterval = 10000,
 ) {
-  const [operations, setOperations] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const mountedRef = useRef(true);
-  const initialLoadDone = useRef(false);
-
   const fetchOps = useCallback(async () => {
     if (!routerAddress) {
-      setOperations([]);
-      setLoaded(true);
-      return;
+      return [];
     }
 
     try {
-      if (!initialLoadDone.current) setLoading(true);
       const provider = rpcProvider;
 
       // Build topic filter: any of our 4 event types
@@ -128,32 +120,31 @@ export function useOperations(
       // Sort newest first
       allOps.sort((a, b) => b.blockNumber - a.blockNumber);
 
-      if (mountedRef.current) {
-        setOperations(allOps);
-        initialLoadDone.current = true;
-        setLoaded(true);
-      }
+      return allOps;
     } catch (e) {
       console.warn("useOperations fetch failed:", e);
-    } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
+      return [];
     }
   }, [routerAddress, brokerAddress]);
 
-  // Fetch on mount + poll
-  useEffect(() => {
-    mountedRef.current = true;
-    fetchOps();
-    const interval = setInterval(fetchOps, pollInterval);
-    return () => {
-      mountedRef.current = false;
-      clearInterval(interval);
-    };
-  }, [fetchOps, pollInterval]);
+  const swrKey = routerAddress
+    ? [
+        "operations.feed.v1",
+        routerAddress.toLowerCase(),
+        brokerAddress?.toLowerCase() || "all",
+      ]
+    : null;
+  const { data, isLoading, mutate } = useSWR(swrKey, fetchOps, {
+    refreshInterval: pollInterval,
+    dedupingInterval: 1000,
+    revalidateOnFocus: false,
+    keepPreviousData: true,
+  });
 
-  return { operations, loading, loaded, refetch: fetchOps };
+  const operations = data ?? [];
+  const loaded = !routerAddress || data !== undefined;
+
+  return { operations, loading: isLoading && !loaded, loaded, refetch: mutate };
 }
 
 /**

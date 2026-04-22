@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import useSWR from "swr";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Brush, Legend,
@@ -7,7 +8,8 @@ import {
 import {
   Loader2, ArrowLeft, ExternalLink,
 } from "lucide-react";
-import { ENVIO_GQL_URL } from "../../utils/helpers";
+import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
+import { postGraphQL } from "../../api/graphqlClient";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
 
 const PROTOCOL_MAP = {
@@ -16,6 +18,48 @@ const PROTOCOL_MAP = {
   euler: "EULER_MARKET",
   fluid: "FLUID_MARKET",
 };
+
+const PROTOCOL_MARKETS_QUERY = `
+  query ProtocolMarketsByProtocol($protocol: String!) {
+    protocolMarkets(protocol: $protocol) {
+      entityId
+      symbol
+      protocol
+      supplyUsd
+      borrowUsd
+      supplyApy
+      borrowApy
+      utilization
+      collateralSymbol
+      lltv
+    }
+  }
+`;
+
+const MARKET_DETAIL_TIMESERIES_QUERY = `
+  query MarketDetailTimeseries(
+    $entityId: String!
+    $resolution: String!
+    $includeAllocations: Boolean!
+  ) {
+    marketTimeseries(entityId: $entityId, resolution: $resolution, limit: 500) {
+      timestamp
+      supplyApy
+      borrowApy
+      utilization
+      supplyUsd
+      borrowUsd
+    }
+    marketVaultAllocations(entityId: $entityId, limit: 90) @include(if: $includeAllocations) {
+      timestamp
+      allocations {
+        name
+        vaultAddress
+        shares
+      }
+    }
+  }
+`;
 
 const formatCurrency = (v) => {
   if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
@@ -40,72 +84,85 @@ export default function MarketDetail() {
   const protocolName = getProtocolDisplayName(protocolKey);
   const isMorpho = protocolKey.startsWith("MORPHO");
 
-  const [market, setMarket] = useState(null);
-  const [timeseries, setTimeseries] = useState([]);
-  const [allocations, setAllocations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [tsLoading, setTsLoading] = useState(true);
   const [resolution, setResolution] = useState("1H");
+  const {
+    data: marketRowsData,
+    error: marketError,
+    isLoading: loading,
+  } = useSWR(
+    [ENVIO_GRAPHQL_URL, "envio.protocol-markets.v1", { protocol: protocolKey }],
+    ([url, , variables]) =>
+      postGraphQL(url, { query: PROTOCOL_MARKETS_QUERY, variables }),
+    {
+      refreshInterval: 30000,
+      dedupingInterval: 5000,
+      revalidateOnFocus: false,
+    },
+  );
 
-  // Fetch market metadata
-  useEffect(() => {
-    const fetch_ = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(ENVIO_GQL_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `{ protocolMarkets(protocol: "${protocolKey}") { entityId symbol protocol supplyUsd borrowUsd supplyApy borrowApy utilization collateralSymbol lltv } }`,
-          }),
-        });
-        const json = await res.json();
-        const rows = json?.data?.protocolMarkets || [];
-        const found = rows.find((r) => r.entityId.toLowerCase().includes(marketId.toLowerCase()));
-        if (found) {
-          setMarket({
-            ...found,
-            loanIcon: getTokenIcon(found.symbol),
-            loanName: getTokenName(found.symbol),
-            collateralIcon: found.collateralSymbol ? getTokenIcon(found.collateralSymbol) : null,
-          });
-        }
-      } catch (err) {
-        console.error("MarketDetail fetch error:", err);
-      }
-      setLoading(false);
+  const market = useMemo(() => {
+    const rows = marketRowsData?.protocolMarkets || [];
+    const found = rows.find((r) =>
+      r.entityId.toLowerCase().includes(marketId.toLowerCase()),
+    );
+    if (!found) {
+      return null;
+    }
+    return {
+      ...found,
+      loanIcon: getTokenIcon(found.symbol),
+      loanName: getTokenName(found.symbol),
+      collateralIcon: found.collateralSymbol
+        ? getTokenIcon(found.collateralSymbol)
+        : null,
     };
-    fetch_();
-  }, [protocolKey, marketId]);
+  }, [marketRowsData, marketId]);
 
-  // Fetch timeseries and allocations
+  const {
+    data: timeseriesData,
+    error: timeseriesError,
+    isLoading: tsLoading,
+  } = useSWR(
+    market?.entityId
+      ? [
+          ENVIO_GRAPHQL_URL,
+          "envio.market-detail.v1",
+          {
+            entityId: market.entityId,
+            resolution,
+            includeAllocations: isMorpho,
+          },
+        ]
+      : null,
+    ([url, , variables]) =>
+      postGraphQL(url, { query: MARKET_DETAIL_TIMESERIES_QUERY, variables }),
+    {
+      refreshInterval: 30000,
+      dedupingInterval: 5000,
+      revalidateOnFocus: false,
+    },
+  );
+
   useEffect(() => {
-    if (!market?.entityId) return;
-    const fetch_ = async () => {
-      setTsLoading(true);
-      try {
-        const entityId = market.entityId;
-        const queryStr = `{
-          marketTimeseries(entityId: "${entityId}", resolution: "${resolution}", limit: 500) { timestamp supplyApy borrowApy utilization supplyUsd borrowUsd }
-          ${isMorpho ? `marketVaultAllocations(entityId: "${entityId}", limit: 90) { timestamp allocations { name vaultAddress shares } }` : ''}
-        }`;
-        const res = await fetch(ENVIO_GQL_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: queryStr }),
-        });
-        const json = await res.json();
-        setTimeseries(json?.data?.marketTimeseries || []);
-        if (isMorpho) {
-          setAllocations(json?.data?.marketVaultAllocations || []);
-        }
-      } catch (err) {
-        console.error("Timeseries fetch error:", err);
-      }
-      setTsLoading(false);
-    };
-    fetch_();
-  }, [market?.entityId, resolution, isMorpho]);
+    if (marketError) {
+      console.error("MarketDetail fetch error:", marketError);
+    }
+  }, [marketError]);
+
+  useEffect(() => {
+    if (timeseriesError) {
+      console.error("Timeseries fetch error:", timeseriesError);
+    }
+  }, [timeseriesError]);
+
+  const timeseries = useMemo(
+    () => timeseriesData?.marketTimeseries ?? [],
+    [timeseriesData],
+  );
+  const allocations = useMemo(
+    () => timeseriesData?.marketVaultAllocations ?? [],
+    [timeseriesData],
+  );
 
   // Chart data
   const chartData = useMemo(() => {
