@@ -59,4 +59,5 @@ data/
 secrets.txt
 .venv/
 scratch/
+scratch.py
 cds-research/
