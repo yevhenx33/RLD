@@ -8,9 +8,13 @@ Operational docs are now aligned to a single Reth-only launch baseline.
 |---|---|
 | Docker/infra operations | [`docker/README.md`](../docker/README.md) |
 | Backend services + API contract | [`backend/README.md`](../backend/README.md) |
+| Runtime boundaries + ownership | [`docs/runtime-boundaries.md`](./runtime-boundaries.md) |
+| Disaster recovery targets | [`docs/disaster-recovery.md`](./disaster-recovery.md) |
+| Frontend architecture + guardrails | [`docs/frontend-architecture.md`](./frontend-architecture.md) |
 | Contracts/tooling | [`contracts/README.md`](../contracts/README.md) |
 | Frontend app | [`frontend/README.md`](../frontend/README.md) |
 | Dashboard operations | [`docker/dashboard/README.md`](../docker/dashboard/README.md) |
+| Architecture decisions (ADR) | [`docs/adr/README.md`](./adr/README.md) |
 
 ## Canonical Launch Surface
 
@@ -33,6 +37,9 @@ bash docker/reth/restart-reth.sh --fresh --with-users
 
 # Start frontend
 docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -d
+
+# Canonical stack controls
+bash docker/scripts/stack.sh ps
 ```
 
 ## Health Checks
