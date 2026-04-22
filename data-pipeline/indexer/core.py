@@ -33,6 +33,16 @@ LOG_FIELDS = [
 BLOCK_FIELDS = [hypersync.BlockField.NUMBER, hypersync.BlockField.TIMESTAMP]
 
 CONFIRMATION_BLOCKS = 3
+CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "default")
+CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
+CLICKHOUSE_ASYNC_INSERT = (
+    os.getenv("CLICKHOUSE_ASYNC_INSERT", "true").strip().lower()
+    in {"1", "true", "yes"}
+)
+CLICKHOUSE_WAIT_FOR_ASYNC_INSERT = (
+    os.getenv("CLICKHOUSE_WAIT_FOR_ASYNC_INSERT", "true").strip().lower()
+    in {"1", "true", "yes"}
+)
 
 
 def require_envio_token(explicit_token: str = "") -> str:
@@ -90,8 +100,16 @@ class IndexerEngine:
         ))
 
     def _create_ch_client(self):
+        settings = {}
+        if CLICKHOUSE_ASYNC_INSERT:
+            settings["async_insert"] = 1
+            settings["wait_for_async_insert"] = 1 if CLICKHOUSE_WAIT_FOR_ASYNC_INSERT else 0
         return clickhouse_connect.get_client(
-            host=self.ch_host, port=self.ch_port
+            host=self.ch_host,
+            port=self.ch_port,
+            username=CLICKHOUSE_USER,
+            password=CLICKHOUSE_PASSWORD,
+            settings=settings,
         )
 
     async def run_cycle(self, hs_client, ch):

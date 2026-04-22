@@ -95,7 +95,13 @@ class SofrSource(BaseSource):
         # Processor can be a no-op since the collector normalizes directly or we copy to a target table
         ch = clickhouse_connect.get_client(
             host=os.getenv("CLICKHOUSE_HOST", "localhost"), 
-            port=int(os.getenv("CLICKHOUSE_PORT", "8123"))
+            port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
+            username=os.getenv("CLICKHOUSE_USER", "default"),
+            password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+            settings={
+                "async_insert": 1 if os.getenv("CLICKHOUSE_ASYNC_INSERT", "true").strip().lower() in {"1", "true", "yes"} else 0,
+                "wait_for_async_insert": 1 if os.getenv("CLICKHOUSE_WAIT_FOR_ASYNC_INSERT", "true").strip().lower() in {"1", "true", "yes"} else 0,
+            },
         )
         # Typically the UI reads exactly from this table, or we materialize it.
         # We can just construct a materialized view in the codebase.

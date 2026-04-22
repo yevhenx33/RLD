@@ -19,7 +19,15 @@ import requests
 
 import pandas as pd
 
-from ..base import BaseSource, forward_fill_hourly, insert_df_batched, insert_rows_batched, upsert_api_market_latest
+from ..base import (
+    BaseSource,
+    forward_fill_hourly,
+    insert_df_batched,
+    insert_rows_batched,
+    upsert_api_market_latest,
+    rewrite_protocol_window_if_enabled,
+    rewrite_protocol_timestamp_if_enabled,
+)
 from ..tokens import (TOKENS as KNOWN_TOKENS, STABLES, ETH_ASSETS, BTC_ASSETS,
                       SYM_DECIMALS, get_usd_price, get_chainlink_prices)
 
@@ -515,10 +523,12 @@ class MorphoSource(BaseSource):
         if len(final) > 0:
             min_ts = final["timestamp"].min().strftime("%Y-%m-%d %H:%M:%S")
             max_ts = final["timestamp"].max().strftime("%Y-%m-%d %H:%M:%S")
-            ch.command(
-                f"DELETE FROM {self.output_table} "
-                f"WHERE protocol='MORPHO_MARKET' "
-                f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
+            rewrite_protocol_window_if_enabled(
+                ch,
+                self.output_table,
+                "MORPHO_MARKET",
+                min_ts,
+                max_ts,
             )
             insert_df_batched(ch, self.output_table, final)
             upsert_api_market_latest(ch, final)
@@ -582,10 +592,11 @@ class MorphoSource(BaseSource):
             if alloc_rows:
                 alloc_df = pd.DataFrame(alloc_rows)
                 ts_str = batch_ts.strftime("%Y-%m-%d %H:%M:%S")
-                ch.command(
-                    f"DELETE FROM {self.output_table} "
-                    f"WHERE protocol='MORPHO_ALLOCATION' "
-                    f"AND timestamp = '{ts_str}'"
+                rewrite_protocol_timestamp_if_enabled(
+                    ch,
+                    self.output_table,
+                    "MORPHO_ALLOCATION",
+                    ts_str,
                 )
                 insert_df_batched(ch, self.output_table, alloc_df)
                 total_rows += len(alloc_df)
@@ -622,10 +633,11 @@ class MorphoSource(BaseSource):
             if vault_rows:
                 vault_df = pd.DataFrame(vault_rows)
                 ts_str = batch_ts.strftime("%Y-%m-%d %H:%M:%S")
-                ch.command(
-                    f"DELETE FROM {self.output_table} "
-                    f"WHERE protocol='MORPHO_VAULT' "
-                    f"AND timestamp = '{ts_str}'"
+                rewrite_protocol_timestamp_if_enabled(
+                    ch,
+                    self.output_table,
+                    "MORPHO_VAULT",
+                    ts_str,
                 )
                 insert_df_batched(ch, self.output_table, vault_df)
                 total_rows += len(vault_df)

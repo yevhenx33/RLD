@@ -31,7 +31,7 @@ typing_extensions==4.15.0
 urllib3==2.6.3
 zstandard==0.25.0
 
-fastapi
-strawberry-graphql[fastapi]
-uvicorn
+fastapi==0.116.2
+strawberry-graphql[fastapi]==0.286.1
+uvicorn==0.38.0
 

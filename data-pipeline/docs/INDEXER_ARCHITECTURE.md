@@ -35,6 +35,15 @@ Protocol-specific deep dives remain in:
 - Each worker is protocol-isolated (`--source ... --role ...`).
 - Collectors and processors run as independent loops with per-cycle error isolation.
 
+### Security runtime defaults
+
+- ClickHouse clients are expected to authenticate via:
+  - `CLICKHOUSE_USER`
+  - `CLICKHOUSE_PASSWORD`
+- GraphQL CORS should be explicit-origin only via:
+  - `ENVIO_CORS_ORIGINS`
+- Wildcard origins are intentionally excluded in API middleware.
+
 ## 3) Protocol and Cursor Semantics
 
 Canonical IDs are centralized in `indexer/protocols.py`:
@@ -68,6 +77,8 @@ Cursor/state tables:
 
 3. **API pre-aggregation write-through**
    - Processors upsert latest market snapshots into `api_market_latest` (ReplacingMergeTree).
+   - Incremental MVs populate `api_market_timeseries_hourly_agg` from `unified_timeseries`.
+   - Incremental MVs populate `api_protocol_tvl_entity_weekly_agg` from `unified_timeseries`.
    - Morpho processor writes `morpho_vault_allocations` snapshot rows for allocation API usage.
 
 4. **GraphQL serving**
@@ -90,14 +101,17 @@ Cursor/state tables:
 - `processor_state` (ReplacingMergeTree)
 - `collector_state` (ReplacingMergeTree)
 - `api_market_latest` (ReplacingMergeTree)
+- `api_market_timeseries_hourly_agg` (AggregatingMergeTree, month partition, TTL)
+- `api_protocol_tvl_entity_weekly_agg` (AggregatingMergeTree, month partition, TTL)
 - `morpho_vault_allocations` (ReplacingMergeTree)
 - `morpho_vault_meta` (ReplacingMergeTree)
 - `morpho_market_params` (dimension metadata)
 
 ### Important current behavior
 
-- Timeseries sources currently use lightweight `DELETE FROM ... WHERE ...` for range/snapshot rewrites before insert in some paths.
-- Inserts are now batched via `CLICKHOUSE_INSERT_BATCH_SIZE` (default `20000`).
+- Timeseries ingestion is append-first by default; mutation rewrites are optional behind `CLICKHOUSE_MUTATION_REWRITE_ENABLED`.
+- Inserts are batched via `CLICKHOUSE_INSERT_BATCH_SIZE` (default `20000`).
+- Async insert safeguards are supported via `CLICKHOUSE_ASYNC_INSERT` + `CLICKHOUSE_WAIT_FOR_ASYNC_INSERT`.
 - `api_market_latest` is bootstrapped on API startup if empty.
 
 ## 6) Health, Liveness, and Readiness Contract

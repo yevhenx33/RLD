@@ -56,7 +56,16 @@ async def run_worker(source_cls, role: str, genesis_override: int = None, poll_i
     if source.name == "MORPHO_MARKET":
         ch_host = os.getenv("CLICKHOUSE_HOST", "localhost")
         ch_port = int(os.getenv("CLICKHOUSE_PORT", "8123"))
-        ch = clickhouse_connect.get_client(host=ch_host, port=ch_port)
+        ch = clickhouse_connect.get_client(
+            host=ch_host,
+            port=ch_port,
+            username=os.getenv("CLICKHOUSE_USER", "default"),
+            password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+            settings={
+                "async_insert": 1 if os.getenv("CLICKHOUSE_ASYNC_INSERT", "true").strip().lower() in {"1", "true", "yes"} else 0,
+                "wait_for_async_insert": 1 if os.getenv("CLICKHOUSE_WAIT_FOR_ASYNC_INSERT", "true").strip().lower() in {"1", "true", "yes"} else 0,
+            },
+        )
         log.info(f"[{source.name}] Hydrating state cache...")
         source.load_state_from_ch(ch)
         ch.close()

@@ -18,7 +18,13 @@ from typing import Optional
 
 import pandas as pd
 
-from ..base import BaseSource, forward_fill_hourly, insert_df_batched, upsert_api_market_latest
+from ..base import (
+    BaseSource,
+    forward_fill_hourly,
+    insert_df_batched,
+    upsert_api_market_latest,
+    rewrite_protocol_window_if_enabled,
+)
 from ..aave_constants import (
     AAVE_V3_POOL,
     AAVE_V3_GENESIS_ANCHOR_BLOCK,
@@ -307,10 +313,12 @@ class AaveV3Source(BaseSource):
         if len(final) > 0:
             min_ts = final["timestamp"].min().strftime("%Y-%m-%d %H:%M:%S")
             max_ts = final["timestamp"].max().strftime("%Y-%m-%d %H:%M:%S")
-            ch.command(
-                f"DELETE FROM {self.output_table} "
-                f"WHERE protocol='AAVE_MARKET' "
-                f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
+            rewrite_protocol_window_if_enabled(
+                ch,
+                self.output_table,
+                "AAVE_MARKET",
+                min_ts,
+                max_ts,
             )
             insert_df_batched(ch, self.output_table, final)
             upsert_api_market_latest(ch, final)

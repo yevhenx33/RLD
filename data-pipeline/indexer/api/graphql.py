@@ -44,10 +44,32 @@ CLICKHOUSE_AUTOGENERATE_SESSION_ID = (
     os.getenv("CLICKHOUSE_AUTOGENERATE_SESSION_ID", "false").strip().lower()
     in ("1", "true", "yes")
 )
+CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "default")
+CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
+CLICKHOUSE_ASYNC_INSERT = (
+    os.getenv("CLICKHOUSE_ASYNC_INSERT", "true").strip().lower()
+    in ("1", "true", "yes")
+)
+CLICKHOUSE_WAIT_FOR_ASYNC_INSERT = (
+    os.getenv("CLICKHOUSE_WAIT_FOR_ASYNC_INSERT", "true").strip().lower()
+    in ("1", "true", "yes")
+)
 
 _CLICKHOUSE_CLIENT = None
 _CLICKHOUSE_LOCK = threading.Lock()
 _TABLES_READY = False
+API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
+API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
+
+
+def _parse_cors_origins(env_name: str, default_origins: list[str]) -> list[str]:
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return default_origins
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if not origins:
+        return default_origins
+    return [origin for origin in origins if origin != "*"] or default_origins
 
 
 @strawberry.type
@@ -127,9 +149,16 @@ class VaultAllocationPoint:
 
 
 def _new_clickhouse_client():
+    settings = {}
+    if CLICKHOUSE_ASYNC_INSERT:
+        settings["async_insert"] = 1
+        settings["wait_for_async_insert"] = 1 if CLICKHOUSE_WAIT_FOR_ASYNC_INSERT else 0
     return clickhouse_connect.get_client(
         host=os.getenv("CLICKHOUSE_HOST", "127.0.0.1"),
         port=int(os.getenv("CLICKHOUSE_PORT", "8123")),
+        username=CLICKHOUSE_USER,
+        password=CLICKHOUSE_PASSWORD,
+        settings=settings,
         connect_timeout=CLICKHOUSE_CONNECT_TIMEOUT,
         send_receive_timeout=CLICKHOUSE_SEND_RECEIVE_TIMEOUT,
         query_retries=CLICKHOUSE_QUERY_RETRIES,
@@ -180,6 +209,69 @@ def _ensure_support_tables(ch) -> None:
         ORDER BY (protocol, entity_id)
         """
     )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS api_market_timeseries_hourly_agg (
+            protocol LowCardinality(String),
+            entity_id String,
+            ts DateTime,
+            supply_apy_state AggregateFunction(avg, Float64),
+            borrow_apy_state AggregateFunction(avg, Float64),
+            utilization_state AggregateFunction(avg, Float64),
+            supply_usd_state AggregateFunction(avg, Float64),
+            borrow_usd_state AggregateFunction(avg, Float64)
+        ) ENGINE = AggregatingMergeTree()
+        PARTITION BY toStartOfMonth(ts)
+        ORDER BY (entity_id, ts, protocol)
+        TTL ts + INTERVAL 18 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS api_protocol_tvl_entity_weekly_agg (
+            day DateTime,
+            protocol LowCardinality(String),
+            entity_id String,
+            supply_usd_state AggregateFunction(argMax, Float64, DateTime)
+        ) ENGINE = AggregatingMergeTree()
+        PARTITION BY toStartOfMonth(day)
+        ORDER BY (day, protocol, entity_id)
+        TTL day + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_api_market_timeseries_hourly_agg
+        TO api_market_timeseries_hourly_agg
+        AS
+        SELECT
+            protocol,
+            entity_id,
+            toStartOfHour(timestamp) AS ts,
+            avgState(toFloat64(supply_apy)) AS supply_apy_state,
+            avgState(toFloat64(borrow_apy)) AS borrow_apy_state,
+            avgState(toFloat64(utilization)) AS utilization_state,
+            avgState(toFloat64(supply_usd)) AS supply_usd_state,
+            avgState(toFloat64(borrow_usd)) AS borrow_usd_state
+        FROM unified_timeseries
+        GROUP BY protocol, entity_id, ts
+        """
+    )
+    ch.command(
+        """
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_api_protocol_tvl_entity_weekly_agg
+        TO api_protocol_tvl_entity_weekly_agg
+        AS
+        SELECT
+            toStartOfWeek(timestamp) AS day,
+            splitByChar('_', protocol)[1] AS protocol,
+            entity_id,
+            argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
+        FROM unified_timeseries
+        WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+        GROUP BY day, protocol, entity_id
+        """
+    )
     # Bootstrap pre-aggregated latest table once on fresh deployments.
     latest_count = _query_int(ch, "SELECT count() FROM api_market_latest")
     if latest_count == 0:
@@ -204,6 +296,39 @@ def _ensure_support_tables(ch) -> None:
                 argMax(price_usd, timestamp) AS price_usd
             FROM unified_timeseries
             GROUP BY protocol, entity_id
+            """
+        )
+    hourly_count = _query_int(ch, "SELECT count() FROM api_market_timeseries_hourly_agg")
+    if hourly_count == 0:
+        ch.command(
+            """
+            INSERT INTO api_market_timeseries_hourly_agg
+            SELECT
+                protocol,
+                entity_id,
+                toStartOfHour(timestamp) AS ts,
+                avgState(toFloat64(supply_apy)) AS supply_apy_state,
+                avgState(toFloat64(borrow_apy)) AS borrow_apy_state,
+                avgState(toFloat64(utilization)) AS utilization_state,
+                avgState(toFloat64(supply_usd)) AS supply_usd_state,
+                avgState(toFloat64(borrow_usd)) AS borrow_usd_state
+            FROM unified_timeseries
+            GROUP BY protocol, entity_id, ts
+            """
+        )
+    weekly_count = _query_int(ch, "SELECT count() FROM api_protocol_tvl_entity_weekly_agg")
+    if weekly_count == 0:
+        ch.command(
+            """
+            INSERT INTO api_protocol_tvl_entity_weekly_agg
+            SELECT
+                toStartOfWeek(timestamp) AS day,
+                splitByChar('_', protocol)[1] AS protocol,
+                entity_id,
+                argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
+            FROM unified_timeseries
+            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            GROUP BY day, protocol, entity_id
             """
         )
     _TABLES_READY = True
@@ -303,14 +428,14 @@ def _normalize_rate_symbol(symbol: str) -> str:
     return upper
 
 
-def _time_bucket_expr(resolution: str) -> str:
+def _time_bucket_expr(resolution: str, column: str = "timestamp") -> str:
     mapping = {
-        "1H": "toStartOfHour(timestamp)",
-        "4H": "toStartOfInterval(timestamp, INTERVAL 4 HOUR)",
-        "1D": "toStartOfDay(timestamp)",
-        "1W": "toStartOfWeek(timestamp)",
+        "1H": f"toStartOfHour({column})",
+        "4H": f"toStartOfInterval({column}, INTERVAL 4 HOUR)",
+        "1D": f"toStartOfDay({column})",
+        "1W": f"toStartOfWeek({column})",
     }
-    return mapping.get(resolution.upper(), "toStartOfHour(timestamp)")
+    return mapping.get(resolution.upper(), f"toStartOfHour({column})")
 
 
 def _query_historical_rates(ch, symbols: list[str], resolution: str, limit: int) -> list[HistoricalRate]:
@@ -532,21 +657,33 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
 
 
 def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
-    # Keep history on base table; api_market_latest is "latest-only".
-    query = """
-    SELECT day, protocol, sum(supply_usd) AS total_supply
-    FROM (
-        SELECT entity_id,
-               splitByChar('_', protocol)[1] AS protocol,
-               toStartOfWeek(timestamp) AS day,
-               argMax(supply_usd, timestamp) AS supply_usd
-        FROM unified_timeseries
-        GROUP BY entity_id, protocol, day
-    )
-    GROUP BY day, protocol
-    ORDER BY day ASC
-    """
-    res = ch.query(query)
+    try:
+        res = ch.query(
+            f"""
+            SELECT day, protocol, sum(argMaxMerge(supply_usd_state)) AS total_supply
+            FROM {API_PROTOCOL_TVL_AGG_TABLE}
+            GROUP BY day, protocol
+            ORDER BY day ASC
+            """
+        )
+    except Exception:
+        # Compatibility fallback while weekly pre-agg table backfills.
+        res = ch.query(
+            """
+            SELECT day, protocol, sum(supply_usd) AS total_supply
+            FROM (
+                SELECT entity_id,
+                       splitByChar('_', protocol)[1] AS protocol,
+                       toStartOfWeek(timestamp) AS day,
+                       argMax(supply_usd, timestamp) AS supply_usd
+                FROM unified_timeseries
+                WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+                GROUP BY entity_id, protocol, day
+            )
+            GROUP BY day, protocol
+            ORDER BY day ASC
+            """
+        )
     pivot: dict[str, dict[str, float]] = {}
     for day, protocol, total_supply in res.result_rows:
         date_key = str(day)
@@ -567,25 +704,45 @@ def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
 
 
 def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) -> list[MarketTimeseriesPoint]:
-    time_expr = _time_bucket_expr(resolution)
+    time_expr = _time_bucket_expr(resolution, "ts")
     sql = f"""
     SELECT
         toUnixTimestamp({time_expr}) AS ts,
-        avg(supply_apy) AS supply_apy,
-        avg(borrow_apy) AS borrow_apy,
-        avg(utilization) AS utilization,
-        avg(supply_usd) AS supply_usd,
-        avg(borrow_usd) AS borrow_usd
-    FROM unified_timeseries
+        avgMerge(supply_apy_state) AS supply_apy,
+        avgMerge(borrow_apy_state) AS borrow_apy,
+        avgMerge(utilization_state) AS utilization,
+        avgMerge(supply_usd_state) AS supply_usd,
+        avgMerge(borrow_usd_state) AS borrow_usd
+    FROM {API_MARKET_TIMESERIES_AGG_TABLE}
     WHERE entity_id LIKE %(eid_prefix)s
     GROUP BY ts
     ORDER BY ts DESC
     LIMIT %(lim)s
     """
-    res = ch.query(
-        sql,
-        parameters={"eid_prefix": f"{entity_id}%", "lim": _safe_limit(limit)},
-    )
+    try:
+        res = ch.query(
+            sql,
+            parameters={"eid_prefix": f"{entity_id}%", "lim": _safe_limit(limit)},
+        )
+    except Exception:
+        # Compatibility fallback while hourly pre-agg table backfills.
+        res = ch.query(
+            f"""
+            SELECT
+                toUnixTimestamp({time_expr}) AS ts,
+                avg(supply_apy) AS supply_apy,
+                avg(borrow_apy) AS borrow_apy,
+                avg(utilization) AS utilization,
+                avg(supply_usd) AS supply_usd,
+                avg(borrow_usd) AS borrow_usd
+            FROM unified_timeseries
+            WHERE entity_id LIKE %(eid_prefix)s
+            GROUP BY ts
+            ORDER BY ts DESC
+            LIMIT %(lim)s
+            """,
+            parameters={"eid_prefix": f"{entity_id}%", "lim": _safe_limit(limit)},
+        )
     points = [
         MarketTimeseriesPoint(
             timestamp=int(row[0]),
@@ -753,10 +910,19 @@ class Query:
 schema = strawberry.Schema(query=Query)
 graphql_app = GraphQLRouter(schema)
 app = FastAPI(title="RLD ClickHouse GraphQL")
+_CORS_ORIGINS = _parse_cors_origins(
+    "ENVIO_CORS_ORIGINS",
+    [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://rld.fi",
+        "https://www.rld.fi",
+    ],
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

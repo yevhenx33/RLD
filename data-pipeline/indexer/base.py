@@ -29,8 +29,14 @@ PROTOCOL_TABLES = {
 }
 
 DEFAULT_INSERT_BATCH_SIZE = int(os.getenv("CLICKHOUSE_INSERT_BATCH_SIZE", "20000"))
+CLICKHOUSE_MUTATION_REWRITE_ENABLED = (
+    os.getenv("CLICKHOUSE_MUTATION_REWRITE_ENABLED", "false").strip().lower()
+    in {"1", "true", "yes"}
+)
 
 _API_TABLES_READY = False
+API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
+API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
 
 
 def insert_rows_batched(ch, table: str, rows: list[list], column_names: list[str], batch_size: int = DEFAULT_INSERT_BATCH_SIZE) -> int:
@@ -80,7 +86,129 @@ def ensure_api_preagg_tables(ch) -> None:
         ORDER BY (protocol, entity_id)
         """
     )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS api_market_timeseries_hourly_agg (
+            protocol LowCardinality(String),
+            entity_id String,
+            ts DateTime,
+            supply_apy_state AggregateFunction(avg, Float64),
+            borrow_apy_state AggregateFunction(avg, Float64),
+            utilization_state AggregateFunction(avg, Float64),
+            supply_usd_state AggregateFunction(avg, Float64),
+            borrow_usd_state AggregateFunction(avg, Float64)
+        ) ENGINE = AggregatingMergeTree()
+        PARTITION BY toStartOfMonth(ts)
+        ORDER BY (entity_id, ts, protocol)
+        TTL ts + INTERVAL 18 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS api_protocol_tvl_entity_weekly_agg (
+            day DateTime,
+            protocol LowCardinality(String),
+            entity_id String,
+            supply_usd_state AggregateFunction(argMax, Float64, DateTime)
+        ) ENGINE = AggregatingMergeTree()
+        PARTITION BY toStartOfMonth(day)
+        ORDER BY (day, protocol, entity_id)
+        TTL day + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_api_market_timeseries_hourly_agg
+        TO api_market_timeseries_hourly_agg
+        AS
+        SELECT
+            protocol,
+            entity_id,
+            toStartOfHour(timestamp) AS ts,
+            avgState(toFloat64(supply_apy)) AS supply_apy_state,
+            avgState(toFloat64(borrow_apy)) AS borrow_apy_state,
+            avgState(toFloat64(utilization)) AS utilization_state,
+            avgState(toFloat64(supply_usd)) AS supply_usd_state,
+            avgState(toFloat64(borrow_usd)) AS borrow_usd_state
+        FROM unified_timeseries
+        GROUP BY protocol, entity_id, ts
+        """
+    )
+    ch.command(
+        """
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_api_protocol_tvl_entity_weekly_agg
+        TO api_protocol_tvl_entity_weekly_agg
+        AS
+        SELECT
+            toStartOfWeek(timestamp) AS day,
+            splitByChar('_', protocol)[1] AS protocol,
+            entity_id,
+            argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
+        FROM unified_timeseries
+        WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+        GROUP BY day, protocol, entity_id
+        """
+    )
+    try:
+        hourly_rows = int(ch.command("SELECT count() FROM api_market_timeseries_hourly_agg") or 0)
+    except Exception:
+        hourly_rows = 0
+    if hourly_rows == 0:
+        ch.command(
+            """
+            INSERT INTO api_market_timeseries_hourly_agg
+            SELECT
+                protocol,
+                entity_id,
+                toStartOfHour(timestamp) AS ts,
+                avgState(toFloat64(supply_apy)) AS supply_apy_state,
+                avgState(toFloat64(borrow_apy)) AS borrow_apy_state,
+                avgState(toFloat64(utilization)) AS utilization_state,
+                avgState(toFloat64(supply_usd)) AS supply_usd_state,
+                avgState(toFloat64(borrow_usd)) AS borrow_usd_state
+            FROM unified_timeseries
+            GROUP BY protocol, entity_id, ts
+            """
+        )
+    try:
+        weekly_rows = int(ch.command("SELECT count() FROM api_protocol_tvl_entity_weekly_agg") or 0)
+    except Exception:
+        weekly_rows = 0
+    if weekly_rows == 0:
+        ch.command(
+            """
+            INSERT INTO api_protocol_tvl_entity_weekly_agg
+            SELECT
+                toStartOfWeek(timestamp) AS day,
+                splitByChar('_', protocol)[1] AS protocol,
+                entity_id,
+                argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
+            FROM unified_timeseries
+            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            GROUP BY day, protocol, entity_id
+            """
+        )
     _API_TABLES_READY = True
+
+
+def rewrite_protocol_window_if_enabled(ch, table: str, protocol: str, min_ts: str, max_ts: str) -> None:
+    if not CLICKHOUSE_MUTATION_REWRITE_ENABLED:
+        return
+    ch.command(
+        f"DELETE FROM {table} "
+        f"WHERE protocol='{protocol}' "
+        f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
+    )
+
+
+def rewrite_protocol_timestamp_if_enabled(ch, table: str, protocol: str, ts_str: str) -> None:
+    if not CLICKHOUSE_MUTATION_REWRITE_ENABLED:
+        return
+    ch.command(
+        f"DELETE FROM {table} "
+        f"WHERE protocol='{protocol}' "
+        f"AND timestamp = '{ts_str}'"
+    )
 
 
 def upsert_api_market_latest(ch, df) -> int:
@@ -137,6 +265,16 @@ def upsert_api_market_latest(ch, df) -> int:
             ]
         ],
     )
+
+
+def upsert_api_market_timeseries_hourly(ch, df) -> int:
+    ensure_api_preagg_tables(ch)
+    return 0
+
+
+def refresh_api_protocol_tvl_weekly(ch, min_ts, max_ts) -> int:
+    ensure_api_preagg_tables(ch)
+    return 0
 
 
 def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = True) -> pd.DataFrame:

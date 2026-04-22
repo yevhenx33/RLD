@@ -58,7 +58,16 @@ class ShadowWatcher:
         self.ch_port = clickhouse_port
 
     def get_ch_client(self):
-        return clickhouse_connect.get_client(host=self.ch_host, port=self.ch_port)
+        return clickhouse_connect.get_client(
+            host=self.ch_host,
+            port=self.ch_port,
+            username=os.getenv("CLICKHOUSE_USER", "default"),
+            password=os.getenv("CLICKHOUSE_PASSWORD", ""),
+            settings={
+                "async_insert": 1 if os.getenv("CLICKHOUSE_ASYNC_INSERT", "true").strip().lower() in {"1", "true", "yes"} else 0,
+                "wait_for_async_insert": 1 if os.getenv("CLICKHOUSE_WAIT_FOR_ASYNC_INSERT", "true").strip().lower() in {"1", "true", "yes"} else 0,
+            },
+        )
         
     def check_aave_integrity(self):
         ch = self.get_ch_client()

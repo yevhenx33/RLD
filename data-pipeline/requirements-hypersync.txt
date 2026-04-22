@@ -1,4 +1,4 @@
-hypersync>=0.8
-pyarrow>=14.0
-clickhouse-connect>=0.7
-python-dotenv>=1.0
+hypersync==1.0.0
+pyarrow==23.0.1
+clickhouse-connect==0.15.1
+python-dotenv==1.2.2
