@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 import datetime
 import logging
+import os
 
 import hypersync
 import pandas as pd
@@ -26,6 +27,116 @@ PROTOCOL_TABLES = {
     "MORPHO_ALLOCATION": "morpho_timeseries",
     "MORPHO_VAULT": "morpho_timeseries",
 }
+
+DEFAULT_INSERT_BATCH_SIZE = int(os.getenv("CLICKHOUSE_INSERT_BATCH_SIZE", "20000"))
+
+_API_TABLES_READY = False
+
+
+def insert_rows_batched(ch, table: str, rows: list[list], column_names: list[str], batch_size: int = DEFAULT_INSERT_BATCH_SIZE) -> int:
+    """Insert rows in bounded batches to avoid tiny-part explosion."""
+    if not rows:
+        return 0
+    written = 0
+    for start in range(0, len(rows), batch_size):
+        chunk = rows[start:start + batch_size]
+        ch.insert(table, chunk, column_names=column_names)
+        written += len(chunk)
+    return written
+
+
+def insert_df_batched(ch, table: str, df, batch_size: int = DEFAULT_INSERT_BATCH_SIZE) -> int:
+    """Insert DataFrame in bounded batches to control part count."""
+    if df is None or len(df) == 0:
+        return 0
+    written = 0
+    for start in range(0, len(df), batch_size):
+        chunk = df.iloc[start:start + batch_size]
+        ch.insert_df(table, chunk)
+        written += len(chunk)
+    return written
+
+
+def ensure_api_preagg_tables(ch) -> None:
+    global _API_TABLES_READY
+    if _API_TABLES_READY:
+        return
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS api_market_latest (
+            protocol LowCardinality(String),
+            entity_id String,
+            symbol LowCardinality(String),
+            target_id String,
+            timestamp DateTime,
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY (protocol, entity_id)
+        """
+    )
+    _API_TABLES_READY = True
+
+
+def upsert_api_market_latest(ch, df) -> int:
+    """
+    Maintain a fast API-facing latest snapshot table.
+    Keeps one logical row per (protocol, entity_id) via ReplacingMergeTree.
+    """
+    if df is None or len(df) == 0:
+        return 0
+    required = {
+        "protocol",
+        "entity_id",
+        "symbol",
+        "target_id",
+        "timestamp",
+        "supply_usd",
+        "borrow_usd",
+        "supply_apy",
+        "borrow_apy",
+        "utilization",
+        "price_usd",
+    }
+    if not required.issubset(set(df.columns)):
+        return 0
+    ensure_api_preagg_tables(ch)
+    latest = (
+        df.sort_values("timestamp")
+        .groupby(["protocol", "entity_id"], as_index=False)
+        .tail(1)
+        .copy()
+    )
+    if latest.empty:
+        return 0
+    latest["target_id"] = latest["target_id"].fillna("").astype(str)
+    latest["symbol"] = latest["symbol"].fillna("").astype(str)
+    latest["protocol"] = latest["protocol"].fillna("").astype(str)
+    latest["entity_id"] = latest["entity_id"].fillna("").astype(str)
+    return insert_df_batched(
+        ch,
+        "api_market_latest",
+        latest[
+            [
+                "protocol",
+                "entity_id",
+                "symbol",
+                "target_id",
+                "timestamp",
+                "supply_usd",
+                "borrow_usd",
+                "supply_apy",
+                "borrow_apy",
+                "utilization",
+                "price_usd",
+            ]
+        ],
+    )
 
 
 def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = True) -> pd.DataFrame:
@@ -251,13 +362,18 @@ class BaseSource(ABC):
                 entry.data or "",
             ])
 
-        if rows:
-            ch.insert(self.raw_table, rows, column_names=[
+        if not rows:
+            return 0
+        return insert_rows_batched(
+            ch,
+            self.raw_table,
+            rows,
+            [
                 "block_number", "block_timestamp", "tx_hash", "log_index",
                 "contract", "event_name", "topic0", "topic1", "topic2",
                 "topic3", "data",
-            ])
-        return len(rows)
+            ],
+        )
 
     def _event_name(self, log_entry) -> str:
         """Derive event name from topic0. Override for custom naming."""

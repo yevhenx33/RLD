@@ -18,7 +18,7 @@ from typing import Optional
 
 import pandas as pd
 
-from ..base import BaseSource, forward_fill_hourly
+from ..base import BaseSource, forward_fill_hourly, insert_df_batched, upsert_api_market_latest
 from ..aave_constants import (
     AAVE_V3_POOL,
     AAVE_V3_GENESIS_ANCHOR_BLOCK,
@@ -308,11 +308,12 @@ class AaveV3Source(BaseSource):
             min_ts = final["timestamp"].min().strftime("%Y-%m-%d %H:%M:%S")
             max_ts = final["timestamp"].max().strftime("%Y-%m-%d %H:%M:%S")
             ch.command(
-                f"ALTER TABLE {self.output_table} DELETE "
+                f"DELETE FROM {self.output_table} "
                 f"WHERE protocol='AAVE_MARKET' "
                 f"AND timestamp >= '{min_ts}' AND timestamp <= '{max_ts}'"
             )
-            ch.insert_df(self.output_table, final)
+            insert_df_batched(ch, self.output_table, final)
+            upsert_api_market_latest(ch, final)
             
             # Persist dynamic physical state boundaries
             if len(self._reserves) > 0:
@@ -325,6 +326,6 @@ class AaveV3Source(BaseSource):
                         "variable_borrow_index": float(r.variable_borrow_index)
                     } for eid, r in self._reserves.items()
                 ])
-                ch.insert_df("aave_scaled_state", state_df)
+                insert_df_batched(ch, "aave_scaled_state", state_df)
 
         return len(final)

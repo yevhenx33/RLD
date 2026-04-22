@@ -20,6 +20,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from indexer.collector import ProtocolCollector
 from indexer.processor import ProtocolProcessor
 from indexer.sources import FluidSource, ChainlinkSource, AaveV3Source, MorphoSource, LidoRebaseSource, StaticPegsSource, PendleSwapSource, SofrSource
+from indexer.protocols import (
+    AAVE_MARKET,
+    MORPHO_MARKET,
+    FLUID_MARKET,
+    CHAINLINK_PRICES,
+    SOFR_RATES,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,14 +36,14 @@ logging.basicConfig(
 log = logging.getLogger("rld-worker")
 
 SOURCE_MAP = {
-    "AAVE_MARKET": AaveV3Source,
-    "MORPHO_MARKET": MorphoSource,
+    AAVE_MARKET: AaveV3Source,
+    MORPHO_MARKET: MorphoSource,
     "PENDLE_MARKET": PendleSwapSource,
-    "FLUID_MARKET": FluidSource,
-    "CHAINLINK_PRICES": ChainlinkSource,
+    FLUID_MARKET: FluidSource,
+    CHAINLINK_PRICES: ChainlinkSource,
     "LIDO_REBASE": LidoRebaseSource,
     "STATIC_PEGS": StaticPegsSource,
-    "SOFR_RATES": SofrSource,
+    SOFR_RATES: SofrSource,
 }
 
 async def run_worker(source_cls, role: str, genesis_override: int = None, poll_interval: int = 60):
