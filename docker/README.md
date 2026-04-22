@@ -23,6 +23,23 @@ Use only:
 
 All launch services share `rld_shared`.
 
+## Indexer Architecture Reference
+
+For the current rates/indexer architecture and planned hardening roadmap, see:
+
+- `data-pipeline/docs/INDEXER_ARCHITECTURE.md`
+- `data-pipeline/docs/AAVE_INDEXER.md`
+- `data-pipeline/docs/MORPHO_INDEXER.md`
+
+### Envio Health Contract
+
+- Liveness: `GET /livez` (cheap process-level probe, used by Docker healthcheck).
+- Service health: `GET /healthz` (includes ClickHouse reachability + both `collectorLag` and `processingLag` snapshots).
+- Readiness: `GET /readyz` (returns `503` when either collector or processor lag exceeds threshold; does not imply process crash).
+- Operational meaning:
+  - `unhealthy` container -> restart/service-level incident.
+  - `readyz=503` with healthy liveness -> data freshness incident (collector/processor lag), not API outage.
+
 ## First-Time Setup
 
 ```bash

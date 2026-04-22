@@ -24,12 +24,13 @@ services:
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      - RATES_API_URL=http://host.docker.internal:5000
+      - RATES_API_URL=http://rld_graphql_api:5000
       - MAINNET_RPC_URL=${BOT_RPC_URL:-https://eth.llamarpc.com}
       - API_KEY=${API_KEY:-}
       - PYTHONUNBUFFERED=1
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      graphql-api:
+        condition: service_healthy
     volumes:
       - ./bot-data:/data
     restart: unless-stopped
@@ -39,6 +40,66 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
+
+  graphql-api:
+    build:
+      context: ../data-pipeline
+      dockerfile: Dockerfile.indexer
+    container_name: rld_graphql_api
+    restart: unless-stopped
+    env_file:
+      - ../data-pipeline/.env
+    environment:
+      - CLICKHOUSE_HOST=172.17.0.1
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - INDEXER_READY_PROTOCOLS=AAVE_MARKET,MORPHO_MARKET,CHAINLINK_PRICES
+      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
+    command:
+      [
+        "uvicorn",
+        "indexer.api.graphql:create_app",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5000",
+        "--workers",
+        "2",
+        "--http",
+        "h11",
+        "--timeout-keep-alive",
+        "5",
+        "--limit-max-requests",
+        "20000",
+        "--limit-max-requests-jitter",
+        "2000",
+        "--limit-concurrency",
+        "512"
+      ]
+    volumes:
+      - ../data-pipeline/indexer:/app/indexer
+    ports:
+      - "127.0.0.1:5000:5000"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:5000/livez', timeout=2)"
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
 
   morpho-indexer:
     profiles: ["analytics"]
