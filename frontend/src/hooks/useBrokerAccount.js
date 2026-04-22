@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import useSWR from "swr";
 import { ethers } from "ethers";
 import { RPC_URL, getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
@@ -68,27 +69,61 @@ async function _waitForTx(txHash, timeout = 30000) {
 export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
   const [hasBroker, setHasBroker] = useState(null); // null=loading
   const [brokerAddress, setBrokerAddress] = useState(null);
-  const [brokerBalance, setBrokerBalance] = useState(null); // waUSDC balance of broker
   const [creating, setCreating] = useState(false);
   const [depositing, setDepositing] = useState(false);
   const [error, setError] = useState(null);
   const [step, setStep] = useState(""); // status text
 
-  // ── Fetch broker's waUSDC balance ──────────────────────────────
+  const brokerBalanceKey =
+    brokerAddress && waUsdcAddr
+      ? [
+          "broker.balance.v1",
+          brokerAddress.toLowerCase(),
+          waUsdcAddr.toLowerCase(),
+        ]
+      : null;
+
+  const { data: brokerBalance, mutate: mutateBrokerBalance } = useSWR(
+    brokerBalanceKey,
+    async () => {
+      const provider = rpcProvider;
+      const token = new ethers.Contract(waUsdcAddr, ERC20_ABI, provider);
+      const bal = await token.balanceOf(brokerAddress);
+      return ethers.formatUnits(bal, 6);
+    },
+    {
+      refreshInterval: 12000,
+      dedupingInterval: 2000,
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    },
+  );
+
+  // ── Fetch broker's waUSDC balance on demand ────────────────────
   const fetchBrokerBalance = useCallback(
-    async (brokerAddr) => {
-      if (!brokerAddr || !waUsdcAddr) return;
+    async (targetBrokerAddress) => {
+      const normalizedTarget = targetBrokerAddress?.toLowerCase();
+      if (!brokerAddress || !waUsdcAddr) return null;
+      if (normalizedTarget && normalizedTarget !== brokerAddress.toLowerCase()) {
+        try {
+          const provider = rpcProvider;
+          const token = new ethers.Contract(waUsdcAddr, ERC20_ABI, provider);
+          const bal = await token.balanceOf(targetBrokerAddress);
+          return ethers.formatUnits(bal, 6);
+        } catch (e) {
+          console.warn("Failed to fetch broker balance:", e);
+          return null;
+        }
+      }
       try {
-        const provider = rpcProvider;
-        const token = new ethers.Contract(waUsdcAddr, ERC20_ABI, provider);
-        const bal = await token.balanceOf(brokerAddr);
-        // waUSDC has 6 decimals
-        setBrokerBalance(ethers.formatUnits(bal, 6));
+        const latest = await mutateBrokerBalance();
+        return latest ?? null;
       } catch (e) {
         console.warn("Failed to fetch broker balance:", e);
+        return null;
       }
     },
-    [waUsdcAddr],
+    [brokerAddress, waUsdcAddr, mutateBrokerBalance],
   );
 
   // ── Check broker ownership & resolve address ────────────────────
@@ -117,32 +152,21 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
           const latestEvent = events[events.length - 1];
           const addr = latestEvent.args.broker;
           setBrokerAddress(addr);
-          fetchBrokerBalance(addr);
         }
         setHasBroker(true);
       } else {
         setHasBroker(false);
         setBrokerAddress(null);
-        setBrokerBalance(null);
       }
     } catch (e) {
       console.warn("Broker check failed:", e);
       setHasBroker(null);
     }
-  }, [account, brokerFactoryAddr, fetchBrokerBalance]);
+  }, [account, brokerFactoryAddr]);
 
   useEffect(() => {
     checkBroker();
   }, [checkBroker]);
-
-  // ── Auto-refresh broker balance every 12s ──────────────────────
-  useEffect(() => {
-    if (!brokerAddress || !waUsdcAddr) return;
-    const interval = setInterval(() => {
-      fetchBrokerBalance(brokerAddress);
-    }, 12_000);
-    return () => clearInterval(interval);
-  }, [brokerAddress, waUsdcAddr, fetchBrokerBalance]);
 
   // ── Create broker via MetaMask signing ──────────────────────────
   const createBroker = useCallback(async () => {
@@ -240,7 +264,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
         await tx.wait();
 
         // Refresh broker balance after deposit
-        await fetchBrokerBalance(brokerAddress);
+        await fetchBrokerBalance();
 
         setStep("Deposit confirmed ✓");
       } catch (e) {

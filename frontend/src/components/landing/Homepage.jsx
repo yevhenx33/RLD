@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import useInView from '../../hooks/useInView'
-import Header from '../layout/Header'
 
 // ── Shared grain overlay ──────────────────────────────────────────
 const GRAIN_SVG = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E")`
@@ -42,11 +41,6 @@ function HeroSection() {
   return (
     <section className="relative bg-[#050505] overflow-hidden min-h-screen flex flex-col">
       <Grain />
-
-      {/* Header lives inside the hero for the homepage */}
-      <div className="relative z-20">
-        <Header isCapped={false} ratesLoaded={true} transparent />
-      </div>
 
       {/* Hero body — flex-1 so it fills the remaining space and centers content */}
       <div className="relative z-10 flex-1 flex items-center justify-center py-20 px-8 md:px-14 lg:ml-[120px] mb-[50px]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>

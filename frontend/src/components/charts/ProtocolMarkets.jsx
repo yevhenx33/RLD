@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import useSWR from "swr";
 import {
   Loader2,
   ChevronDown,
@@ -9,7 +10,8 @@ import {
   ArrowLeft,
   Zap,
 } from "lucide-react";
-import { ENVIO_GQL_URL } from "../../utils/helpers";
+import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
+import { postGraphQL } from "../../api/graphqlClient";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
 
 const PAGE_SIZE = 25;
@@ -20,6 +22,23 @@ const PROTOCOL_MAP = {
   euler: "EULER_MARKET",
   fluid: "FLUID_MARKET",
 };
+
+const PROTOCOL_MARKETS_QUERY = `
+  query ProtocolMarketsByProtocol($protocol: String!) {
+    protocolMarkets(protocol: $protocol) {
+      entityId
+      symbol
+      protocol
+      supplyUsd
+      borrowUsd
+      supplyApy
+      borrowApy
+      utilization
+      collateralSymbol
+      lltv
+    }
+  }
+`;
 
 const formatCurrency = (value) => {
   if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
@@ -41,52 +60,46 @@ export default function ProtocolMarkets() {
   const protocolName = getProtocolDisplayName(protocolKey);
   const isMorpho = protocolKey.startsWith("MORPHO");
 
-  const [markets, setMarkets] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [sortKey, setSortKey] = useState("supplyUsd");
   const [sortDir, setSortDir] = useState("desc");
+  const { data, error, isLoading: loading } = useSWR(
+    [ENVIO_GRAPHQL_URL, "envio.protocol-markets.v1", { protocol: protocolKey }],
+    ([url, , variables]) =>
+      postGraphQL(url, { query: PROTOCOL_MARKETS_QUERY, variables }),
+    {
+      refreshInterval: 30000,
+      dedupingInterval: 5000,
+      revalidateOnFocus: false,
+    },
+  );
 
-  // --- Fetch individual markets ---
   useEffect(() => {
-    const fetchMarkets = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch(ENVIO_GQL_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `{ protocolMarkets(protocol: "${protocolKey}") { entityId symbol protocol supplyUsd borrowUsd supplyApy borrowApy utilization collateralSymbol lltv } }`,
-          }),
-        });
-        const json = await res.json();
-        const rows = json?.data?.protocolMarkets || [];
-        setMarkets(
-          rows
-            .map((r) => ({
-              entityId: r.entityId,
-              collateralIcon: r.collateralSymbol ? getTokenIcon(r.collateralSymbol) : null,
-              collateralSymbol: r.collateralSymbol || null,
-              loanIcon: getTokenIcon(r.symbol),
-              loanName: getTokenName(r.symbol),
-              symbol: r.symbol,
-              protocol: r.protocol,
-              supplyUsd: r.supplyUsd || 0,
-              borrowUsd: r.borrowUsd || 0,
-              supplyApy: r.supplyApy || 0,
-              borrowApy: r.borrowApy || 0,
-              utilization: r.utilization || 0,
-              lltv: r.lltv || 0,
-            }))
-            .filter((m) => m.utilization < 0.99)
-        );
-      } catch (err) {
-        console.error("ProtocolMarkets fetch error:", err);
-      }
-      setLoading(false);
-    };
-    fetchMarkets();
-  }, [protocolKey]);
+    if (error) {
+      console.error("ProtocolMarkets fetch error:", error);
+    }
+  }, [error]);
+
+  const markets = useMemo(() => {
+    const rows = data?.protocolMarkets || [];
+    return rows
+      .map((r) => ({
+        entityId: r.entityId,
+        collateralIcon: r.collateralSymbol ? getTokenIcon(r.collateralSymbol) : null,
+        collateralSymbol: r.collateralSymbol || null,
+        loanIcon: getTokenIcon(r.symbol),
+        loanName: getTokenName(r.symbol),
+        symbol: r.symbol,
+        protocol: r.protocol,
+        supplyUsd: r.supplyUsd || 0,
+        borrowUsd: r.borrowUsd || 0,
+        supplyApy: r.supplyApy || 0,
+        borrowApy: r.borrowApy || 0,
+        utilization: r.utilization || 0,
+        lltv: r.lltv || 0,
+      }))
+      .filter((m) => m.utilization < 0.99);
+  }, [data]);
 
   // --- Sort handler ---
   const handleSort = useCallback((key) => {

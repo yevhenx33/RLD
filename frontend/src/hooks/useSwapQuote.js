@@ -1,5 +1,6 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useCallback, useMemo, useRef, useEffect, useState } from "react";
 import { ethers } from "ethers";
+import useSWR from "swr";
 import { rpcProvider } from "../utils/provider";
 
 // Mainnet V4 Quoter ABI — quoteExactInputSingle(QuoteExactSingleParams)
@@ -56,25 +57,29 @@ export function useSwapQuote(
   direction = "BUY",
   debounceMs = 500,
 ) {
-  const [quote, setQuote] = useState(null); // { amountOut, entryRate, notional, estFee, gasEstimate }
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const timerRef = useRef(null);
+  const debounceRef = useRef(null);
+  const [debouncedAmount, setDebouncedAmount] = useState(amountIn);
+
+  useEffect(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = setTimeout(() => setDebouncedAmount(amountIn), debounceMs);
+    return () => {
+      clearTimeout(debounceRef.current);
+    };
+  }, [amountIn, debounceMs]);
 
   const fetchQuote = useCallback(async () => {
     if (
       !infrastructure?.v4_quoter ||
       !collateralAddr ||
       !positionAddr ||
-      !amountIn ||
-      amountIn <= 0
+      !debouncedAmount ||
+      debouncedAmount <= 0
     ) {
-      setQuote(null);
-      return;
+      return null;
     }
-
-    setLoading(true);
-    setError(null);
 
     try {
       const provider = rpcProvider;
@@ -111,7 +116,7 @@ export function useSwapQuote(
           : collateralAddr.toLowerCase() < positionAddr.toLowerCase();
 
       // Both waUSDC and wRLP have 6 decimals
-      const exactAmount = ethers.parseUnits(String(amountIn), 6);
+      const exactAmount = ethers.parseUnits(String(debouncedAmount), 6);
 
       // V4Quoter.quoteExactInputSingle is NOT a view function —
       // it calls PoolManager.unlock() which reverts internally.
@@ -133,7 +138,7 @@ export function useSwapQuote(
 
       // Trading fee: pool_fee / 1e6 (e.g., 500 = 0.05%)
       const poolFeeRate = (infrastructure.pool_fee || 500) / 1e6;
-      const tradingFee = amountIn * poolFeeRate;
+      const tradingFee = debouncedAmount * poolFeeRate;
 
       // Rate: price per wRLP in waUSDC terms
       // BUY:  entryRate = waUSDC_in / wRLP_out
@@ -141,15 +146,14 @@ export function useSwapQuote(
       const rate =
         direction === "SELL"
           ? amountOutFormatted > 0
-            ? amountOutFormatted / amountIn
+            ? amountOutFormatted / debouncedAmount
             : 0
           : amountOutFormatted > 0
-            ? amountIn / amountOutFormatted
+            ? debouncedAmount / amountOutFormatted
             : 0;
+      const notional = direction === "SELL" ? amountOutFormatted : debouncedAmount;
 
-      const notional = direction === "SELL" ? amountOutFormatted : amountIn;
-
-      setQuote({
+      return {
         amountOut: amountOutFormatted,
         entryRate: rate,
         exitRate: rate,
@@ -158,29 +162,53 @@ export function useSwapQuote(
         gasEstimate: Number(gasEstimateRaw),
         amountOutRaw: amountOutRaw.toString(),
         direction,
-      });
+      };
     } catch (e) {
       console.warn("Quote failed:", e);
-      setError(e.message || "Quote failed");
-      setQuote(null);
-    } finally {
-      setLoading(false);
+      throw e;
     }
-  }, [infrastructure, collateralAddr, positionAddr, amountIn, direction]);
+  }, [infrastructure, collateralAddr, positionAddr, debouncedAmount, direction]);
 
-  // Debounced fetch + 5s auto-refresh
-  useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(fetchQuote, debounceMs);
+  const swrKey = useMemo(() => {
+    if (
+      !infrastructure?.v4_quoter ||
+      !collateralAddr ||
+      !positionAddr ||
+      !(debouncedAmount > 0)
+    ) {
+      return null;
+    }
+    return [
+      "swap.quote.v1",
+      infrastructure.v4_quoter.toLowerCase(),
+      collateralAddr.toLowerCase(),
+      positionAddr.toLowerCase(),
+      Number(debouncedAmount),
+      direction,
+      infrastructure.pool_fee || 500,
+      infrastructure.tick_spacing || 5,
+      infrastructure.twamm_hook?.toLowerCase() || "",
+    ];
+  }, [infrastructure, collateralAddr, positionAddr, debouncedAmount, direction]);
 
-    // Auto-refresh every 12s
-    const interval = setInterval(fetchQuote, 12000);
+  const {
+    data: quote,
+    isLoading,
+    error: swrError,
+    mutate,
+  } = useSWR(swrKey, fetchQuote, {
+    refreshInterval: 12000,
+    dedupingInterval: 400,
+    revalidateOnFocus: false,
+    keepPreviousData: true,
+  });
 
-    return () => {
-      clearTimeout(timerRef.current);
-      clearInterval(interval);
-    };
-  }, [fetchQuote, debounceMs]);
+  const refresh = useCallback(async () => mutate(), [mutate]);
 
-  return { quote, loading, error, refresh: fetchQuote };
+  return {
+    quote: quote ?? null,
+    loading: isLoading,
+    error: swrError?.message || null,
+    refresh,
+  };
 }

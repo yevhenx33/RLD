@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { SIM_API } from "../../config/simulationConfig";
+import React, { useState, useEffect } from "react";
+import useSWR from "swr";
+import { SIM_GRAPHQL_URL } from "../../api/endpoints";
+import { postGraphQL } from "../../api/graphqlClient";
 
-const GQL_URL = `${SIM_API}/graphql`;
 const MARKET_ID =
   "0x3de6baf71424c800a4c01e4a7b114737736e311611a7298b946609eeb0b4f0f6";
 
@@ -19,18 +20,6 @@ const ALL_BROKERS_QUERY = `
     poolSnapshot(marketId: $marketId) { markPrice indexPrice tick normalizationFactor }
   }
 `;
-
-async function gqlFetch(query, variables) {
-  const res = await fetch(GQL_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables }),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  if (json.errors) throw new Error(json.errors[0]?.message || "GQL error");
-  return json.data;
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────
 function raw(val) {
@@ -61,34 +50,33 @@ function statusPill(frozen, liquidated) {
 
 // ── Component ────────────────────────────────────────────────────────
 export default function BrokersDashboard() {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
+  const [lastError, setLastError] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [expandedBroker, setExpandedBroker] = useState(null);
-  const mountedRef = useRef(true);
-
-  const fetchData = useCallback(async () => {
-    try {
-      const res = await gqlFetch(ALL_BROKERS_QUERY, { marketId: MARKET_ID });
-      if (mountedRef.current) {
-        setData(res);
-        setError(null);
-        setLastUpdate(new Date());
-      }
-    } catch (e) {
-      if (mountedRef.current) setError(e.message);
-    }
-  }, []);
+  const { data, error } = useSWR(
+    [SIM_GRAPHQL_URL, "brokers.dashboard.v1", { marketId: MARKET_ID }],
+    ([url, , variables]) =>
+      postGraphQL(url, { query: ALL_BROKERS_QUERY, variables }),
+    {
+      refreshInterval: 3000,
+      dedupingInterval: 1000,
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    },
+  );
 
   useEffect(() => {
-    mountedRef.current = true;
-    fetchData();
-    const interval = setInterval(fetchData, 1000);
-    return () => {
-      mountedRef.current = false;
-      clearInterval(interval);
-    };
-  }, [fetchData]);
+    if (data) {
+      setLastUpdate(new Date());
+      setLastError(null);
+    }
+  }, [data]);
+
+  useEffect(() => {
+    if (error) {
+      setLastError(error.message || "Failed to fetch brokers");
+    }
+  }, [error]);
 
   const brokers = data?.brokers || [];
   const lpPositions = data?.lpPositions || [];
@@ -141,9 +129,9 @@ export default function BrokersDashboard() {
             </div>
           )}
           <div className="flex items-center gap-2">
-            <div className={`w-1.5 h-1.5 rounded-full ${error ? "bg-red-500" : "bg-emerald-500 animate-pulse"}`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${lastError ? "bg-red-500" : "bg-emerald-500 animate-pulse"}`} />
             <span className="tracking-wider uppercase">
-              {error ? "ERR" : lastUpdate ? `${lastUpdate.toLocaleTimeString()}` : "..."}
+              {lastError ? "ERR" : lastUpdate ? `${lastUpdate.toLocaleTimeString()}` : "..."}
             </span>
           </div>
         </div>
@@ -159,9 +147,9 @@ export default function BrokersDashboard() {
       </div>
 
       {/* Error Banner */}
-      {error && (
+      {lastError && (
         <div className="mb-4 border border-red-500/30 bg-red-500/5 px-4 py-3 text-xs text-red-400 font-mono">
-          ⚠ {error}
+          ⚠ {lastError}
         </div>
       )}
 

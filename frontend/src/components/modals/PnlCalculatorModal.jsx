@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { X, RefreshCw } from "lucide-react";
-import SettingsButton from "../common/SettingsButton";
+import SettingsButton from "../shared/SettingsButton";
 
 /**
  * Self-contained PnL Calculator modal.

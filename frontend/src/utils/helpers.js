@@ -1,18 +1,15 @@
-import axios from "axios";
+import { API_BASE_URL, ENVIO_GRAPHQL_URL } from "../api/endpoints";
 
-export const API_BASE =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+export const API_BASE = API_BASE_URL;
 export const API_URL = API_BASE;
 
 // API auth is handled server-side by Nginx proxy — no client-side key needed
 export const authHeaders = {};
 
-export const ENVIO_GQL_URL = "/envio-graphql";
+export const ENVIO_GQL_URL = ENVIO_GRAPHQL_URL;
 
 // Earliest date the indexer has data for (protocol deployment date)
 export const DEPLOYMENT_DATE = "2026-03-03";
-
-export const fetcher = (url) => axios.get(url).then((res) => res.data);
 
 export const getPastDate = (days) => {
   const d = new Date();

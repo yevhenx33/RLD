@@ -1,30 +1,21 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
-import { SIM_API } from "../config/simulationConfig";
+import { SIM_GRAPHQL_URL } from "../api/endpoints";
+import { postGraphQL } from "../api/graphqlClient";
+import { queryKeys } from "../api/queryKeys";
 
 // Broker labels by deployment order (deployer always creates in this sequence)
 const BROKER_LABELS = ["User A", "MM Daemon", "Chaos Trader"];
 
-// ── GraphQL fetcher ──────────────────────────────────────────
-const GQL_URL = `${SIM_API}/graphql`;
+// ── GraphQL fetchers ────────────────────────────────────────
+const fetchSimulationSnapshot = ([url]) =>
+  postGraphQL(url, { query: SIM_QUERY });
 
-const gqlFetcher = ([url, query, variables]) => {
-  const body = { query };
-  if (variables) body.variables = variables;
-  return fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-    .then((r) => {
-      if (!r.ok) throw new Error(`GraphQL HTTP ${r.status}`);
-      return r.json();
-    })
-    .then((r) => {
-      if (r.errors) console.warn("[GQL] errors:", r.errors);
-      return r.data;
-    });
-};
+const fetchSimulationAccount = ([url, , variables]) =>
+  postGraphQL(url, { query: ACCOUNT_QUERY, variables });
+
+const fetchSimulationCandles = ([url, , variables]) =>
+  postGraphQL(url, { query: CHART_QUERY, variables });
 
 // ── Single GraphQL query — indexer returns JSON scalars ───────
 const SIM_QUERY = `
@@ -128,22 +119,23 @@ export function useSimulation({
     data: gqlData,
     error: gqlError,
     isLoading: gqlLoading,
-  } = useSWR([GQL_URL, SIM_QUERY, null], gqlFetcher, {
+  } = useSWR(
+    queryKeys.simulationSnapshot(SIM_GRAPHQL_URL),
+    fetchSimulationSnapshot,
+    {
     refreshInterval: pollInterval,
     revalidateOnFocus: false,
     dedupingInterval: 1000,
     keepPreviousData: true,
     onSuccess: () => setConnected(true),
     onError: () => setConnected(false),
-  });
+    },
+  );
 
   // ── Tier 2: Account SWR (wallet-keyed, 5s poll) ────────────────
-  const accountVars = account
-    ? { owner: account.toLowerCase(), status: "all" }
-    : null;
   const { data: accountData } = useSWR(
-    account ? [GQL_URL, ACCOUNT_QUERY, accountVars] : null,
-    gqlFetcher,
+    account ? queryKeys.simulationAccount(SIM_GRAPHQL_URL, account) : null,
+    fetchSimulationAccount,
     {
       refreshInterval: 15000,   // balances trigger RPC calls — don't hammer
       revalidateOnFocus: false,
@@ -166,8 +158,10 @@ export function useSimulation({
   }), [chartResolution, chartStartTime, chartEndTime, snapshotMarketId]);
 
   const { data: chartGqlData, error: chartError } = useSWR(
-    snapshotMarketId ? [GQL_URL, CHART_QUERY, chartVars] : null, // wait for marketId
-    gqlFetcher,
+    snapshotMarketId
+      ? queryKeys.simulationCandles(SIM_GRAPHQL_URL, chartVars)
+      : null,
+    fetchSimulationCandles,
     {
       refreshInterval: 30000,
       revalidateOnFocus: false,

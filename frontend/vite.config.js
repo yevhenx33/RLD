@@ -139,12 +139,45 @@ export default defineConfig({
     },
   },
   build: {
+    manifest: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          "vendor-react": ["react", "react-dom"],
-          "vendor-charts": ["recharts"],
-          "vendor-utils": ["ethers", "lucide-react", "axios", "swr"],
+        manualChunks(id) {
+          if (!id) return undefined;
+
+          if (id.includes("node_modules")) {
+            if (id.includes("/recharts/")) {
+              return "vendor-charts";
+            }
+            if (id.includes("/ethers/")) {
+              return "vendor-web3";
+            }
+            if (id.includes("/swr/")) {
+              return "vendor-swr";
+            }
+            return "vendor";
+          }
+
+          if (
+            id.includes("/src/components/trading/") ||
+            id.includes("/src/components/pools/") ||
+            id.includes("/src/components/twamm/") ||
+            id.includes("/src/hooks/useBrokerData") ||
+            id.includes("/src/hooks/useSwapExecution") ||
+            id.includes("/src/hooks/useSwapQuote") ||
+            id.includes("/src/hooks/useTwamm")
+          ) {
+            return "feature-trading";
+          }
+
+          if (
+            id.includes("/src/components/charts/") ||
+            id.includes("/src/features/explore/")
+          ) {
+            return "feature-explore";
+          }
+
+          return undefined;
         },
       },
     },

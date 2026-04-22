@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { ethers } from "ethers";
-import { ZERO_FOR_ONE_LONG, SIM_API } from "../config/simulationConfig";
+import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
+import { SIM_GRAPHQL_URL } from "../api/endpoints";
+import { postGraphQL } from "../api/graphqlClient";
+import { queryKeys } from "../api/queryKeys";
 import { rpcProvider } from "../utils/provider";
-const GQL_URL = `${SIM_API}/graphql`;
 
 // ── ABI: only view functions (no event scanning) ──────────────────
 
@@ -65,19 +67,8 @@ const TWAMM_ORDERS_QUERY = `
   }
 `;
 
-const gqlFetcher = ([url, query, variables]) => {
-  const body = { query };
-  if (variables) body.variables = variables;
-  return fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-    .then((r) => {
-      if (!r.ok) throw new Error(`GraphQL HTTP ${r.status}`);
-      return r.json();
-    })
-    .then((r) => r.data);
+const gqlFetcher = ([url, , variables]) => {
+  return postGraphQL(url, { query: TWAMM_ORDERS_QUERY, variables });
 };
 
 /**
@@ -106,9 +97,7 @@ export function useTwammPositions(
 
   // ── Fetch base orders via GraphQL (SWR with dedup) ──────────────
   const { data: gqlData, mutate: refreshGql } = useSWR(
-    brokerAddress && hookAddr && marketInfo?.marketId
-      ? [GQL_URL, TWAMM_ORDERS_QUERY, { marketId: marketInfo.marketId, owner: brokerAddress }]
-      : null,
+    queryKeys.twammPositions(SIM_GRAPHQL_URL, marketInfo?.marketId, brokerAddress),
     gqlFetcher,
     {
       refreshInterval: pollInterval,

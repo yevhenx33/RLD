@@ -1,29 +1,26 @@
 import { useState, useMemo } from "react";
 import useSWR from "swr";
-import { ENVIO_GQL_URL, getPastDate, getToday } from "../utils/helpers";
+import { ENVIO_GRAPHQL_URL } from "../api/endpoints";
+import { postGraphQL } from "../api/graphqlClient";
+import { queryKeys } from "../api/queryKeys";
+import { getPastDate, getToday } from "../utils/helpers";
 
 const MAX_POINTS = 17520;
 
-const fetchMarketRates = async ([url, resolution, startDate, endDate]) => {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query: `{
-        historicalRates(symbols: ["USDC"], resolution: "${resolution}", limit: ${MAX_POINTS}) {
-          timestamp
-          symbol
-          apy
-          price
-        }
-      }`,
-    }),
-  });
-
-  const json = await res.json();
-  if (json.errors) throw new Error(json.errors[0]?.message || "GraphQL query failed");
-
-  const nodes = json?.data?.historicalRates || [];
+const fetchMarketRates = async ([url, , variables]) => {
+  const query = `
+    query HistoricalRates($resolution: String!, $limit: Int!) {
+      historicalRates(symbols: ["USDC"], resolution: $resolution, limit: $limit) {
+        timestamp
+        symbol
+        apy
+        price
+      }
+    }
+  `;
+  const data = await postGraphQL(url, { query, variables });
+  const nodes = data?.historicalRates || [];
+  const { startDate, endDate } = variables;
   const startUnix = Math.floor(new Date(startDate).getTime() / 1000);
   const endDateObj = new Date(endDate);
   endDateObj.setUTCHours(23, 59, 59, 999);
@@ -46,7 +43,13 @@ export function useMarketData(resolution = "4H") {
     error,
     isLoading,
   } = useSWR(
-    [ENVIO_GQL_URL, resolution, dates.start, dates.end],
+    queryKeys.envioHistoricalRates(
+      ENVIO_GRAPHQL_URL,
+      resolution,
+      dates.start,
+      dates.end,
+      MAX_POINTS,
+    ),
     fetchMarketRates,
     { refreshInterval: 10000, revalidateOnFocus: false },
   );

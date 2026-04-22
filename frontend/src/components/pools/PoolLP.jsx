@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { Suspense, lazy, useState, useMemo, useEffect, useCallback } from "react";
 import { ethers } from "ethers";
 import {
   Droplets,
@@ -18,8 +18,7 @@ import { liquidityToAmounts } from "../../hooks/usePoolLiquidity";
 import { useToast } from "../../hooks/useToast";
 import TradingTerminal, { InputGroup, SummaryRow } from "../trading/TradingTerminal";
 import StatItem from "../common/StatItem";
-import RLDPerformanceChart from "../charts/RLDChart";
-import ChartControlBar from "../charts/ChartControlBar";
+import ChartControlBar from "../../charts/primitives/ChartControlBar";
 import ClaimFeesModal from "../modals/ClaimFeesModal";
 import WithdrawModal from "../modals/WithdrawModal";
 import AddLiquidityModal from "../modals/AddLiquidityModal";
@@ -31,7 +30,10 @@ const ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"]
 
 
 // ── Combo: Uniswap-style Dual-Color Mountain Chart ────────────────────────
-import ComboChart from "../charts/ComboChart";
+const RLDPerformanceChart = lazy(
+  () => import("../../charts/primitives/RLDPerformanceChart"),
+);
+const ComboChart = lazy(() => import("../../charts/primitives/ComboChart"));
 
 
 
@@ -661,34 +663,42 @@ export default function PoolLP() {
 
               {/* Chart body */}
               <div className="h-[350px] md:h-[500px] w-full p-4">
-                {chartView === "LIQUIDITY" ? (
-                  <ComboChart
-                    bins={liquidityBins}
-                    currentPrice={poolData?.markPrice || liqDistPrice || 0}
-                  />
-                ) : chartView === "VOLUME" ? (
-                  volumeHistory.length === 0 ? (
+                <Suspense
+                  fallback={
+                    <div className="h-full flex items-center justify-center">
+                      <Loader2 className="animate-spin text-gray-700" />
+                    </div>
+                  }
+                >
+                  {chartView === "LIQUIDITY" ? (
+                    <ComboChart
+                      bins={liquidityBins}
+                      currentPrice={poolData?.markPrice || liqDistPrice || 0}
+                    />
+                  ) : chartView === "VOLUME" ? (
+                    volumeHistory.length === 0 ? (
+                      <div className="h-full flex items-center justify-center">
+                        <Loader2 className="animate-spin text-gray-700" />
+                      </div>
+                    ) : (
+                      <RLDPerformanceChart
+                        data={volumeHistory}
+                        areas={activeChartConfig.areas}
+                        resolution="1H"
+                      />
+                    )
+                  ) : chartData.length === 0 ? (
                     <div className="h-full flex items-center justify-center">
                       <Loader2 className="animate-spin text-gray-700" />
                     </div>
                   ) : (
                     <RLDPerformanceChart
-                      data={volumeHistory}
+                      data={chartData}
                       areas={activeChartConfig.areas}
-                      resolution="1H"
+                      resolution={resolution}
                     />
-                  )
-                ) : chartData.length === 0 ? (
-                  <div className="h-full flex items-center justify-center">
-                    <Loader2 className="animate-spin text-gray-700" />
-                  </div>
-                ) : (
-                  <RLDPerformanceChart
-                    data={chartData}
-                    areas={activeChartConfig.areas}
-                    resolution={resolution}
-                  />
-                )}
+                  )}
+                </Suspense>
               </div>
 
               {/* ── Mobile Row 3 (below chart): Resolution | Timeframe ── */}

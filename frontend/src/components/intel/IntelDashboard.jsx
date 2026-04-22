@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import useInView from '../../hooks/useInView';
-import Header from '../layout/Header';
 
 // ── Shared grain overlay ──────────────────────────────────────────
 const GRAIN_SVG = `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E")`;
@@ -51,10 +50,6 @@ export default function IntelDashboard() {
     <div className="relative min-h-screen bg-[#020202] text-[#eee] overflow-hidden pb-40" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
       <Grain />
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-[#cfad7a] opacity-[0.02] blur-[150px] rounded-full pointer-events-none" />
-      
-      <div className="relative z-20">
-        <Header isCapped={false} ratesLoaded={true} transparent />
-      </div>
       
       {/* Header Area */}
       <div className={`relative z-10 max-w-[1300px] mx-auto px-8 md:px-14 pt-32 pb-16 transition-all duration-[1000ms] ${vis ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>

@@ -1,6 +1,6 @@
 import React from "react";
 import ControlCell from "../common/ControlCell";
-import SettingsButton from "../common/SettingsButton";
+import SettingsButton from "../shared/SettingsButton";
 import MobileDropdown from "../common/MobileDropdown";
 import { DEPLOYMENT_DATE } from "../../utils/helpers";
 

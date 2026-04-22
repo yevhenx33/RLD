@@ -14,7 +14,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
-import RLDPerformanceChart from "../charts/RLDChart";
+import RLDPerformanceChart from "../../charts/primitives/RLDPerformanceChart";
 import TradingTerminal, { InputGroup, SummaryRow } from "../trading/TradingTerminal";
 
 /**

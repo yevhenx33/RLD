@@ -20,11 +20,13 @@ import {
   Download,
 } from "lucide-react";
 import useSWR from "swr";
-import { ENVIO_GQL_URL, DEPLOYMENT_DATE } from "../../utils/helpers";
+import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
+import { postGraphQL } from "../../api/graphqlClient";
+import { DEPLOYMENT_DATE } from "../../utils/helpers";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
 import { useChartControls } from "../../hooks/useChartControls";
-import RLDPerformanceChart from "./RLDChart";
-import SettingsButton from "../common/SettingsButton";
+import RLDPerformanceChart from "../../charts/primitives/RLDPerformanceChart";
+import SettingsButton from "../shared/SettingsButton";
 
 // --- ASSET CONFIG ---
 const ASSETS = [
@@ -97,11 +99,48 @@ const SERIES_CONFIG = [
   },
 ];
 
+const PROTOCOL_TVL_HISTORY_QUERY = `
+  query ProtocolTvlHistory {
+    protocolTvlHistory {
+      date
+      aave
+      morpho
+      euler
+      fluid
+    }
+  }
+`;
+
+const MARKET_SNAPSHOTS_QUERY = `
+  query MarketSnapshots {
+    marketSnapshots {
+      symbol
+      protocol
+      supplyUsd
+      borrowUsd
+      supplyApy
+      borrowApy
+      utilization
+    }
+  }
+`;
+
+const HISTORICAL_RATES_QUERY = `
+  query HistoricalRates($resolution: String!, $limit: Int!) {
+    historicalRates(
+      symbols: ["USDC", "DAI", "USDT", "SOFR", "WETH"]
+      resolution: $resolution
+      limit: $limit
+    ) {
+      timestamp
+      symbol
+      apy
+      price
+    }
+  }
+`;
+
 // --- SUB-COMPONENTS ---
-
-// eslint-disable-next-line no-unused-vars
-
-
 function FilterDropdown({ label, options, selected, onChange }) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = React.useRef(null);
@@ -278,45 +317,57 @@ function SingleDropdown({ label, options, selectedValue, onChange }) {
 
 // --- Protocol Breakdown Visualizations ---
 function ProtocolBreakdown({ marketData, navigate }) {
-  const [tvlHistory, setTvlHistory] = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
+  const {
+    data: tvlHistoryData,
+    error: tvlHistoryError,
+    isLoading: historyLoading,
+  } = useSWR(
+    [ENVIO_GRAPHQL_URL, "envio.protocol-tvl-history.v1", null],
+    ([url]) => postGraphQL(url, { query: PROTOCOL_TVL_HISTORY_QUERY }),
+    {
+      refreshInterval: 60000,
+      dedupingInterval: 10000,
+      revalidateOnFocus: false,
+    },
+  );
 
-  // Fetch historical TVL data
   useEffect(() => {
-    const fetchHistory = async () => {
-      setHistoryLoading(true);
-      try {
-        const res = await fetch(ENVIO_GQL_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `{ protocolTvlHistory { date aave morpho euler fluid } }`,
-          }),
-        });
-        const json = await res.json();
-        const raw = json?.data?.protocolTvlHistory || [];
-        // Convert to % share
-        const processed = raw.map((r) => {
-          const total = r.aave + r.morpho + r.euler + r.fluid;
-          if (total === 0) return { date: r.date, AAVE: 0, MORPHO: 0, EULER: 0, FLUID: 0, _total: 0, _raw: {} };
-          return {
-            date: r.date,
-            AAVE: (r.aave / total) * 100,
-            MORPHO: (r.morpho / total) * 100,
-            EULER: (r.euler / total) * 100,
-            FLUID: (r.fluid / total) * 100,
-            _total: total,
-            _raw: { AAVE: r.aave, MORPHO: r.morpho, EULER: r.euler, FLUID: r.fluid },
-          };
-        });
-        setTvlHistory(processed);
-      } catch (err) {
-        console.error("TVL history fetch error:", err);
+    if (tvlHistoryError) {
+      console.error("TVL history fetch error:", tvlHistoryError);
+    }
+  }, [tvlHistoryError]);
+
+  const tvlHistory = useMemo(() => {
+    const raw = tvlHistoryData?.protocolTvlHistory || [];
+    return raw.map((r) => {
+      const total = r.aave + r.morpho + r.euler + r.fluid;
+      if (total === 0) {
+        return {
+          date: r.date,
+          AAVE: 0,
+          MORPHO: 0,
+          EULER: 0,
+          FLUID: 0,
+          _total: 0,
+          _raw: {},
+        };
       }
-      setHistoryLoading(false);
-    };
-    fetchHistory();
-  }, []);
+      return {
+        date: r.date,
+        AAVE: (r.aave / total) * 100,
+        MORPHO: (r.morpho / total) * 100,
+        EULER: (r.euler / total) * 100,
+        FLUID: (r.fluid / total) * 100,
+        _total: total,
+        _raw: {
+          AAVE: r.aave,
+          MORPHO: r.morpho,
+          EULER: r.euler,
+          FLUID: r.fluid,
+        },
+      };
+    });
+  }, [tvlHistoryData]);
 
   const protocols = useMemo(() => {
     const map = {};
@@ -354,62 +405,10 @@ function ProtocolBreakdown({ marketData, navigate }) {
   ];
   const getColor = (key) => PROTO_CONFIG.find((p) => p.key === key) || { color: '#64748b', bg: 'bg-slate-500', text: 'text-slate-400', label: key };
 
-  const heatmapColor = (val) => {
-    if (val >= 0.08) return 'bg-red-500/80';
-    if (val >= 0.05) return 'bg-orange-500/60';
-    if (val >= 0.03) return 'bg-yellow-500/50';
-    if (val >= 0.01) return 'bg-emerald-500/40';
-    return 'bg-emerald-500/20';
-  };
-
   const fmtCurrency = (v) => {
     if (v >= 1e9) return `$${(v / 1e9).toFixed(2)}B`;
     if (v >= 1e6) return `$${(v / 1e6).toFixed(0)}M`;
     return `$${(v / 1e3).toFixed(0)}K`;
-  };
-
-  // Custom tooltip for the stacked bar chart
-  const CustomTooltip = ({ active, payload, label }) => {
-    if (!active || !payload || !payload.length) return null;
-    const entry = payload[0]?.payload;
-    const total = entry?._total || 0;
-    const raw = entry?._raw || {};
-    return (
-      <div className="bg-[#111] border border-white/20 p-4 text-sm font-mono shadow-xl min-w-[240px]">
-        <div className="text-white font-bold mb-2 border-b border-white/10 pb-2 flex justify-between">
-          <span>{label}</span>
-          <span className="text-gray-500 font-normal">Total {fmtCurrency(total)}</span>
-        </div>
-        <table className="w-full">
-          <thead>
-            <tr className="text-gray-600 text-xs">
-              <th className="text-left pb-1">Protocol</th>
-              <th className="text-right pb-1">Share</th>
-              <th className="text-right pb-1">TVL</th>
-            </tr>
-          </thead>
-          <tbody>
-            {PROTO_CONFIG.map((cfg) => {
-              const val = raw[cfg.key] || 0;
-              const pct = total > 0 ? (val / total) * 100 : 0;
-              if (pct < 0.01) return null;
-              return (
-                <tr key={cfg.key} className="text-gray-300">
-                  <td className="pr-3 py-0.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5" style={{ backgroundColor: cfg.color }} />
-                      <span>{cfg.label}</span>
-                    </div>
-                  </td>
-                  <td className="text-right font-bold text-white">{pct.toFixed(1)}%</td>
-                  <td className="text-right text-gray-500">{fmtCurrency(val)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
   };
 
   // --- Absolute TVL history (raw dollars, not %) ---
@@ -422,48 +421,6 @@ function ProtocolBreakdown({ marketData, navigate }) {
     }));
   }, [tvlHistory]);
 
-  // Custom tooltip for absolute bar chart
-  const AbsTooltip = ({ active, payload, label }) => {
-    if (!active || !payload || !payload.length) return null;
-    const entry = payload[0]?.payload;
-    const total = entry?._total || 0;
-    return (
-      <div className="bg-[#111] border border-white/20 p-4 text-sm font-mono shadow-xl min-w-[260px]">
-        <div className="text-white font-bold mb-2 border-b border-white/10 pb-2 flex justify-between">
-          <span>{label}</span>
-          <span className="text-gray-500 font-normal">Total {fmtCurrency(total)}</span>
-        </div>
-        <table className="w-full">
-          <thead>
-            <tr className="text-gray-600 text-xs">
-              <th className="text-left pb-1">Protocol</th>
-              <th className="text-right pb-1">TVL</th>
-              <th className="text-right pb-1">Share</th>
-            </tr>
-          </thead>
-          <tbody>
-            {PROTO_CONFIG.map((cfg) => {
-              const val = entry?.[cfg.key] || 0;
-              const pct = total > 0 ? (val / total) * 100 : 0;
-              if (val < 1) return null;
-              return (
-                <tr key={cfg.key} className="text-gray-300">
-                  <td className="pr-3 py-0.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5" style={{ backgroundColor: cfg.color }} />
-                      <span>{cfg.label}</span>
-                    </div>
-                  </td>
-                  <td className="text-right font-bold text-white">{fmtCurrency(val)}</td>
-                  <td className="text-right text-gray-500">{pct.toFixed(1)}%</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
 
   return (
     <div className="space-y-6">
@@ -610,7 +567,7 @@ function ProtocolBreakdown({ marketData, navigate }) {
                   }}
                   width={55}
                 />
-                <Tooltip content={<AbsTooltip />} cursor={{ fill: '#ffffff08' }} />
+                <Tooltip cursor={{ fill: '#ffffff08' }} />
                 {PROTO_CONFIG.map((cfg) => (
                   <Bar
                     key={cfg.key}
@@ -676,7 +633,7 @@ function ProtocolBreakdown({ marketData, navigate }) {
                   tickFormatter={(v) => `${v}%`}
                   width={45}
                 />
-                <Tooltip content={<CustomTooltip />} cursor={{ fill: '#ffffff08' }} />
+                <Tooltip cursor={{ fill: '#ffffff08' }} />
                 {PROTO_CONFIG.map((cfg) => (
                   <Bar
                     key={cfg.key}
@@ -709,8 +666,6 @@ function ProtocolBreakdown({ marketData, navigate }) {
 
 export default function Markets() {
   const navigate = useNavigate();
-  const [marketData, setMarketData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('overview');
 
   // Shared chart controls
@@ -767,89 +722,79 @@ export default function Markets() {
     }));
   }, [hiddenSeries]);
 
-  // --- Initial Data Fetch (Cards/Table) via GraphQL ---
+  const {
+    data: snapshotData,
+    error: snapshotError,
+    isLoading: loading,
+  } = useSWR(
+    [ENVIO_GRAPHQL_URL, "envio.market-snapshots.v1", null],
+    ([url]) => postGraphQL(url, { query: MARKET_SNAPSHOTS_QUERY }),
+    {
+      refreshInterval: 30000,
+      dedupingInterval: 5000,
+      revalidateOnFocus: false,
+    },
+  );
+
   useEffect(() => {
-    const fetchAllData = async () => {
-      try {
-        const gqlRes = await fetch(ENVIO_GQL_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `{ marketSnapshots { symbol protocol supplyUsd borrowUsd supplyApy borrowApy utilization } }`,
-          }),
-        });
+    if (snapshotError) {
+      console.error("Markets Fetch Error:", snapshotError);
+    }
+  }, [snapshotError]);
 
-        let snapshots = [];
-        try {
-          const gqlData = await gqlRes.json();
-          snapshots = gqlData?.data?.marketSnapshots;
-        } catch (e) { }
-
-        // Fallback layout mapping for visual presentation if API block is unmounted
-        if (!snapshots || snapshots.length === 0) {
-          snapshots = ASSETS.map((asset, i) => ({
-            symbol: asset.symbol,
-            protocol: asset.protocol || "AAVE_MARKET",
-            supplyUsd: (i + 1) * 1000500,
-            borrowUsd: (i + 1) * 500500,
-            supplyApy: 0.05 + (i * 0.01),
-            borrowApy: 0.08 + (i * 0.01),
-            utilization: 0.50
-          }));
-        }
-
-        const results = snapshots.map((snap) => {
-          return {
-            icon: getTokenIcon(snap.symbol),
-            name: getTokenName(snap.symbol),
-            symbol: snap.symbol,
-            protocol: snap.protocol,
-            supplyUsd: snap.supplyUsd || 0,
-            borrowUsd: snap.borrowUsd || 0,
-            supplyApy: snap.supplyApy || 0,
-            borrowApy: snap.borrowApy || 0,
-            utilization: snap.utilization || 0,
-            debt: snap.borrowUsd || 0, // Fallback for charts top banner
-            apy: snap.borrowApy || 0   // Fallback for charts top banner
-          };
-        });
-
-        results.sort((a, b) => b.borrowUsd - a.borrowUsd);
-        setMarketData(results);
-        setLoading(false);
-      } catch (err) {
-        console.error("Markets Fetch Error:", err);
-        setLoading(false);
-      }
-    };
-
-    fetchAllData();
-  }, []);
+  const marketData = useMemo(() => {
+    let snapshots = snapshotData?.marketSnapshots || [];
+    if (!snapshots || snapshots.length === 0) {
+      snapshots = ASSETS.map((asset, i) => ({
+        symbol: asset.symbol,
+        protocol: asset.protocol || "AAVE_MARKET",
+        supplyUsd: (i + 1) * 1000500,
+        borrowUsd: (i + 1) * 500500,
+        supplyApy: 0.05 + i * 0.01,
+        borrowApy: 0.08 + i * 0.01,
+        utilization: 0.5,
+      }));
+    }
+    const results = snapshots.map((snap) => ({
+      icon: getTokenIcon(snap.symbol),
+      name: getTokenName(snap.symbol),
+      symbol: snap.symbol,
+      protocol: snap.protocol,
+      supplyUsd: snap.supplyUsd || 0,
+      borrowUsd: snap.borrowUsd || 0,
+      supplyApy: snap.supplyApy || 0,
+      borrowApy: snap.borrowApy || 0,
+      utilization: snap.utilization || 0,
+      debt: snap.borrowUsd || 0,
+      apy: snap.borrowApy || 0,
+    }));
+    results.sort((a, b) => b.borrowUsd - a.borrowUsd);
+    return results;
+  }, [snapshotData]);
 
   // --- Chart Data Fetching via GraphQL ---
-  const chartGqlKey = useMemo(
-    () => (appliedStart && appliedEnd ? `chart:${resolution}:${appliedStart}:${appliedEnd}` : null),
-    [resolution, appliedStart, appliedEnd],
-  );
+  const chartGqlKey = useMemo(() => {
+    if (!appliedStart || !appliedEnd) return null;
+    return [
+      ENVIO_GRAPHQL_URL,
+      "envio.historical-rates-chart.v1",
+      { resolution, limit: 17520, appliedStart, appliedEnd },
+    ];
+  }, [resolution, appliedStart, appliedEnd]);
 
   const { data: chartGqlData } = useSWR(
     chartGqlKey,
-    async () => {
-      const startUnix = Math.floor(new Date(appliedStart).getTime() / 1000);
-      const endObj = new Date(appliedEnd);
+    async ([url, , variables]) => {
+      const { resolution: chartResolution, limit, appliedStart: start, appliedEnd: end } = variables;
+      const data = await postGraphQL(url, {
+        query: HISTORICAL_RATES_QUERY,
+        variables: { resolution: chartResolution, limit },
+      });
+      const startUnix = Math.floor(new Date(start).getTime() / 1000);
+      const endObj = new Date(end);
       endObj.setUTCHours(23, 59, 59, 999);
       const endUnix = Math.floor(endObj.getTime() / 1000);
-
-      const res = await fetch(ENVIO_GQL_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: `{ historicalRates(symbols: ["USDC", "DAI", "USDT", "SOFR", "WETH"], resolution: "${resolution}", limit: 17520) { timestamp symbol apy price } }`,
-        }),
-      });
-      
-      const json = await res.json();
-      const nodes = json?.data?.historicalRates || [];
+      const nodes = data?.historicalRates || [];
       
       const symbolGroups = {};
       const ethPrices = [];
@@ -865,7 +810,7 @@ export default function Markets() {
             let scaledApy = n.symbol === 'SOFR' ? n.apy : n.apy * 100;
             // Catch cases where math might be different based on offchain sources
             if (scaledApy < 0.0001 && n.symbol !== 'SOFR') scaledApy = n.apy * 100 * 100; // Normalizing just in case 
-            symbolGroups[n.symbol].push({ timestamp: n.timestamp, apy: n.apy * 100 });
+            symbolGroups[n.symbol].push({ timestamp: n.timestamp, apy: scaledApy });
           }
         }
       });
@@ -874,7 +819,11 @@ export default function Markets() {
       
       return { rates, ethPrices };
     },
-    { revalidateOnFocus: false },
+    {
+      refreshInterval: 30000,
+      dedupingInterval: 5000,
+      revalidateOnFocus: false,
+    },
   );
 
   // Merge Chart Data

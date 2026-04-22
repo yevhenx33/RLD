@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ethers } from "ethers";
-import { ZERO_FOR_ONE_LONG, SIM_API } from "../config/simulationConfig";
+import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
+import { SIM_GRAPHQL_URL } from "../api/endpoints";
+import { postGraphQL } from "../api/graphqlClient";
 import { rpcProvider } from "../utils/provider";
-const GQL_URL = `${SIM_API}/graphql`;
 
 // ── Minimal ABI for TWAMM enrichment only ───────────────────────────
 const TWAP_ENGINE_VIEW_ABI = [
@@ -93,15 +94,7 @@ const BROKER_DATA_QUERY = `
 `;
 
 async function gqlFetch(query, variables) {
-  const res = await fetch(GQL_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables }),
-  });
-  if (!res.ok) throw new Error(`GraphQL HTTP ${res.status}`);
-  const json = await res.json();
-  if (json.errors) throw new Error(json.errors[0]?.message || "GQL error");
-  return json.data;
+  return postGraphQL(SIM_GRAPHQL_URL, { query, variables });
 }
 
 // ── The hook ────────────────────────────────────────────────────────

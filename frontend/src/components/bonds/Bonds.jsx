@@ -24,8 +24,8 @@ import TradingTerminal, { InputGroup, SummaryRow } from "../trading/TradingTermi
 import CreateBondModal from "../modals/CreateBondModal";
 import CloseBondModal from "../modals/CloseBondModal";
 import BondBrandingPanel from "./BondBrandingPanel";
-import WealthProjectionChart from "../charts/WealthProjectionChart";
-import SettingsButton from "../common/SettingsButton";
+import WealthProjectionChart from "../../charts/primitives/WealthProjectionChart";
+import SettingsButton from "../shared/SettingsButton";
 import AccountModal from "../modals/AccountModal";
 
 
