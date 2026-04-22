@@ -10,7 +10,6 @@ import { useToast } from "../../hooks/useToast";
 import { ToastContainer } from "../common/Toast";
 
 // Hooks
-import { useMarketData } from "../../hooks/useMarketData";
 import { useTradeLogic } from "../../hooks/useTradeLogic";
 import { useSim } from "../../context/SimulationContext";
 
@@ -122,14 +121,11 @@ export default function BasisTradePage() {
   const { account, connectWallet } = useWallet();
   const { toasts, addToast, removeToast } = useToast();
   
-  const {
-    rates,
-    error,
-    isLoading,
-    latest,
-  } = useMarketData();
-
-  const { marketInfo } = useSim();
+  const sim = useSim();
+  const { pool, marketInfo, loading: simLoading, connected: simConnected } = sim;
+  const error = !simConnected && !simLoading ? "disconnected" : null;
+  const latest = { apy: pool?.markPrice || 0 };
+  const rates = pool ? [latest] : null;
 
   // Live sUSDe yield from Ethena
   const { stakingYield: susdeYield, lastUpdated: susdeUpdated } = useSusdeYield();
@@ -282,7 +278,7 @@ export default function BasisTradePage() {
   const needsApproval = currentAllowance < notionalAmount;
 
   if (error) return <div className="h-screen flex items-center justify-center text-red-600 bg-black font-mono text-xs">ERR: API_DISCONNECTED</div>;
-  if (isLoading || !rates) return <div className="h-screen flex items-center justify-center text-gray-500 bg-black font-mono text-xs animate-pulse">SYSTEM_INITIALIZING...</div>;
+  if (simLoading || !rates) return <div className="h-screen flex items-center justify-center text-gray-500 bg-black font-mono text-xs animate-pulse">SYSTEM_INITIALIZING...</div>;
 
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">

@@ -18,6 +18,12 @@ function normalizeOrderId(orderId) {
   return /^0x[0-9a-fA-F]{64}$/.test(hex) ? hex : null;
 }
 
+function orderIdKey(orderId) {
+  const normalized = normalizeOrderId(orderId);
+  if (normalized) return normalized.toLowerCase();
+  return String(orderId || "").toLowerCase();
+}
+
 function isUsableAddress(addr) {
   return (
     !!addr &&
@@ -171,6 +177,74 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
       // ── Phase 2: TWAMM enrichment (only RPC calls) ──────────────
       let enrichedOrders = [];
       const activeTwamm = rawTwamm.filter((o) => !o.isCancelled);
+      const now = blockTimestamp || Math.floor(Date.now() / 1000);
+
+      // Read tracked TWAMM order ID from GQL response (no RPC needed)
+      let trackedOrderId = profile?.activeTwammOrderId || null;
+      if (trackedOrderId === "" || trackedOrderId === "0x" + "0".repeat(64))
+        trackedOrderId = null;
+
+      // RPC-free fallback so UI updates to currently active order IDs even if
+      // settlement enrichment lags or fails for a poll cycle.
+      const fallbackActiveOrders = activeTwamm.map((evt) => {
+        const amountInNum = Number(BigInt(evt.amountIn || "0"));
+        const amountInTokens = amountInNum / 1e6;
+        const startTs = Number(evt.startEpoch || 0);
+        const expTs = Number(evt.expiration || 0);
+        const totalDuration = Math.max(0, expTs - startTs);
+        const elapsed = Math.max(0, now - startTs);
+        const progress = totalDuration > 0
+          ? Math.min(100, Math.round((elapsed / totalDuration) * 100))
+          : 0;
+        const isPending = now < startTs;
+        const timeLeftSec = Math.max(0, expTs - now);
+        const isExpired = timeLeftSec === 0;
+        const isDone = isExpired;
+        const isBuy = evt.zeroForOne === ZERO_FOR_ONE_LONG;
+        const direction = isBuy ? "waUSDC → wRLP" : "wRLP → waUSDC";
+        const tracked =
+          trackedOrderId != null &&
+          orderIdKey(trackedOrderId) === orderIdKey(evt.orderId);
+
+        const fallbackValueUsd = isBuy
+          ? amountInTokens
+          : amountInTokens * markPrice;
+
+        return {
+          orderId: evt.orderId,
+          direction,
+          isBuy,
+          amountIn: amountInTokens,
+          sellToken: isBuy ? "waUSDC" : "wRLP",
+          buyToken: isBuy ? "wRLP" : "waUSDC",
+          earned: 0,
+          earnedUsd: 0,
+          valueUsd: fallbackValueUsd,
+          remainingUsd: fallbackValueUsd,
+          sellRefund: isPending ? amountInTokens : 0,
+          tokensSpent: isPending ? 0 : amountInTokens,
+          convertedBuyEstimate: 0,
+          progress: isDone && progress < 100 ? 100 : progress,
+          timeLeft: isPending
+            ? `Starts in ${formatTimeLeft(startTs - now)}`
+            : formatTimeLeft(timeLeftSec),
+          timeLeftSec,
+          tracked,
+          isPending,
+          isExpired,
+          isDone,
+          startEpoch: startTs,
+          expiration: expTs,
+          zeroForOne: evt.zeroForOne,
+          nonce: parseInt(evt.nonce || "0"),
+          txHash: evt.txHash,
+        };
+      });
+
+      fallbackActiveOrders.sort((a, b) => {
+        if (a.tracked !== b.tracked) return a.tracked ? -1 : 1;
+        return a.expiration - b.expiration;
+      });
 
       if (
         activeTwamm.length > 0 &&
@@ -180,18 +254,12 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
         collateralAddr &&
         positionAddr
       ) {
-        const now = blockTimestamp || Math.floor(Date.now() / 1000);
         const provider = rpcProvider;
         const twapEngine = new ethers.Contract(
           twapEngineAddr,
           TWAP_ENGINE_VIEW_ABI,
           provider,
         );
-
-        // Read tracked TWAMM order ID from GQL response (no RPC needed)
-        let trackedOrderId = profile?.activeTwammOrderId || null;
-        if (trackedOrderId === "" || trackedOrderId === "0x" + "0".repeat(64))
-          trackedOrderId = null;
 
         enrichedOrders = await Promise.all(
           activeTwamm.map(async (evt) => {
@@ -428,10 +496,11 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
           // LP positions (client-computed amounts + values)
           lpPositions: enrichedLps,
 
-          // TWAMM orders: preserve previous data during transient empty states
-          // (e.g. RPC enrichment lag after a TX, indexer hasn't caught up)
-          twammOrders: enrichedOrders.length > 0 || rawTwamm.length === 0
-            ? enrichedOrders : prev?.twammOrders ?? [],
+          // TWAMM orders: derive from current active rows only.
+          // This prevents stale claimed/cancelled orders from sticking around.
+          twammOrders: enrichedOrders.length > 0
+            ? enrichedOrders
+            : (activeTwamm.length > 0 ? fallbackActiveOrders : []),
 
           // Operations (from indexed BrokerRouter events)
           operations,
