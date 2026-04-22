@@ -32,9 +32,13 @@ EOF
 }
 
 # ─── SECTION 2: Fix Docker/UFW bypass — bind ports to 127.0.0.1 (C2, H1, H3) ──
-# You MUST edit docker-compose.yml manually. This section shows what to change.
+# Canonical targets:
+#   - docker/reth/docker-compose.reth.yml
+#   - docker/docker-compose.infra.yml
+#   - docker/docker-compose.frontend.yml
+# Keep legacy compose files deprecated.
 section_docker_port_binding() {
-  echo "[!] Manual action required in docker/docker-compose.yml:"
+  echo "[!] Manual action required in canonical compose files under docker/:"
   echo ""
   echo "  CHANGE:"
   echo "    ports:"
@@ -48,7 +52,7 @@ section_docker_port_binding() {
   echo "      - '127.0.0.1:8080:8080'"
   echo ""
   echo "  After editing, run:"
-  echo "    cd ~/RLD/docker && docker compose down && docker compose up -d"
+  echo "    bash ~/RLD/docker/scripts/stack.sh restart"
 
   # Create hardened daemon.json
   echo "[+] Writing /etc/docker/daemon.json..."
