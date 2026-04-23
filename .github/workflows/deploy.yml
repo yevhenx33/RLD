@@ -62,7 +62,7 @@ jobs:
           name: frontend-dist
           path: dist
 
-      - name: Prepare deploy SSH auth
+      - name: Validate deploy secrets
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -81,10 +81,6 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$HOME/.ssh"
-          printf "%s" "$DEPLOY_SSH_KEY" | tr -d '\r' > "$HOME/.ssh/deploy_key"
-          chmod 600 "$HOME/.ssh/deploy_key"
-
           if [ -n "${DEPLOY_PORT:-}" ]; then
             echo "DEPLOY_PORT=$DEPLOY_PORT" >> "$GITHUB_ENV"
           else
@@ -97,7 +93,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           port: ${{ env.DEPLOY_PORT }}
-          key_path: /github/home/.ssh/deploy_key
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
           timeout: 90s
@@ -113,7 +109,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           port: ${{ env.DEPLOY_PORT }}
-          key_path: /github/home/.ssh/deploy_key
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
           timeout: 90s
