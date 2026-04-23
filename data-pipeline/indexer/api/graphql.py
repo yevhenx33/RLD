@@ -283,15 +283,15 @@ def _ensure_support_tables(ch) -> None:
             SELECT
                 protocol,
                 entity_id,
-                argMax(symbol, timestamp) AS symbol,
-                argMax(target_id, timestamp) AS target_id,
-                max(timestamp) AS timestamp,
-                argMax(supply_usd, timestamp) AS supply_usd,
-                argMax(borrow_usd, timestamp) AS borrow_usd,
-                argMax(supply_apy, timestamp) AS supply_apy,
-                argMax(borrow_apy, timestamp) AS borrow_apy,
-                argMax(utilization, timestamp) AS utilization,
-                argMax(price_usd, timestamp) AS price_usd
+                argMax(symbol, timestamp),
+                argMax(target_id, timestamp),
+                max(timestamp),
+                argMax(supply_usd, timestamp),
+                argMax(borrow_usd, timestamp),
+                argMax(supply_apy, timestamp),
+                argMax(borrow_apy, timestamp),
+                argMax(utilization, timestamp),
+                argMax(price_usd, timestamp)
             FROM unified_timeseries
             GROUP BY protocol, entity_id
             """

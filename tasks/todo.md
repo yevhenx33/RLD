@@ -178,3 +178,8 @@ new-front/
 - [x] Bootstrapped `scripts/generate_forum_post.py` to extract the Top 30 vulnerability list directly from `usdc_hf_sorted_envio_reconstruction_2026-04-23.csv`.
 - [x] Refactored the unified liquidation metrics into a persuasive, Aave Governance-formatted markdown reply (`aave_forum_arfc_reply.md`).
 - [x] Positioned the exact $61.29M structural boundary under the S2=50% Target as mathematical validation of the 30-day deadlock hypothesis.
+
+
+## REVIEW REQUIRED: ClickHouse ILLEGAL_AGGREGATION Fix
+- [x] Removed inline AS aliases from the INSERT SELECT statement in indexer/api/graphql.py.
+- [x] Verified GraphQL /data endpoint correctly loads marketSnapshots without throwing Code 184.
