@@ -24,11 +24,11 @@ export default function LendingDataPage() {
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
                   <div className="flex flex-col justify-end">
-                    <StatItem label="TOTAL NET WORTH" value="$0" />
+                    <StatItem label="TOTAL NET WORTH" value="$15.2B" change="+2.4%" />
                   </div>
                   <div className="flex flex-col justify-center gap-2 border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
-                    <StatItem label="TOTAL SUPPLY" value="$0" />
-                    <StatItem label="TOTAL BORROW" value="$0" />
+                    <StatItem label="TOTAL SUPPLY" value="$22.8B" change="+1.8%" />
+                    <StatItem label="TOTAL BORROW" value="$7.6B" change="-0.5%" />
                   </div>
                 </div>
               }
@@ -40,10 +40,10 @@ export default function LendingDataPage() {
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
                   <div className="flex flex-col justify-end">
-                    <StatItem label="AVG SUPPLY" value="0.00%" />
+                    <StatItem label="AVG SUPPLY" value="4.54%" change="+0.12%" />
                   </div>
                   <div className="flex flex-col justify-end border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
-                    <StatItem label="AVG BORROW" value="0.00%" />
+                    <StatItem label="AVG BORROW" value="6.12%" change="-0.04%" />
                   </div>
                 </div>
               }
@@ -55,10 +55,10 @@ export default function LendingDataPage() {
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
                   <div className="flex flex-col justify-end">
-                    <StatItem label="POOLED" value="$0" />
+                    <StatItem label="POOLED" value="$22.3B" change="+1.5%" />
                   </div>
                   <div className="flex flex-col justify-end border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
-                    <StatItem label="ISOLATED" value="$0" />
+                    <StatItem label="ISOLATED" value="$500M" change="+12.4%" />
                   </div>
                 </div>
               }
@@ -70,10 +70,10 @@ export default function LendingDataPage() {
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
                   <div className="flex flex-col justify-end">
-                    <StatItem label="MARKETS" value="0" />
+                    <StatItem label="MARKETS" value="142" change="+2" />
                   </div>
                   <div className="flex flex-col justify-end border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
-                    <StatItem label="USERS" value="0" />
+                    <StatItem label="USERS" value="124,500" change="+1,200" />
                   </div>
                 </div>
               }

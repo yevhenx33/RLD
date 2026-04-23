@@ -260,3 +260,15 @@ new-front/
 - [x] Allowed `lg:grid-cols-4` to seamlessly split the remaining 75% boundary space equally across all 4 sub-panels.
 - [x] Maintained 100% `w-full` boundary on mobile screens to prevent UI crushing.
 - [x] Formally verified boundary enforcement via `tests/verify_grid_width.py`.
+
+## REVIEW REQUIRED: Mock Data Injection
+- [x] Injected realistic Aave V3 market approximations into the Data Hub UI components.
+- [x] Simulated string lengths (e.g. `$22.8B`, `124,500`, `4.54%`) to visually test typography boundaries against the newly constrained 75% grid width.
+- [x] Executed invariant check via `tests/verify_mock_data.py` to ensure zero empty placeholders remain.
+
+## REVIEW REQUIRED: 1w Change Indicator Expansion
+- [x] Upgraded the native `StatItem` component to seamlessly accept an optional `change` string parameter.
+- [x] Applied deterministic `text-green-500` / `text-red-500` syntax coloring based on strict polarity parsing (`startsWith('+')`).
+- [x] Enforced `whitespace-nowrap flex items-baseline` layout boundaries so typography physically cannot wrap and shatter the grid rhythm.
+- [x] Injected realistic 1w delta mocks (e.g., `+2.4%`, `-0.5%`) across all 9 data points.
+- [x] Verified via `tests/verify_change_indicator.py`.

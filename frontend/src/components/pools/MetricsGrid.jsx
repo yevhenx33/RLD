@@ -19,13 +19,20 @@ export const MetricCell = ({ label, Icon, content, hideLabelOnMobile }) => (
   </div>
 );
 
-export const StatItem = ({ label, value }) => (
+export const StatItem = ({ label, value, change }) => (
   <div>
     <div className="text-[9px] md:text-sm text-gray-400 uppercase tracking-widest mb-0.5 md:mb-1">
       {label}
     </div>
-    <div className="text-base md:text-xl font-light text-white font-mono tracking-tighter truncate">
-      {value}
+    <div className="flex items-baseline gap-2 whitespace-nowrap">
+      <div className="text-base md:text-xl font-light text-white font-mono tracking-tighter truncate">
+        {value}
+      </div>
+      {change && (
+        <div className={`text-xs md:text-sm font-mono tracking-tighter ${change.startsWith('+') ? 'text-green-500' : 'text-red-500'}`}>
+          {change}
+        </div>
+      )}
     </div>
   </div>
 );
