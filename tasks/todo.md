@@ -194,3 +194,10 @@ new-front/
 - [x] Replaced 60+ lines of fallback/timeout logic in combined_daemon.py with a 10-line direct REST call.
 - [x] Added unit tests for fetch_latest_rate in backend/tests/test_daemon_rate_fetch.py
 - [x] Verified mm-daemon successfully arbitraged the stale $14 mark price down to the correct ~$12.65 index price.
+
+## REVIEW REQUIRED: Deployment & Simulation Codebase Simplification
+- [x] Audited the codebase for similar fragile GraphQL and Anvil `getReserveData` fetching logic.
+- [x] **`01_protocol.sh`**: Stripped out legacy GraphQL array-slicing and replaced it with a strictly enforced `curl` against the new REST API.
+- [x] **`deploy_protocol_snapshot.py`**: Rewrote `_fetch_live_rate_fraction` using a deterministic `urllib` `GET` request.
+- [x] **`deploy_pool_live_index_with_liquidity.py`**: Rewrote the `fetch_live_rate_fraction` python helper.
+- [x] **`fixed_yield.sh`**: Eliminated the `cast call` to Aave V3's `getReserveData`. By ripping out the Anvil on-chain fallback, we guarantee that simulated Fixed Yield bonds are initialized at exactly the correct market rate (e.g., ~12.65%), rather than silently defaulting to the snapshot's 14%.

@@ -163,27 +163,20 @@ cast rpc evm_increaseTime 7200 --rpc-url $RPC_URL > /dev/null
 cast rpc anvil_mine 1 --rpc-url $RPC_URL > /dev/null
 echo -e "  ${GREEN}✓ Advanced time by 2 hours${NC}"
 
-# Query current Aave USDC borrow rate
-echo -e "${YELLOW}[3/6] Querying Aave borrow rate...${NC}"
-AAVE_DATA=$(cast call $AAVE_POOL "getReserveData(address)" $USDC --rpc-url $RPC_URL 2>/dev/null)
+# Query live Aave USDC borrow rate from indexer API
+echo -e "${YELLOW}[3/6] Querying Aave borrow rate from API...${NC}"
 
-# The borrow rate is the 4th field (index 3) - variableBorrowRate in ray (1e27)
-# Format: configuration, liquidityIndex, currentLiquidityRate, variableBorrowIndex, 
-#         currentVariableBorrowRate, currentStableBorrowRate, ...
-# We need to extract the 5th 32-byte word (currentVariableBorrowRate)
+RATE_FRACTION=$(curl -sf "http://localhost:5000/api/v1/oracle/usdc-borrow-apy" | jq -r '.borrow_apy')
+if [ -z "$RATE_FRACTION" ] || [ "$RATE_FRACTION" == "null" ]; then
+    echo -e "${RED}✗ Error: Could not fetch live rate from local API. Ensure indexer is running.${NC}"
+    exit 1
+fi
 
-# Parse the hex response - skip first 4 words (128 hex chars + 2 for 0x = 130 offset)
-# Actually parse more carefully - cut gets the 5th word
-BORROW_RATE_RAY=$(echo "$AAVE_DATA" | cut -c131-194)
-BORROW_RATE_RAY_DEC=$(cast --to-dec "0x$BORROW_RATE_RAY" 2>/dev/null || echo "100000000000000000000000000")
-
-# Convert ray (1e27) to wad (1e18) by dividing by 1e9
-# Then divide by 1e18 to get percentage
-RATE_PERCENT=$(echo "scale=4; $BORROW_RATE_RAY_DEC / 10^27 * 100" | bc)
+RATE_PERCENT=$(echo "scale=4; $RATE_FRACTION * 100" | bc)
 echo -e "  Current Aave USDC Borrow Rate: ${RATE_PERCENT}%"
 
 # Convert to WAD format (1e18 = 100%)
-CURRENT_RATE_WAD=$(echo "$BORROW_RATE_RAY_DEC / 10^9" | bc)
+CURRENT_RATE_WAD=$(python3 -c "print(int($RATE_FRACTION * 10**18))")
 
 # Default utilization and reserve factor (could also query from Aave)
 UTILIZATION_WAD="900000000000000000"    # 90% = 0.9e18

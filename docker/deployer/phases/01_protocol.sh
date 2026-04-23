@@ -40,10 +40,8 @@ log_ok "MockRLDAaveOracle: $MOCK_ORACLE (admin-settable rate for simulation)"
 
 # --- Sync Initial Rate ---
 log_step "1.3" "Syncing initial oracle rate from Envio GraphQL..."
-RATE_APY=$(curl -sf "http://host.docker.internal:5000/graphql" \
-  -H "Content-Type: application/json" \
-  --data '{"query":"{ historicalRates(symbols:[\"USDC\"], resolution:\"1H\", limit:1){ apy } }"}' \
-  | jq -r '.data.historicalRates[0].apy' || echo "")
+RATE_APY=$(curl -sf "http://rld_graphql_api:5000/api/v1/oracle/usdc-borrow-apy" | jq -r '.borrow_apy' || \
+           curl -sf "http://host.docker.internal:5000/api/v1/oracle/usdc-borrow-apy" | jq -r '.borrow_apy' || echo "")
 
 if [ -n "$RATE_APY" ] && [ "$RATE_APY" != "null" ]; then
     # Normalize APY to fraction, then convert to RAY.

@@ -321,26 +321,26 @@ def normalize_rate_fraction(raw_rate: Decimal) -> Decimal:
 
 def fetch_live_rate_fraction(api_url: str) -> Decimal:
     base = api_url.rstrip("/")
-    graphql_endpoints = [f"{base}/graphql", f"{base}/envio-graphql"]
-
-    # 1) Envio/data-pipeline GraphQL
-    envio_query = {"query": '{ historicalRates(symbols:["USDC"], resolution:"1H", limit:1){ apy timestamp symbol } }'}
-    for endpoint in graphql_endpoints:
+    endpoints = [
+        "http://rld_graphql_api:5000/api/v1/oracle/usdc-borrow-apy",
+        f"{base}/api/v1/oracle/usdc-borrow-apy"
+    ]
+    
+    for endpoint in endpoints:
         try:
-            response = requests.post(endpoint, json=envio_query, timeout=6)
+            response = requests.get(endpoint, timeout=4)
             response.raise_for_status()
-            rows = response.json().get("data", {}).get("historicalRates", [])
-            if rows:
-                raw_rate = Decimal(str(rows[0].get("apy")))
-                rate_fraction = normalize_rate_fraction(raw_rate)
+            apy = response.json().get("borrow_apy")
+            if apy is not None:
+                rate_fraction = normalize_rate_fraction(Decimal(str(apy)))
                 info(
-                    f"Fetched Envio rate from {endpoint}: r={rate_fraction} (~{(rate_fraction * 100):.6f}%)"
+                    f"Fetched live rate from {endpoint}: r={rate_fraction} (~{(rate_fraction * 100):.6f}%)"
                 )
                 return rate_fraction
         except Exception:
-            pass
+            continue
 
-    die(f"Could not fetch live rate from API_URL={api_url}")
+    die(f"Could not fetch live rate from endpoints {endpoints}")
     return Decimal(0)
 
 
