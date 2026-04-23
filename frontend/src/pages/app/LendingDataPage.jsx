@@ -1,14 +1,17 @@
 import React, { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
 import { Activity, PieChart, Layers, Users, Check, Loader2 } from "lucide-react";
 import RLDPerformanceChart from "../../components/charts/RLDChart";
 import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
+import { getTokenIcon } from "../../utils/tokenIcons";
 
 const LENDING_DATA_QUERY = `
   query LendingDataHub {
     marketSnapshots(protocol: "AAVE_MARKET") {
+      entityId
       symbol
       protocol
       supplyUsd
@@ -53,6 +56,7 @@ const CustomCheckbox = ({ label, checked = false, disabled = false }) => (
 );
 
 export default function LendingDataPage() {
+  const navigate = useNavigate();
   const { data: gqlData, error: _error, isLoading: loading } = useSWR(
     [ENVIO_GRAPHQL_URL, "envio.lending-data-hub.v3"],
     ([url]) => postGraphQL(url, { query: LENDING_DATA_QUERY }),
@@ -68,6 +72,7 @@ export default function LendingDataPage() {
       const borrowApy = Math.max(0, Number(row?.borrowApy) || 0);
 
       return {
+        entityId: String(row?.entityId || ""),
         symbol: String(row?.symbol || "UNKNOWN"),
         protocol: String(row?.protocol || "AAVE_MARKET"),
         supplyUsd,
@@ -312,10 +317,16 @@ export default function LendingDataPage() {
                   </div>
                 ) : (
                   marketsData.map((pool, idx) => (
-                    <div key={`${pool.symbol}-${idx}`} className="grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center hover:bg-white/[0.02] transition-colors cursor-pointer">
+                    <div 
+                      key={`${pool.symbol}-${idx}`} 
+                      onClick={() => pool.entityId && navigate(`/data/aave/${pool.entityId}`)}
+                      className={`grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center transition-colors ${
+                        pool.entityId ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
+                      }`}
+                    >
                       <div className="col-span-2 flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-[10px] font-bold text-white">
-                          {pool.symbol.substring(0, 1)}
+                        <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
+                          <img src={getTokenIcon(pool.symbol)} alt={pool.symbol} className="w-full h-full object-contain rounded-full" />
                         </div>
                         <span className="text-sm text-white font-medium">{pool.symbol}</span>
                       </div>
