@@ -158,6 +158,12 @@ class MarketFlowPoint:
     borrow_outflow_usd: float = strawberry.field(name="borrowOutflowUsd")
     net_supply_flow_usd: float = strawberry.field(name="netSupplyFlowUsd")
     net_borrow_flow_usd: float = strawberry.field(name="netBorrowFlowUsd")
+    cumulative_supply_net_inflow_usd: float = strawberry.field(
+        name="cumulativeSupplyNetInflowUsd", default=0.0
+    )
+    cumulative_borrow_net_inflow_usd: float = strawberry.field(
+        name="cumulativeBorrowNetInflowUsd", default=0.0
+    )
 
 
 @strawberry.type
@@ -750,6 +756,52 @@ def _is_aave_market_entity(ch, entity_id: str) -> bool:
     return count > 0
 
 
+def _query_aave_cumulative_baseline_usd(
+    ch, normalized_entity_id: str, resolution: str, first_bucket_ts: int, denom: float
+) -> tuple[float, float]:
+    first_bucket_dt = datetime.utcfromtimestamp(first_bucket_ts).replace(microsecond=0)
+    flow_bucket_expr = _time_bucket_expr(resolution, "day")
+    price_bucket_expr = _time_bucket_expr(resolution, "timestamp")
+    rows = ch.query(
+        f"""
+        SELECT
+            coalesce(sum(((supply_in_raw - supply_out_raw) / %(denom)s) * coalesce(price_usd, 0.0)), 0.0) AS baseline_supply_usd,
+            coalesce(sum(((borrow_in_raw - borrow_out_raw) / %(denom)s) * coalesce(price_usd, 0.0)), 0.0) AS baseline_borrow_usd
+        FROM (
+            SELECT
+                {flow_bucket_expr} AS bucket_ts,
+                toFloat64(sumMerge(supply_inflow_raw_state)) AS supply_in_raw,
+                toFloat64(sumMerge(supply_outflow_raw_state)) AS supply_out_raw,
+                toFloat64(sumMerge(borrow_inflow_raw_state)) AS borrow_in_raw,
+                toFloat64(sumMerge(borrow_outflow_raw_state)) AS borrow_out_raw
+            FROM {AAVE_FLOW_DAILY_AGG_TABLE}
+            WHERE entity_id = %(eid)s
+              AND day < %(first_bucket_ts)s
+            GROUP BY bucket_ts
+        ) AS flows
+        LEFT JOIN (
+            SELECT
+                {price_bucket_expr} AS bucket_ts,
+                avg(toFloat64(price_usd)) AS price_usd
+            FROM aave_timeseries
+            WHERE protocol = 'AAVE_MARKET'
+              AND entity_id LIKE %(eid_prefix)s
+              AND timestamp < %(first_bucket_ts)s
+            GROUP BY bucket_ts
+        ) AS prices USING bucket_ts
+        """,
+        parameters={
+            "denom": denom,
+            "eid": normalized_entity_id,
+            "eid_prefix": f"{normalized_entity_id}%",
+            "first_bucket_ts": first_bucket_dt,
+        },
+    ).result_rows
+    if not rows:
+        return 0.0, 0.0
+    return float(rows[0][0] or 0.0), float(rows[0][1] or 0.0)
+
+
 def _query_aave_preaggregated_flow_timeseries(
     ch, entity_id: str, resolution: str, limit: int
 ) -> list[MarketFlowPoint]:
@@ -820,6 +872,9 @@ def _query_aave_preaggregated_flow_timeseries(
         return []
 
     all_buckets = [int(row[0]) for row in price_rows]
+    selected_buckets = all_buckets[-safe_limit:]
+    if not selected_buckets:
+        return []
     price_by_bucket = {
         int(row[0]): float(row[1]) if row[1] is not None else 0.0
         for row in price_rows
@@ -834,8 +889,11 @@ def _query_aave_preaggregated_flow_timeseries(
             float(row[4] or 0),
         )
 
+    cumulative_supply_usd, cumulative_borrow_usd = _query_aave_cumulative_baseline_usd(
+        ch, normalized, resolution, selected_buckets[0], denom
+    )
     points: list[MarketFlowPoint] = []
-    for bucket_ts in all_buckets[-safe_limit:]:
+    for bucket_ts in selected_buckets:
         price = float(price_by_bucket.get(bucket_ts, 0.0))
         supply_in_raw, supply_out_raw, borrow_in_raw, borrow_out_raw = raw_by_bucket.get(
             bucket_ts, (0.0, 0.0, 0.0, 0.0)
@@ -844,6 +902,10 @@ def _query_aave_preaggregated_flow_timeseries(
         supply_outflow_usd = (supply_out_raw / denom) * price
         borrow_inflow_usd = (borrow_in_raw / denom) * price
         borrow_outflow_usd = (borrow_out_raw / denom) * price
+        net_supply_flow_usd = float(supply_inflow_usd - supply_outflow_usd)
+        net_borrow_flow_usd = float(borrow_inflow_usd - borrow_outflow_usd)
+        cumulative_supply_usd += net_supply_flow_usd
+        cumulative_borrow_usd += net_borrow_flow_usd
         points.append(
             MarketFlowPoint(
                 timestamp=int(bucket_ts),
@@ -851,8 +913,10 @@ def _query_aave_preaggregated_flow_timeseries(
                 supply_outflow_usd=float(supply_outflow_usd),
                 borrow_inflow_usd=float(borrow_inflow_usd),
                 borrow_outflow_usd=float(borrow_outflow_usd),
-                net_supply_flow_usd=float(supply_inflow_usd - supply_outflow_usd),
-                net_borrow_flow_usd=float(borrow_inflow_usd - borrow_outflow_usd),
+                net_supply_flow_usd=net_supply_flow_usd,
+                net_borrow_flow_usd=net_borrow_flow_usd,
+                cumulative_supply_net_inflow_usd=float(cumulative_supply_usd),
+                cumulative_borrow_net_inflow_usd=float(cumulative_borrow_usd),
             )
         )
     return points
@@ -1034,6 +1098,8 @@ def _query_aave_event_flow_timeseries(ch, entity_id: str, resolution: str, limit
             if bool(is_debt_event):
                 slot["borrow_outflow_usd"] += amount0 * price
 
+    cumulative_supply_usd = 0.0
+    cumulative_borrow_usd = 0.0
     points: list[MarketFlowPoint] = []
     for bucket_ts in all_buckets[-safe_limit:]:
         slot = usd_flows_by_bucket.get(
@@ -1049,6 +1115,10 @@ def _query_aave_event_flow_timeseries(ch, entity_id: str, resolution: str, limit
         supply_outflow_usd = float(slot["supply_outflow_usd"])
         borrow_inflow_usd = float(slot["borrow_inflow_usd"])
         borrow_outflow_usd = float(slot["borrow_outflow_usd"])
+        net_supply_flow_usd = float(supply_inflow_usd - supply_outflow_usd)
+        net_borrow_flow_usd = float(borrow_inflow_usd - borrow_outflow_usd)
+        cumulative_supply_usd += net_supply_flow_usd
+        cumulative_borrow_usd += net_borrow_flow_usd
         points.append(
             MarketFlowPoint(
                 timestamp=int(bucket_ts),
@@ -1056,8 +1126,10 @@ def _query_aave_event_flow_timeseries(ch, entity_id: str, resolution: str, limit
                 supply_outflow_usd=float(supply_outflow_usd),
                 borrow_inflow_usd=float(borrow_inflow_usd),
                 borrow_outflow_usd=float(borrow_outflow_usd),
-                net_supply_flow_usd=float(supply_inflow_usd - supply_outflow_usd),
-                net_borrow_flow_usd=float(borrow_inflow_usd - borrow_outflow_usd),
+                net_supply_flow_usd=net_supply_flow_usd,
+                net_borrow_flow_usd=net_borrow_flow_usd,
+                cumulative_supply_net_inflow_usd=float(cumulative_supply_usd),
+                cumulative_borrow_net_inflow_usd=float(cumulative_borrow_usd),
             )
         )
     return points
@@ -1451,6 +1523,8 @@ def _query_market_flow_timeseries_from_balance_deltas(ch, entity_id: str, resolu
     if not points:
         return []
 
+    cumulative_supply_usd = 0.0
+    cumulative_borrow_usd = 0.0
     flows: list[MarketFlowPoint] = []
     prev_supply: Optional[float] = None
     prev_borrow: Optional[float] = None
@@ -1466,6 +1540,8 @@ def _query_market_flow_timeseries_from_balance_deltas(ch, entity_id: str, resolu
             delta_supply = supply_usd - prev_supply
             delta_borrow = borrow_usd - prev_borrow
 
+        cumulative_supply_usd += delta_supply
+        cumulative_borrow_usd += delta_borrow
         flows.append(
             MarketFlowPoint(
                 timestamp=int(point.timestamp),
@@ -1475,6 +1551,8 @@ def _query_market_flow_timeseries_from_balance_deltas(ch, entity_id: str, resolu
                 borrow_outflow_usd=max(0.0, -delta_borrow),
                 net_supply_flow_usd=delta_supply,
                 net_borrow_flow_usd=delta_borrow,
+                cumulative_supply_net_inflow_usd=float(cumulative_supply_usd),
+                cumulative_borrow_net_inflow_usd=float(cumulative_borrow_usd),
             )
         )
         prev_supply = supply_usd

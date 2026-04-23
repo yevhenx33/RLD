@@ -15,8 +15,8 @@ const PROTOCOL_MAP = {
 };
 
 const CHART_RESOLUTION = "1D";
-const TIMESERIES_LIMIT_DAYS = 120;
-const FLOW_LIMIT_DAYS = 120;
+const TIMESERIES_LIMIT_DAYS = 500;
+const FLOW_LIMIT_DAYS = 500;
 
 const LENDING_POOL_CORE_QUERY = `
   query LendingPoolCore($protocol: String!, $entityId: String!, $timeseriesLimit: Int!) {
@@ -51,6 +51,8 @@ const LENDING_POOL_FLOW_QUERY = `
       borrowOutflowUsd
       netSupplyFlowUsd
       netBorrowFlowUsd
+      cumulativeSupplyNetInflowUsd
+      cumulativeBorrowNetInflowUsd
     }
   }
 `;
@@ -80,7 +82,7 @@ export default function LendingPoolPage() {
   }, [marketId, protocolKey]);
 
   const { data: coreGqlData, isLoading: coreLoading } = useSWR(
-    normalizedEntityId ? [ENVIO_GRAPHQL_URL, `envio.lending-pool.core.${normalizedEntityId}.v1`] : null,
+    normalizedEntityId ? [ENVIO_GRAPHQL_URL, `envio.lending-pool.core.${normalizedEntityId}.v2`] : null,
     ([url]) =>
       postGraphQL(url, {
         query: LENDING_POOL_CORE_QUERY,
@@ -94,7 +96,7 @@ export default function LendingPoolPage() {
   );
 
   const { data: flowGqlData, isLoading: flowLoading } = useSWR(
-    normalizedEntityId ? [ENVIO_GRAPHQL_URL, `envio.lending-pool.flow.${normalizedEntityId}.v1`] : null,
+    normalizedEntityId ? [ENVIO_GRAPHQL_URL, `envio.lending-pool.flow.${normalizedEntityId}.v3`] : null,
     ([url]) =>
       postGraphQL(url, {
         query: LENDING_POOL_FLOW_QUERY,
@@ -140,7 +142,7 @@ export default function LendingPoolPage() {
       .sort((a, b) => a.timestamp - b.timestamp);
 
     const rawFlow = flowGqlData?.marketFlowTimeseries || [];
-    const flow = rawFlow
+    const flowBase = rawFlow
       .map((p) => {
         const supplyOutflowAbs = Math.max(0, Number(p.supplyOutflowUsd) || 0);
         const borrowOutflowAbs = Math.max(0, Number(p.borrowOutflowUsd) || 0);
@@ -153,10 +155,37 @@ export default function LendingPoolPage() {
           borrowInflowUsd: Math.max(0, Number(p.borrowInflowUsd) || 0),
           borrowOutflowUsd: -borrowOutflowAbs,
           netBorrowFlowUsd: Number(p.netBorrowFlowUsd) || 0,
+          cumulativeSupplyNetInflowUsd: Number(p.cumulativeSupplyNetInflowUsd),
+          cumulativeBorrowNetInflowUsd: Number(p.cumulativeBorrowNetInflowUsd),
         };
       })
       .filter((p) => p.timestamp > 0)
       .sort((a, b) => a.timestamp - b.timestamp);
+    const flow = flowBase.reduce(
+      (acc, point) => {
+        const hasSupplyFromApi = Number.isFinite(point.cumulativeSupplyNetInflowUsd);
+        const hasBorrowFromApi = Number.isFinite(point.cumulativeBorrowNetInflowUsd);
+        const cumulativeSupplyNetInflowUsd = hasSupplyFromApi
+          ? point.cumulativeSupplyNetInflowUsd
+          : acc.cumulativeSupply + point.netSupplyFlowUsd;
+        const cumulativeBorrowNetInflowUsd = hasBorrowFromApi
+          ? point.cumulativeBorrowNetInflowUsd
+          : acc.cumulativeBorrow + point.netBorrowFlowUsd;
+        return {
+          cumulativeSupply: cumulativeSupplyNetInflowUsd,
+          cumulativeBorrow: cumulativeBorrowNetInflowUsd,
+          rows: [
+            ...acc.rows,
+            {
+              ...point,
+              cumulativeSupplyNetInflowUsd,
+              cumulativeBorrowNetInflowUsd,
+            },
+          ],
+        };
+      },
+      { cumulativeSupply: 0, cumulativeBorrow: 0, rows: [] }
+    ).rows;
 
     return { market: safeMarket, tsData: chart, flowData: flow };
   }, [coreGqlData, flowGqlData]);
@@ -215,176 +244,244 @@ export default function LendingPoolPage() {
           </div>
         </div>
 
-        {/* Hero Metrics Banner */}
-        <div className="border border-white/10 bg-[#0a0a0a] rounded-sm mb-6 flex flex-wrap">
-          <div className="flex-1 min-w-[200px] border-r border-white/10 p-6 flex flex-col justify-center">
-            <div className="text-xs uppercase tracking-widest text-gray-500 mb-2">Total Supply</div>
-            <div className="text-2xl font-bold text-white">{formatCurrency(market.supplyUsd)}</div>
-          </div>
-          <div className="flex-1 min-w-[200px] border-r border-white/10 p-6 flex flex-col justify-center">
-            <div className="text-xs uppercase tracking-widest text-gray-500 mb-2">Total Borrowed</div>
-            <div className="text-2xl font-bold text-white">{formatCurrency(market.borrowUsd)}</div>
-          </div>
-          <div className="flex-1 min-w-[150px] border-r border-white/10 p-6 flex flex-col justify-center">
-            <div className="text-xs uppercase tracking-widest text-emerald-500/70 mb-2">Supply APY</div>
-            <div className="text-xl font-bold text-emerald-400">{formatApy(market.supplyApy)}</div>
-          </div>
-          <div className="flex-1 min-w-[150px] border-r border-white/10 p-6 flex flex-col justify-center">
-            <div className="text-xs uppercase tracking-widest text-cyan-500/70 mb-2">Borrow APY</div>
-            <div className="text-xl font-bold text-cyan-400">{formatApy(market.borrowApy)}</div>
-          </div>
-          <div className="flex-1 min-w-[150px] p-6 flex flex-col justify-center">
-            <div className="text-xs uppercase tracking-widest text-purple-500/70 mb-2">Utilization</div>
-            <div className="text-xl font-bold text-purple-400">{(market.utilization * 100).toFixed(2)}%</div>
-          </div>
-        </div>
+        {/* 2-Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
 
-        {/* Charts Grid */}
-        <div className="grid grid-cols-1 gap-6">
-          {/* APY / Utilization Chart */}
-          <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-3">
-                <Activity size={18} className="text-gray-500" />
-                <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Interest Rates</h2>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-emerald-400" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Supply APY</span>
+          {/* Left Panel: Stats (25%) */}
+          <div className="lg:col-span-1 border border-white/10 bg-[#0a0a0a] rounded-sm p-6 flex flex-col gap-6 h-fit top-6">
+
+            <div className="flex flex-col gap-2 pb-4 border-b border-white/10">
+              <div className="text-xs uppercase tracking-widest text-gray-500">Market</div>
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-5 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center shadow-sm">
+                  <img src={getTokenIcon(market.symbol)} alt={market.symbol} className="w-full h-full object-contain rounded-full" />
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-cyan-400" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Borrow APY</span>
-                </div>
+                <div className="text-lg font-bold text-white">{market.symbol}</div>
               </div>
             </div>
-            <div className="h-[300px] w-full">
-              <RLDPerformanceChart
-                data={tsData}
-                resolution={CHART_RESOLUTION}
-                areas={[
-                  { key: "borrowApy", color: "#22d3ee", name: "Borrow APY", format: "percent" },
-                  { key: "supplyApy", color: "#34d399", name: "Supply APY", format: "percent" }
-                ]}
-              />
+
+            <div className="flex flex-col gap-1">
+              <div className="text-xs uppercase tracking-widest text-emerald-500/70">Supply APR</div>
+              <div className="text-xl font-bold text-emerald-400">{formatApy(market.supplyApy)}</div>
             </div>
+
+            <div className="flex flex-col gap-1">
+              <div className="text-xs uppercase tracking-widest text-cyan-500/70">Borrow APR</div>
+              <div className="text-xl font-bold text-cyan-400">{formatApy(market.borrowApy)}</div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <div className="text-xs uppercase tracking-widest text-gray-500">Supplied ($)</div>
+              <div className="text-xl font-bold text-white">{formatCurrency(market.supplyUsd)}</div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <div className="text-xs uppercase tracking-widest text-gray-500">Borrowed ($)</div>
+              <div className="text-xl font-bold text-white">{formatCurrency(market.borrowUsd)}</div>
+            </div>
+
+            <div className="flex flex-col gap-1 pt-4 border-t border-white/10">
+              <div className="text-xs uppercase tracking-widest text-purple-500/70">Utilization info</div>
+              <div className="text-xl font-bold text-purple-400">{(market.utilization * 100).toFixed(2)}%</div>
+            </div>
+
           </div>
 
-          {/* TVL Chart */}
-          <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-3">
-                <Activity size={18} className="text-gray-500" />
-                <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Value Locked</h2>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-[#818cf8]" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Supply TVL</span>
+          {/* Right Panel: Row Stacked Charts (75%) */}
+          <div className="lg:col-span-3 flex flex-col gap-6">
+            {/* APY / Utilization Chart */}
+            <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                  <Activity size={18} className="text-gray-500" />
+                  <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Interest Rates</h2>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-[#fb7185]" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Borrow TVL</span>
-                </div>
-              </div>
-            </div>
-            <div className="h-[300px] w-full">
-              <RLDPerformanceChart
-                data={tsData}
-                resolution={CHART_RESOLUTION}
-                areas={[
-                  { key: "supplyUsd", color: "#818cf8", name: "Supply TVL", format: "dollar" },
-                  { key: "borrowUsd", color: "#fb7185", name: "Borrow TVL", format: "dollar" }
-                ]}
-              />
-            </div>
-          </div>
-
-          {/* Supply Flow Chart */}
-          <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-3">
-                <Activity size={18} className="text-gray-500" />
-                <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Supply Inflow / Outflow (USD)</h2>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-emerald-500" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Inflow</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-rose-500" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Outflow</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-cyan-400" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Net</span>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-emerald-400" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Supply APY</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-cyan-400" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Borrow APY</span>
+                  </div>
                 </div>
               </div>
-            </div>
-            {flowLoading && flowData.length === 0 ? (
-              <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
-                <Loader2 size={14} className="animate-spin" />
-                Loading Flow History...
-              </div>
-            ) : (
               <div className="h-[300px] w-full">
                 <RLDPerformanceChart
-                  data={flowData}
+                  data={tsData}
                   resolution={CHART_RESOLUTION}
-                  referenceLines={[{ y: 0, stroke: "#52525b" }]}
                   areas={[
-                    { key: "supplyInflowUsd", color: "#22c55e", name: "Supply Inflow", format: "dollar" },
-                    { key: "supplyOutflowUsd", color: "#f43f5e", name: "Supply Outflow", format: "dollar" },
-                    { key: "netSupplyFlowUsd", color: "#22d3ee", name: "Net Supply Flow", format: "dollar" }
+                    { key: "borrowApy", color: "#22d3ee", name: "Borrow APY", format: "percent" },
+                    { key: "supplyApy", color: "#34d399", name: "Supply APY", format: "percent" }
                   ]}
                 />
               </div>
-            )}
-          </div>
-
-          {/* Borrow Flow Chart */}
-          <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-3">
-                <Activity size={18} className="text-gray-500" />
-                <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Borrow Inflow / Outflow (USD)</h2>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-violet-500" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Inflow</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-orange-500" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Outflow</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-yellow-400" />
-                  <span className="text-xs text-gray-500 uppercase tracking-widest">Net</span>
-                </div>
-              </div>
             </div>
-            {flowLoading && flowData.length === 0 ? (
-              <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
-                <Loader2 size={14} className="animate-spin" />
-                Loading Flow History...
+
+            {/* TVL Chart */}
+            <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                  <Activity size={18} className="text-gray-500" />
+                  <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Value Locked</h2>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-[#818cf8]" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Supply TVL</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-[#fb7185]" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Borrow TVL</span>
+                  </div>
+                </div>
               </div>
-            ) : (
               <div className="h-[300px] w-full">
                 <RLDPerformanceChart
-                  data={flowData}
+                  data={tsData}
                   resolution={CHART_RESOLUTION}
-                  referenceLines={[{ y: 0, stroke: "#52525b" }]}
                   areas={[
-                    { key: "borrowInflowUsd", color: "#8b5cf6", name: "Borrow Inflow", format: "dollar" },
-                    { key: "borrowOutflowUsd", color: "#f97316", name: "Borrow Outflow", format: "dollar" },
-                    { key: "netBorrowFlowUsd", color: "#facc15", name: "Net Borrow Flow", format: "dollar" }
+                    { key: "supplyUsd", color: "#818cf8", name: "Supply TVL", format: "dollar" },
+                    { key: "borrowUsd", color: "#fb7185", name: "Borrow TVL", format: "dollar" }
                   ]}
                 />
               </div>
-            )}
+            </div>
+
+            {/* Supply Flow Chart */}
+            <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                  <Activity size={18} className="text-gray-500" />
+                  <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Supply Inflow / Outflow (USD)</h2>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-emerald-500" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Inflow</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-rose-500" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Outflow</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-cyan-400" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Net</span>
+                  </div>
+                </div>
+              </div>
+              {flowLoading && flowData.length === 0 ? (
+                <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading Flow History...
+                </div>
+              ) : (
+                <div className="h-[300px] w-full">
+                  <RLDPerformanceChart
+                    data={flowData}
+                    resolution={CHART_RESOLUTION}
+                    referenceLines={[{ y: 0, stroke: "#52525b" }]}
+                    areas={[
+                      { key: "supplyInflowUsd", color: "#22c55e", name: "Supply Inflow", format: "dollar" },
+                      { key: "supplyOutflowUsd", color: "#f43f5e", name: "Supply Outflow", format: "dollar" },
+                      { key: "netSupplyFlowUsd", color: "#22d3ee", name: "Net Supply Flow", format: "dollar" }
+                    ]}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Borrow Flow Chart */}
+            <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                  <Activity size={18} className="text-gray-500" />
+                  <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Borrow Inflow / Outflow (USD)</h2>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-violet-500" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Inflow</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-orange-500" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Outflow</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-yellow-400" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Net</span>
+                  </div>
+                </div>
+              </div>
+              {flowLoading && flowData.length === 0 ? (
+                <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading Flow History...
+                </div>
+              ) : (
+                <div className="h-[300px] w-full">
+                  <RLDPerformanceChart
+                    data={flowData}
+                    resolution={CHART_RESOLUTION}
+                    referenceLines={[{ y: 0, stroke: "#52525b" }]}
+                    areas={[
+                      { key: "borrowInflowUsd", color: "#8b5cf6", name: "Borrow Inflow", format: "dollar" },
+                      { key: "borrowOutflowUsd", color: "#f97316", name: "Borrow Outflow", format: "dollar" },
+                      { key: "netBorrowFlowUsd", color: "#facc15", name: "Net Borrow Flow", format: "dollar" }
+                    ]}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Cumulative Net Flow Chart */}
+            <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
+              <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center gap-3">
+                  <Activity size={18} className="text-gray-500" />
+                  <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">Cumulative Net Inflow (USD)</h2>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-blue-400" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Supply</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-lime-300" />
+                    <span className="text-xs text-gray-500 uppercase tracking-widest">Borrow</span>
+                  </div>
+                </div>
+              </div>
+              {flowLoading && flowData.length === 0 ? (
+                <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  Loading Flow History...
+                </div>
+              ) : (
+                <div className="h-[300px] w-full">
+                  <RLDPerformanceChart
+                    data={flowData}
+                    resolution={CHART_RESOLUTION}
+                    referenceLines={[{ y: 0, stroke: "#52525b" }]}
+                    areas={[
+                      {
+                        key: "cumulativeSupplyNetInflowUsd",
+                        color: "#60a5fa",
+                        name: "Cumulative Net Supply Inflow",
+                        format: "dollar",
+                      },
+                      {
+                        key: "cumulativeBorrowNetInflowUsd",
+                        color: "#bef264",
+                        name: "Cumulative Net Borrow Inflow",
+                        format: "dollar",
+                      }
+                    ]}
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </main>
