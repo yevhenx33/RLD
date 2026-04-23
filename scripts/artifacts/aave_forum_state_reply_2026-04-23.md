@@ -131,4 +131,3 @@ At current-utilization interim/target scenarios, this single address contributes
 - Base user snapshot: `/home/ubuntu/RLD/scripts/artifacts/usdc_hf_sorted_envio_reconstruction_2026-04-23.csv`
 - Projection dataset: `/home/ubuntu/RLD/scripts/artifacts/usdc_irm_sensitivity_projection_2026-04-23.csv`
 - Summary dataset: `/home/ubuntu/RLD/scripts/artifacts/usdc_irm_sensitivity_summary_2026-04-23.json`
-

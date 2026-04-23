@@ -10,7 +10,7 @@ const formatUSD = (val) => {
   return `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 };
 
-const MetricCell = ({ label, Icon, content, hideLabelOnMobile }) => (
+export const MetricCell = ({ label, Icon, content, hideLabelOnMobile }) => (
   <div className="p-3 md:p-6 flex flex-col justify-between h-full min-h-[100px] md:min-h-[180px]">
     <div className={`${hideLabelOnMobile ? 'hidden md:flex' : 'flex'} text-[9px] md:text-sm text-gray-500 uppercase tracking-widest mb-2 md:mb-4 justify-between`}>
       {label} {Icon && <Icon size={15} className="md:opacity-90 hidden md:block" />}
@@ -19,7 +19,7 @@ const MetricCell = ({ label, Icon, content, hideLabelOnMobile }) => (
   </div>
 );
 
-const StatItem = ({ label, value }) => (
+export const StatItem = ({ label, value }) => (
   <div>
     <div className="text-[9px] md:text-sm text-gray-400 uppercase tracking-widest mb-0.5 md:mb-1">
       {label}
@@ -39,9 +39,10 @@ const MetricsGrid = ({
   paramItems = [
     { label: "MATURITY", value: "1H — 1Y" },
     { label: "WITHDRAW", value: "Inst." }
-  ]
+  ],
+  extraPanel
 }) => (
-  <div className="grid grid-cols-3 h-full border border-white/10 bg-[#080808] divide-x divide-white/10">
+  <div className={`grid ${extraPanel ? 'grid-cols-4' : 'grid-cols-3'} h-full border border-white/10 bg-[#080808] divide-x divide-white/10`}>
     <MetricCell
       label="CURRENT_SPOT"
       Icon={Terminal}
@@ -95,6 +96,7 @@ const MetricsGrid = ({
         </div>
       }
     />
+    {extraPanel && extraPanel}
   </div>
 );
 

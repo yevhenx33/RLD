@@ -172,7 +172,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                 onMouseEnter={() => prefetchRoute("/data")}
                 className={`transition-colors px-2 tracking-widest ${location.pathname === "/data" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
-                LENDINGS
+                DATA
               </Link>
 
               <span className="text-white/10">|</span>
@@ -307,7 +307,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                 onMouseEnter={() => prefetchRoute("/data")}
                 className={`py-2 ${location.pathname === "/data" ? "text-white" : "text-gray-500"}`}
               >
-                LENDINGS
+                DATA
               </Link>
               <a
                 href="https://docs.rld.fi/introduction/rate-level-derivatives.html"

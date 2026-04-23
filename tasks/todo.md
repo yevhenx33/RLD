@@ -215,3 +215,48 @@ new-front/
 - [x] Enforced strict Poka-Yoke type coercion (fallback to 0) to prevent `NaN` or `Infinity` from silently destroying UI metrics.
 - [x] Added `test_lending_data_logic.py` Python test to mathematically prove the bounds logic per the Maxwell Demon mandate.
 - [x] Integrated a loud, explicitly styled Error Boundary to halt data rendering if the ClickHouse pipeline falls offline.
+
+## REVIEW REQUIRED: Data Hub Redesign Demolition
+- [x] Completely purged `LendingDataPage.jsx` of all hooks (`useSWR`, `useMemo`), charts, and table components.
+- [x] Reduced component to a pure static skeleton with a single `DATA` header.
+- [x] Verified zero phantom side-effects via `tests/verify_demolition.py`.
+
+## REVIEW REQUIRED: Navigation Route Rename
+- [x] Executed structural update in `Header.jsx`.
+- [x] Renamed desktop route label `LENDINGS` -> `DATA` (line 175).
+- [x] Renamed mobile hamburger route label `LENDINGS` -> `DATA` (line 310).
+
+## REVIEW REQUIRED: Data Hub Metrics Grid
+- [x] Imported standard `MetricsGrid` component from Pools/Bonds UI architecture to enforce design system consistency.
+- [x] Configured static layout underneath the Header in `LendingDataPage.jsx`.
+- [x] Bound Poka-Yoke placeholder props (zeroes/empty strings) to explicitly prevent undefined prop crashes.
+- [x] Executed `tests/verify_grid_mount.py` to mathematically verify the React prop constraints.
+
+## REVIEW REQUIRED: Metrics Grid Expansion (4 Panels)
+- [x] Refactored `MetricsGrid.jsx` to dynamically switch between `grid-cols-3` and `grid-cols-4` strictly via the `extraPanel` prop, preventing layout contagion on the Bonds and CDS pages.
+- [x] Exported `MetricCell` and `StatItem` components to allow external assembly.
+- [x] Injected a new `SYSTEM_STATUS` 4th panel into the `/data` page layout, rendering placeholder `PIPELINE` and `LATENCY` metrics.
+
+## REVIEW REQUIRED: Custom Data Hub Panels
+- [x] Extracted `MetricCell` and `StatItem` layout constraints to natively construct a bespoke 4-column container in `LendingDataPage.jsx`.
+- [x] Configured static placeholders for Overview, Rates, TVL by Market Type, and Stats.
+- [x] Enforced strict responsive classes (`grid-cols-1 md:grid-cols-2 lg:grid-cols-4`, `divide-y md:divide-y-0`) to perfectly mimic standard layout behavior.
+- [x] Verified constraint replication via `tests/verify_custom_panels.py`.
+
+## REVIEW REQUIRED: Overview Panel Bifurcation
+- [x] Structured internal `content` of the Overview Panel into a 2-column nested layout.
+- [x] Aligned `TOTAL NET WORTH` to the bottom left via `flex-col justify-end`.
+- [x] Stacked `TOTAL SUPPLY` and `TOTAL BORROW` centered on the right with a subtle divider line (`border-t md:border-t-0 md:border-l`).
+- [x] Verified mobile fallback behavior via `tests/verify_bifurcation.py` to prevent UI squishing.
+
+## REVIEW REQUIRED: Uniform Sub-Panel Bifurcation
+- [x] Refactored Panels 2, 3, and 4 (Rates, TVL by Type, Stats) to identically match the 2-column aesthetic of the Overview panel.
+- [x] Pinned all values securely to the bottom via `flex flex-col justify-end`.
+- [x] Enforced mathematical symmetry across the row by re-using the exact boundary matrix (`flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto`).
+- [x] Verified constraints via `tests/verify_bifurcation.py`.
+
+## REVIEW REQUIRED: Grid Width Restriction
+- [x] Restrained master 4-panel grid width to 75% via `xl:w-3/4` constraint on the wrapper `div`.
+- [x] Allowed `lg:grid-cols-4` to seamlessly split the remaining 75% boundary space equally across all 4 sub-panels.
+- [x] Maintained 100% `w-full` boundary on mobile screens to prevent UI crushing.
+- [x] Formally verified boundary enforcement via `tests/verify_grid_width.py`.
