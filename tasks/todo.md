@@ -207,3 +207,5 @@ new-front/
 - [x] **Deleted `docker/deployer/deploy_all.sh`**, `docker/deployer/lib_setup.sh`, and the entire `docker/deployer/phases/` directory.
 - [x] **Deleted the Reth equivalents:** `docker/reth/deploy_all.sh` and the entire `docker/reth/deployer/` directory.
 - [x] **Updated `docker/deployer/Dockerfile`** to remove all `COPY` commands related to these dead files, stripping bloat from the container image.
+- [x] **Deleted legacy Anvil maintenance scripts** including `anvil-rotate.sh`, `cleanup-anvil-snapshots.sh`, `start_anvil.sh`, and `kill_all.sh`, as well as `docker/restart.sh` (the old anvil orchestrator).
+- [x] **Deleted `run_anvil.py`** and `05_setup_users_reth.sh` as they are unused dead code from earlier migrations.
