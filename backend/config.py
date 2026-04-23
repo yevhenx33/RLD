@@ -1,6 +1,8 @@
 
 import os
 
+from dotenv import load_dotenv
+
 # --- CONTRACTS ---
 # Aave V3 Pool (Ethereum Mainnet)
 AAVE_POOL_ADDRESS = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
@@ -119,7 +121,6 @@ CLEAN_DB_NAME = "clean_rates.db"
 CLEAN_DB_PATH = os.path.join(DB_DIR, CLEAN_DB_NAME)
 
 # --- GRAPHQL SOURCES ---
-from dotenv import load_dotenv
 load_dotenv(os.path.join(BACKEND_DIR, "../.env"))
 
 ETH_PRICE_GRAPH_URL = os.getenv("ETH_PRICE_GRAPH_URL")

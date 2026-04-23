@@ -27,7 +27,6 @@ import json
 import logging
 import os
 import math
-import random
 import sys
 import time
 from datetime import datetime, timezone
@@ -115,7 +114,7 @@ async def insert_swap(conn, market_id, block_number, block_timestamp,
         ON CONFLICT (market_id, block_number) DO UPDATE SET index_price = EXCLUDED.index_price
     """, market_id, block_number, block_timestamp, index_price)
 
-    import sys; sys.path.insert(0, os.path.dirname(__file__))
+    sys.path.insert(0, os.path.dirname(__file__))
     from handlers.pool import handle_swap
 
     # Try to record the event — DO NOTHING on duplicate
@@ -373,7 +372,7 @@ async def test_twamm_order_id_dedup(conn):
 async def test_watch_set_expansion(conn):
     """Bug 8: New market registered after indexer start must appear in watch set."""
     log.info("TEST 8: Watch set expansion on new market")
-    import sys; sys.path.insert(0, os.path.dirname(__file__))
+    sys.path.insert(0, os.path.dirname(__file__))
     from indexer import build_watch_set
 
     global_cfg = {
@@ -387,7 +386,7 @@ async def test_watch_set_expansion(conn):
     assert "0xfactory_mkt_b" in watched or "0xfactory_mkt_B" in {w.lower() for w in watched}, \
         f"mkt_B factory not in watch set: {watched}"
     assert "0xhook_mkt_a" in {w.lower() for w in watched}, \
-        f"mkt_A hook not in watch set"
+        "mkt_A hook not in watch set"
     log.info("  ✓ Watch set contains %d addresses", len(watched))
 
 

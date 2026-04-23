@@ -6,7 +6,6 @@ Replaces LifecycleSwap.s.sol forge script (~25s) with a direct contract call (~1
 Requires SWAP_ROUTER address in .env (deployed by deploy_swap_router.py).
 """
 
-import os
 import logging
 from web3 import Web3
 from eth_account import Account

@@ -6,7 +6,6 @@ All data comes from clean_rates.db (hourly aggregated) or aave_rates.db (raw).
 """
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -190,7 +189,7 @@ def get_eth_prices(
             select_clause = "timestamp, eth_price as price"
             group_clause = ""
         else:
-            select_clause = f"""
+            select_clause = """
                 MAX(timestamp) as timestamp,
                 AVG(eth_price) as price
             """

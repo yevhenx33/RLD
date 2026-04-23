@@ -11,7 +11,6 @@ import asyncpg
 import decimal
 import json
 import logging
-import math
 
 log = logging.getLogger(__name__)
 

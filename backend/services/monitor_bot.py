@@ -35,7 +35,7 @@ def load_chat_id():
                 content = f.read().strip()
                 if content:
                     return content
-        except Exception as e:
+        except Exception:
             pass
             
     # 2. Try env if file missing
@@ -46,7 +46,7 @@ def save_chat_id(new_id):
         os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
         with open(DATA_FILE, "w") as f:
             f.write(str(new_id))
-    except Exception as e:
+    except Exception:
         pass
 
 CHAT_ID = load_chat_id()
@@ -111,7 +111,7 @@ def check_api_health():
         res = requests.get(f"{RATES_API_URL}/healthz", headers=get_headers(), timeout=5)
         latency = (time.time() - start) * 1000
         if res.status_code == 200:
-            data = res.json()
+            res.json()
             # Envio health endpoint exposes lag, not canonical block number.
             last_indexed = None
             return True, f"{int(latency)}ms", last_indexed
@@ -254,7 +254,7 @@ def generate_report():
             lag_emoji = "✅" if lag < 50 else ("⚠️" if lag < 300 else "🚨")
             report += f"**📦 Block Lag**: {lag_emoji} {lag:,} blocks\n\n"
         else:
-             report += f"**📦 Block Lag**: N/A\n\n"
+             report += "**📦 Block Lag**: N/A\n\n"
 
         report += "**📉 Market Rates (24h Trend)**\n"
 

@@ -115,7 +115,6 @@ async def verify(rpc_url: str, db_dsn: str):
     market_id = market["market_id"]
     wausdc_addr = Web3.to_checksum_address(market["wausdc"])
     wrlp_addr = Web3.to_checksum_address(market["wrlp"])
-    rld_core = Web3.to_checksum_address(os.getenv("RLD_CORE", "0x0000000000000000000000000000000000000000"))
     posm_addr = market.get("v4_position_manager")
 
     wausdc = w3.eth.contract(address=wausdc_addr, abi=ERC20_BALANCE_OF)

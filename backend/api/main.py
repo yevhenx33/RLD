@@ -18,6 +18,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
 from api.deps import get_db_connection
+from api.routes.graphql_rates import graphql_router
 from api.routes.rates import router as rates_router, broadcast_rates
 
 # --- Logging ---
@@ -121,7 +122,6 @@ def health_check():
 app.include_router(rates_router)
 
 # GraphQL endpoint
-from api.routes.graphql_rates import graphql_router
 app.include_router(graphql_router)
 
 

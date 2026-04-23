@@ -13,25 +13,16 @@ Usage:
 """
 import asyncio
 import argparse
-import json
 import logging
 import os
 import sys
 import time
-from typing import Any
 
-import asyncpg
 from web3 import Web3
 
 # Reuse existing modules
 import db
 import bootstrap
-from handlers import market as market_handler
-from handlers import broker as broker_handler
-from handlers import pool as pool_handler
-from handlers import twamm as twamm_handler
-from handlers import lp as lp_handler
-from handlers import bond as bond_handler
 from handlers import snapshot as snapshot_handler
 
 # Import TOPICS and dispatch from indexer

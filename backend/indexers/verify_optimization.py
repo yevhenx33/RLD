@@ -12,7 +12,6 @@ Phases:
   4. BENCHMARK: Report batch timing statistics
 """
 import asyncio
-import json
 import os
 import sys
 import time
@@ -114,7 +113,7 @@ async def assert_invariants(conn, before: dict, after: dict) -> list[str]:
 
     # 2. Block head should advance
     if after["last_indexed_block"] < before["last_indexed_block"]:
-        errors.append(f"FAIL: last_indexed_block went backwards")
+        errors.append("FAIL: last_indexed_block went backwards")
     else:
         print(f"  ✓ last_indexed_block: {before['last_indexed_block']} → {after['last_indexed_block']}")
 
@@ -122,7 +121,7 @@ async def assert_invariants(conn, before: dict, after: dict) -> list[str]:
     if not after.get("has_snapshot"):
         errors.append("FAIL: markets.snapshot is NULL after optimization")
     else:
-        print(f"  ✓ markets.snapshot is populated")
+        print("  ✓ markets.snapshot is populated")
 
     # 4. Latest block_state should have non-null critical fields
     latest = after.get("latest_block_state", {})

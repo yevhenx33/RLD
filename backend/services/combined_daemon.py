@@ -32,7 +32,6 @@ import time
 import logging
 import urllib.request
 import urllib.error
-import threading
 import requests
 from web3 import Web3
 from eth_account import Account
@@ -713,7 +712,7 @@ class CombinedDaemon:
                 norm_factor_display = norm_factor / 1e18  # WAD format
             else:
                 norm_factor_display = 1.0
-        except Exception as e:
+        except Exception:
             norm_factor_display = 1.0
         
         # 3. Calculate spread
