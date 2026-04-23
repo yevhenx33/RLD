@@ -272,3 +272,79 @@ new-front/
 - [x] Enforced `whitespace-nowrap flex items-baseline` layout boundaries so typography physically cannot wrap and shatter the grid rhythm.
 - [x] Injected realistic 1w delta mocks (e.g., `+2.4%`, `-0.5%`) across all 9 data points.
 - [x] Verified via `tests/verify_change_indicator.py`.
+
+## REVIEW REQUIRED: Protocol TVL Analytics Chart
+- [x] Wrote a pure deterministic JS function to generate exactly 156 weeks (3 years) of mocked TVL data natively inside the component.
+- [x] Mounted a `recharts` Bar Chart below the main data grid, wrapped in a `ResponsiveContainer`.
+- [x] Enforced mobile typography survival by setting `<XAxis minTickGap={50} />`, ensuring date labels cull themselves rather than colliding on small screens.
+- [x] Verified payload constraints via `tests/verify_bar_chart.py`.
+
+## REVIEW REQUIRED: Perps Chart Architecture Migration
+- [x] Scrapped the generic BarChart in favor of the shared, highly-interactive `RLDPerformanceChart` component utilized on the Perps Trading UI.
+- [x] Standardized the global data formatting by mathematically scaling the mock generator values to raw dollar amounts (e.g., `10e9`) and activating the internal `"dollar"` format prop.
+- [x] Cast all generated timestamps explicitly into UNIX epoch seconds (`Math.floor(date.getTime() / 1000)`) to natively prevent the `recharts` Year-55000 time-dilation bug.
+- [x] Verified deterministic component state via `tests/verify_performance_chart.py`.
+
+## REVIEW REQUIRED: Chart Viewport Vertical Scaling
+- [x] Expanded the `RLDPerformanceChart` vertical container footprint by precisely 1.5x across all responsive breakpoints.
+- [x] Updated mobile bounds from `250px` to `375px` to increase data legibility without dominating the native phone scroll view.
+- [x] Updated desktop bounds from `350px` to `525px` to utilize wide-screen real estate efficiently.
+- [x] Verified CSS class invariants mathematically via `tests/verify_chart_height.py`.
+
+## REVIEW REQUIRED: Chart Section Layout Bifurcation
+- [x] Dismantled the full-width chart section and replaced it with a strictly enforced `grid-cols-1 lg:grid-cols-4` matrix.
+- [x] Injected a new static Settings Panel skeleton on the left (`col-span-1`), guaranteeing it perfectly mirrors the 25% width of the top "Overview" sub-panel.
+- [x] Confined the `RLDPerformanceChart` to the right (`lg:col-span-3`), matching the combined 75% footprint of the remaining top sub-panels.
+- [x] Validated responsive stacking behavior via `tests/verify_layout_bifurcation.py` to prevent mobile UX destruction.
+
+## REVIEW REQUIRED: Chart Vertical Compression
+- [x] Scaled the chart viewport down by exactly 25% (0.75x multiplier) across all breakpoints to tighten the interface.
+- [x] Compressed mobile footprint from `375px` to `280px`.
+- [x] Compressed desktop footprint from `525px` to `394px`.
+- [x] Validated strict mathematical enforcement via `tests/verify_chart_compression.py`.
+
+## REVIEW REQUIRED: Settings Panel Population
+- [x] Built a highly stylized, bespoke `<CustomCheckbox />` component native to the file, bypassing ugly native HTML browser inputs.
+- [x] Imported the `lucide-react` checkmark to guarantee pixel-perfect SVG rendering across all browsers.
+- [x] Populated the Settings panel with three distinct filter groups (Protocols, Metrics, Display In) containing the requested mock items.
+- [x] Applied aggressive `opacity-40` dimming to disabled "soon" items to gracefully indicate inactive state.
+- [x] Ran structural bounds check via `tests/verify_settings_panel.py`.
+
+## REVIEW REQUIRED: Markets Data Table
+- [x] Appended a new `MARKETS` section beneath the chart to catalog individual lending pools.
+- [x] Constructed a bespoke CSS Grid-based list view (`grid-cols-7`), cleanly dividing the Left column (Asset Logo + Name) from the Right column (5 financial metrics).
+- [x] Wrapped the inner table within a `min-w-[800px] overflow-x-auto` container to natively enable horizontal scrolling on mobile devices without shattering the master layout.
+- [x] Populated with mocked Aave V3 data (USDC, USDT, WETH, WBTC) physically sorted descending by Total Borrow.
+- [x] Verified scroll boundary constraints via `tests/verify_markets_table.py`.
+
+## REVIEW REQUIRED: Markets Table Expansion
+- [x] Injected the critical "Net Worth" column into the data grid immediately following the asset identity.
+- [x] Expanded the structural CSS boundaries from `grid-cols-7` to `grid-cols-8`.
+- [x] Shifted numerical data alignment globally from `text-right` to `text-center` to balance the dense column grouping.
+- [x] Pre-emptively widened the mobile overflow failsafe from `min-w-[800px]` to `min-w-[900px]` to prevent the new 8th column from suffocating the layout on tablets.
+- [x] Ran automated verification via `tests/verify_markets_table_update.py`.
+
+## REVIEW REQUIRED: Protocol Column Extraction
+- [x] Stripped the "Protocol" identifier from its stacked subtitle position under the Asset name.
+- [x] Elevated Protocol into its own dedicated data column.
+- [x] Expanded the CSS Grid skeleton from `grid-cols-8` to `grid-cols-9`.
+- [x] Aggressively widened the horizontal mobile scroll bounds to `min-w-[1000px]` to mathematically guarantee sufficient real estate for 9 independent data columns without text truncation.
+- [x] Verified grid geometry and bounds via `tests/verify_protocol_column.py`.
+
+## REVIEW REQUIRED: GraphQL Indexer Integration
+- [x] Ripped out all static hardcoded mock JSON arrays from `LendingDataPage.jsx`.
+- [x] Assembled a monolithic `LENDING_DATA_QUERY` to fetch `marketSnapshots` and `protocolTvlHistory` in a single POST request to `/envio-graphql`.
+- [x] Plumbed the raw GraphQL payload through the `parseMarketSnapshots` and `calculateTotals` deterministic pipeline to mathematically sanitize all data points (e.g. `NaN` guards, utilization constraints) before React hydration.
+- [x] Forcibly cast `protocolTvlHistory` string dates into UNIX epoch integers (`Math.floor(Date.getTime() / 1000)`) to natively align with `RLDPerformanceChart` X-axis physics.
+- [x] Handled asynchronous race conditions by deploying a generic `<Loader2 />` `lucide-react` spinner state across the Chart and Table grids during initial fetch.
+- [x] Verified API structural boundaries via `tests/verify_graphql_integration.py`.
+
+## REVIEW REQUIRED: Aave Protocol Isolation
+- [x] Injected a hard `.filter(m => m.protocolKey === "AAVE")` immediately after raw GraphQL parsing to aggressively purge any pre-production Morpho, Euler, or Fluid data from hitting the UI layer.
+- [x] Re-mapped the `protocolTvlHistory` chart transformer to exclusively track the `row.aave` payload sum, ignoring other protocol columns completely.
+- [x] Executed `tests/verify_aave_filter.py` to assert that these data pipeline boundaries are mathematically intact and unbreakable.
+
+## REVIEW REQUIRED: UI Copy Refining
+- [x] Replaced the hardcoded `$500M` string in the Isolated TVL stat block with the static placeholder `(soon)`.
+- [x] Implemented a native React view-layer ternary (`pool.protocol === "AAVE_MARKET" || pool.protocol === "AAVE" ? "AAVE_V3" : pool.protocol`) in the Markets Table loop to correctly display "AAVE_V3".
+- [x] Verified mapping structure via `tests/verify_ui_copy.py`.

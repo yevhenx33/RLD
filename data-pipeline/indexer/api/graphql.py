@@ -260,14 +260,17 @@ def _ensure_support_tables(ch) -> None:
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_api_protocol_tvl_entity_weekly_agg
         TO api_protocol_tvl_entity_weekly_agg
         AS
-        SELECT
-            toStartOfWeek(timestamp) AS day,
-            splitByChar('_', protocol)[1] AS protocol,
-            entity_id,
-            argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
-        FROM unified_timeseries
-        WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
-        GROUP BY day, protocol, entity_id
+        SELECT day, clean_protocol AS protocol, entity_id, supply_usd_state
+        FROM (
+            SELECT
+                toStartOfWeek(timestamp) AS day,
+                splitByChar('_', protocol)[1] AS clean_protocol,
+                entity_id,
+                argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
+            FROM unified_timeseries
+            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            GROUP BY day, clean_protocol, entity_id
+        )
         """
     )
     # Bootstrap pre-aggregated latest table once on fresh deployments.
@@ -293,6 +296,7 @@ def _ensure_support_tables(ch) -> None:
                 argMax(utilization, timestamp),
                 argMax(price_usd, timestamp)
             FROM unified_timeseries
+            WHERE entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY protocol, entity_id
             """
         )
@@ -311,6 +315,7 @@ def _ensure_support_tables(ch) -> None:
                 avgState(toFloat64(supply_usd)) AS supply_usd_state,
                 avgState(toFloat64(borrow_usd)) AS borrow_usd_state
             FROM unified_timeseries
+            WHERE entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY protocol, entity_id, ts
             """
         )
@@ -326,7 +331,8 @@ def _ensure_support_tables(ch) -> None:
                 argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
             FROM unified_timeseries
             WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
-            GROUP BY day, protocol, entity_id
+              AND entity_id != 'AAVE_MARKET_SYNTHETIC'
+            GROUP BY day, clean_protocol, entity_id
             """
         )
     _TABLES_READY = True
@@ -658,8 +664,12 @@ def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
     try:
         res = ch.query(
             f"""
-            SELECT day, protocol, sum(argMaxMerge(supply_usd_state)) AS total_supply
-            FROM {API_PROTOCOL_TVL_AGG_TABLE}
+            SELECT day, protocol, sum(supply_usd) AS total_supply
+            FROM (
+                SELECT day, protocol, entity_id, argMaxMerge(supply_usd_state) AS supply_usd
+                FROM {API_PROTOCOL_TVL_AGG_TABLE}
+                GROUP BY day, protocol, entity_id
+            )
             GROUP BY day, protocol
             ORDER BY day ASC
             """
@@ -668,17 +678,17 @@ def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
         # Compatibility fallback while weekly pre-agg table backfills.
         res = ch.query(
             """
-            SELECT day, protocol, sum(supply_usd) AS total_supply
+            SELECT day, clean_protocol AS protocol, sum(supply_usd) AS total_supply
             FROM (
                 SELECT entity_id,
-                       splitByChar('_', protocol)[1] AS protocol,
+                       splitByChar('_', protocol)[1] AS clean_protocol,
                        toStartOfWeek(timestamp) AS day,
                        argMax(supply_usd, timestamp) AS supply_usd
                 FROM unified_timeseries
                 WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
-                GROUP BY entity_id, protocol, day
+                GROUP BY entity_id, protocol, clean_protocol, day
             )
-            GROUP BY day, protocol
+            GROUP BY day, clean_protocol
             ORDER BY day ASC
             """
         )
