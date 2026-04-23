@@ -34,6 +34,7 @@ TOKENS = {
     "6c3ea9036406852006290770bedfcaba0e23a0e8": ("PYUSD", 6),
     # Additional Morpho-listed stablecoins
     "e42f72e1c12f56e34a5e4ee3820af94b4e1ad533": ("RLUSD", 18),
+    "8292bb45bf1ee4d140127049757c2e0ff06317ed": ("RLUSD", 18),
     "c76a3cba4d77223d53e3a7aa5b3b2e13ff33ee0e": ("EURCV", 18),
     "c139190f447e929f090edeb554d95abb8b18ac1c": ("USDTB", 18),
     "3456a06eb13286b0354899e76d42a57c20b4e2e7": ("MSUSD", 18),
@@ -51,6 +52,26 @@ TOKENS = {
     "defe616913fa88a5af0c5fc6a5e0d25e89ea5471": ("Paxos", 18),
     "e72b141df173b999ae7c1adcbf60cc9833ce56a8": ("EURV", 18),
     "1c7d4b196cb0c7b01d743fbc6116a902379c7238": ("EURC", 6),
+    "1abaea1f7c830bd89acc67ec4af516284b1bc33c": ("EURC", 6),
+    "e343167631d89b6ffc58b88d6b7fb0228795491d": ("USDG", 6),
+    "aca92e438df0b2401ff60da7e4337b687a2435da": ("mUSD", 6),
+    "90d2af7d622ca3141efa4d8f1f24d86e5974cc8f": ("eUSDe", 18),
+    # Aave PT markets (principal tokens)
+    "9f56094c450763769ba0ea9fe2876070c0fd5f77": ("PT-sUSDE-25SEP2025", 18),
+    "14bdc3a3ae09f5518b923b69489cbcafb238e617": ("PT-eUSDE-14AUG2025", 18),
+    "3b3fb9c57858ef816833dc91565efcd85d96f634": ("PT-sUSDE-31JUL2025", 18),
+    "e6a934089bbee34f832060ce98848359883749b3": ("PT-sUSDE-27NOV2025", 18),
+    "62c6e813b9589c3631ba0cdb013acdb8544038b7": ("PT-USDe-27NOV2025", 18),
+    "917459337caac939d41d7493b3999f571d20d667": ("PT-USDe-31JUL2025", 18),
+    "bc6736d346a5ebc0debc997397912cd9b8fae10a": ("PT-USDe-25SEP2025", 18),
+    "50d2c7992b802eef16c04feadab310f31866a545": ("PT-eUSDE-29MAY2025", 18),
+    "e8483517077afa11a9b07f849cee2552f040d7b2": ("PT-sUSDE-5FEB2026", 18),
+    "9bf45ab47747f4b4dd09b3c2c73953484b4eb375": ("PT-srUSDe-2APR2026", 18),
+    "3de0ff76e8b528c092d47b9dac775931cef80f49": ("PT-sUSDE-7MAY2026", 18),
+    "1f84a51296691320478c98b8d77f2bbd17d34350": ("PT-USDe-5FEB2026", 18),
+    "619d75e3b790ebc21c289f2805bb7177a7d732e2": ("PT-srUSDe-25JUN2026", 18),
+    "aebf0bb9f57e89260d57f31af34eb58657d96ce0": ("PT-USDe-7MAY2026", 18),
+    "9db38d74a0d29380899ad354121dfb521adb0548": ("PT-USDG-28MAY2026", 6),
     # ETH derivatives
     "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": ("WETH", 18),
     "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": ("ETH", 18),
@@ -68,6 +89,7 @@ TOKENS = {
     "5e8422345238f34275888049021821e8e08caa1f": ("frxETH", 18),
     "ac3e018457b222d93114458476f3e3416abbe38f": ("sfrxETH", 18),
     "edfa23602d0ec14714057867a78d01e94176bea0": ("osETH_aave", 18),  # Aave-listed osETH
+    "d11c452fc99cf405034ee446803b6f6c1f6d5ed8": ("tETH", 18),
     "5c7e299cf531eb66f2a1df637d37abb78e6200c7": ("WOETH", 18),
     "7122985931b4d0b1aa7cc69dc3e466fc6c7bca44": ("KSETH", 18),
     "8c1bed5b9a0928467c9b1341da1d7bd5e10b6549": ("lsETH", 18),
@@ -78,10 +100,19 @@ TOKENS = {
     "8236a87084f8b84306f72007f36f2618a5634494": ("LBTC", 8),
     "18084fba666a33d37592fa2633fd49a74dd93a88": ("tBTC", 18),
     "657e8c867d8b37dcc18fa4caead9c45eb088c642": ("eBTC", 8),
+    "c96de26018a54d51c097160568752c4e3bd6c364": ("FBTC", 8),
+    "b0f70c0bd6fd87dbeb7c10dc692a2a6106817072": ("BTC.b", 8),
     # Gold
     "45804880de22913dafe09f4980848ece6ecbaf78": ("PAXG", 18),
     "68749665ff8d2d112fa859aa293f07a622782f38": ("XAUt", 6),
     # Governance / other
+    "5a98fcbea516cf06857215779fd812ca3bef1b32": ("LDO", 18),
+    "d33526068d116ce69f19a9ee46f0bd304f21a51f": ("RPL", 18),
+    "c18360217d8f7ab5e7c516566761ea12ce7f9d72": ("ENS", 18),
+    "111111111117dc0aa78b770fa6a738034120c302": ("1INCH", 18),
+    "3432b6a60d23ca0dfca7761b7ab56459d9c964d0": ("FXS", 18),
+    "af5191b0de278c7286d6c7cc6ab6bb8a73ba2cd6": ("STG", 18),
+    "defa4e8a7bcba345f687a2f1456f5edd9ce97202": ("KNC", 18),
     "514910771af9ca656af840dff83e8264ecf986ca": ("LINK", 18),
     "7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": ("AAVE", 18),
     "9f8f72aa9304c8b593d555f12ef6589cc3a579a2": ("MKR", 18),
@@ -105,6 +136,7 @@ STABLES = {
     # Additional Morpho stablecoins (uppercase from morpho_market_params)
     "RLUSD", "USDTB", "MSUSD", "RUSD", "FRXUSD", "LVLUSD",
     "USDE", "APXUSD", "AUSD", "EUSD", "MUSD", "PMUSD", "USDCV", "USDF",
+    "USDG", "EUSDE",
     "USDQ", "USDR", "USDU",
     # Uppercase aliases for case-insensitive lookup
     "SYRUPUSDC", "SYRUPUSDT",
@@ -114,11 +146,12 @@ ETH_ASSETS = {
     "WETH", "ETH", "wstETH", "rETH", "cbETH", "weETH", "weETHs", "ezETH",
     "rsETH", "osETH", "osETH_aave", "mETH", "stETH", "eETH", "frxETH",
     "sfrxETH", "WOETH", "KSETH", "lsETH",
+    "tETH", "TETH",
     # Uppercase aliases
     "WSTETH", "WEETH", "MSETH",
 }
 
-BTC_ASSETS = {"WBTC", "cbBTC", "LBTC", "tBTC", "eBTC", "CBBTC"}
+BTC_ASSETS = {"WBTC", "cbBTC", "LBTC", "tBTC", "eBTC", "CBBTC", "FBTC", "BTC.b", "BTC.B"}
 
 # Fluid-specific: approximate exchange rates vs base asset for LSDs
 PRICE_MULTIPLIERS = {

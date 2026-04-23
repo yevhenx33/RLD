@@ -82,23 +82,21 @@ export default function ProtocolMarkets() {
 
   const markets = useMemo(() => {
     const rows = data?.protocolMarkets || [];
-    return rows
-      .map((r) => ({
-        entityId: r.entityId,
-        collateralIcon: r.collateralSymbol ? getTokenIcon(r.collateralSymbol) : null,
-        collateralSymbol: r.collateralSymbol || null,
-        loanIcon: getTokenIcon(r.symbol),
-        loanName: getTokenName(r.symbol),
-        symbol: r.symbol,
-        protocol: r.protocol,
-        supplyUsd: r.supplyUsd || 0,
-        borrowUsd: r.borrowUsd || 0,
-        supplyApy: r.supplyApy || 0,
-        borrowApy: r.borrowApy || 0,
-        utilization: r.utilization || 0,
-        lltv: r.lltv || 0,
-      }))
-      .filter((m) => m.utilization < 0.99);
+    return rows.map((r) => ({
+      entityId: r.entityId,
+      collateralIcon: r.collateralSymbol ? getTokenIcon(r.collateralSymbol) : null,
+      collateralSymbol: r.collateralSymbol || null,
+      loanIcon: getTokenIcon(r.symbol),
+      loanName: getTokenName(r.symbol),
+      symbol: r.symbol,
+      protocol: r.protocol,
+      supplyUsd: r.supplyUsd || 0,
+      borrowUsd: r.borrowUsd || 0,
+      supplyApy: r.supplyApy || 0,
+      borrowApy: r.borrowApy || 0,
+      utilization: r.utilization || 0,
+      lltv: r.lltv || 0,
+    }));
   }, [data]);
 
   // --- Sort handler ---

@@ -23,6 +23,7 @@ from ..base import (
     forward_fill_hourly,
     insert_df_batched,
     upsert_api_market_latest,
+    refresh_api_protocol_tvl_weekly,
     rewrite_protocol_window_if_enabled,
 )
 from ..aave_constants import (
@@ -311,8 +312,10 @@ class AaveV3Source(BaseSource):
         final = forward_fill_hourly(final, ch, "AAVE_MARKET", compound=False)
 
         if len(final) > 0:
-            min_ts = final["timestamp"].min().strftime("%Y-%m-%d %H:%M:%S")
-            max_ts = final["timestamp"].max().strftime("%Y-%m-%d %H:%M:%S")
+            min_ts_dt = final["timestamp"].min()
+            max_ts_dt = final["timestamp"].max()
+            min_ts = min_ts_dt.strftime("%Y-%m-%d %H:%M:%S")
+            max_ts = max_ts_dt.strftime("%Y-%m-%d %H:%M:%S")
             rewrite_protocol_window_if_enabled(
                 ch,
                 self.output_table,
@@ -322,6 +325,7 @@ class AaveV3Source(BaseSource):
             )
             insert_df_batched(ch, self.output_table, final)
             upsert_api_market_latest(ch, final)
+            refresh_api_protocol_tvl_weekly(ch, min_ts_dt, max_ts_dt)
             
             # Persist dynamic physical state boundaries
             if len(self._reserves) > 0:

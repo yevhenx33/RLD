@@ -139,14 +139,18 @@ def ensure_api_preagg_tables(ch) -> None:
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_api_protocol_tvl_entity_weekly_agg
         TO api_protocol_tvl_entity_weekly_agg
         AS
-        SELECT
-            toStartOfWeek(timestamp) AS day,
-            splitByChar('_', protocol)[1] AS protocol,
-            entity_id,
-            argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
-        FROM unified_timeseries
-        WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
-        GROUP BY day, protocol, entity_id
+        SELECT day, clean_protocol AS protocol, entity_id, supply_usd_state
+        FROM (
+            SELECT
+                toStartOfWeek(timestamp) AS day,
+                splitByChar('_', protocol)[1] AS clean_protocol,
+                entity_id,
+                argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
+            FROM unified_timeseries
+            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+              AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
+            GROUP BY day, clean_protocol, entity_id
+        )
         """
     )
     try:
@@ -178,14 +182,18 @@ def ensure_api_preagg_tables(ch) -> None:
         ch.command(
             """
             INSERT INTO api_protocol_tvl_entity_weekly_agg
-            SELECT
-                toStartOfWeek(timestamp) AS day,
-                splitByChar('_', protocol)[1] AS protocol,
-                entity_id,
-                argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
-            FROM unified_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
-            GROUP BY day, protocol, entity_id
+            SELECT day, clean_protocol AS protocol, entity_id, supply_usd_state
+            FROM (
+                SELECT
+                    toStartOfWeek(timestamp) AS day,
+                    splitByChar('_', protocol)[1] AS clean_protocol,
+                    entity_id,
+                    argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
+                FROM unified_timeseries
+                WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+                  AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
+                GROUP BY day, clean_protocol, entity_id
+            )
             """
         )
     _API_TABLES_READY = True
@@ -274,7 +282,42 @@ def upsert_api_market_timeseries_hourly(ch, df) -> int:
 
 def refresh_api_protocol_tvl_weekly(ch, min_ts, max_ts) -> int:
     ensure_api_preagg_tables(ch)
-    return 0
+    if min_ts is None or max_ts is None:
+        return 0
+    try:
+        min_dt = pd.to_datetime(min_ts)
+        max_dt = pd.to_datetime(max_ts)
+        if pd.isna(min_dt) or pd.isna(max_dt):
+            return 0
+        if max_dt < min_dt:
+            min_dt, max_dt = max_dt, min_dt
+    except Exception:
+        return 0
+
+    # Expand by one week to cover boundary updates cleanly.
+    window_start = (min_dt - pd.Timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    window_end = (max_dt + pd.Timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+
+    ch.command(
+        f"""
+        INSERT INTO {API_PROTOCOL_TVL_AGG_TABLE}
+        SELECT day, clean_protocol AS protocol, entity_id, supply_usd_state
+        FROM (
+            SELECT
+                toStartOfWeek(timestamp) AS day,
+                splitByChar('_', protocol)[1] AS clean_protocol,
+                entity_id,
+                argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
+            FROM unified_timeseries
+            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+              AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
+              AND timestamp >= '{window_start}'
+              AND timestamp <= '{window_end}'
+            GROUP BY day, clean_protocol, entity_id
+        )
+        """
+    )
+    return 1
 
 
 def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = True) -> pd.DataFrame:

@@ -2,6 +2,7 @@ import os
 import sqlite3
 import threading
 import atexit
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 import clickhouse_connect
@@ -58,6 +59,8 @@ _CLICKHOUSE_LOCK = threading.Lock()
 _TABLES_READY = False
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
 API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
+TVL_PROTOCOLS = ("AAVE", "MORPHO", "EULER", "FLUID")
+TVL_SYNTHETIC_ENTITY_IDS = {"AAVE_MARKET_SYNTHETIC"}
 
 
 def _parse_cors_origins(env_name: str, default_origins: list[str]) -> list[str]:
@@ -266,9 +269,10 @@ def _ensure_support_tables(ch) -> None:
                 toStartOfWeek(timestamp) AS day,
                 splitByChar('_', protocol)[1] AS clean_protocol,
                 entity_id,
-                argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
+                argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM unified_timeseries
             WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+              AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
             GROUP BY day, clean_protocol, entity_id
         )
         """
@@ -286,18 +290,37 @@ def _ensure_support_tables(ch) -> None:
             SELECT
                 protocol,
                 entity_id,
-                argMax(symbol, timestamp),
-                argMax(target_id, timestamp),
-                max(timestamp),
-                argMax(supply_usd, timestamp),
-                argMax(borrow_usd, timestamp),
-                argMax(supply_apy, timestamp),
-                argMax(borrow_apy, timestamp),
-                argMax(utilization, timestamp),
-                argMax(price_usd, timestamp)
-            FROM unified_timeseries
-            WHERE entity_id != 'AAVE_MARKET_SYNTHETIC'
-            GROUP BY protocol, entity_id
+                tupleElement(latest_tuple, 1) AS symbol,
+                tupleElement(latest_tuple, 2) AS target_id,
+                tupleElement(latest_tuple, 3) AS timestamp,
+                tupleElement(latest_tuple, 4) AS supply_usd,
+                tupleElement(latest_tuple, 5) AS borrow_usd,
+                tupleElement(latest_tuple, 6) AS supply_apy,
+                tupleElement(latest_tuple, 7) AS borrow_apy,
+                tupleElement(latest_tuple, 8) AS utilization,
+                tupleElement(latest_tuple, 9) AS price_usd
+            FROM (
+                SELECT
+                    protocol,
+                    entity_id,
+                    argMax(
+                        tuple(
+                            symbol,
+                            target_id,
+                            timestamp,
+                            supply_usd,
+                            borrow_usd,
+                            supply_apy,
+                            borrow_apy,
+                            utilization,
+                            price_usd
+                        ),
+                        timestamp
+                    ) AS latest_tuple
+                FROM unified_timeseries
+                WHERE entity_id != 'AAVE_MARKET_SYNTHETIC'
+                GROUP BY protocol, entity_id
+            )
             """
         )
     hourly_count = _query_int(ch, "SELECT count() FROM api_market_timeseries_hourly_agg")
@@ -324,15 +347,18 @@ def _ensure_support_tables(ch) -> None:
         ch.command(
             """
             INSERT INTO api_protocol_tvl_entity_weekly_agg
-            SELECT
-                toStartOfWeek(timestamp) AS day,
-                splitByChar('_', protocol)[1] AS protocol,
-                entity_id,
-                argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
-            FROM unified_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
-              AND entity_id != 'AAVE_MARKET_SYNTHETIC'
-            GROUP BY day, clean_protocol, entity_id
+            SELECT day, clean_protocol AS protocol, entity_id, supply_usd_state
+            FROM (
+                SELECT
+                    toStartOfWeek(timestamp) AS day,
+                    splitByChar('_', protocol)[1] AS clean_protocol,
+                    entity_id,
+                    argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
+                FROM unified_timeseries
+                WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+                  AND entity_id != 'AAVE_MARKET_SYNTHETIC'
+                GROUP BY day, clean_protocol, entity_id
+            )
             """
         )
     _TABLES_READY = True
@@ -507,21 +533,37 @@ def _query_historical_rates(ch, symbols: list[str], resolution: str, limit: int)
     ]
 
 
-def _query_market_snapshots(ch) -> list[MarketSnapshot]:
-    sql = """
-    SELECT
-        symbol,
-        protocol,
-        supply_usd,
-        borrow_usd,
-        supply_apy,
-        borrow_apy,
-        if(supply_usd > 0, borrow_usd / supply_usd, 0.0) AS utilization
-    FROM api_market_latest FINAL
-    WHERE supply_usd >= 1000 OR borrow_usd >= 1000 OR protocol LIKE 'AAVE%'
-    ORDER BY supply_usd DESC
-    """
-    res = ch.query(sql)
+def _query_market_snapshots(ch, protocol: Optional[str] = None) -> list[MarketSnapshot]:
+    if protocol:
+        sql = """
+        SELECT
+            symbol,
+            protocol,
+            supply_usd,
+            borrow_usd,
+            supply_apy,
+            borrow_apy,
+            if(supply_usd > 0, borrow_usd / supply_usd, 0.0) AS utilization
+        FROM api_market_latest FINAL
+        WHERE protocol = %(protocol)s
+        ORDER BY supply_usd DESC
+        """
+        res = ch.query(sql, parameters={"protocol": protocol})
+    else:
+        sql = """
+        SELECT
+            symbol,
+            protocol,
+            supply_usd,
+            borrow_usd,
+            supply_apy,
+            borrow_apy,
+            if(supply_usd > 0, borrow_usd / supply_usd, 0.0) AS utilization
+        FROM api_market_latest FINAL
+        WHERE supply_usd >= 1000 OR borrow_usd >= 1000 OR protocol LIKE 'AAVE%'
+        ORDER BY supply_usd DESC
+        """
+        res = ch.query(sql)
     return [
         MarketSnapshot(
             symbol=str(row[0]),
@@ -622,6 +664,11 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
         ORDER BY t.supply_usd DESC
         """
     else:
+        value_filter = (
+            ""
+            if protocol == AAVE_MARKET
+            else "WHERE supply_usd >= 1000 OR borrow_usd >= 1000"
+        )
         query = f"""
         SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
                supply_apy, borrow_apy, utilization,
@@ -638,7 +685,7 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
             FROM api_market_latest FINAL
             WHERE protocol = '{escaped_protocol}'
         )
-        WHERE supply_usd >= 1000 OR borrow_usd >= 1000
+        {value_filter}
         ORDER BY supply_usd DESC
         """
 
@@ -660,55 +707,97 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
     ]
 
 
-def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
-    try:
-        res = ch.query(
-            f"""
-            SELECT day, protocol, sum(supply_usd) AS total_supply
-            FROM (
-                SELECT day, protocol, entity_id, argMaxMerge(supply_usd_state) AS supply_usd
-                FROM {API_PROTOCOL_TVL_AGG_TABLE}
-                GROUP BY day, protocol, entity_id
-            )
-            GROUP BY day, protocol
-            ORDER BY day ASC
-            """
-        )
-    except Exception:
-        # Compatibility fallback while weekly pre-agg table backfills.
-        res = ch.query(
-            """
-            SELECT day, clean_protocol AS protocol, sum(supply_usd) AS total_supply
-            FROM (
-                SELECT entity_id,
-                       splitByChar('_', protocol)[1] AS clean_protocol,
-                       toStartOfWeek(timestamp) AS day,
-                       argMax(supply_usd, timestamp) AS supply_usd
-                FROM unified_timeseries
-                WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
-                GROUP BY entity_id, protocol, clean_protocol, day
-            )
-            GROUP BY day, clean_protocol
-            ORDER BY day ASC
-            """
-        )
-    pivot: dict[str, dict[str, float]] = {}
-    for day, protocol, total_supply in res.result_rows:
-        date_key = str(day)
-        if date_key not in pivot:
-            pivot[date_key] = {}
-        pivot[date_key][str(protocol).upper()] = float(total_supply)
+def _to_week_date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
 
-    return [
-        ProtocolTvlPoint(
-            date=date_key,
-            aave=values.get("AAVE", 0.0),
-            morpho=values.get("MORPHO", 0.0),
-            euler=values.get("EULER", 0.0),
-            fluid=values.get("FLUID", 0.0),
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for separator in ("T", " "):
+        if separator in text:
+            text = text.split(separator, 1)[0]
+            break
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _forward_fill_protocol_tvl(rows) -> list[ProtocolTvlPoint]:
+    if not rows:
+        return []
+
+    updates_by_week: dict[date, list[tuple[str, str, float]]] = {}
+    min_week: date | None = None
+    max_week: date | None = None
+
+    for raw_week, raw_protocol, raw_entity_id, raw_supply in rows:
+        week = _to_week_date(raw_week)
+        if week is None:
+            continue
+        protocol = str(raw_protocol or "").upper()
+        if protocol not in TVL_PROTOCOLS:
+            continue
+        entity_id = str(raw_entity_id or "")
+        if entity_id in TVL_SYNTHETIC_ENTITY_IDS:
+            continue
+
+        try:
+            supply = max(0.0, float(raw_supply or 0.0))
+        except (TypeError, ValueError):
+            supply = 0.0
+
+        updates_by_week.setdefault(week, []).append((protocol, entity_id, supply))
+        min_week = week if min_week is None else min(min_week, week)
+        max_week = week if max_week is None else max(max_week, week)
+
+    if min_week is None or max_week is None:
+        return []
+
+    points: list[ProtocolTvlPoint] = []
+    current_supply_by_entity: dict[tuple[str, str], float] = {}
+    totals_by_protocol = {protocol: 0.0 for protocol in TVL_PROTOCOLS}
+    cursor = min_week
+    one_week = timedelta(days=7)
+
+    while cursor <= max_week:
+        for protocol, entity_id, supply in updates_by_week.get(cursor, []):
+            key = (protocol, entity_id)
+            previous = current_supply_by_entity.get(key)
+            if previous is not None:
+                totals_by_protocol[protocol] -= previous
+            current_supply_by_entity[key] = supply
+            totals_by_protocol[protocol] += supply
+
+        points.append(
+            ProtocolTvlPoint(
+                date=cursor.isoformat(),
+                aave=totals_by_protocol.get("AAVE", 0.0),
+                morpho=totals_by_protocol.get("MORPHO", 0.0),
+                euler=totals_by_protocol.get("EULER", 0.0),
+                fluid=totals_by_protocol.get("FLUID", 0.0),
+            )
         )
-        for date_key, values in sorted(pivot.items(), key=lambda item: item[0])
-    ]
+        cursor += one_week
+
+    return points
+
+
+def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
+    res = ch.query(
+        f"""
+        SELECT day, protocol, entity_id, argMaxMerge(supply_usd_state) AS supply_usd
+        FROM {API_PROTOCOL_TVL_AGG_TABLE}
+        WHERE protocol IN ('AAVE', 'MORPHO', 'EULER', 'FLUID')
+          AND entity_id != 'AAVE_MARKET_SYNTHETIC'
+        GROUP BY day, protocol, entity_id
+        ORDER BY day ASC, protocol ASC, entity_id ASC
+        """
+    )
+    return _forward_fill_protocol_tvl(res.result_rows)
 
 
 def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) -> list[MarketTimeseriesPoint]:
@@ -727,30 +816,10 @@ def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) ->
     ORDER BY ts DESC
     LIMIT %(lim)s
     """
-    try:
-        res = ch.query(
-            sql,
-            parameters={"eid_prefix": f"{entity_id}%", "lim": _safe_limit(limit)},
-        )
-    except Exception:
-        # Compatibility fallback while hourly pre-agg table backfills.
-        res = ch.query(
-            f"""
-            SELECT
-                toUnixTimestamp({time_expr}) AS ts,
-                avg(supply_apy) AS supply_apy,
-                avg(borrow_apy) AS borrow_apy,
-                avg(utilization) AS utilization,
-                avg(supply_usd) AS supply_usd,
-                avg(borrow_usd) AS borrow_usd
-            FROM unified_timeseries
-            WHERE entity_id LIKE %(eid_prefix)s
-            GROUP BY ts
-            ORDER BY ts DESC
-            LIMIT %(lim)s
-            """,
-            parameters={"eid_prefix": f"{entity_id}%", "lim": _safe_limit(limit)},
-        )
+    res = ch.query(
+        sql,
+        parameters={"eid_prefix": f"{entity_id}%", "lim": _safe_limit(limit)},
+    )
     points = [
         MarketTimeseriesPoint(
             timestamp=int(row[0]),
@@ -881,9 +950,9 @@ class Query:
         return _query_historical_rates(ch, symbols, resolution, limit)
 
     @strawberry.field(name="marketSnapshots")
-    def market_snapshots(self) -> List[MarketSnapshot]:
+    def market_snapshots(self, protocol: Optional[str] = None) -> List[MarketSnapshot]:
         ch = get_clickhouse_client()
-        return _query_market_snapshots(ch)
+        return _query_market_snapshots(ch, protocol)
 
     @strawberry.field(name="latestRates")
     def latest_rates(self) -> Optional[LatestRates]:

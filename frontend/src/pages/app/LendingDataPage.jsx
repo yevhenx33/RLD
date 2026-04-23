@@ -5,11 +5,10 @@ import { Activity, PieChart, Layers, Users, Check, Loader2 } from "lucide-react"
 import RLDPerformanceChart from "../../components/charts/RLDChart";
 import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
-import { parseMarketSnapshots, aggregateProtocolStats, calculateTotals } from "../../utils/lendingDataPokaYoke";
 
 const LENDING_DATA_QUERY = `
   query LendingDataHub {
-    marketSnapshots {
+    marketSnapshots(protocol: "AAVE_MARKET") {
       symbol
       protocol
       supplyUsd
@@ -54,35 +53,101 @@ const CustomCheckbox = ({ label, checked = false, disabled = false }) => (
 );
 
 export default function LendingDataPage() {
-  const { data: gqlData, error, isLoading: loading } = useSWR(
-    [ENVIO_GRAPHQL_URL, "envio.lending-data-hub.v1"],
+  const { data: gqlData, error: _error, isLoading: loading } = useSWR(
+    [ENVIO_GRAPHQL_URL, "envio.lending-data-hub.v3"],
     ([url]) => postGraphQL(url, { query: LENDING_DATA_QUERY }),
     { refreshInterval: 30000, dedupingInterval: 5000 }
   );
 
   const { stats, chartData, marketsData } = useMemo(() => {
-    // 1. Safe parsing & Top-level stats (AAVE ONLY)
-    const rawMarkets = parseMarketSnapshots(gqlData?.marketSnapshots || []);
-    const parsedMarkets = rawMarkets.filter(m => m.protocolKey === "AAVE");
-    const protocolStats = aggregateProtocolStats(parsedMarkets);
-    const totals = calculateTotals(protocolStats);
+    // 1) Canonical Aave snapshot normalization
+    const aaveMarkets = (gqlData?.marketSnapshots || []).map((row) => {
+      const supplyUsd = Math.max(0, Number(row?.supplyUsd) || 0);
+      const borrowUsd = Math.max(0, Number(row?.borrowUsd) || 0);
+      const supplyApy = Math.max(0, Number(row?.supplyApy) || 0);
+      const borrowApy = Math.max(0, Number(row?.borrowApy) || 0);
 
-    // 2. Chart Transformation (Enforce UNIX Epoch & Aave TVL)
+      return {
+        symbol: String(row?.symbol || "UNKNOWN"),
+        protocol: String(row?.protocol || "AAVE_MARKET"),
+        supplyUsd,
+        borrowUsd,
+        supplyApy,
+        borrowApy,
+        utilization: supplyUsd > 0 ? Math.min(1, borrowUsd / supplyUsd) : 0,
+      };
+    });
+
+    // 2) Top-level stats derived from canonical snapshot
+    const totals = aaveMarkets.reduce(
+      (acc, market) => {
+        acc.totalSupplyUsd += market.supplyUsd;
+        acc.totalBorrowUsd += market.borrowUsd;
+        acc.weightedSupplyApy += market.supplyApy * market.supplyUsd;
+        acc.weightedBorrowApy += market.borrowApy * market.borrowUsd;
+        return acc;
+      },
+      {
+        totalSupplyUsd: 0,
+        totalBorrowUsd: 0,
+        weightedSupplyApy: 0,
+        weightedBorrowApy: 0,
+      }
+    );
+    const stats = {
+      totalSupplyUsd: totals.totalSupplyUsd,
+      totalBorrowUsd: totals.totalBorrowUsd,
+      averageSupplyApy:
+        totals.totalSupplyUsd > 0 ? totals.weightedSupplyApy / totals.totalSupplyUsd : 0,
+      averageBorrowApy:
+        totals.totalBorrowUsd > 0 ? totals.weightedBorrowApy / totals.totalBorrowUsd : 0,
+      marketCount: aaveMarkets.length,
+    };
+
+    // 3) Chart transformation (weekly timestamps + Aave TVL)
     const rawHistory = gqlData?.protocolTvlHistory || [];
-    const chart = rawHistory.map((row) => ({
-      timestamp: Math.floor(new Date(row.date).getTime() / 1000),
-      tvl: row.aave || 0,
-    }));
+    const chart = rawHistory
+      .map((row) => {
+        const rawDate = typeof row?.date === "string" ? row.date.trim() : "";
+        if (!rawDate) return null;
 
-    // 3. Markets Table Transformation
-    const tableData = [...parsedMarkets]
+        // Normalize DB-style timestamps so parsing is deterministic in browsers.
+        let normalizedDate = rawDate;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+          normalizedDate = `${rawDate}T00:00:00Z`;
+        } else if (rawDate.includes(" ")) {
+          normalizedDate = `${rawDate.replace(" ", "T")}Z`;
+        }
+
+        const timestampMs = Date.parse(normalizedDate);
+        if (!Number.isFinite(timestampMs)) return null;
+
+        const tvl = Number(row?.aave);
+        return {
+          timestamp: Math.floor(timestampMs / 1000),
+          tvl: Number.isFinite(tvl) && tvl > 0 ? tvl : 0,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .reduce((acc, point) => {
+        if (acc.length === 0 || acc[acc.length - 1].timestamp !== point.timestamp) {
+          acc.push(point);
+          return acc;
+        }
+        acc[acc.length - 1] = point;
+        return acc;
+      }, []);
+
+    // 4) Markets table rows
+    const tableData = [...aaveMarkets]
       .sort((a, b) => b.borrowUsd - a.borrowUsd)
       .map(m => ({
         ...m,
         netWorth: Math.max(0, m.supplyUsd - m.borrowUsd)
       }));
 
-    return { stats: totals, chartData: chart, marketsData: tableData };
+    return { stats, chartData: chart, marketsData: tableData };
   }, [gqlData]);
 
   return (
@@ -130,10 +195,10 @@ export default function LendingDataPage() {
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
                   <div className="flex flex-col justify-end">
-                    <StatItem label="POOLED" value="$22.3B" change="+1.5%" />
+                    <StatItem label="POOLED" value={formatCurrency(stats.totalSupplyUsd)} />
                   </div>
                   <div className="flex flex-col justify-end border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
-                    <StatItem label="ISOLATED" value="(soon)" />
+                    <StatItem label="ISOLATED" value="N/A" />
                   </div>
                 </div>
               }
