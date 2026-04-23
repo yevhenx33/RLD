@@ -317,46 +317,27 @@ def _normalize_rate_fraction(raw_rate: Decimal) -> Decimal | None:
     return raw_rate
 
 
-def _post_json(endpoint: str, payload: dict[str, Any], timeout: int = 4) -> dict[str, Any] | list[Any] | None:
-    try:
-        req = urllib.request.Request(
-            endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError):
-        return None
-
-
 def _fetch_live_rate_fraction(api_url: str | None) -> Decimal | None:
-    """
-    Fetch live USDC borrow rate fraction r (e.g., 0.1399 for 13.99% APY).
-
-    Source:
-      Envio/data-pipeline GraphQL historicalRates
-    """
+    """Fetch live USDC borrow rate fraction r strictly from the unified REST endpoint."""
     if not api_url:
         return None
 
     base = api_url.rstrip("/")
-    graphql_endpoints = [f"{base}/graphql", f"{base}/envio-graphql"]
+    endpoints = [
+        "http://rld_graphql_api:5000/api/v1/oracle/usdc-borrow-apy",
+        f"{base}/api/v1/oracle/usdc-borrow-apy"
+    ]
 
-    # 1) Envio/data-pipeline GraphQL endpoint
-    envio_query = {
-        "query": '{ historicalRates(symbols:["USDC"], resolution:"1H", limit:1){ apy } }'
-    }
-    for endpoint in graphql_endpoints:
-        payload = _post_json(endpoint, envio_query)
-        if not isinstance(payload, dict):
+    for endpoint in endpoints:
+        try:
+            req = urllib.request.Request(endpoint, method="GET")
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                apy = data.get("borrow_apy")
+                if apy is not None:
+                    return _normalize_rate_fraction(Decimal(str(apy)))
+        except Exception:
             continue
-        rows = payload.get("data", {}).get("historicalRates", [])
-        if rows:
-            apy = rows[0].get("apy")
-            if apy is not None:
-                return _normalize_rate_fraction(Decimal(str(apy)))
 
     return None
 
