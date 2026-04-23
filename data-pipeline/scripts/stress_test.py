@@ -5,6 +5,7 @@ import asyncio
 import logging
 import gc
 import psutil
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -15,6 +16,11 @@ from indexer.sources.aave_v3 import AaveV3Source
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] STRESS TEST: %(message)s")
 log = logging.getLogger("stress_test")
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_DATA_PIPELINE_STRESS_TESTS") != "1",
+    reason="stress tests are opt-in; set RUN_DATA_PIPELINE_STRESS_TESTS=1",
+)
 
 class MemoryTracker:
     def __init__(self):

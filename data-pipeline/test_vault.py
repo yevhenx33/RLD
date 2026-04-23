@@ -1,18 +1,26 @@
-import hypersync
 import asyncio
+import os
 
-async def test():
-    client = hypersync.HypersyncClient(hypersync.ClientConfig())
-    # Vault creation event signature: CreateMetaMorpho(address,address,address,uint256,address,string,string,bytes32)
-    # Actually let's query the factory address
-    FACTORY = "0xA9c3D3a366466Fa809d1Ae982Fb2c46E5fC41101"
-    query = hypersync.Query(
-        from_block=18883124,
-        to_block=18885124, # small range to find a log
-        logs=[hypersync.LogSelection(address=[FACTORY])]
-    )
-    res = await client.get(query)
-    for log in res.data.logs:
-        print("Vault created:", log.topics[0])
+import hypersync
+import pytest
 
-asyncio.run(test())
+HYPERSYNC_URL = os.getenv("HYPERSYNC_URL")
+FACTORY_ADDRESS = "0xA9c3D3a366466Fa809d1Ae982Fb2c46E5fC41101"
+
+
+@pytest.mark.skipif(not HYPERSYNC_URL, reason="requires HYPERSYNC_URL")
+def test_vault_factory_logs_query():
+    async def run():
+        client = hypersync.HypersyncClient(
+            hypersync.ClientConfig(url=HYPERSYNC_URL)
+        )
+        query = hypersync.Query(
+            from_block=18883124,
+            to_block=18885124,
+            logs=[hypersync.LogSelection(address=[FACTORY_ADDRESS])],
+        )
+        response = await client.get(query)
+        assert response.data is not None
+        assert response.data.logs is not None
+
+    asyncio.run(run())
