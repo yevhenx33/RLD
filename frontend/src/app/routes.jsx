@@ -11,8 +11,8 @@ const BondsDirectoryPage = lazy(() => import("../pages/app/BondsDirectoryPage"))
 const ProtocolMarketsPage = lazy(
   () => import("../features/explore/pages/ProtocolMarketsPage"),
 );
-const MarketDetailPage = lazy(
-  () => import("../features/explore/pages/MarketDetailPage"),
+const LendingPoolPage = lazy(
+  () => import("../pages/app/LendingPoolPage"),
 );
 const PortfolioPage = lazy(() => import("../pages/app/PortfolioPage"));
 const SimulationTerminalPage = lazy(
@@ -72,7 +72,7 @@ export default function AppRoutes() {
         />
         <Route
           path="/data/:protocol/:marketId"
-          element={renderLazy(MarketDetailPage)}
+          element={renderLazy(LendingPoolPage)}
         />
         <Route
           path="/explore"

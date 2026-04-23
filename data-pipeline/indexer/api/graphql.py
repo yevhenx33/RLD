@@ -83,6 +83,7 @@ class HistoricalRate:
 
 @strawberry.type
 class MarketSnapshot:
+    entity_id: str = strawberry.field(name="entityId")
     symbol: str
     protocol: str
     supply_usd: float = strawberry.field(name="supplyUsd")
@@ -537,6 +538,7 @@ def _query_market_snapshots(ch, protocol: Optional[str] = None) -> list[MarketSn
     if protocol:
         sql = """
         SELECT
+            entity_id,
             symbol,
             protocol,
             supply_usd,
@@ -552,6 +554,7 @@ def _query_market_snapshots(ch, protocol: Optional[str] = None) -> list[MarketSn
     else:
         sql = """
         SELECT
+            entity_id,
             symbol,
             protocol,
             supply_usd,
@@ -566,13 +569,14 @@ def _query_market_snapshots(ch, protocol: Optional[str] = None) -> list[MarketSn
         res = ch.query(sql)
     return [
         MarketSnapshot(
-            symbol=str(row[0]),
-            protocol=str(row[1]),
-            supply_usd=float(row[2]),
-            borrow_usd=float(row[3]),
-            supply_apy=float(row[4]),
-            borrow_apy=float(row[5]),
-            utilization=float(row[6]),
+            entity_id=str(row[0]),
+            symbol=str(row[1]),
+            protocol=str(row[2]),
+            supply_usd=float(row[3]),
+            borrow_usd=float(row[4]),
+            supply_apy=float(row[5]),
+            borrow_apy=float(row[6]),
+            utilization=float(row[7]),
         )
         for row in res.result_rows
     ]
