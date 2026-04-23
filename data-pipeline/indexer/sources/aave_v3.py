@@ -36,9 +36,7 @@ from ..aave_constants import (
     AAVE_TOPIC_LIQUIDATION_CALL,
     AAVE_TOPIC_MINTED_TO_TREASURY,
 )
-from ..tokens import (TOKENS as RESERVE_MAP, STABLES, ETH_ASSETS, BTC_ASSETS,
-                      PRICE_MULTIPLIERS, get_chainlink_prices, get_usd_price)
-from ..sources.morpho import SYM_DECIMALS  # Reusing shared dictionary for simplicity
+from ..tokens import (TOKENS as RESERVE_MAP, get_chainlink_prices, get_usd_price)
 
 log = logging.getLogger("indexer.aave_v3")
 
@@ -162,7 +160,8 @@ class AaveV3Source(BaseSource):
 
         # Reserve address is typically topic1 unless LiquidationCall (where it's collateral in topic1 and debt in topic2)
         if evt == "LiquidationCall":
-            if len(topics) < 3: return None
+            if len(topics) < 3:
+                return None
             collateral_addr = "0x" + topics[1][26:].lower()
             debt_addr = "0x" + topics[2][26:].lower()
             
@@ -183,7 +182,8 @@ class AaveV3Source(BaseSource):
             return None
 
         # Standard reserve interactions
-        if len(topics) < 2: return None
+        if len(topics) < 2:
+            return None
         reserve_addr = topics[1][26:].lower()
         eid = "0x" + reserve_addr
 

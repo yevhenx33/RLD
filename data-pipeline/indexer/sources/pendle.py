@@ -1,5 +1,4 @@
 from indexer.base import BaseSource
-import hypersync
 from typing import Optional
 import json
 import os

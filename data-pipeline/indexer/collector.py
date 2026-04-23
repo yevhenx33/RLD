@@ -1,5 +1,4 @@
 import os
-import asyncio
 import logging
 import datetime
 import hypersync
@@ -225,7 +224,9 @@ class ProtocolCollector:
 
             # Route & Write strictly to this protocol's raw_table
             block_ts_map = build_block_ts_map(mempool_blocks)
-            source_logs = [l for l in mempool_logs if self.source.route(l)]
+            source_logs = [
+                log_entry for log_entry in mempool_logs if self.source.route(log_entry)
+            ]
             
             if source_logs:
                 # We assert invariant: Poka-Yoke isolation.

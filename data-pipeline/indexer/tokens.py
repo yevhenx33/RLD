@@ -14,7 +14,6 @@ TOKENS = {
     "dac17f958d2ee523a2206206994597c13d831ec7": ("USDT", 6),
     "6b175474e89094c44da98b954eedeac495271d0f": ("DAI", 18),
     "4c9edd5852cd905f086c759e8383e09bff1e68b3": ("USDe", 18),
-    "c139190f447e929f090edeb554d95abb8b18ac1c": ("USDtb", 18),
     "9d39a5de30e57443bff2a8307a4256c8797a3497": ("sUSDe", 18),
     "40d16fc0246ad3160ccc09b8d0d3a2cd28ae6c2f": ("GHO", 18),
     "66a1e37c9b0eaddca17d3662d6c05f4decf3e110": ("USR", 18),

@@ -1,4 +1,5 @@
-import asyncio, os
+import asyncio
+import os
 from web3 import AsyncWeb3, AsyncHTTPProvider
 from dotenv import load_dotenv
 
