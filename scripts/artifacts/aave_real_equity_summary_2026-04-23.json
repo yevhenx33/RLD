@@ -1,0 +1,92 @@
+{
+  "generated_at_utc": "2026-04-23T20:08:27.269434+00:00",
+  "snapshot_ts": "2026-04-23 20:00:00",
+  "source": {
+    "clickhouse_table": "aave_events",
+    "rpc_method": "getUserAccountData(address)",
+    "pool": "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+    "rpc_endpoint": "https://ethereum.publicnode.com",
+    "candidate_construction": "distinct users from Supply/Withdraw/Borrow/Repay/LiquidationCall events"
+  },
+  "meta": {
+    "candidate_addresses": 200630,
+    "rpc_fetch": {
+      "requested_addresses": 200630,
+      "fetched_addresses": 200630,
+      "request_failures": 0,
+      "decode_failures": 0,
+      "skipped_addresses": 0
+    },
+    "material_threshold_usd": 100000.0
+  },
+  "summary": {
+    "counts": {
+      "active_users": 83526,
+      "debtors": 27450,
+      "suppliers": 83523,
+      "material_users": 8062,
+      "underwater_hf_lt_1": 656,
+      "healthy_hf_ge_1": 82870
+    },
+    "totals_usd": {
+      "collateral": 20602085158.01652,
+      "debt": 9906187025.978207,
+      "equity": 10695898132.038317
+    },
+    "ratios": {
+      "debt_to_collateral": 0.48083419469429717,
+      "collateral_to_equity": 1.9261669196629103,
+      "debt_to_equity": 0.9261669196629105,
+      "equity_share_of_collateral": 0.5191658053057029
+    },
+    "concentration": {
+      "top1_debt_share": 0.1226242214380672,
+      "top1_collateral_share": 0.06494053868162877,
+      "top1_equity_share": 0.01151581990828563,
+      "top5_debt_share": 0.29370071721491964,
+      "top5_collateral_share": 0.15626005551513641,
+      "top5_equity_share": 0.028967061232216037,
+      "top10_debt_share": 0.36389262618844787,
+      "top10_collateral_share": 0.21950501532377475,
+      "top10_equity_share": 0.08577798653175349,
+      "top20_debt_share": 0.45928116734969093,
+      "top20_collateral_share": 0.29617392226276185,
+      "top20_equity_share": 0.1451093875058973,
+      "top50_debt_share": 0.6009793713636864,
+      "top50_collateral_share": 0.3936352601359689,
+      "top50_equity_share": 0.20160000332994962
+    },
+    "debtor_hf_quantiles": {
+      "p01": 0.7304705418839635,
+      "p05": 1.0207475722988042,
+      "p10": 1.0946294840316364,
+      "p25": 1.3859358792052368,
+      "p50": 1.8461768946580737,
+      "p75": 2.773896772846854,
+      "p90": 6.737484186130592,
+      "p95": 50.82049314842866,
+      "p99": 193904.28055430448
+    },
+    "largest_debt_account": {
+      "rank_by_debt": 1,
+      "address": "0xf0bb20865277abd641a307ece5ee04e79073416c",
+      "hf": 1.0463280883588184,
+      "collateral_usd": 1337910508.1263819,
+      "total_debt_usd": 1214738471.48046,
+      "equity_usd": 123172036.64592195,
+      "available_borrows_usd": 29518301.07707498,
+      "liquidation_threshold": 0.95,
+      "ltv": 0.93,
+      "is_active": true,
+      "is_material_100k": true,
+      "debt_to_collateral": 0.9079370138004127,
+      "collateral_to_equity": 10.862128649966415,
+      "debt_to_equity": 9.862128649966415
+    }
+  },
+  "protocol_market_totals": {
+    "sum_supply_usd": 21356978253.68863,
+    "sum_borrow_usd": 9946385442.673822,
+    "sum_net_supply_minus_borrow_usd": 11410592811.014809
+  }
+}
