@@ -12,10 +12,9 @@ All writes go into block_states via UPSERT — block_states has one row per
 import asyncpg
 import logging
 
-log = logging.getLogger(__name__)
-
-# Step 4: import read-once helper from pool handler
 from handlers.pool import fetch_latest_state
+
+log = logging.getLogger(__name__)
 
 
 async def handle_funding_applied(

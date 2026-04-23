@@ -18,7 +18,6 @@ from typing import Any, Optional
 
 import asyncpg
 from web3 import Web3
-from web3.types import LogReceipt
 
 import db
 import bootstrap
@@ -1150,7 +1149,6 @@ async def run(
 
 
 if __name__ == "__main__":
-    import sys
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",

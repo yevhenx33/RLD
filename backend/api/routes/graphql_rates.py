@@ -218,7 +218,7 @@ def _query_eth_prices(
             select = "timestamp, eth_price as price"
             group = ""
         else:
-            select = f"MAX(timestamp) as timestamp, AVG(eth_price) as price"
+            select = "MAX(timestamp) as timestamp, AVG(eth_price) as price"
             group = f"GROUP BY CAST(timestamp / {seconds} AS INTEGER)"
 
         query = f"SELECT {select} FROM hourly_stats WHERE timestamp >= 1677801600 {group} ORDER BY timestamp DESC LIMIT {limit}"

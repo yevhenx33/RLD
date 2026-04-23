@@ -20,13 +20,11 @@ import asyncio
 import json
 import os
 import pathlib
-import sys
 from typing import Any
 
 import asyncpg
 from eth_abi import decode as abi_decode
 from web3 import Web3
-from web3.exceptions import ContractLogicError
 
 # ── Config ─────────────────────────────────────────────────────────────────
 
@@ -92,7 +90,6 @@ async def run():
 
     market_id = cfg["market_id"]
     rld_core = cfg["rld_core"]
-    pool_manager = cfg.get("pool_manager", cfg.get("v4_pool_manager", ""))
     state_view = cfg.get("v4_state_view", "")
     mock_oracle = cfg["mock_oracle"]
     broker_factory = cfg["broker_factory"]
@@ -107,13 +104,12 @@ async def run():
     )
 
     print(f"\n{'═'*80}")
-    print(f"  RLD Protocol State Comparison")
+    print("  RLD Protocol State Comparison")
     print(f"  on-chain block: {current_block}")
     print(f"  last indexed:   {latest_block['block_number'] if latest_block else 'none'}")
     print(f"  market_id:      {market_id}")
     print(f"{'═'*80}\n")
 
-    results = []
 
     # ── 1. Market config from DB ───────────────────────────────────────────
     print("[ 1. Market config ]")
@@ -136,7 +132,7 @@ async def run():
         print(f"{v}  {field:<35} deployment.json={cfg_val[:20]}...  db={str(db_val)[:20]}...")
 
     # ── 2. Brokers ─────────────────────────────────────────────────────────
-    print(f"\n[ 2. Brokers ]")
+    print("\n[ 2. Brokers ]")
     # On-chain: scan BrokerCreated events
     topic0 = Web3.keccak(text="BrokerCreated(address,address,bytes32)").hex()
     logs = w3.eth.get_logs({
@@ -171,7 +167,7 @@ async def run():
         print(f"{ok}  broker={r['address'][:20]}...  owner={r['owner'][:20]}...")
 
     # ── 3. Pool state (V4 StateView getSlot0) ──────────────────────────────
-    print(f"\n[ 3. Pool state (V4 Slot0) ]")
+    print("\n[ 3. Pool state (V4 Slot0) ]")
     db_state = latest_block  # already fetched
     db_full = None
     if db_state:
@@ -207,7 +203,7 @@ async def run():
         print(f"{WARN}  getSlot0 failed: {e}")
 
     # ── 4. Liquidity ──────────────────────────────────────────────────────
-    print(f"\n[ 4. Liquidity ]")
+    print("\n[ 4. Liquidity ]")
     try:
         liq_sig = "getLiquidity(bytes32)"
         selector = Web3.keccak(text=liq_sig)[:4]
@@ -221,7 +217,7 @@ async def run():
         print(f"{WARN}  getLiquidity failed: {e}")
 
     # ── 5. Normalization factor ────────────────────────────────────────────
-    print(f"\n[ 5. Normalization factor (RLDCore) ]")
+    print("\n[ 5. Normalization factor (RLDCore) ]")
     try:
         from eth_abi import encode as abi_encode
         mid_bytes = bytes.fromhex(market_id[2:] if market_id.startswith("0x") else market_id)
@@ -241,7 +237,7 @@ async def run():
         print(f"{WARN}  normFactor call failed: {e}")
 
     # ── 6. Index price (MockOracle) ────────────────────────────────────────
-    print(f"\n[ 6. Index price (MockOracle) ]")
+    print("\n[ 6. Index price (MockOracle) ]")
     try:
         # MockOracle emits RateUpdated(uint256 newRateRay, uint256 timestamp)
         # topic0 = keccak256("RateUpdated(uint256,uint256)")
@@ -270,8 +266,10 @@ async def run():
             if all_logs:
                 last_log = all_logs[-1]
                 raw_data = last_log["data"]
-                if isinstance(raw_data, bytes): raw_data = raw_data.hex()
-                if raw_data.startswith("0x"): raw_data = raw_data[2:]
+                if isinstance(raw_data, bytes):
+                    raw_data = raw_data.hex()
+                if raw_data.startswith("0x"):
+                    raw_data = raw_data[2:]
                 (rate_ray, ts) = abi_decode(["uint256", "uint256"], bytes.fromhex(raw_data))
                 index_price = rate_ray / 1e27
                 print(f"{OK}  last oracle event rate_ray: {rate_ray} = {index_price*100:.4f}% APY (topic={last_log['topics'][0].hex()[:16]}...)")
@@ -281,7 +279,7 @@ async def run():
         print(f"{WARN}  oracle read failed: {e}")
 
     # ── 7. Events summary ─────────────────────────────────────────────────
-    print(f"\n[ 7. Indexer progress ]")
+    print("\n[ 7. Indexer progress ]")
     state_row = await conn.fetchrow(
         "SELECT last_indexed_block, total_events FROM indexer_state WHERE market_id=$1", market_id
     )
@@ -295,7 +293,7 @@ async def run():
     print(f"{OK if lag < 5 else WARN}  block_lag:          {lag}")
     print(f"{OK}  total_events (DB):  {state_row['total_events'] if state_row else 0}")
     if events_by_type:
-        print(f"\n  Events by type:")
+        print("\n  Events by type:")
         for row in events_by_type:
             print(f"         {row['event_name']:<35} {row['cnt']}")
 

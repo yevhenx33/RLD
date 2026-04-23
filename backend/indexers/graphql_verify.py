@@ -6,8 +6,6 @@ Seeds the DB with a known market + runs queries via HTTP against a live
 Uvicorn server. Asserts exact return values. Exits 0 if all pass.
 """
 import asyncio
-import json
-import math
 import os
 import subprocess
 import sys

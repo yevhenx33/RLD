@@ -729,7 +729,6 @@ class Query:
             current_tick = int(latest["tick"] or 0)
             fg0 = int(latest["fee_growth_global0"] or "0")
             fg1 = int(latest["fee_growth_global1"] or "0")
-            index_price = float(latest["index_price"] or 0)
 
             # Get LP positions (now keyed by owner, not broker_address)
             positions = await conn.fetch("""

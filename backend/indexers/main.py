@@ -12,7 +12,6 @@ This keeps the stack to a single container, single process.
 import asyncio
 import logging
 import os
-import sys
 from pathlib import Path
 
 import uvicorn
@@ -52,7 +51,7 @@ async def run_all() -> None:
 
     # Bootstrap: run migrations, load global config
     await db.init(dsn)
-    global_cfg = await bootstrap.bootstrap(db.pool)
+    await bootstrap.bootstrap(db.pool)
     if _is_production_env() and not admin_token:
         raise RuntimeError(
             "INDEXER_ADMIN_TOKEN must be set in production; refusing to start without reset protection."
