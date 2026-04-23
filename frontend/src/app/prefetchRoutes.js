@@ -4,9 +4,7 @@ const routePrefetchers = {
   "/markets/cds": () => import("../components/cds/CdsDirectory"),
   "/markets/pools": () => import("../components/pools/PoolsDirectory"),
   "/portfolio": () => import("../components/portfolio/Portfolio"),
-  "/strategies": () => import("../components/common/Vaults"),
-  "/explore": () => import("../features/explore/pages/MarketsPage"),
-  "/brokers": () => import("../components/brokers/BrokersDashboard"),
+  "/data": () => import("../pages/app/LendingDataPage"),
 };
 
 const prefetched = new Set();

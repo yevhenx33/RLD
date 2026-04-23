@@ -328,7 +328,7 @@ export default function MarketDetail() {
         {/* Back nav */}
         <div className="py-4 flex items-center gap-3">
           <button
-            onClick={() => navigate(`/explore/${protocolSlug}`)}
+            onClick={() => navigate(`/data/${protocolSlug}`)}
             className="flex items-center gap-2 text-gray-500 hover:text-white transition-colors text-sm uppercase tracking-widest"
           >
             <ArrowLeft size={16} />

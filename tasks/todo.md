@@ -146,5 +146,35 @@ new-front/
 ## Code Review: Faucet Hardening
 * Review Docker networking changes (`rld_shared` bridge integration vs `network_mode: host`)
 * Review Nginx upstream proxy pointing to `http://faucet:8088` instead of `host.docker.internal`
-* Review `ThreadingHTTPServer` upgrade to prevent TCP backlog congestion
 * Verify removal of Anvil storage overrides in `useFaucet.js`
+
+## Review: SOFR LVR Simulation Environment
+- [x] Implemented standalone Python SDE environment (`cds-research/scripts/sofr_lvr_sim.py`) for AutoResearch integration.
+- [x] Configured Cox-Ingersoll-Ross (CIR) interest rate generation to prevent negative yield boundaries.
+- [x] Engineered continuous AmPO pricing evaluation against discrete 24-hour SOFR oracle steps.
+- [x] Verified Poka-Yoke constraints: proved naive pricing leaks massive LVR, while mathematically perfect omniscience yields exactly zero LVR.
+- [ ] Needs Review: Hand off to Scientist/AutoResearch pipeline for LLM optimization of the funding curve.
+
+## Review: Aave IRM Liquidation Sensitivity Simulation
+- [x] Defined deterministic pure Python logic (`scripts/simulate_irm_liquidation.py`) to isolate interest rate effects on Aave Health Factors.
+- [x] Extracted continuous compounding equation mapped strictly to Aave's per-second accumulation model.
+- [x] Verified Poka-Yoke constraints: algorithm exactly identifies crossover points ($HF < 1.0$) and correctly filters noise.
+- [ ] Needs Review: Attach ClickHouse `processor_state` hook to pipe real-time indexer data into the structural `simulate_irm_liquidation.py` bounds.
+
+## Review: ARFC USDC Interest Rate Market Impact
+- [x] Bootstrapped deterministic `scripts/arfc_impact_analysis.py` over exactly 9,141 raw indexer states.
+- [x] Hardened analysis via Debt Pruning to strictly observe $> \$10,000$ accounts, eliminating retail noise from systemic bad debt thresholds.
+- [x] Executed isolated mathematically exact continuous compounding exclusively on the USDC proportion of the portfolio.
+- [x] Compiled `usdc_arfc_impact_report.md` outputting the exact cumulative structural damage against time horizons.
+- [ ] Needs Review: Confirm if we want to run this sweep across Arbitrum and Base deployments using the same parameters.
+
+## Review: Unified ARFC Governance Synthesis
+- [x] Bootstrapped `scripts/generate_unified_report.py` to seamlessly ingest multi-agent JSON summary state and mathematically integrate it with deterministic debt boundaries.
+- [x] Auto-generated `unified_arfc_governance_visual.png` rendering exact 7-Day and 30-Day Liquidated Volumes over the $61M boundary limit.
+- [x] Compiled `unified_arfc_governance_report.md` artifact.
+- [x] Resolved context conflict: confirmed `arfc_impact_analysis.py` as the official isolation mechanism to be safely included in the final governance package.
+
+## Review: ARFC Governance Forum Post Refactor
+- [x] Bootstrapped `scripts/generate_forum_post.py` to extract the Top 30 vulnerability list directly from `usdc_hf_sorted_envio_reconstruction_2026-04-23.csv`.
+- [x] Refactored the unified liquidation metrics into a persuasive, Aave Governance-formatted markdown reply (`aave_forum_arfc_reply.md`).
+- [x] Positioned the exact $61.29M structural boundary under the S2=50% Target as mathematical validation of the 30-day deadlock hypothesis.

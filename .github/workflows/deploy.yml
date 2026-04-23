@@ -62,12 +62,47 @@ jobs:
           name: frontend-dist
           path: dist
 
+      - name: Prepare deploy SSH auth
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          if [ -z "${DEPLOY_HOST:-}" ]; then missing+=("DEPLOY_HOST"); fi
+          if [ -z "${DEPLOY_USER:-}" ]; then missing+=("DEPLOY_USER"); fi
+          if [ -z "${DEPLOY_SSH_KEY:-}" ]; then missing+=("DEPLOY_SSH_KEY"); fi
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required deploy secrets: ${missing[*]}"
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.ssh"
+          printf "%s" "$DEPLOY_SSH_KEY" | tr -d '\r' > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+
+          if [ -n "${DEPLOY_PORT:-}" ]; then
+            echo "DEPLOY_PORT=$DEPLOY_PORT" >> "$GITHUB_ENV"
+          else
+            echo "DEPLOY_PORT=22" >> "$GITHUB_ENV"
+          fi
+
       - name: Deploy frontend to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ env.DEPLOY_PORT }}
+          key_path: /github/home/.ssh/deploy_key
+          passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          timeout: 90s
+          command_timeout: 10m
+          debug: true
           source: "dist/*"
           target: "/home/ubuntu/RLD/frontend/"
           strip_components: 0
@@ -77,7 +112,13 @@ jobs:
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ env.DEPLOY_PORT }}
+          key_path: /github/home/.ssh/deploy_key
+          passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          timeout: 90s
+          command_timeout: 20m
+          debug: true
           script: |
             cd /home/ubuntu/RLD
 

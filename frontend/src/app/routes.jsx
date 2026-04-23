@@ -1,15 +1,13 @@
 import { Suspense, lazy } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import AppShell from "./AppShell";
 import LoadingScreen from "./LoadingScreen";
 import { useEnvioStatus } from "../hooks/queries/useEnvioStatus";
 
 const HomepagePage = lazy(() => import("../pages/public/HomepagePage"));
 const IntelPage = lazy(() => import("../pages/public/IntelPage"));
-const BrokersPage = lazy(() => import("../pages/app/BrokersPage"));
 const BondsPage = lazy(() => import("../pages/app/BondsPage"));
 const BondsDirectoryPage = lazy(() => import("../pages/app/BondsDirectoryPage"));
-const MarketsPage = lazy(() => import("../features/explore/pages/MarketsPage"));
 const ProtocolMarketsPage = lazy(
   () => import("../features/explore/pages/ProtocolMarketsPage"),
 );
@@ -26,9 +24,17 @@ const CdsPage = lazy(() => import("../pages/app/CdsPage"));
 const PoolLPPage = lazy(() => import("../pages/app/PoolLPPage"));
 const PoolsDirectoryPage = lazy(() => import("../pages/app/PoolsDirectoryPage"));
 const TwammOrdersPage = lazy(() => import("../pages/app/TwammOrdersPage"));
-const StrategiesPage = lazy(() => import("../pages/app/StrategiesPage"));
-const BasisTradePage = lazy(() => import("../pages/app/BasisTradePage"));
-const StrategyDetailPage = lazy(() => import("../pages/app/StrategyDetailPage"));
+const LendingDataPage = lazy(() => import("../pages/app/LendingDataPage"));
+
+function LegacyExploreProtocolRedirect() {
+  const { protocol } = useParams();
+  return <Navigate to={`/data/${protocol}`} replace />;
+}
+
+function LegacyExploreMarketRedirect() {
+  const { protocol, marketId } = useParams();
+  return <Navigate to={`/data/${protocol}/${marketId}`} replace />;
+}
 
 function renderLazy(component) {
   const LazyComponent = component;
@@ -57,17 +63,36 @@ export default function AppRoutes() {
       </Route>
 
       <Route element={<RuntimeShell />}>
-        <Route path="/brokers" element={renderLazy(BrokersPage)} />
         <Route path="/bonds" element={renderLazy(BondsDirectoryPage)} />
         <Route path="/bonds/:address" element={renderLazy(BondsPage)} />
-        <Route path="/explore" element={renderLazy(MarketsPage)} />
+        <Route path="/data" element={renderLazy(LendingDataPage)} />
         <Route
-          path="/explore/:protocol"
+          path="/data/:protocol"
           element={renderLazy(ProtocolMarketsPage)}
         />
         <Route
-          path="/explore/:protocol/:marketId"
+          path="/data/:protocol/:marketId"
           element={renderLazy(MarketDetailPage)}
+        />
+        <Route
+          path="/explore"
+          element={<Navigate to="/data" replace />}
+        />
+        <Route
+          path="/explore/:protocol/:marketId"
+          element={<LegacyExploreMarketRedirect />}
+        />
+        <Route
+          path="/explore/:protocol"
+          element={<LegacyExploreProtocolRedirect />}
+        />
+        <Route
+          path="/brokers/*"
+          element={<Navigate to="/data" replace />}
+        />
+        <Route
+          path="/strategies/*"
+          element={<Navigate to="/data" replace />}
         />
         <Route path="/portfolio" element={renderLazy(PortfolioPage)} />
         <Route path="/markets" element={<Navigate to="/markets/perps" replace />} />
@@ -81,9 +106,6 @@ export default function AppRoutes() {
         <Route path="/markets/pools" element={renderLazy(PoolsDirectoryPage)} />
         <Route path="/markets/pools/:address" element={renderLazy(PoolLPPage)} />
         <Route path="/markets/twamm" element={renderLazy(TwammOrdersPage)} />
-        <Route path="/strategies" element={renderLazy(StrategiesPage)} />
-        <Route path="/strategies/basis-trade" element={renderLazy(BasisTradePage)} />
-        <Route path="/strategies/:id" element={renderLazy(StrategyDetailPage)} />
       </Route>
     </Routes>
   );
