@@ -18,6 +18,7 @@ import {
   getTokenIcon,
   getTokenName,
 } from "../../utils/tokenIcons";
+import { parseMarketSnapshots, aggregateProtocolStats, calculateTotals } from "../../utils/lendingDataPokaYoke";
 
 const PROTOCOL_META = {
   AAVE: { slug: "aave", color: "#6366f1", label: "Aave V3" },
@@ -125,69 +126,15 @@ export default function LendingDataPage() {
   }, [tvlHistoryError]);
 
   const markets = useMemo(() => {
-    const rows = snapshotData?.marketSnapshots || [];
-    return rows.map((row) => {
-      const protocolKey = (row.protocol || "UNKNOWN").split("_")[0];
-      return {
-        symbol: row.symbol || "UNKNOWN",
-        protocol: row.protocol || "UNKNOWN_MARKET",
-        protocolKey,
-        protocolName: getProtocolDisplayName(row.protocol),
-        supplyUsd: Number(row.supplyUsd || 0),
-        borrowUsd: Number(row.borrowUsd || 0),
-        supplyApy: Number(row.supplyApy || 0),
-        borrowApy: Number(row.borrowApy || 0),
-        utilization: Number(row.utilization || 0),
-      };
-    });
+    const parsed = parseMarketSnapshots(snapshotData?.marketSnapshots);
+    return parsed.map((market) => ({
+      ...market,
+      protocolName: getProtocolDisplayName(market.protocol),
+    }));
   }, [snapshotData]);
 
   const protocolStats = useMemo(() => {
-    const aggregate = {};
-    markets.forEach((market) => {
-      const key = market.protocolKey || "UNKNOWN";
-      if (!aggregate[key]) {
-        aggregate[key] = {
-          key,
-          supplyUsd: 0,
-          borrowUsd: 0,
-          supplyApyWeighted: 0,
-          borrowApyWeighted: 0,
-          markets: 0,
-        };
-      }
-      aggregate[key].supplyUsd += market.supplyUsd;
-      aggregate[key].borrowUsd += market.borrowUsd;
-      aggregate[key].supplyApyWeighted += market.supplyApy * market.supplyUsd;
-      aggregate[key].borrowApyWeighted += market.borrowApy * market.borrowUsd;
-      aggregate[key].markets += 1;
-    });
-
-    const toRow = (item) => {
-      const meta = PROTOCOL_META[item.key] || {};
-      return {
-        key: item.key,
-        label: meta.label || getProtocolDisplayName(`${item.key}_MARKET`),
-        slug: meta.slug || item.key.toLowerCase(),
-        color: meta.color || "#64748b",
-        supplyUsd: item.supplyUsd,
-        borrowUsd: item.borrowUsd,
-        utilization: item.supplyUsd > 0 ? item.borrowUsd / item.supplyUsd : 0,
-        avgSupplyApy:
-          item.supplyUsd > 0 ? item.supplyApyWeighted / item.supplyUsd : 0,
-        avgBorrowApy:
-          item.borrowUsd > 0 ? item.borrowApyWeighted / item.borrowUsd : 0,
-        markets: item.markets,
-      };
-    };
-
-    const ordered = PROTOCOL_ORDER.filter((key) => aggregate[key]).map((key) =>
-      toRow(aggregate[key]),
-    );
-    const remaining = Object.keys(aggregate)
-      .filter((key) => !PROTOCOL_ORDER.includes(key))
-      .map((key) => toRow(aggregate[key]));
-    return [...ordered, ...remaining].sort((a, b) => b.supplyUsd - a.supplyUsd);
+    return aggregateProtocolStats(markets, PROTOCOL_META, PROTOCOL_ORDER);
   }, [markets]);
 
   const visibleProtocols = useMemo(() => {
@@ -206,32 +153,8 @@ export default function LendingDataPage() {
   }, [markets, activeProtocol]);
 
   const totals = useMemo(() => {
-    const totalSupplyUsd = protocolStats.reduce(
-      (sum, row) => sum + row.supplyUsd,
-      0,
-    );
-    const totalBorrowUsd = protocolStats.reduce(
-      (sum, row) => sum + row.borrowUsd,
-      0,
-    );
-    const weightedSupplyApy = protocolStats.reduce(
-      (sum, row) => sum + row.avgSupplyApy * row.supplyUsd,
-      0,
-    );
-    const weightedBorrowApy = protocolStats.reduce(
-      (sum, row) => sum + row.avgBorrowApy * row.borrowUsd,
-      0,
-    );
-    return {
-      totalSupplyUsd,
-      totalBorrowUsd,
-      averageSupplyApy:
-        totalSupplyUsd > 0 ? weightedSupplyApy / totalSupplyUsd : 0,
-      averageBorrowApy:
-        totalBorrowUsd > 0 ? weightedBorrowApy / totalBorrowUsd : 0,
-      marketCount: markets.length,
-    };
-  }, [protocolStats, markets]);
+    return calculateTotals(protocolStats);
+  }, [protocolStats]);
 
   const tvlHistory = useMemo(() => {
     const rows = tvlHistoryData?.protocolTvlHistory || [];
@@ -252,6 +175,23 @@ export default function LendingDataPage() {
       tvlHistory.some((row) => Number(row[key] || 0) > 0),
     );
   }, [activeProtocol, tvlHistory]);
+
+  if (snapshotError || tvlHistoryError) {
+    return (
+      <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center p-6">
+        <div className="border border-red-500/30 bg-red-500/5 p-8 max-w-xl w-full text-center">
+          <div className="text-red-400 font-bold mb-4 uppercase tracking-widest text-xl">Data Pipeline Offline</div>
+          <p className="text-gray-400 text-sm mb-6 leading-relaxed">
+            The frontend is unable to fetch deterministic market states from the pipeline. 
+            To prevent invalid execution assumptions, data rendering has been halted.
+          </p>
+          <div className="text-xs text-red-400/60 uppercase break-all font-semibold p-4 bg-red-900/10 border border-red-900/30">
+            {snapshotError?.message || tvlHistoryError?.message || "Unknown Connection Error"}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#050505] text-gray-300 font-mono">

@@ -209,3 +209,9 @@ new-front/
 - [x] **Updated `docker/deployer/Dockerfile`** to remove all `COPY` commands related to these dead files, stripping bloat from the container image.
 - [x] **Deleted legacy Anvil maintenance scripts** including `anvil-rotate.sh`, `cleanup-anvil-snapshots.sh`, `start_anvil.sh`, and `kill_all.sh`, as well as `docker/restart.sh` (the old anvil orchestrator).
 - [x] **Deleted `run_anvil.py`** and `05_setup_users_reth.sh` as they are unused dead code from earlier migrations.
+
+## REVIEW REQUIRED: Lending Data Hub Deterministic Rendering
+- [x] Abstracted `LendingDataPage.jsx` data parsing into pure JS functions in `utils/lendingDataPokaYoke.js`.
+- [x] Enforced strict Poka-Yoke type coercion (fallback to 0) to prevent `NaN` or `Infinity` from silently destroying UI metrics.
+- [x] Added `test_lending_data_logic.py` Python test to mathematically prove the bounds logic per the Maxwell Demon mandate.
+- [x] Integrated a loud, explicitly styled Error Boundary to halt data rendering if the ClickHouse pipeline falls offline.
