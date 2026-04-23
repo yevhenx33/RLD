@@ -10,15 +10,22 @@ import {
   ReferenceLine,
 } from "recharts";
 
+const formatDollarCompact = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "$0";
+  const abs = Math.abs(num);
+  const sign = num < 0 ? "-" : "";
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
+};
+
 const fmtValue = (name, value, areas) => {
   // Check if any area with this name has format: 'dollar'
   const area = areas?.find((a) => a.name === name);
   if (area?.format === "dollar") {
-    const v = Number(value);
-    if (v >= 1e9) return `$${(v/1e9).toFixed(1)}B`;
-    if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
-    if (v >= 1e3) return `$${(v/1e3).toFixed(1)}K`;
-    return `$${v.toFixed(0)}`;
+    return formatDollarCompact(value);
   }
   if (name && (name.includes("Price") || name.includes("ETH"))) {
     return `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -445,11 +452,7 @@ const RLDPerformanceChart = ({
               // Check if any area uses dollar format
               const hasDollar = areas.some((a) => a.format === "dollar");
               if (hasDollar) {
-                const v = Number(val);
-                if (v >= 1e9) return `$${(v/1e9).toFixed(1)}B`;
-                if (v >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
-                if (v >= 1e3) return `$${(v/1e3).toFixed(1)}K`;
-                return `$${v.toFixed(0)}`;
+                return formatDollarCompact(val);
               }
               // Check if any area uses price format
               const hasPrice = areas.some((a) => a.name?.includes("Price") || a.name?.includes("ETH"));
@@ -467,7 +470,7 @@ const RLDPerformanceChart = ({
               stroke="#71717a"
               fontSize={12}
               domain={["auto", "auto"]}
-              tickFormatter={(val) => `$${val}`}
+              tickFormatter={(val) => formatDollarCompact(val)}
               width={60}
             />
           )}

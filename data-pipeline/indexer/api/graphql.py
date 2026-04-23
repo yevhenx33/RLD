@@ -2,6 +2,8 @@ import os
 import sqlite3
 import threading
 import atexit
+import math
+from bisect import bisect_left
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -22,6 +24,7 @@ from indexer.protocols import (
     RAW_HEAD_QUERY_BY_PROTOCOL,
     PROCESSOR_STATE_ALIASES,
 )
+from indexer.tokens import TOKENS, get_usd_price
 
 MAX_LIMIT = 10000
 MAX_READY_LAG_BLOCKS = int(os.getenv("INDEXER_MAX_READY_LAG_BLOCKS", "250000"))
@@ -59,8 +62,17 @@ _CLICKHOUSE_LOCK = threading.Lock()
 _TABLES_READY = False
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
 API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
+AAVE_FLOW_DAILY_AGG_TABLE = "api_aave_market_flow_daily_agg"
 TVL_PROTOCOLS = ("AAVE", "MORPHO", "EULER", "FLUID")
 TVL_SYNTHETIC_ENTITY_IDS = {"AAVE_MARKET_SYNTHETIC"}
+AAVE_FLOW_EVENT_NAMES = (
+    "Supply",
+    "Withdraw",
+    "Borrow",
+    "Repay",
+    "LiquidationCall",
+    "MintedToTreasury",
+)
 
 
 def _parse_cors_origins(env_name: str, default_origins: list[str]) -> list[str]:
@@ -135,6 +147,17 @@ class MarketTimeseriesPoint:
     utilization: Optional[float] = None
     supply_usd: Optional[float] = strawberry.field(name="supplyUsd", default=None)
     borrow_usd: Optional[float] = strawberry.field(name="borrowUsd", default=None)
+
+
+@strawberry.type
+class MarketFlowPoint:
+    timestamp: int
+    supply_inflow_usd: float = strawberry.field(name="supplyInflowUsd")
+    supply_outflow_usd: float = strawberry.field(name="supplyOutflowUsd")
+    borrow_inflow_usd: float = strawberry.field(name="borrowInflowUsd")
+    borrow_outflow_usd: float = strawberry.field(name="borrowOutflowUsd")
+    net_supply_flow_usd: float = strawberry.field(name="netSupplyFlowUsd")
+    net_borrow_flow_usd: float = strawberry.field(name="netBorrowFlowUsd")
 
 
 @strawberry.type
@@ -238,6 +261,21 @@ def _ensure_support_tables(ch) -> None:
         ) ENGINE = AggregatingMergeTree()
         PARTITION BY toStartOfMonth(day)
         ORDER BY (day, protocol, entity_id)
+        TTL day + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {AAVE_FLOW_DAILY_AGG_TABLE} (
+            day DateTime,
+            entity_id String,
+            supply_inflow_raw_state AggregateFunction(sum, UInt256),
+            supply_outflow_raw_state AggregateFunction(sum, UInt256),
+            borrow_inflow_raw_state AggregateFunction(sum, UInt256),
+            borrow_outflow_raw_state AggregateFunction(sum, UInt256)
+        ) ENGINE = AggregatingMergeTree()
+        PARTITION BY toStartOfMonth(day)
+        ORDER BY (entity_id, day)
         TTL day + INTERVAL 36 MONTH DELETE
         """
     )
@@ -362,6 +400,78 @@ def _ensure_support_tables(ch) -> None:
             )
             """
         )
+    ch.command(
+        f"""
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_{AAVE_FLOW_DAILY_AGG_TABLE}
+        TO {AAVE_FLOW_DAILY_AGG_TABLE}
+        AS
+        SELECT
+            day,
+            entity_id,
+            sumState(supply_inflow_raw) AS supply_inflow_raw_state,
+            sumState(supply_outflow_raw) AS supply_outflow_raw_state,
+            sumState(borrow_inflow_raw) AS borrow_inflow_raw_state,
+            sumState(borrow_outflow_raw) AS borrow_outflow_raw_state
+        FROM (
+            SELECT
+                toStartOfDay(block_timestamp) AS day,
+                lower(concat('0x', substring(ifNull(topic1, ''), 27))) AS entity_id,
+                if(
+                    event_name = 'Supply',
+                    if(length(data) >= 130, reinterpretAsUInt256(reverse(unhex(substring(data, 67, 64)))), toUInt256(0)),
+                    if(event_name = 'MintedToTreasury', if(length(data) >= 66, reinterpretAsUInt256(reverse(unhex(substring(data, 3, 64)))), toUInt256(0)), toUInt256(0))
+                ) AS supply_inflow_raw,
+                if(
+                    event_name = 'Withdraw',
+                    if(length(data) >= 66, reinterpretAsUInt256(reverse(unhex(substring(data, 3, 64)))), toUInt256(0)),
+                    if(
+                        event_name = 'Repay'
+                        AND if(length(data) >= 130, reinterpretAsUInt256(reverse(unhex(substring(data, 67, 64)))), toUInt256(0)) = toUInt256(1),
+                        if(length(data) >= 66, reinterpretAsUInt256(reverse(unhex(substring(data, 3, 64)))), toUInt256(0)),
+                        toUInt256(0)
+                    )
+                ) AS supply_outflow_raw,
+                if(
+                    event_name = 'Borrow',
+                    if(length(data) >= 130, reinterpretAsUInt256(reverse(unhex(substring(data, 67, 64)))), toUInt256(0)),
+                    toUInt256(0)
+                ) AS borrow_inflow_raw,
+                if(
+                    event_name = 'Repay',
+                    if(length(data) >= 66, reinterpretAsUInt256(reverse(unhex(substring(data, 3, 64)))), toUInt256(0)),
+                    toUInt256(0)
+                ) AS borrow_outflow_raw
+            FROM aave_events
+            WHERE event_name IN ('Supply', 'Withdraw', 'Borrow', 'Repay', 'MintedToTreasury')
+
+            UNION ALL
+
+            SELECT
+                toStartOfDay(block_timestamp) AS day,
+                lower(concat('0x', substring(ifNull(topic1, ''), 27))) AS entity_id,
+                toUInt256(0) AS supply_inflow_raw,
+                if(length(data) >= 130, reinterpretAsUInt256(reverse(unhex(substring(data, 67, 64)))), toUInt256(0)) AS supply_outflow_raw,
+                toUInt256(0) AS borrow_inflow_raw,
+                toUInt256(0) AS borrow_outflow_raw
+            FROM aave_events
+            WHERE event_name = 'LiquidationCall'
+
+            UNION ALL
+
+            SELECT
+                toStartOfDay(block_timestamp) AS day,
+                lower(concat('0x', substring(ifNull(topic2, ''), 27))) AS entity_id,
+                toUInt256(0) AS supply_inflow_raw,
+                toUInt256(0) AS supply_outflow_raw,
+                toUInt256(0) AS borrow_inflow_raw,
+                if(length(data) >= 66, reinterpretAsUInt256(reverse(unhex(substring(data, 3, 64)))), toUInt256(0)) AS borrow_outflow_raw
+            FROM aave_events
+            WHERE event_name = 'LiquidationCall'
+        )
+        WHERE length(entity_id) = 42
+        GROUP BY day, entity_id
+        """
+    )
     _TABLES_READY = True
 
 
@@ -467,6 +577,490 @@ def _time_bucket_expr(resolution: str, column: str = "timestamp") -> str:
         "1W": f"toStartOfWeek({column})",
     }
     return mapping.get(resolution.upper(), f"toStartOfHour({column})")
+
+
+def _bucket_seconds(resolution: str) -> int:
+    mapping = {
+        "1H": 3600,
+        "4H": 4 * 3600,
+        "1D": 24 * 3600,
+        "1W": 7 * 24 * 3600,
+    }
+    return mapping.get(resolution.upper(), 3600)
+
+
+def _normalize_entity_id(entity_id: str) -> str:
+    normalized = str(entity_id or "").strip().lower()
+    if not normalized:
+        return normalized
+    if not normalized.startswith("0x"):
+        normalized = f"0x{normalized}"
+    return normalized
+
+
+def _candidate_chainlink_feeds_for_symbol(symbol: str) -> tuple[str, ...]:
+    raw = str(symbol or "").strip()
+    upper = raw.upper()
+    feeds: set[str] = {"ETH / USD", "BTC / USD"}
+    if raw:
+        feeds.update(
+            {
+                f"{raw} / USD",
+                f"{upper} / USD",
+                f"{raw} / ETH",
+                f"{upper} / ETH",
+                f"{raw} / BTC",
+                f"{upper} / BTC",
+            }
+        )
+
+    # Normalize known feed naming quirks for get_usd_price().
+    if upper in {"WSTETH", "STETH"}:
+        feeds.update({"STETH / USD", "STETH / ETH"})
+    if upper == "WEETH":
+        feeds.add("weETH / ETH")
+    if upper == "RETH":
+        feeds.add("RETH / ETH")
+    if upper == "WBTC":
+        feeds.add("WBTC / BTC")
+    if upper == "CBBTC":
+        feeds.add("cbBTC / USD")
+    if upper == "LBTC":
+        feeds.add("LBTC / BTC")
+    if upper == "TBTC":
+        feeds.add("TBTC / USD")
+    if upper in {"USDE", "SUSDE"}:
+        feeds.add("USDe / USD")
+    if upper in {"USDS", "SUSDS"}:
+        feeds.add("USDS / USD")
+    if upper in {"USD0", "USD0PP", "USD0++"}:
+        feeds.update({"USD0 / USD", "USD0++ / USD"})
+    if upper in {"MKR", "SKY"}:
+        feeds.update({"MKR / USD", "SKY / USD"})
+    if upper == "LDO":
+        feeds.add("LDO / ETH")
+    if upper in {"PAXG", "XAUT"}:
+        feeds.update({"PAXG / USD", "XAU / USD"})
+    if upper == "EURC":
+        feeds.add("EURC / USD")
+    if upper == "RLUSD":
+        feeds.add("RLUSD / USD")
+    if upper == "USDG":
+        feeds.add("USDG / USD")
+    if upper == "CRVUSD":
+        feeds.add("CRVUSD / USD")
+    return tuple(sorted(feeds))
+
+
+def _load_chainlink_feed_series(
+    ch,
+    feeds: tuple[str, ...],
+    start_ts: datetime,
+    end_ts: datetime,
+) -> dict[str, tuple[list[int], list[float]]]:
+    if not feeds:
+        return {}
+
+    escaped_feeds = ", ".join(f"'{_escape_sql_string(feed)}'" for feed in feeds)
+    base_rows = ch.query(
+        f"""
+        SELECT feed, toUnixTimestamp(timestamp) AS ts, price
+        FROM chainlink_prices
+        WHERE feed IN ({escaped_feeds})
+          AND timestamp >= %(start_ts)s
+          AND timestamp <= %(end_ts)s
+        ORDER BY feed ASC, ts ASC
+        """,
+        parameters={"start_ts": start_ts, "end_ts": end_ts},
+    ).result_rows
+
+    # Add one boundary point per feed before/after window for true nearest lookup.
+    before_rows = ch.query(
+        f"""
+        SELECT feed, toUnixTimestamp(max(timestamp)) AS ts, argMax(price, timestamp) AS price
+        FROM chainlink_prices
+        WHERE feed IN ({escaped_feeds}) AND timestamp < %(start_ts)s
+        GROUP BY feed
+        """,
+        parameters={"start_ts": start_ts},
+    ).result_rows
+    after_rows = ch.query(
+        f"""
+        SELECT feed, toUnixTimestamp(min(timestamp)) AS ts, argMin(price, timestamp) AS price
+        FROM chainlink_prices
+        WHERE feed IN ({escaped_feeds}) AND timestamp > %(end_ts)s
+        GROUP BY feed
+        """,
+        parameters={"end_ts": end_ts},
+    ).result_rows
+
+    by_feed: dict[str, list[tuple[int, float]]] = {}
+    for feed, ts, price in [*base_rows, *before_rows, *after_rows]:
+        if feed is None or ts is None or price is None:
+            continue
+        feed_str = str(feed)
+        by_feed.setdefault(feed_str, []).append((int(ts), float(price)))
+
+    prepared: dict[str, tuple[list[int], list[float]]] = {}
+    for feed, pairs in by_feed.items():
+        unique = sorted(set(pairs), key=lambda item: item[0])
+        ts_list = [item[0] for item in unique]
+        price_list = [item[1] for item in unique]
+        prepared[feed] = (ts_list, price_list)
+    return prepared
+
+
+def _nearest_feed_price(
+    prepared_series: dict[str, tuple[list[int], list[float]]],
+    feed: str,
+    target_ts: int,
+) -> Optional[float]:
+    series = prepared_series.get(feed)
+    if series is None:
+        return None
+    ts_list, price_list = series
+    if not ts_list:
+        return None
+    idx = bisect_left(ts_list, target_ts)
+    if idx <= 0:
+        return price_list[0]
+    if idx >= len(ts_list):
+        return price_list[-1]
+    prev_ts = ts_list[idx - 1]
+    next_ts = ts_list[idx]
+    if target_ts - prev_ts <= next_ts - target_ts:
+        return price_list[idx - 1]
+    return price_list[idx]
+
+
+def _is_aave_market_entity(ch, entity_id: str) -> bool:
+    normalized = _normalize_entity_id(entity_id)
+    if not normalized or not normalized.startswith("0x"):
+        return False
+    escaped = _escape_sql_string(normalized)
+    count = _query_int(
+        ch,
+        f"""
+        SELECT count()
+        FROM api_market_latest FINAL
+        WHERE protocol = 'AAVE_MARKET'
+          AND entity_id LIKE '{escaped}%'
+        """,
+    )
+    return count > 0
+
+
+def _query_aave_preaggregated_flow_timeseries(
+    ch, entity_id: str, resolution: str, limit: int
+) -> list[MarketFlowPoint]:
+    if resolution.upper() not in {"1D", "1W"}:
+        return []
+
+    normalized = _normalize_entity_id(entity_id)
+    if not normalized.startswith("0x"):
+        return []
+
+    token = TOKENS.get(normalized[2:])
+    if token is None:
+        return []
+    _, decimals = token
+    denom = float(10 ** decimals)
+
+    safe_limit = _safe_limit(limit)
+    bucket_seconds = _bucket_seconds(resolution)
+    now_dt = datetime.utcnow().replace(microsecond=0)
+    window_start = now_dt - timedelta(seconds=(safe_limit + 2) * bucket_seconds)
+
+    ts_bucket_expr = _time_bucket_expr(resolution, "timestamp")
+    price_rows = ch.query(
+        f"""
+        SELECT
+            toUnixTimestamp({ts_bucket_expr}) AS bucket_ts,
+            avg(price_usd) AS price_usd
+        FROM aave_timeseries
+        WHERE protocol = 'AAVE_MARKET'
+          AND entity_id LIKE %(eid_prefix)s
+          AND timestamp >= %(start_ts)s
+          AND timestamp <= %(end_ts)s
+        GROUP BY bucket_ts
+        ORDER BY bucket_ts ASC
+        """,
+        parameters={
+            "eid_prefix": f"{normalized}%",
+            "start_ts": window_start,
+            "end_ts": now_dt,
+        },
+    ).result_rows
+    if not price_rows:
+        return []
+
+    bucket_expr = _time_bucket_expr(resolution, "day")
+    flow_rows = ch.query(
+        f"""
+        SELECT
+            toUnixTimestamp({bucket_expr}) AS bucket_ts,
+            sumMerge(supply_inflow_raw_state) AS supply_inflow_raw,
+            sumMerge(supply_outflow_raw_state) AS supply_outflow_raw,
+            sumMerge(borrow_inflow_raw_state) AS borrow_inflow_raw,
+            sumMerge(borrow_outflow_raw_state) AS borrow_outflow_raw
+        FROM {AAVE_FLOW_DAILY_AGG_TABLE}
+        WHERE entity_id = %(eid)s
+          AND day >= %(start_ts)s
+          AND day <= %(end_ts)s
+        GROUP BY bucket_ts
+        ORDER BY bucket_ts ASC
+        """,
+        parameters={
+            "eid": normalized,
+            "start_ts": window_start,
+            "end_ts": now_dt,
+        },
+    ).result_rows
+    if not flow_rows:
+        return []
+
+    all_buckets = [int(row[0]) for row in price_rows]
+    price_by_bucket = {
+        int(row[0]): float(row[1]) if row[1] is not None else 0.0
+        for row in price_rows
+    }
+    raw_by_bucket: dict[int, tuple[float, float, float, float]] = {}
+    for row in flow_rows:
+        bucket = int(row[0])
+        raw_by_bucket[bucket] = (
+            float(row[1] or 0),
+            float(row[2] or 0),
+            float(row[3] or 0),
+            float(row[4] or 0),
+        )
+
+    points: list[MarketFlowPoint] = []
+    for bucket_ts in all_buckets[-safe_limit:]:
+        price = float(price_by_bucket.get(bucket_ts, 0.0))
+        supply_in_raw, supply_out_raw, borrow_in_raw, borrow_out_raw = raw_by_bucket.get(
+            bucket_ts, (0.0, 0.0, 0.0, 0.0)
+        )
+        supply_inflow_usd = (supply_in_raw / denom) * price
+        supply_outflow_usd = (supply_out_raw / denom) * price
+        borrow_inflow_usd = (borrow_in_raw / denom) * price
+        borrow_outflow_usd = (borrow_out_raw / denom) * price
+        points.append(
+            MarketFlowPoint(
+                timestamp=int(bucket_ts),
+                supply_inflow_usd=float(supply_inflow_usd),
+                supply_outflow_usd=float(supply_outflow_usd),
+                borrow_inflow_usd=float(borrow_inflow_usd),
+                borrow_outflow_usd=float(borrow_outflow_usd),
+                net_supply_flow_usd=float(supply_inflow_usd - supply_outflow_usd),
+                net_borrow_flow_usd=float(borrow_inflow_usd - borrow_outflow_usd),
+            )
+        )
+    return points
+
+
+def _query_aave_event_flow_timeseries(ch, entity_id: str, resolution: str, limit: int) -> list[MarketFlowPoint]:
+    normalized = _normalize_entity_id(entity_id)
+    if not normalized.startswith("0x"):
+        return []
+    encoded_topic_entity = f"0x{normalized[2:].rjust(64, '0')}"
+
+    token = TOKENS.get(normalized[2:])
+    if token is None:
+        return []
+    symbol, decimals = token
+    denom = float(10 ** decimals)
+
+    safe_limit = _safe_limit(limit)
+    bucket_seconds = _bucket_seconds(resolution)
+    now_dt = datetime.utcnow().replace(microsecond=0)
+    window_start = now_dt - timedelta(seconds=(safe_limit + 2) * bucket_seconds)
+
+    ts_bucket_expr = _time_bucket_expr(resolution, "timestamp")
+    price_rows = ch.query(
+        f"""
+        SELECT
+            toUnixTimestamp({ts_bucket_expr}) AS bucket_ts,
+            avg(price_usd) AS price_usd
+        FROM aave_timeseries
+        WHERE protocol = 'AAVE_MARKET'
+          AND entity_id LIKE %(eid_prefix)s
+          AND timestamp >= %(start_ts)s
+          AND timestamp <= %(end_ts)s
+        GROUP BY bucket_ts
+        ORDER BY bucket_ts ASC
+        """,
+        parameters={
+            "eid_prefix": f"{normalized}%",
+            "start_ts": window_start,
+            "end_ts": now_dt,
+        },
+    ).result_rows
+
+    if not price_rows:
+        return []
+
+    all_buckets = [int(row[0]) for row in price_rows]
+    price_by_bucket = {
+        int(row[0]): float(row[1]) if row[1] is not None else 0.0
+        for row in price_rows
+    }
+    feed_candidates = _candidate_chainlink_feeds_for_symbol(symbol)
+    try:
+        chainlink_series = _load_chainlink_feed_series(ch, feed_candidates, window_start, now_dt)
+    except Exception:
+        chainlink_series = {}
+    event_price_cache: dict[int, float] = {}
+    block_bounds = ch.query(
+        """
+        SELECT min(block_number), max(block_number)
+        FROM aave_events
+        WHERE block_timestamp >= %(start_ts)s
+          AND block_timestamp <= %(end_ts)s
+        """,
+        parameters={"start_ts": window_start, "end_ts": now_dt},
+    ).result_rows
+    if not block_bounds or block_bounds[0][0] is None or block_bounds[0][1] is None:
+        return []
+    min_block = int(block_bounds[0][0])
+    max_block = int(block_bounds[0][1])
+
+    event_bucket_expr = _time_bucket_expr(resolution, "block_timestamp")
+    event_in = ", ".join(f"'{name}'" for name in AAVE_FLOW_EVENT_NAMES)
+    event_rows = ch.query(
+        f"""
+        SELECT
+            toUnixTimestamp({event_bucket_expr}) AS bucket_ts,
+            toUnixTimestamp(block_timestamp) AS event_ts,
+            event_name,
+            topic1 = %(encoded_topic_entity)s AS is_collateral_event,
+            topic2 = %(encoded_topic_entity)s AS is_debt_event,
+            if(
+                length(data) >= 66,
+                reinterpretAsUInt256(reverse(unhex(substring(data, 3, 64)))),
+                toUInt256(0)
+            ) AS amount0_raw,
+            if(
+                length(data) >= 130,
+                reinterpretAsUInt256(reverse(unhex(substring(data, 67, 64)))),
+                toUInt256(0)
+            ) AS amount1_raw
+        FROM aave_events
+        WHERE block_number >= %(min_block)s
+          AND block_number <= %(max_block)s
+          AND block_timestamp >= %(start_ts)s
+          AND block_timestamp <= %(end_ts)s
+          AND (
+            (
+                event_name IN ('Supply', 'Withdraw', 'Borrow', 'Repay', 'MintedToTreasury')
+                AND topic1 = %(encoded_topic_entity)s
+            )
+            OR
+            (
+                event_name = 'LiquidationCall'
+                AND (
+                    topic1 = %(encoded_topic_entity)s
+                    OR topic2 = %(encoded_topic_entity)s
+                )
+            )
+          )
+          AND event_name IN ({event_in})
+        ORDER BY bucket_ts ASC, block_number ASC, log_index ASC
+        """,
+        parameters={
+            "min_block": min_block,
+            "max_block": max_block,
+            "start_ts": window_start,
+            "end_ts": now_dt,
+            "encoded_topic_entity": encoded_topic_entity,
+        },
+    ).result_rows
+
+    usd_flows_by_bucket: dict[int, dict[str, float]] = {}
+    for bucket_ts, event_ts, event_name, is_collateral_event, is_debt_event, amount0_raw, amount1_raw in event_rows:
+        bucket = int(bucket_ts)
+        slot = usd_flows_by_bucket.setdefault(
+            bucket,
+            {
+                "supply_inflow_usd": 0.0,
+                "supply_outflow_usd": 0.0,
+                "borrow_inflow_usd": 0.0,
+                "borrow_outflow_usd": 0.0,
+            },
+        )
+        evt_ts_int = int(event_ts)
+        price = event_price_cache.get(evt_ts_int)
+        if price is None:
+            eth_price = _nearest_feed_price(chainlink_series, "ETH / USD", evt_ts_int)
+            btc_price = _nearest_feed_price(chainlink_series, "BTC / USD", evt_ts_int)
+            extra_prices: dict[str, float] = {}
+            for feed in feed_candidates:
+                if feed in {"ETH / USD", "BTC / USD"}:
+                    continue
+                feed_price = _nearest_feed_price(chainlink_series, feed, evt_ts_int)
+                if feed_price is not None:
+                    extra_prices[feed] = float(feed_price)
+            derived_price = get_usd_price(
+                symbol,
+                eth_price=float(eth_price) if eth_price is not None else 2000.0,
+                btc_price=float(btc_price) if btc_price is not None else 70000.0,
+                extra_prices=extra_prices,
+            )
+            if not math.isfinite(derived_price) or derived_price <= 0:
+                derived_price = float(price_by_bucket.get(bucket, 0.0))
+            price = max(0.0, float(derived_price))
+            event_price_cache[evt_ts_int] = price
+
+        evt = str(event_name or "")
+        amount0 = float(amount0_raw) / denom
+        amount1 = float(amount1_raw) / denom
+
+        if evt == "Supply":
+            slot["supply_inflow_usd"] += amount1 * price
+        elif evt == "Withdraw":
+            slot["supply_outflow_usd"] += amount0 * price
+        elif evt == "Borrow":
+            slot["borrow_inflow_usd"] += amount1 * price
+        elif evt == "Repay":
+            repay_usd = amount0 * price
+            slot["borrow_outflow_usd"] += repay_usd
+            # Repay(useATokens=true) burns aTokens, so supply also flows out.
+            if int(amount1_raw) == 1:
+                slot["supply_outflow_usd"] += repay_usd
+        elif evt == "MintedToTreasury":
+            slot["supply_inflow_usd"] += amount0 * price
+        elif evt == "LiquidationCall":
+            if bool(is_collateral_event):
+                slot["supply_outflow_usd"] += amount1 * price
+            if bool(is_debt_event):
+                slot["borrow_outflow_usd"] += amount0 * price
+
+    points: list[MarketFlowPoint] = []
+    for bucket_ts in all_buckets[-safe_limit:]:
+        slot = usd_flows_by_bucket.get(
+            bucket_ts,
+            {
+                "supply_inflow_usd": 0.0,
+                "supply_outflow_usd": 0.0,
+                "borrow_inflow_usd": 0.0,
+                "borrow_outflow_usd": 0.0,
+            },
+        )
+        supply_inflow_usd = float(slot["supply_inflow_usd"])
+        supply_outflow_usd = float(slot["supply_outflow_usd"])
+        borrow_inflow_usd = float(slot["borrow_inflow_usd"])
+        borrow_outflow_usd = float(slot["borrow_outflow_usd"])
+        points.append(
+            MarketFlowPoint(
+                timestamp=int(bucket_ts),
+                supply_inflow_usd=float(supply_inflow_usd),
+                supply_outflow_usd=float(supply_outflow_usd),
+                borrow_inflow_usd=float(borrow_inflow_usd),
+                borrow_outflow_usd=float(borrow_outflow_usd),
+                net_supply_flow_usd=float(supply_inflow_usd - supply_outflow_usd),
+                net_borrow_flow_usd=float(borrow_inflow_usd - borrow_outflow_usd),
+            )
+        )
+    return points
 
 
 def _query_historical_rates(ch, symbols: list[str], resolution: str, limit: int) -> list[HistoricalRate]:
@@ -632,7 +1226,7 @@ def _query_latest_rates(ch) -> Optional[LatestRates]:
     return latest
 
 
-def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
+def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) -> list[MarketDetail]:
     allowed = {
         AAVE_MARKET,
         MORPHO_MARKET,
@@ -645,6 +1239,15 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
         return []
 
     escaped_protocol = _escape_sql_string(protocol)
+    normalized_entity_id = _normalize_entity_id(entity_id or "")
+    entity_filter = ""
+    if normalized_entity_id:
+        escaped_entity = _escape_sql_string(normalized_entity_id)
+        if normalized_entity_id.startswith("0x"):
+            entity_filter = f" AND entity_id LIKE '{escaped_entity}%'"
+        else:
+            entity_filter = f" AND entity_id = '{escaped_entity}'"
+
     if protocol.startswith("MORPHO"):
         query = f"""
         SELECT t.entity_id, t.symbol, t.proto, t.supply_usd, t.borrow_usd,
@@ -662,6 +1265,7 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
                    utilization
             FROM api_market_latest FINAL
             WHERE protocol = '{escaped_protocol}'
+            {entity_filter}
         ) AS t
         LEFT JOIN morpho_market_params AS p ON t.entity_id = p.market_id
         WHERE t.supply_usd >= 1000 OR t.borrow_usd >= 1000
@@ -688,6 +1292,7 @@ def _query_protocol_markets(ch, protocol: str) -> list[MarketDetail]:
                    utilization
             FROM api_market_latest FINAL
             WHERE protocol = '{escaped_protocol}'
+            {entity_filter}
         )
         {value_filter}
         ORDER BY supply_usd DESC
@@ -839,6 +1444,58 @@ def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) ->
     return points
 
 
+def _query_market_flow_timeseries_from_balance_deltas(ch, entity_id: str, resolution: str, limit: int) -> list[MarketFlowPoint]:
+    safe_limit = _safe_limit(limit)
+    # Fetch one extra point so first visible bucket can compute deltas.
+    points = _query_market_timeseries(ch, entity_id, resolution, safe_limit + 1)
+    if not points:
+        return []
+
+    flows: list[MarketFlowPoint] = []
+    prev_supply: Optional[float] = None
+    prev_borrow: Optional[float] = None
+
+    for point in points:
+        supply_usd = float(point.supply_usd or 0.0)
+        borrow_usd = float(point.borrow_usd or 0.0)
+
+        if prev_supply is None or prev_borrow is None:
+            delta_supply = 0.0
+            delta_borrow = 0.0
+        else:
+            delta_supply = supply_usd - prev_supply
+            delta_borrow = borrow_usd - prev_borrow
+
+        flows.append(
+            MarketFlowPoint(
+                timestamp=int(point.timestamp),
+                supply_inflow_usd=max(0.0, delta_supply),
+                supply_outflow_usd=max(0.0, -delta_supply),
+                borrow_inflow_usd=max(0.0, delta_borrow),
+                borrow_outflow_usd=max(0.0, -delta_borrow),
+                net_supply_flow_usd=delta_supply,
+                net_borrow_flow_usd=delta_borrow,
+            )
+        )
+        prev_supply = supply_usd
+        prev_borrow = borrow_usd
+
+    if len(flows) > safe_limit:
+        flows = flows[-safe_limit:]
+    return flows
+
+
+def _query_market_flow_timeseries(ch, entity_id: str, resolution: str, limit: int) -> list[MarketFlowPoint]:
+    if _is_aave_market_entity(ch, entity_id):
+        preaggregated = _query_aave_preaggregated_flow_timeseries(
+            ch, entity_id, resolution, limit
+        )
+        if preaggregated:
+            return preaggregated
+        return _query_aave_event_flow_timeseries(ch, entity_id, resolution, limit)
+    return _query_market_flow_timeseries_from_balance_deltas(ch, entity_id, resolution, limit)
+
+
 def _query_market_vault_allocations(ch, entity_id: str, limit: int) -> list[VaultAllocationPoint]:
     # Preferred path: ClickHouse table produced by Morpho processor.
     try:
@@ -964,9 +1621,11 @@ class Query:
         return _query_latest_rates(ch)
 
     @strawberry.field(name="protocolMarkets")
-    def protocol_markets(self, protocol: str = "AAVE_MARKET") -> list[MarketDetail]:
+    def protocol_markets(
+        self, protocol: str = "AAVE_MARKET", entity_id: Optional[str] = None
+    ) -> list[MarketDetail]:
         ch = get_clickhouse_client()
-        return _query_protocol_markets(ch, protocol)
+        return _query_protocol_markets(ch, protocol, entity_id)
 
     @strawberry.field(name="protocolTvlHistory")
     def protocol_tvl_history(self) -> list[ProtocolTvlPoint]:
@@ -979,6 +1638,13 @@ class Query:
     ) -> list[MarketTimeseriesPoint]:
         ch = get_clickhouse_client()
         return _query_market_timeseries(ch, entity_id, resolution, limit)
+
+    @strawberry.field(name="marketFlowTimeseries")
+    def market_flow_timeseries(
+        self, entity_id: str, resolution: str = "1H", limit: int = 2000
+    ) -> list[MarketFlowPoint]:
+        ch = get_clickhouse_client()
+        return _query_market_flow_timeseries(ch, entity_id, resolution, limit)
 
     @strawberry.field(name="marketVaultAllocations")
     def market_vault_allocations(
