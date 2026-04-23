@@ -19,7 +19,7 @@ from ..base import (
     rewrite_protocol_window_if_enabled,
 )
 from ..tokens import (TOKENS as ADDR_MAP, STABLES, ETH_ASSETS, BTC_ASSETS,
-                      PRICE_MULTIPLIERS, get_usd_price, get_chainlink_prices)
+                      PRICE_MULTIPLIERS)
 
 log = logging.getLogger("indexer.fluid")
 
@@ -68,8 +68,10 @@ class FluidSource(BaseSource):
 
         sup_ep = (w5 >> 91) & MASK_64
         bor_ep = (w5 >> 155) & MASK_64
-        if sup_ep == 0: sup_ep = int(1e12)
-        if bor_ep == 0: bor_ep = int(1e12)
+        if sup_ep == 0:
+            sup_ep = int(1e12)
+        if bor_ep == 0:
+            bor_ep = int(1e12)
 
         util_raw = (w5 >> 30) & 0x3FFF
         rate_raw = w5 & 0xFFFF

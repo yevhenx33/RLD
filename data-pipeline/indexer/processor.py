@@ -1,5 +1,4 @@
 import os
-import asyncio
 import logging
 import clickhouse_connect
 from indexer.base import BaseSource

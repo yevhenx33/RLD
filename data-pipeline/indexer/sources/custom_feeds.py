@@ -7,7 +7,6 @@ Matches the architectural Phase 2 schema.
 
 from typing import Optional
 from indexer.base import BaseSource
-import datetime
 import logging
 
 log = logging.getLogger("indexer.custom_feeds")

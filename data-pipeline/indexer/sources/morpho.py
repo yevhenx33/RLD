@@ -233,7 +233,7 @@ class MorphoSource(BaseSource):
         except Exception as e:
             log.warning(f"Failed to pre-seed Morpho state: {e}")
 
-    def log_selection(self) -> "hypersync.LogSelection":
+    def log_selection(self):
         """Override: no topic filter — we need ALL events."""
         import hypersync
         return hypersync.LogSelection(address=self.contracts)

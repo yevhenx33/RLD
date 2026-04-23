@@ -1,10 +1,7 @@
 import sys
 import os
-import time
 import logging
-import asyncio
 import requests
-import datetime
 import clickhouse_connect
 
 # Add project root to path

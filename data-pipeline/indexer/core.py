@@ -170,7 +170,9 @@ class IndexerEngine:
             # ── STAGE 2 & 3: PARSER & AGGREGATOR (Consume & Commit) ───
             for source in self.sources:
                 # 2.1 Route to relevant source
-                source_logs = [l for l in mempool_logs if source.route(l)]
+                source_logs = [
+                    log_entry for log_entry in mempool_logs if source.route(log_entry)
+                ]
                 if not source_logs and not source.raw_table:
                     continue
 

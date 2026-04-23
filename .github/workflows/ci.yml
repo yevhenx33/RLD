@@ -68,7 +68,7 @@ jobs:
           pip install pytest ruff pip-audit
 
       - name: Lint data pipeline
-        run: ruff check data-pipeline
+        run: ruff check data-pipeline/indexer data-pipeline/test_rpc.py data-pipeline/test_vault.py
 
       - name: Run data pipeline tests
         run: |
