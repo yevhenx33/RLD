@@ -28,11 +28,7 @@ COPY backend/tools/deploy_swap_router.py /workspace/backend/tools/deploy_swap_ro
 # Copy the new snapshot deploy orchestrator
 COPY docker/deployer/deploy_protocol_snapshot.py /workspace/deploy_protocol_snapshot.py
 
-# Copy the master deploy script + modular phases
-COPY docker/deployer/deploy_all.sh /workspace/deploy_all.sh
-COPY docker/deployer/phases/ /workspace/phases/
-COPY docker/deployer/lib_setup.sh /workspace/lib_setup.sh
-RUN chmod +x /workspace/deploy_all.sh /workspace/deploy_protocol_snapshot.py /workspace/phases/*.sh
+RUN chmod +x /workspace/deploy_protocol_snapshot.py
 
 # Pre-install forge dependencies
 WORKDIR /workspace/contracts

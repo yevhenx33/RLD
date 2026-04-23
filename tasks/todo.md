@@ -201,3 +201,9 @@ new-front/
 - [x] **`deploy_protocol_snapshot.py`**: Rewrote `_fetch_live_rate_fraction` using a deterministic `urllib` `GET` request.
 - [x] **`deploy_pool_live_index_with_liquidity.py`**: Rewrote the `fetch_live_rate_fraction` python helper.
 - [x] **`fixed_yield.sh`**: Eliminated the `cast call` to Aave V3's `getReserveData`. By ripping out the Anvil on-chain fallback, we guarantee that simulated Fixed Yield bonds are initialized at exactly the correct market rate (e.g., ~12.65%), rather than silently defaulting to the snapshot's 14%.
+
+## REVIEW REQUIRED: Cleanup of Obsolete Orchestration Scripts
+- [x] Audited the repository and confirmed that the monolithic `docker/deployer/deploy_all.sh` flow (and its child `phases/*.sh` scripts) had been entirely superseded by the unified Python orchestrators (`deploy_protocol_snapshot.py` and `setup_simulation.py`).
+- [x] **Deleted `docker/deployer/deploy_all.sh`**, `docker/deployer/lib_setup.sh`, and the entire `docker/deployer/phases/` directory.
+- [x] **Deleted the Reth equivalents:** `docker/reth/deploy_all.sh` and the entire `docker/reth/deployer/` directory.
+- [x] **Updated `docker/deployer/Dockerfile`** to remove all `COPY` commands related to these dead files, stripping bloat from the container image.
