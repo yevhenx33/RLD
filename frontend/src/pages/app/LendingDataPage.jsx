@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
@@ -9,7 +9,7 @@ import { postGraphQL } from "../../api/graphqlClient";
 import { getTokenIcon } from "../../utils/tokenIcons";
 
 const LENDING_DATA_QUERY = `
-  query LendingDataHub {
+  query LendingDataHub($displayIn: String!) {
     marketSnapshots(protocol: "AAVE_MARKET") {
       entityId
       symbol
@@ -20,19 +20,35 @@ const LENDING_DATA_QUERY = `
       borrowApy
       utilization
     }
-    protocolTvlHistory {
+    protocolTvlHistory(displayIn: $displayIn) {
       date
       aave
       morpho
       euler
       fluid
     }
+    protocolApyHistory(protocol: "AAVE_MARKET", resolution: "1W", limit: 5000) {
+      timestamp
+      averageSupplyApy
+      averageBorrowApy
+    }
   }
 `;
 
-const CHART_AREAS = [
-  { key: "tvl", color: "#22d3ee", name: "Protocol TVL", format: "dollar" }
-];
+const SUPPLY_APY_AREA = {
+  key: "averageSupplyApy",
+  color: "#34d399",
+  name: "Avg Supply APY",
+  format: "percent",
+  yAxisId: "right",
+};
+const BORROW_APY_AREA = {
+  key: "averageBorrowApy",
+  color: "#f97316",
+  name: "Avg Borrow APY",
+  format: "percent",
+  yAxisId: "right",
+};
 
 const formatCurrency = (value) => {
   if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
@@ -45,21 +61,34 @@ const formatApy = (value) => {
   return `${(value * 100).toFixed(2)}%`;
 };
 
-const CustomCheckbox = ({ label, checked = false, disabled = false }) => (
-  <div className={`flex items-center gap-3 select-none ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:opacity-80 transition-opacity'}`}>
+const CustomCheckbox = ({ label, checked = false, disabled = false, onClick }) => (
+  <button
+    type="button"
+    onClick={disabled ? undefined : onClick}
+    className={`w-full text-left flex items-center gap-3 select-none ${
+      disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:opacity-80 transition-opacity"
+    }`}
+  >
     <div className={`w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${checked ? 'bg-cyan-500 border-cyan-500' : 'bg-[#080808] border-white/20'
       }`}>
       {checked && <Check size={12} strokeWidth={3} className="text-black" />}
     </div>
     <span className="text-xs tracking-wide">{label}</span>
-  </div>
+  </button>
 );
 
 export default function LendingDataPage() {
   const navigate = useNavigate();
+  const [displayUnit, setDisplayUnit] = useState("USD");
+  const [showSupplyApyHistory, setShowSupplyApyHistory] = useState(false);
+  const [showBorrowApyHistory, setShowBorrowApyHistory] = useState(false);
   const { data: gqlData, error: _error, isLoading: loading } = useSWR(
-    [ENVIO_GRAPHQL_URL, "envio.lending-data-hub.v3"],
-    ([url]) => postGraphQL(url, { query: LENDING_DATA_QUERY }),
+    [ENVIO_GRAPHQL_URL, `envio.lending-data-hub.${displayUnit}.v6`],
+    ([url]) =>
+      postGraphQL(url, {
+        query: LENDING_DATA_QUERY,
+        variables: { displayIn: displayUnit },
+      }),
     { refreshInterval: 30000, dedupingInterval: 5000 }
   );
 
@@ -109,9 +138,9 @@ export default function LendingDataPage() {
       marketCount: aaveMarkets.length,
     };
 
-    // 3) Chart transformation (weekly timestamps + Aave TVL)
+    // 3) Chart transformation (weekly timestamps + Aave TVL + optional APY overlays)
     const rawHistory = gqlData?.protocolTvlHistory || [];
-    const chart = rawHistory
+    const tvlPoints = rawHistory
       .map((row) => {
         const rawDate = typeof row?.date === "string" ? row.date.trim() : "";
         if (!rawDate) return null;
@@ -143,6 +172,35 @@ export default function LendingDataPage() {
         acc[acc.length - 1] = point;
         return acc;
       }, []);
+    const apyPoints = (gqlData?.protocolApyHistory || [])
+      .map((row) => {
+        const ts = Number(row?.timestamp) || 0;
+        if (ts <= 0) return null;
+        const averageSupplyApy = Number(row?.averageSupplyApy);
+        const averageBorrowApy = Number(row?.averageBorrowApy);
+        return {
+          timestamp: ts,
+          averageSupplyApy: Number.isFinite(averageSupplyApy) ? averageSupplyApy * 100 : null,
+          averageBorrowApy: Number.isFinite(averageBorrowApy) ? averageBorrowApy * 100 : null,
+        };
+      })
+      .filter(Boolean);
+    const chartByTimestamp = new Map();
+    for (const point of tvlPoints) {
+      chartByTimestamp.set(point.timestamp, { ...point });
+    }
+    for (const point of apyPoints) {
+      const existing = chartByTimestamp.get(point.timestamp) || {
+        timestamp: point.timestamp,
+        tvl: 0,
+      };
+      chartByTimestamp.set(point.timestamp, {
+        ...existing,
+        averageSupplyApy: point.averageSupplyApy,
+        averageBorrowApy: point.averageBorrowApy,
+      });
+    }
+    const chart = [...chartByTimestamp.values()].sort((a, b) => a.timestamp - b.timestamp);
 
     // 4) Markets table rows
     const tableData = [...aaveMarkets]
@@ -154,6 +212,31 @@ export default function LendingDataPage() {
 
     return { stats, chartData: chart, marketsData: tableData };
   }, [gqlData]);
+
+  const tvlArea = useMemo(() => {
+    if (displayUnit === "USD") {
+      return {
+        key: "tvl",
+        color: "#22d3ee",
+        name: "Protocol TVL",
+        format: "dollar",
+      };
+    }
+    return {
+      key: "tvl",
+      color: "#22d3ee",
+      name: `Protocol TVL (${displayUnit})`,
+      format: "asset",
+      unit: displayUnit,
+    };
+  }, [displayUnit]);
+
+  const chartAreas = useMemo(() => {
+    const areas = [tvlArea];
+    if (showSupplyApyHistory) areas.push(SUPPLY_APY_AREA);
+    if (showBorrowApyHistory) areas.push(BORROW_APY_AREA);
+    return areas;
+  }, [showBorrowApyHistory, showSupplyApyHistory, tvlArea]);
 
   return (
     <div className="min-h-screen bg-[#050505] text-gray-300 font-mono">
@@ -244,15 +327,35 @@ export default function LendingDataPage() {
 
               <div className="flex flex-col gap-3">
                 <div className="text-[12px] text-gray-500 uppercase tracking-widest border-b border-white/10 pb-2 mb-1">Metrics</div>
-                <CustomCheckbox label="Supply APY" checked={false} />
-                <CustomCheckbox label="Borrow APY" checked={false} />
+                <CustomCheckbox
+                  label="Supply APY"
+                  checked={showSupplyApyHistory}
+                  onClick={() => setShowSupplyApyHistory((value) => !value)}
+                />
+                <CustomCheckbox
+                  label="Borrow APY"
+                  checked={showBorrowApyHistory}
+                  onClick={() => setShowBorrowApyHistory((value) => !value)}
+                />
               </div>
 
               <div className="flex flex-col gap-3">
                 <div className="text-[12px] text-gray-500 uppercase tracking-widest border-b border-white/10 pb-2 mb-1">Display In</div>
-                <CustomCheckbox label="USD" checked={true} />
-                <CustomCheckbox label="BTC" checked={false} />
-                <CustomCheckbox label="ETH" checked={false} />
+                <CustomCheckbox
+                  label="USD"
+                  checked={displayUnit === "USD"}
+                  onClick={() => setDisplayUnit("USD")}
+                />
+                <CustomCheckbox
+                  label="BTC"
+                  checked={displayUnit === "BTC"}
+                  onClick={() => setDisplayUnit("BTC")}
+                />
+                <CustomCheckbox
+                  label="ETH"
+                  checked={displayUnit === "ETH"}
+                  onClick={() => setDisplayUnit("ETH")}
+                />
               </div>
 
             </div>
@@ -262,7 +365,7 @@ export default function LendingDataPage() {
           <div className="lg:col-span-3 flex flex-col p-4 md:p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
-                PROTOCOL TVL
+                {`PROTOCOL TVL (${displayUnit})`}
               </h2>
               <div className="text-[9px] md:text-xs text-gray-500 uppercase tracking-widest border border-white/10 px-2 py-1 bg-[#050505]">
                 3Y / 1W STEP
@@ -277,7 +380,7 @@ export default function LendingDataPage() {
               ) : (
                 <RLDPerformanceChart
                   data={chartData}
-                  areas={CHART_AREAS}
+                  areas={chartAreas}
                   resolution="1W"
                 />
               )}

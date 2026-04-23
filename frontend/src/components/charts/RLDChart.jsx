@@ -21,11 +21,26 @@ const formatDollarCompact = (value) => {
   return `${sign}$${abs.toFixed(0)}`;
 };
 
+const formatAssetCompact = (value, unit = "") => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return `0 ${unit}`.trim();
+  const abs = Math.abs(num);
+  const sign = num < 0 ? "-" : "";
+  if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(2)}B ${unit}`.trim();
+  if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(2)}M ${unit}`.trim();
+  if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(2)}K ${unit}`.trim();
+  if (abs >= 1) return `${sign}${abs.toFixed(2)} ${unit}`.trim();
+  return `${sign}${abs.toFixed(6)} ${unit}`.trim();
+};
+
 const fmtValue = (name, value, areas) => {
   // Check if any area with this name has format: 'dollar'
   const area = areas?.find((a) => a.name === name);
   if (area?.format === "dollar") {
     return formatDollarCompact(value);
+  }
+  if (area?.format === "asset") {
+    return formatAssetCompact(value, area?.unit);
   }
   if (name && (name.includes("Price") || name.includes("ETH"))) {
     return `$${Number(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -360,6 +375,21 @@ const RLDPerformanceChart = ({
 
   if (!data || data.length === 0) return null;
 
+  const rightAxisAreas = areas.filter((a) => a.yAxisId === "right");
+  const rightAxisTickFormatter = (val) => {
+    if (rightAxisAreas.some((a) => a.format === "dollar")) {
+      return formatDollarCompact(val);
+    }
+    if (rightAxisAreas.some((a) => a.format === "asset")) {
+      const firstAssetArea = rightAxisAreas.find((a) => a.format === "asset");
+      return formatAssetCompact(val, firstAssetArea?.unit);
+    }
+    if (rightAxisAreas.some((a) => a.name?.includes("Price") || a.name?.includes("ETH"))) {
+      return `$${Number(val).toFixed(2)}`;
+    }
+    return `${Number(val).toFixed(1)}%`;
+  };
+
   const formatTick = (unix) => {
     const date = new Date(unix * 1000);
 
@@ -454,6 +484,10 @@ const RLDPerformanceChart = ({
               if (hasDollar) {
                 return formatDollarCompact(val);
               }
+              const assetArea = areas.find((a) => a.format === "asset");
+              if (assetArea) {
+                return formatAssetCompact(val, assetArea.unit);
+              }
               // Check if any area uses price format
               const hasPrice = areas.some((a) => a.name?.includes("Price") || a.name?.includes("ETH"));
               if (hasPrice) return `$${Number(val).toFixed(2)}`;
@@ -470,7 +504,7 @@ const RLDPerformanceChart = ({
               stroke="#71717a"
               fontSize={12}
               domain={["auto", "auto"]}
-              tickFormatter={(val) => formatDollarCompact(val)}
+              tickFormatter={rightAxisTickFormatter}
               width={60}
             />
           )}

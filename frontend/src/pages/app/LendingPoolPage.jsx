@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { Activity, ArrowLeft, Loader2, ExternalLink } from "lucide-react";
@@ -71,6 +71,7 @@ const formatApy = (value) => {
 export default function LendingPoolPage() {
   const { protocol: protocolSlug, marketId } = useParams();
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("market");
   const protocolKey = PROTOCOL_MAP[protocolSlug?.toLowerCase()] || "AAVE_MARKET";
   const normalizedEntityId = useMemo(() => {
     const raw = String(marketId || "").trim().toLowerCase();
@@ -212,83 +213,93 @@ export default function LendingPoolPage() {
   return (
     <div className="min-h-screen bg-[#050505] text-gray-300 font-mono">
       <main className="max-w-[1800px] mx-auto px-6 pb-12">
-        {/* Navigation & Header */}
-        <div className="py-6 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => navigate(`/data`)}
-              className="w-10 h-10 flex items-center justify-center rounded-full border border-white/10 hover:bg-white/[0.02] transition-colors"
-            >
-              <ArrowLeft size={18} className="text-gray-400" />
-            </button>
-            <div>
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
-                  <img src={getTokenIcon(market.symbol)} alt={market.symbol} className="w-full h-full object-contain rounded-full" />
-                </div>
-                <h1 className="text-3xl font-bold tracking-tight text-white">{market.symbol}</h1>
-                <a
-                  href={normalizedEntityId?.startsWith("0x") ? `https://etherscan.io/address/${normalizedEntityId}` : "#"}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`text-gray-500 transition-colors ml-2 ${normalizedEntityId?.startsWith("0x") ? "hover:text-cyan-400" : "pointer-events-none opacity-40"}`}
-                >
-                  <ExternalLink size={16} />
-                </a>
-              </div>
-            </div>
-          </div>
-          <div className="text-right hidden md:block">
-            <div className="text-xs uppercase tracking-widest text-gray-500 mb-1">Protocol</div>
-            <div className="text-sm font-bold text-white tracking-widest">{market.protocol}</div>
-          </div>
-        </div>
-
         {/* 2-Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start mt-6">
 
-          {/* Left Panel: Stats (25%) */}
-          <div className="lg:col-span-1 border border-white/10 bg-[#0a0a0a] rounded-sm p-6 flex flex-col gap-6 h-fit top-6">
+          {/* Left Panel: Header + Stats (25%) */}
+          <div className="lg:col-span-1 flex flex-col gap-6 h-fit top-6 sticky">
 
-            <div className="flex flex-col gap-2 pb-4 border-b border-white/10">
-              <div className="text-xs uppercase tracking-widest text-gray-500">Market</div>
-              <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center shadow-sm">
-                  <img src={getTokenIcon(market.symbol)} alt={market.symbol} className="w-full h-full object-contain rounded-full" />
+            {/* Navigation & Header */}
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => navigate(`/data`)}
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-white/10 hover:bg-white/[0.02] transition-colors"
+              >
+                <ArrowLeft size={18} className="text-gray-400" />
+              </button>
+              <div>
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
+                    <img src={getTokenIcon(market.symbol)} alt={market.symbol} className="w-full h-full object-contain rounded-full" />
+                  </div>
+                  <h1 className="text-3xl font-bold tracking-tight text-white">{market.symbol}</h1>
+                  <a
+                    href={normalizedEntityId?.startsWith("0x") ? `https://etherscan.io/address/${normalizedEntityId}` : "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`text-gray-500 transition-colors ml-2 ${normalizedEntityId?.startsWith("0x") ? "hover:text-cyan-400" : "pointer-events-none opacity-40"}`}
+                  >
+                    <ExternalLink size={16} />
+                  </a>
                 </div>
-                <div className="text-lg font-bold text-white">{market.symbol}</div>
               </div>
             </div>
 
-            <div className="flex flex-col gap-1">
-              <div className="text-xs uppercase tracking-widest text-emerald-500/70">Supply APR</div>
-              <div className="text-xl font-bold text-emerald-400">{formatApy(market.supplyApy)}</div>
-            </div>
+            {/* Stats Panel */}
+            <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6 flex flex-col gap-6">
 
-            <div className="flex flex-col gap-1">
-              <div className="text-xs uppercase tracking-widest text-cyan-500/70">Borrow APR</div>
-              <div className="text-xl font-bold text-cyan-400">{formatApy(market.borrowApy)}</div>
-            </div>
+              <div className="flex flex-col gap-1">
+                <div className="text-xs uppercase tracking-widest text-emerald-500/70">Supply APR</div>
+                <div className="text-xl font-bold text-emerald-400">{formatApy(market.supplyApy)}</div>
+              </div>
 
-            <div className="flex flex-col gap-1">
-              <div className="text-xs uppercase tracking-widest text-gray-500">Supplied ($)</div>
-              <div className="text-xl font-bold text-white">{formatCurrency(market.supplyUsd)}</div>
-            </div>
+              <div className="flex flex-col gap-1">
+                <div className="text-xs uppercase tracking-widest text-cyan-500/70">Borrow APR</div>
+                <div className="text-xl font-bold text-cyan-400">{formatApy(market.borrowApy)}</div>
+              </div>
 
-            <div className="flex flex-col gap-1">
-              <div className="text-xs uppercase tracking-widest text-gray-500">Borrowed ($)</div>
-              <div className="text-xl font-bold text-white">{formatCurrency(market.borrowUsd)}</div>
-            </div>
+              <div className="flex flex-col gap-1">
+                <div className="text-xs uppercase tracking-widest text-gray-500">Supplied ($)</div>
+                <div className="text-xl font-bold text-white">{formatCurrency(market.supplyUsd)}</div>
+              </div>
 
-            <div className="flex flex-col gap-1 pt-4 border-t border-white/10">
-              <div className="text-xs uppercase tracking-widest text-purple-500/70">Utilization info</div>
-              <div className="text-xl font-bold text-purple-400">{(market.utilization * 100).toFixed(2)}%</div>
-            </div>
+              <div className="flex flex-col gap-1">
+                <div className="text-xs uppercase tracking-widest text-gray-500">Borrowed ($)</div>
+                <div className="text-xl font-bold text-white">{formatCurrency(market.borrowUsd)}</div>
+              </div>
 
+              <div className="flex flex-col gap-1 pt-4 border-t border-white/10">
+                <div className="text-xs uppercase tracking-widest text-purple-500/70">Utilization info</div>
+                <div className="text-xl font-bold text-purple-400">{(market.utilization * 100).toFixed(2)}%</div>
+              </div>
+
+            </div>
           </div>
 
           {/* Right Panel: Row Stacked Charts (75%) */}
-          <div className="lg:col-span-3 flex flex-col gap-6">
+          <div className="lg:col-span-3 flex flex-col">
+            <div className="flex items-end gap-6 h-10 mb-6">
+              <button
+                onClick={() => setActiveTab("market")}
+                className={`text-[15px] uppercase tracking-widest font-bold pb-2 border-b-2 transition-colors ${activeTab === "market"
+                  ? "border-cyan-400 text-cyan-400"
+                  : "border-transparent text-gray-500 hover:text-gray-300"
+                  }`}
+              >
+                Market
+              </button>
+              <button
+                onClick={() => setActiveTab("addresses")}
+                className={`text-[15px] uppercase tracking-widest font-bold pb-2 border-b-2 transition-colors ${activeTab === "addresses"
+                  ? "border-cyan-400 text-cyan-400"
+                  : "border-transparent text-gray-500 hover:text-gray-300"
+                  }`}
+              >
+                Addresses
+              </button>
+            </div>
+            
+            <div className="flex flex-col gap-6">
             {/* APY / Utilization Chart */}
             <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
               <div className="flex items-center justify-between mb-8">
@@ -481,6 +492,7 @@ export default function LendingPoolPage() {
                   />
                 </div>
               )}
+            </div>
             </div>
           </div>
         </div>

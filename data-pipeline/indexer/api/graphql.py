@@ -63,6 +63,7 @@ _TABLES_READY = False
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
 API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
 AAVE_FLOW_DAILY_AGG_TABLE = "api_aave_market_flow_daily_agg"
+API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE = "api_chainlink_price_weekly_agg"
 TVL_PROTOCOLS = ("AAVE", "MORPHO", "EULER", "FLUID")
 TVL_SYNTHETIC_ENTITY_IDS = {"AAVE_MARKET_SYNTHETIC"}
 AAVE_FLOW_EVENT_NAMES = (
@@ -137,6 +138,13 @@ class ProtocolTvlPoint:
     morpho: float = 0.0
     euler: float = 0.0
     fluid: float = 0.0
+
+
+@strawberry.type
+class ProtocolApyPoint:
+    timestamp: int
+    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+    average_borrow_apy: float = strawberry.field(name="averageBorrowApy")
 
 
 @strawberry.type
@@ -286,6 +294,18 @@ def _ensure_support_tables(ch) -> None:
         """
     )
     ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE} (
+            day DateTime,
+            feed LowCardinality(String),
+            price_state AggregateFunction(argMax, Float64, DateTime)
+        ) ENGINE = AggregatingMergeTree()
+        PARTITION BY toStartOfMonth(day)
+        ORDER BY (feed, day)
+        TTL day + INTERVAL 72 MONTH DELETE
+        """
+    )
+    ch.command(
         """
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_api_market_timeseries_hourly_agg
         TO api_market_timeseries_hourly_agg
@@ -320,6 +340,20 @@ def _ensure_support_tables(ch) -> None:
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
             GROUP BY day, clean_protocol, entity_id
         )
+        """
+    )
+    ch.command(
+        f"""
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_{API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE}
+        TO {API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE}
+        AS
+        SELECT
+            toStartOfWeek(timestamp) AS day,
+            feed,
+            argMaxState(toFloat64(price), timestamp) AS price_state
+        FROM chainlink_prices
+        WHERE feed IN ('BTC / USD', 'ETH / USD')
+        GROUP BY day, feed
         """
     )
     # Bootstrap pre-aggregated latest table once on fresh deployments.
@@ -404,6 +438,22 @@ def _ensure_support_tables(ch) -> None:
                   AND entity_id != 'AAVE_MARKET_SYNTHETIC'
                 GROUP BY day, clean_protocol, entity_id
             )
+            """
+        )
+    weekly_price_count = _query_int(
+        ch, f"SELECT count() FROM {API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE}"
+    )
+    if weekly_price_count == 0:
+        ch.command(
+            f"""
+            INSERT INTO {API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE}
+            SELECT
+                toStartOfWeek(timestamp) AS day,
+                feed,
+                argMaxState(toFloat64(price), timestamp) AS price_state
+            FROM chainlink_prices
+            WHERE feed IN ('BTC / USD', 'ETH / USD')
+            GROUP BY day, feed
             """
         )
     ch.command(
@@ -1407,6 +1457,41 @@ def _to_week_date(value) -> date | None:
         return None
 
 
+def _normalize_display_unit(display_in: str) -> str:
+    unit = str(display_in or "USD").strip().upper()
+    if unit not in {"USD", "BTC", "ETH"}:
+        return "USD"
+    return unit
+
+
+def _load_weekly_quote_prices(ch) -> dict[date, dict[str, float]]:
+    rows = ch.query(
+        f"""
+        SELECT
+            toDate(day) AS day_date,
+            feed,
+            argMaxMerge(price_state) AS price
+        FROM {API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE}
+        WHERE feed IN ('BTC / USD', 'ETH / USD')
+        GROUP BY day_date, feed
+        ORDER BY day_date ASC
+        """
+    ).result_rows
+    prices_by_week: dict[date, dict[str, float]] = {}
+    for raw_day, raw_feed, raw_price in rows:
+        week = _to_week_date(raw_day)
+        if week is None:
+            continue
+        feed = str(raw_feed or "")
+        price = float(raw_price or 0.0)
+        slot = prices_by_week.setdefault(week, {})
+        if feed == "BTC / USD":
+            slot["BTC"] = price
+        elif feed == "ETH / USD":
+            slot["ETH"] = price
+    return prices_by_week
+
+
 def _forward_fill_protocol_tvl(rows) -> list[ProtocolTvlPoint]:
     if not rows:
         return []
@@ -1467,7 +1552,7 @@ def _forward_fill_protocol_tvl(rows) -> list[ProtocolTvlPoint]:
     return points
 
 
-def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
+def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvlPoint]:
     res = ch.query(
         f"""
         SELECT day, protocol, entity_id, argMaxMerge(supply_usd_state) AS supply_usd
@@ -1478,7 +1563,154 @@ def _query_protocol_tvl_history(ch) -> list[ProtocolTvlPoint]:
         ORDER BY day ASC, protocol ASC, entity_id ASC
         """
     )
-    return _forward_fill_protocol_tvl(res.result_rows)
+    points = _forward_fill_protocol_tvl(res.result_rows)
+    unit = _normalize_display_unit(display_in)
+    if unit == "USD" or not points:
+        return points
+
+    prices_by_week = _load_weekly_quote_prices(ch)
+    weekly_prices: list[float] = []
+    for point in points:
+        week = _to_week_date(point.date)
+        if week is None:
+            weekly_prices.append(0.0)
+            continue
+        price = float((prices_by_week.get(week) or {}).get(unit, 0.0) or 0.0)
+        weekly_prices.append(price if price > 0 else 0.0)
+
+    # Forward-fill with previously known price.
+    last_seen = 0.0
+    for idx, price in enumerate(weekly_prices):
+        if price > 0:
+            last_seen = price
+            continue
+        if last_seen > 0:
+            weekly_prices[idx] = last_seen
+
+    # Backfill leading gaps using earliest available price so history remains continuous.
+    next_seen = 0.0
+    for idx in range(len(weekly_prices) - 1, -1, -1):
+        price = weekly_prices[idx]
+        if price > 0:
+            next_seen = price
+            continue
+        if next_seen > 0:
+            weekly_prices[idx] = next_seen
+
+    converted: list[ProtocolTvlPoint] = []
+    for point, divisor in zip(points, weekly_prices):
+        if divisor <= 0:
+            converted.append(
+                ProtocolTvlPoint(
+                    date=point.date,
+                    aave=0.0,
+                    morpho=0.0,
+                    euler=0.0,
+                    fluid=0.0,
+                )
+            )
+            continue
+
+        converted.append(
+            ProtocolTvlPoint(
+                date=point.date,
+                aave=float(point.aave / divisor),
+                morpho=float(point.morpho / divisor),
+                euler=float(point.euler / divisor),
+                fluid=float(point.fluid / divisor),
+            )
+        )
+    return converted
+
+
+def _query_protocol_apy_history(
+    ch, protocol: str, resolution: str, limit: int
+) -> list[ProtocolApyPoint]:
+    allowed = {AAVE_MARKET, MORPHO_MARKET, "EULER_MARKET", FLUID_MARKET}
+    if protocol not in allowed:
+        return []
+
+    safe_limit = _safe_limit(limit)
+    escaped_protocol = _escape_sql_string(protocol)
+    if protocol == AAVE_MARKET:
+        # Full history for /data chart should come from canonical raw timeseries,
+        # not the hourly API pre-agg table with shorter TTL retention.
+        time_expr = _time_bucket_expr(resolution, "timestamp")
+        rows = ch.query(
+            f"""
+            SELECT
+                toUnixTimestamp(bucket_ts) AS bucket_ts,
+                if(
+                    sum(supply_usd) > 0,
+                    sum(supply_apy * supply_usd) / sum(supply_usd),
+                    avg(supply_apy)
+                ) AS average_supply_apy,
+                if(
+                    sum(borrow_usd) > 0,
+                    sum(borrow_apy * borrow_usd) / sum(borrow_usd),
+                    avg(borrow_apy)
+                ) AS average_borrow_apy
+            FROM (
+                SELECT
+                    entity_id,
+                    {time_expr} AS bucket_ts,
+                    avg(toFloat64(supply_apy)) AS supply_apy,
+                    avg(toFloat64(borrow_apy)) AS borrow_apy,
+                    avg(toFloat64(supply_usd)) AS supply_usd,
+                    avg(toFloat64(borrow_usd)) AS borrow_usd
+                FROM aave_timeseries
+                WHERE protocol = '{escaped_protocol}'
+                  AND entity_id != 'AAVE_MARKET_SYNTHETIC'
+                GROUP BY entity_id, bucket_ts
+            )
+            GROUP BY bucket_ts
+            ORDER BY bucket_ts DESC
+            LIMIT {safe_limit}
+            """
+        ).result_rows
+    else:
+        time_expr = _time_bucket_expr(resolution, "ts")
+        rows = ch.query(
+            f"""
+            SELECT
+                toUnixTimestamp({time_expr}) AS bucket_ts,
+                if(
+                    sum(supply_usd) > 0,
+                    sum(supply_apy * supply_usd) / sum(supply_usd),
+                    avg(supply_apy)
+                ) AS average_supply_apy,
+                if(
+                    sum(borrow_usd) > 0,
+                    sum(borrow_apy * borrow_usd) / sum(borrow_usd),
+                    avg(borrow_apy)
+                ) AS average_borrow_apy
+            FROM (
+                SELECT
+                    entity_id,
+                    ts,
+                    avgMerge(supply_apy_state) AS supply_apy,
+                    avgMerge(borrow_apy_state) AS borrow_apy,
+                    avgMerge(supply_usd_state) AS supply_usd,
+                    avgMerge(borrow_usd_state) AS borrow_usd
+                FROM {API_MARKET_TIMESERIES_AGG_TABLE}
+                WHERE protocol = '{escaped_protocol}'
+                GROUP BY entity_id, ts
+            )
+            GROUP BY bucket_ts
+            ORDER BY bucket_ts DESC
+            LIMIT {safe_limit}
+            """
+        ).result_rows
+    points = [
+        ProtocolApyPoint(
+            timestamp=int(row[0]),
+            average_supply_apy=float(row[1]) if row[1] is not None else 0.0,
+            average_borrow_apy=float(row[2]) if row[2] is not None else 0.0,
+        )
+        for row in rows
+    ]
+    points.reverse()
+    return points
 
 
 def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) -> list[MarketTimeseriesPoint]:
@@ -1706,9 +1938,16 @@ class Query:
         return _query_protocol_markets(ch, protocol, entity_id)
 
     @strawberry.field(name="protocolTvlHistory")
-    def protocol_tvl_history(self) -> list[ProtocolTvlPoint]:
+    def protocol_tvl_history(self, display_in: str = "USD") -> list[ProtocolTvlPoint]:
         ch = get_clickhouse_client()
-        return _query_protocol_tvl_history(ch)
+        return _query_protocol_tvl_history(ch, display_in)
+
+    @strawberry.field(name="protocolApyHistory")
+    def protocol_apy_history(
+        self, protocol: str = AAVE_MARKET, resolution: str = "1W", limit: int = 500
+    ) -> list[ProtocolApyPoint]:
+        ch = get_clickhouse_client()
+        return _query_protocol_apy_history(ch, protocol, resolution, limit)
 
     @strawberry.field(name="marketTimeseries")
     def market_timeseries(
