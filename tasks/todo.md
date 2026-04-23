@@ -183,3 +183,14 @@ new-front/
 ## REVIEW REQUIRED: ClickHouse ILLEGAL_AGGREGATION Fix
 - [x] Removed inline AS aliases from the INSERT SELECT statement in indexer/api/graphql.py.
 - [x] Verified GraphQL /data endpoint correctly loads marketSnapshots without throwing Code 184.
+
+
+## REVIEW REQUIRED: USDC Oracle APY Endpoint
+- [x] Added `GET /api/v1/oracle/usdc-borrow-apy` to indexer/api/graphql.py.
+- [x] Verified endpoint cleanly parses latest AAVE_MARKET USDC APY from ClickHouse.
+
+
+## REVIEW REQUIRED: MM Daemon Simplification
+- [x] Replaced 60+ lines of fallback/timeout logic in combined_daemon.py with a 10-line direct REST call.
+- [x] Added unit tests for fetch_latest_rate in backend/tests/test_daemon_rate_fetch.py
+- [x] Verified mm-daemon successfully arbitraged the stale $14 mark price down to the correct ~$12.65 index price.

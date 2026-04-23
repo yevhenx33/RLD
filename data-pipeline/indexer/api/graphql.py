@@ -997,5 +997,23 @@ def readyz():
         )
 
 
+@app.get("/api/v1/oracle/usdc-borrow-apy")
+def get_usdc_borrow_apy():
+    try:
+        ch = get_clickhouse_client()
+        sql = """
+        SELECT argMax(borrow_apy, timestamp) AS apy
+        FROM aave_timeseries
+        WHERE protocol = 'AAVE_MARKET' AND symbol = 'USDC'
+        """
+        res = ch.query(sql).result_rows
+        if not res or res[0][0] is None:
+            return JSONResponse(status_code=404, content={"error": "Rate not found"})
+        return {"symbol": "USDC", "borrow_apy": float(res[0][0])}
+    except Exception as exc:
+        close_clickhouse_client()
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
 def create_app():
     return app

@@ -238,90 +238,29 @@ JTM_HOOK_ABI = [
 ]
 
 
-def _normalize_rate_fraction(raw_rate):
-    """
-    Normalize to APY fraction r (e.g. 14% => 0.14).
-    Supports both:
-      - Envio style: 0.1399
-      - Legacy percent: 13.99
-    """
-    if raw_rate is None:
-        return None
-    try:
-        r = float(raw_rate)
-    except Exception:
-        return None
-    if r < 0:
-        return None
-    if r > 1:
-        return r / 100.0
-    return r
-
-
 def fetch_latest_rate():
-    """Fetch latest USDC borrow rate fraction r from Envio/data-pipeline."""
-    graphql_endpoints = [f"{API_URL}/graphql", f"{API_URL}/envio-graphql"]
-
-    # 1) Envio/data-pipeline GraphQL
-    envio_query = {
-        "query": '{ historicalRates(symbols:["USDC"], resolution:"1H", limit:1){ apy timestamp symbol } }'
-    }
-    for endpoint in graphql_endpoints:
+    """Fetch latest USDC borrow rate fraction strictly from the unified REST endpoint."""
+    endpoints = [
+        "http://rld_graphql_api:5000/api/v1/oracle/usdc-borrow-apy",  # Docker internal mesh
+        f"{API_URL}/api/v1/oracle/usdc-borrow-apy"                    # Local fallback via API_URL
+    ]
+    
+    for endpoint in endpoints:
         try:
-            response = requests.post(endpoint, json=envio_query, timeout=5)
-            response.raise_for_status()
-            data = response.json()
-            rows = data.get("data", {}).get("historicalRates", [])
-            if rows:
-                rate_fraction = _normalize_rate_fraction(rows[0].get("apy"))
-                if rate_fraction is not None:
-                    logger.info(
-                        "📡 Live USDC rate from Envio: r=%.6f (~%.4f%%)",
-                        rate_fraction,
-                        rate_fraction * 100,
-                    )
-                    return rate_fraction
+            resp = requests.get(endpoint, timeout=2)
+            resp.raise_for_status()
+            rate_fraction = float(resp.json()["borrow_apy"])
+            logger.info(
+                "📡 Live USDC rate from REST API: r=%.6f (~%.4f%%)",
+                rate_fraction,
+                rate_fraction * 100,
+            )
+            return rate_fraction
         except Exception:
-            pass
-
-    # Fallback: read rate directly from Aave V3 on-chain (STALE on Reth fork!)
-    try:
-        w3 = Web3(Web3.HTTPProvider(RPC_URL))
-        AAVE_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
-        USDC_ADDR = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-        POOL_ABI = [{"inputs": [{"name": "asset", "type": "address"}],
-                     "name": "getReserveData",
-                     "outputs": [{"components": [
-                         {"name": "configuration", "type": "uint256"},
-                         {"name": "liquidityIndex", "type": "uint128"},
-                         {"name": "currentLiquidityRate", "type": "uint128"},
-                         {"name": "variableBorrowIndex", "type": "uint128"},
-                         {"name": "currentVariableBorrowRate", "type": "uint128"},
-                         {"name": "currentStableBorrowRate", "type": "uint128"},
-                         {"name": "lastUpdateTimestamp", "type": "uint40"},
-                         {"name": "id", "type": "uint16"},
-                         {"name": "aTokenAddress", "type": "address"},
-                         {"name": "stableDebtTokenAddress", "type": "address"},
-                         {"name": "variableDebtTokenAddress", "type": "address"},
-                         {"name": "interestRateStrategyAddress", "type": "address"},
-                         {"name": "accruedToTreasury", "type": "uint128"},
-                         {"name": "unbacked", "type": "uint128"},
-                         {"name": "isolationModeTotalDebt", "type": "uint128"},
-                     ], "name": "", "type": "tuple"}],
-                     "stateMutability": "view", "type": "function"}]
-        pool = w3.eth.contract(address=Web3.to_checksum_address(AAVE_POOL), abi=POOL_ABI)
-        reserve_data = pool.functions.getReserveData(Web3.to_checksum_address(USDC_ADDR)).call()
-        variable_borrow_rate_ray = reserve_data[4]
-        rate_fraction = variable_borrow_rate_ray / 1e27
-        logger.warning(
-            "⚠️ Using STALE on-chain Aave rate: r=%.6f (~%.4f%%)",
-            rate_fraction,
-            rate_fraction * 100,
-        )
-        return rate_fraction
-    except Exception as e:
-        logger.error(f"All rate sources failed: {e}")
-        return None
+            continue
+            
+    logger.warning("⚠️ Oracle fetch failed across all endpoints. Maintaining previous rate.")
+    return None
 
 
 def rate_fraction_to_ray(rate_fraction):
