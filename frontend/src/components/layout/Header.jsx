@@ -168,31 +168,11 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               <span className="text-white/10">|</span>
 
               <Link
-                to="/strategies"
-                onMouseEnter={() => prefetchRoute("/strategies")}
-                className={`transition-colors px-2 tracking-widest ${location.pathname.startsWith("/strategies") ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+                to="/data"
+                onMouseEnter={() => prefetchRoute("/data")}
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/data" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
               >
-                STRATEGIES
-              </Link>
-
-              <span className="text-white/10">|</span>
-
-              <Link
-                to="/explore"
-                onMouseEnter={() => prefetchRoute("/explore")}
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/explore" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
-              >
-                DATA
-              </Link>
-
-              <span className="text-white/10">|</span>
-
-              <Link
-                to="/brokers"
-                onMouseEnter={() => prefetchRoute("/brokers")}
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/brokers" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
-              >
-                BROKERS
+                LENDINGS
               </Link>
 
               <span className="text-white/10">|</span>
@@ -323,25 +303,11 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                 PORTFOLIO
               </Link>
               <Link
-                to="/strategies"
-                onMouseEnter={() => prefetchRoute("/strategies")}
-                className={`py-2 ${location.pathname.startsWith("/strategies") ? "text-white" : "text-gray-500"}`}
+                to="/data"
+                onMouseEnter={() => prefetchRoute("/data")}
+                className={`py-2 ${location.pathname === "/data" ? "text-white" : "text-gray-500"}`}
               >
-                STRATEGIES
-              </Link>
-              <Link
-                to="/explore"
-                onMouseEnter={() => prefetchRoute("/explore")}
-                className={`py-2 ${location.pathname === "/explore" ? "text-white" : "text-gray-500"}`}
-              >
-                DATA
-              </Link>
-              <Link
-                to="/brokers"
-                onMouseEnter={() => prefetchRoute("/brokers")}
-                className={`py-2 ${location.pathname === "/brokers" ? "text-white" : "text-gray-500"}`}
-              >
-                BROKERS
+                LENDINGS
               </Link>
               <a
                 href="https://docs.rld.fi/introduction/rate-level-derivatives.html"

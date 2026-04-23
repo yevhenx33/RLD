@@ -169,7 +169,7 @@ export default function ProtocolMarkets() {
         {/* Back nav + Title */}
         <div className="flex items-center gap-4 mb-6">
           <button
-            onClick={() => navigate("/explore")}
+            onClick={() => navigate("/data")}
             className="p-2 border border-white/10 hover:bg-white/5 transition-colors"
           >
             <ArrowLeft size={16} className="text-gray-400" />
@@ -261,7 +261,9 @@ export default function ProtocolMarkets() {
                     <tr
                       key={m.entityId}
                       className={`hover:bg-white/[0.03] transition-all duration-300 group cursor-pointer ${isTrapped ? "opacity-50" : ""}`}
-                      onClick={() => navigate(`/explore/${protocolSlug}/${m.entityId.replace('0x', '')}`)}
+                      onClick={() =>
+                        navigate(`/data/${protocolSlug}/${m.entityId.replace("0x", "")}`)
+                      }
                     >
                       <td className="p-5">
                         {isMorpho ? (
