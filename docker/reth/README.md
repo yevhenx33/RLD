@@ -81,11 +81,11 @@ All accounts get 10,000 ETH in genesis. Keys are Anvil/Hardhat defaults.
 | Script | Purpose |
 |--------|---------|
 | `restart-reth.sh` | Main entry point — full lifecycle |
-| `docker/deployer/deploy_protocol_snapshot.py` | One-shot Python deployer used during Anvil snapshot bootstrap |
-| `start_reth.sh` | Start Reth node (called by restart) |
-| `00_warmup.sh` | Standalone: Anvil dump → genesis.json |
+| `docker/deployer/deploy_protocol_snapshot.py` | One-shot deployer used during Anvil snapshot bootstrap |
 | `convert_state.py` | Anvil JSON → Reth genesis format |
-| `05_setup_users_reth.sh` | Post-genesis broker/LP setup on Reth |
+| `verify_protocol_e2e.py` | Read-only verification of on-chain/indexer deployment wiring |
+| `setup_simulation.py` | Post-genesis SimFunder + LP/MM/CHAOS setup on Reth |
+| `deploy_pool_live_index_with_liquidity.py` | Standalone V4 pool deploy/liquidity smoke script |
 
 ## GhostRouter Solver Requirement
 

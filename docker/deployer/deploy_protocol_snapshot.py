@@ -17,6 +17,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Sequence
@@ -215,6 +216,24 @@ def _checksum(addr: str) -> str:
     return Web3.to_checksum_address(addr)
 
 
+def _env_decimal(name: str, default: str) -> Decimal:
+    raw = os.getenv(name, default).strip()
+    try:
+        return Decimal(raw)
+    except Exception:
+        _info(f"Invalid {name}={raw!r}; defaulting to {default}")
+        return Decimal(default)
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default)).strip()
+    try:
+        return int(raw)
+    except Exception:
+        _info(f"Invalid {name}={raw!r}; defaulting to {default}")
+        return default
+
+
 def _forge_create(contract_id: str, private_key: str, rpc_url: str, constructor_args: Sequence[Any]) -> str:
     cmd = [
         "forge",
@@ -317,25 +336,103 @@ def _normalize_rate_fraction(raw_rate: Decimal) -> Decimal | None:
     return raw_rate
 
 
+def _normalize_api_base(url: str | None) -> str:
+    if not url:
+        return ""
+    return url.strip().rstrip("/")
+
+
+def _candidate_rate_api_bases(api_url: str | None) -> list[str]:
+    configured = [
+        api_url,
+        os.getenv("ENVIO_API_URL", ""),
+        os.getenv("API_URL", ""),
+        os.getenv("RATES_API_URL", ""),
+        f"http://localhost:{os.getenv('ENVIO_API_PORT', '5000')}",
+        "http://127.0.0.1:5000",
+        "http://rld_graphql_api:5000",
+    ]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for candidate in configured:
+        base = _normalize_api_base(candidate)
+        if not base or base in seen:
+            continue
+        seen.add(base)
+        ordered.append(base)
+    return ordered
+
+
+def _parse_rate_timestamp(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return int(float(raw))
+        except ValueError:
+            pass
+        try:
+            return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            return None
+    return None
+
+
 def _fetch_live_rate_fraction(api_url: str | None) -> Decimal | None:
     """Fetch live USDC borrow rate fraction r strictly from the unified REST endpoint."""
-    if not api_url:
-        return None
+    min_rate = _env_decimal("MIN_BORROW_APY", "0.0")
+    max_rate = _env_decimal("MAX_BORROW_APY", "2.0")
+    max_rate_age_seconds = _env_int("MAX_RATE_AGE_SECONDS", 900)
+    require_rate_timestamp = os.getenv("REQUIRE_RATE_TIMESTAMP", "1").strip().lower() not in {"0", "false", "no"}
 
-    base = api_url.rstrip("/")
-    endpoints = [
-        "http://rld_graphql_api:5000/api/v1/oracle/usdc-borrow-apy",
-        f"{base}/api/v1/oracle/usdc-borrow-apy"
-    ]
-
-    for endpoint in endpoints:
+    for base in _candidate_rate_api_bases(api_url):
+        endpoint = f"{base}/api/v1/oracle/usdc-borrow-apy"
         try:
             req = urllib.request.Request(endpoint, method="GET")
             with urllib.request.urlopen(req, timeout=4) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 apy = data.get("borrow_apy")
-                if apy is not None:
-                    return _normalize_rate_fraction(Decimal(str(apy)))
+                if apy is None:
+                    _info(f"Rate API payload missing borrow_apy from {endpoint}")
+                    continue
+
+                rate_fraction = _normalize_rate_fraction(Decimal(str(apy)))
+                if rate_fraction is None:
+                    _info(f"Rate API returned invalid APY from {endpoint}: {apy}")
+                    continue
+                if rate_fraction < min_rate or rate_fraction > max_rate:
+                    _info(
+                        f"Ignoring out-of-range APY from {endpoint}: "
+                        f"{rate_fraction} (expected {min_rate}..{max_rate})"
+                    )
+                    continue
+
+                if max_rate_age_seconds > 0:
+                    updated_at = _parse_rate_timestamp(
+                        data.get("timestamp")
+                        or data.get("updated_at")
+                        or data.get("updatedAt")
+                        or data.get("ts")
+                    )
+                    if updated_at is None:
+                        if require_rate_timestamp:
+                            _info(f"Ignoring rate payload without timestamp from {endpoint}")
+                            continue
+                    else:
+                        age_seconds = max(0, int(time.time()) - int(updated_at))
+                        if age_seconds > max_rate_age_seconds:
+                            _info(
+                                f"Ignoring stale APY from {endpoint}: age={age_seconds}s "
+                                f"(max={max_rate_age_seconds}s)"
+                            )
+                            continue
+
+                return rate_fraction
         except Exception:
             continue
 

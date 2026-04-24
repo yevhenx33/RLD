@@ -11,6 +11,12 @@
       "rev": "04695aecbd4d17dddfd55de766d10e3805d6f42f"
     }
   },
+  "lib/openzeppelin-v5": {
+    "rev": "932fddf69a699a9a80fd2396fd1a2ab91cdda123"
+  },
+  "lib/permit2": {
+    "rev": "cc56ad0f3439c502c246fc5cfcc3db92bb8b7219"
+  },
   "lib/solmate": {
     "rev": "89365b880c4f3c786bdd453d4b8e8fe410344a69"
   },
@@ -31,5 +37,8 @@
       "name": "v4.0.0",
       "rev": "e50237c43811bd9b526eff40f26772152a42daba"
     }
+  },
+  "lib/v4-periphery": {
+    "rev": "3779387e5d296f39df543d23524b050f89a62917"
   }
 }

@@ -64,7 +64,7 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8080\"' || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=2)\""]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -93,6 +93,10 @@ services:
       - CHAOS_KEY=${CHAOS_KEY}
       - API_URL=${API_URL:-http://host.docker.internal:5000}
       - API_KEY=${API_KEY}
+      - MIN_BORROW_APY=${MIN_BORROW_APY:-0.0}
+      - MAX_BORROW_APY=${MAX_BORROW_APY:-2.0}
+      - MAX_RATE_AGE_SECONDS=${MAX_RATE_AGE_SECONDS:-900}
+      - REQUIRE_RATE_TIMESTAMP=${REQUIRE_RATE_TIMESTAMP:-true}
       - DATABASE_URL=postgresql://rld:${DB_PASSWORD:?DB_PASSWORD must be set}@postgres:5432/rld_indexer
       - SKIP_USER_SETUP=${SKIP_USER_SETUP:-true}
     extra_hosts:
@@ -115,6 +119,10 @@ services:
       - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
       - API_URL=${API_URL:-http://host.docker.internal:5000}
       - API_KEY=${API_KEY}
+      - MIN_BORROW_APY=${MIN_BORROW_APY:-0.0}
+      - MAX_BORROW_APY=${MAX_BORROW_APY:-2.0}
+      - MAX_RATE_AGE_SECONDS=${MAX_RATE_AGE_SECONDS:-900}
+      - RATES_TIMEOUT=${RATES_TIMEOUT:-2}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

@@ -106,7 +106,7 @@ services:
       - "127.0.0.1:${INDEXER_PORT:-8080}:8080"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8080\"' || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=2)\""]
       interval: 10s
       timeout: 5s
       start_period: 30s
@@ -129,6 +129,10 @@ services:
       - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
       - API_URL=${API_URL:-http://host.docker.internal:5000}
       - API_KEY=${API_KEY}
+      - MIN_BORROW_APY=${MIN_BORROW_APY:-0.0}
+      - MAX_BORROW_APY=${MAX_BORROW_APY:-2.0}
+      - MAX_RATE_AGE_SECONDS=${MAX_RATE_AGE_SECONDS:-900}
+      - RATES_TIMEOUT=${RATES_TIMEOUT:-2}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -183,7 +187,7 @@ services:
       - ./deployment-snapshot.json:/config/deployment-snapshot.json:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8088\"' || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8088/health', timeout=2)\""]
       interval: 15s
       timeout: 5s
       start_period: 15s

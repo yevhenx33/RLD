@@ -319,13 +319,39 @@ def normalize_rate_fraction(raw_rate: Decimal) -> Decimal:
     return raw_rate
 
 
-def fetch_live_rate_fraction(api_url: str) -> Decimal:
-    base = api_url.rstrip("/")
-    endpoints = [
-        "http://rld_graphql_api:5000/api/v1/oracle/usdc-borrow-apy",
-        f"{base}/api/v1/oracle/usdc-borrow-apy"
+def normalize_api_base(url: str | None) -> str:
+    if not url:
+        return ""
+    return url.strip().rstrip("/")
+
+
+def candidate_rate_api_bases(preferred_api_url: str | None) -> list[str]:
+    configured = [
+        preferred_api_url,
+        os.environ.get("ENVIO_API_URL", ""),
+        os.environ.get("API_URL", ""),
+        os.environ.get("RATES_API_URL", ""),
+        f"http://localhost:{os.environ.get('ENVIO_API_PORT', '5000')}",
+        DEFAULT_API_URL,
+        "http://rld_graphql_api:5000",
     ]
-    
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for candidate in configured:
+        base = normalize_api_base(candidate)
+        if not base or base in seen:
+            continue
+        seen.add(base)
+        ordered.append(base)
+    return ordered
+
+
+def fetch_live_rate_fraction(api_url: str) -> Decimal:
+    endpoints = [
+        f"{base}/api/v1/oracle/usdc-borrow-apy"
+        for base in candidate_rate_api_bases(api_url)
+    ]
+
     for endpoint in endpoints:
         try:
             response = requests.get(endpoint, timeout=4)
@@ -387,7 +413,15 @@ def main() -> None:
         description="Deploy and verify a hookless V4 pool at live index price, then seed liquidity."
     )
     parser.add_argument("--rpc-url", default=os.environ.get("RPC_URL", DEFAULT_RPC_URL))
-    parser.add_argument("--api-url", default=os.environ.get("API_URL", DEFAULT_API_URL))
+    parser.add_argument(
+        "--api-url",
+        default=(
+            os.environ.get("ENVIO_API_URL")
+            or os.environ.get("API_URL")
+            or os.environ.get("RATES_API_URL")
+            or DEFAULT_API_URL
+        ),
+    )
     parser.add_argument("--private-key", default=None)
     parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE))
     parser.add_argument("--deployment-json", default=str(DEFAULT_DEPLOYMENT_JSON))
@@ -442,7 +476,7 @@ def main() -> None:
 
     step("Step 0: Preflight")
     info(f"RPC URL: {args.rpc_url}")
-    info(f"API URL: {args.api_url}")
+    info(f"Preferred API URL: {args.api_url}")
     info(f"Deployer: {deployer}")
     info(f"PoolManager: {pool_manager_addr}")
     info("Liquidity seeding route: PoolModifyLiquidityTest helper")

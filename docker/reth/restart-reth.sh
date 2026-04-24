@@ -42,6 +42,11 @@ ANVIL_RPC="http://localhost:$ANVIL_PORT"
 ANVIL_LOG="/tmp/anvil.log"
 
 DEPLOYER_TIMEOUT=600
+LOCK_FILE="/tmp/rld-restart-reth.lock"
+ANVIL_PID_FILE="/tmp/rld-restart-reth.anvil.pid"
+ANVIL_PID=""
+CURRENT_PHASE="bootstrap"
+CLEANUP_DONE=false
 
 # ─── Parse args ───────────────────────────────────────────────
 NO_BUILD=false
@@ -164,22 +169,102 @@ volume_name() {
     echo "${RETH_PROJECT}_${short_name}"
 }
 
+kill_pid_if_running() {
+    local pid="${1:-}"
+    local label="${2:-process}"
+    if [ -z "$pid" ] || ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+        return 0
+    fi
+    if kill -0 "$pid" 2>/dev/null; then
+        warn "Stopping $label (pid=$pid)"
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    fi
+}
+
+acquire_run_lock() {
+    if ! command -v flock &>/dev/null; then
+        fail "flock not found in PATH"
+        exit 1
+    fi
+    exec 9>"$LOCK_FILE"
+    if ! flock -n 9; then
+        fail "Another restart-reth run is already active (lock: $LOCK_FILE)"
+        exit 1
+    fi
+    ok "Acquired run lock"
+}
+
+cleanup_trap() {
+    local exit_code=$?
+    if [ "$CLEANUP_DONE" = true ]; then
+        return
+    fi
+    CLEANUP_DONE=true
+
+    kill_pid_if_running "${ANVIL_PID:-}" "temporary Anvil"
+    if [ -f "$ANVIL_PID_FILE" ]; then
+        local tracked_pid
+        tracked_pid=$(cat "$ANVIL_PID_FILE" 2>/dev/null || echo "")
+        kill_pid_if_running "$tracked_pid" "tracked Anvil"
+        rm -f "$ANVIL_PID_FILE"
+    fi
+
+    if [ "$exit_code" -ne 0 ]; then
+        warn "restart-reth aborted in phase '${CURRENT_PHASE}' (exit=$exit_code)"
+    fi
+}
+
+wait_for_service_ready() {
+    local service="$1"
+    local timeout_seconds="${2:-90}"
+    local i
+    local cid=""
+    local state="missing"
+    local health="none"
+
+    for i in $(seq 1 "$timeout_seconds"); do
+        cid="$(compose_cid "$COMPOSE_RETH" "$service")"
+        if [ -n "$cid" ]; then
+            state=$(docker inspect --format '{{.State.Status}}' "$cid" 2>/dev/null || echo "unknown")
+            health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || echo "none")
+            if [ "$state" = "running" ] && { [ "$health" = "none" ] || [ "$health" = "healthy" ]; }; then
+                ok "$service ready (state=$state, health=$health)"
+                return 0
+            fi
+        else
+            state="missing"
+            health="none"
+        fi
+        [ $((i % 15)) -eq 0 ] && dim "Waiting for $service... (state=$state health=$health)"
+        sleep 1
+    done
+
+    fail "$service failed readiness check (state=$state health=$health)"
+    docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" logs "$service" --tail 30 2>&1 || true
+    return 1
+}
+
+acquire_run_lock
+trap cleanup_trap EXIT INT TERM
+
 # ═════════════════════════════════════════════════════════════
 # PREFLIGHT
 # ═════════════════════════════════════════════════════════════
+CURRENT_PHASE="preflight"
 header "PREFLIGHT CHECKS"
 
-for cmd in docker cast; do
+for cmd in docker cast jq curl python3 tar flock sha256sum; do
     command -v "$cmd" &>/dev/null || { fail "$cmd not found in PATH"; exit 1; }
 done
-ok "Required tools found (docker, cast)"
+ok "Required tools found"
 
 docker compose version &>/dev/null || { fail "docker compose v2 not available"; exit 1; }
 ok "Docker compose v2 available"
 
 [ ! -f "$ENV_FILE" ] && { fail "$ENV_FILE not found"; exit 1; }
 
-source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|DEPLOYER_KEY|USER_A_KEY|USER_B_KEY|USER_C_KEY|MM_KEY|CHAOS_KEY|INDEXER_PORT|DB_PORT|RATES_PORT|ENVIO_API_URL|ENVIO_API_PORT|INDEXER_ADMIN_TOKEN|INDEXER_ALLOW_UNSAFE_ADMIN_RESET)=' "$ENV_FILE" | sed 's/^/export /')
+source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|DEPLOYER_KEY|USER_A_KEY|USER_B_KEY|USER_C_KEY|MM_KEY|CHAOS_KEY|INDEXER_PORT|DB_PORT|RATES_PORT|ENVIO_API_URL|ENVIO_API_PORT|API_URL|RATES_API_URL|INDEXER_ADMIN_TOKEN|INDEXER_ALLOW_UNSAFE_ADMIN_RESET|MIN_BORROW_APY|MAX_BORROW_APY|MAX_RATE_AGE_SECONDS|REQUIRE_RATE_TIMESTAMP|RATES_TIMEOUT)=' "$ENV_FILE" | sed 's/^/export /')
 if [ -z "${FORK_BLOCK:-}" ] && [ -f "$RLD_ROOT/.env" ]; then
     FORK_BLOCK=$(grep -E '^FORK_BLOCK=' "$RLD_ROOT/.env" 2>/dev/null | cut -d= -f2 || echo "")
 fi
@@ -200,6 +285,7 @@ fi
 # ═════════════════════════════════════════════════════════════
 # STEP 1: TEAR DOWN
 # ═════════════════════════════════════════════════════════════
+CURRENT_PHASE="teardown"
 header "STEP 1: TEAR DOWN"
 
 step "1a" "Stopping simulation stack..."
@@ -210,11 +296,15 @@ docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" down -v 2>/dev/null ||
 docker network create rld_shared 2>/dev/null || true
 ok "Simulation stack stopped (infra + frontend untouched)"
 
-step "1b" "Killing stale bare-metal processes..."
-pkill -f "reth.*--dev" 2>/dev/null || true
-pkill -f "anvil" 2>/dev/null || true
-sleep 2
-ok "Processes killed"
+step "1b" "Cleaning tracked temporary processes..."
+if [ -f "$ANVIL_PID_FILE" ]; then
+    STALE_ANVIL_PID=$(cat "$ANVIL_PID_FILE" 2>/dev/null || echo "")
+    kill_pid_if_running "$STALE_ANVIL_PID" "stale tracked Anvil"
+    rm -f "$ANVIL_PID_FILE"
+else
+    dim "No tracked temporary Anvil PID found"
+fi
+ok "Process cleanup complete"
 
 step "1c" "Clearing deployment.json..."
 echo '{}' > "$DEPLOY_JSON"
@@ -232,6 +322,7 @@ fi
 # STEP 2: GENERATE GENESIS (via temporary Anvil deploy)
 # ═════════════════════════════════════════════════════════════
 if [ "$SKIP_GENESIS" = false ]; then
+    CURRENT_PHASE="generate-genesis"
     header "STEP 2: GENERATE GENESIS"
 
     # ── 2a. Start temporary Anvil ──
@@ -247,6 +338,7 @@ if [ "$SKIP_GENESIS" = false ]; then
         --dump-state /tmp/anvil-state/state.json \
         > "$ANVIL_LOG" 2>&1 &
     ANVIL_PID=$!
+    echo "$ANVIL_PID" > "$ANVIL_PID_FILE"
 
     for i in $(seq 1 60); do
         if cast block-number --rpc-url "$ANVIL_RPC" > /dev/null 2>&1; then
@@ -269,21 +361,28 @@ if [ "$SKIP_GENESIS" = false ]; then
     # Only bring up services needed by host-run deploy orchestrator.
     docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" up -d $BUILD_FLAG postgres indexer 2>&1 | tail -3
 
-    # Deployer now pulls index rate from Envio/data-pipeline GraphQL.
-    ENVIO_GRAPHQL_URL="${ENVIO_API_URL:-http://localhost:${ENVIO_API_PORT:-5000}}"
-    if ensure_envio_api "$ENVIO_GRAPHQL_URL" 45; then
-        ok "Envio API reachable at ${ENVIO_GRAPHQL_URL}"
+    # Deployer now pulls index rate from the unified REST oracle endpoint.
+    ENVIO_DEFAULT_URL="http://localhost:${ENVIO_API_PORT:-5000}"
+    LIVE_RATE_API_URL="${ENVIO_API_URL:-${API_URL:-${RATES_API_URL:-$ENVIO_DEFAULT_URL}}}"
+    if ensure_envio_api "$LIVE_RATE_API_URL" 20; then
+        ok "Live rate API reachable at ${LIVE_RATE_API_URL}"
     else
-        fail "Envio API unavailable at ${ENVIO_GRAPHQL_URL} (required for live index rate). Failing fast."
-        kill "$ANVIL_PID" 2>/dev/null || true
-        exit 1
+        if [ "$LIVE_RATE_API_URL" != "$ENVIO_DEFAULT_URL" ] && ensure_envio_api "$ENVIO_DEFAULT_URL" 45; then
+            warn "Primary live-rate API unavailable at ${LIVE_RATE_API_URL}; falling back to ${ENVIO_DEFAULT_URL}"
+            LIVE_RATE_API_URL="$ENVIO_DEFAULT_URL"
+            ok "Live rate API reachable at ${LIVE_RATE_API_URL}"
+        else
+            fail "Live rate API unavailable at ${LIVE_RATE_API_URL} and fallback ${ENVIO_DEFAULT_URL} (required for live index rate). Failing fast."
+            kill "$ANVIL_PID" 2>/dev/null || true
+            exit 1
+        fi
     fi
 
     # Run deployment orchestrator on host to avoid container→host RPC routing
     # issues observed in this environment (host.docker.internal timeouts).
     step "2b.1" "Running host deployment orchestrator..."
     INDEXER_RESET_URL="http://localhost:${INDEXER_PORT:-8080}/admin/reset"
-    API_URL="$ENVIO_GRAPHQL_URL" \
+    API_URL="$LIVE_RATE_API_URL" \
     REQUIRE_LIVE_RATE=1 \
     INDEXER_RESET_URL="$INDEXER_RESET_URL" \
     INDEXER_ADMIN_TOKEN="${INDEXER_ADMIN_TOKEN:-}" \
@@ -420,6 +519,8 @@ print(f'  Patched deploy_block/fork_block → 0 for Reth')
     docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" down -v 2>/dev/null || true
     kill "$ANVIL_PID" 2>/dev/null || true
     wait "$ANVIL_PID" 2>/dev/null || true
+    ANVIL_PID=""
+    rm -f "$ANVIL_PID_FILE"
     ok "Anvil stack stopped"
 
     # ── 2h. Save genesis snapshot ──
@@ -430,12 +531,20 @@ print(f'  Patched deploy_block/fork_block → 0 for Reth')
     tar -czf "$SNAPSHOT_DIR/$SNAPSHOT_NAME" \
         -C "$SCRIPT_DIR" genesis.json deployment-snapshot.json 2>/dev/null
     ok "Snapshot saved: snapshots/$SNAPSHOT_NAME ($(du -h "$SNAPSHOT_DIR/$SNAPSHOT_NAME" | cut -f1))"
+    SNAPSHOT_SHA=$(sha256sum "$SNAPSHOT_DIR/$SNAPSHOT_NAME" | awk '{print $1}')
+    echo "$SNAPSHOT_SHA  $SNAPSHOT_NAME" > "$SNAPSHOT_DIR/$SNAPSHOT_NAME.sha256"
+    dim "  checksum: $SNAPSHOT_SHA"
     # Keep last 3 snapshots
     ls -t "$SNAPSHOT_DIR"/genesis-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+    for checksum_file in "$SNAPSHOT_DIR"/genesis-*.tar.gz.sha256; do
+        [ -e "$checksum_file" ] || continue
+        [ -f "${checksum_file%.sha256}" ] || rm -f "$checksum_file"
+    done
     SNAPSHOT_COUNT=$(ls "$SNAPSHOT_DIR"/genesis-*.tar.gz 2>/dev/null | wc -l)
     dim "  $SNAPSHOT_COUNT snapshot(s) retained"
 
 else
+    CURRENT_PHASE="restore-genesis"
     header "STEP 2: GENESIS (SKIPPED)"
 
     # Auto-restore from snapshot if genesis is missing
@@ -444,6 +553,16 @@ else
         LATEST_SNAPSHOT=$(ls -t "$SNAPSHOT_DIR"/genesis-*.tar.gz 2>/dev/null | head -1)
         if [ -n "$LATEST_SNAPSHOT" ]; then
             step "2r" "Restoring from snapshot: $(basename "$LATEST_SNAPSHOT")..."
+            CHECKSUM_FILE="${LATEST_SNAPSHOT}.sha256"
+            if [ -f "$CHECKSUM_FILE" ]; then
+                if ! (cd "$SNAPSHOT_DIR" && sha256sum -c "$(basename "$CHECKSUM_FILE")" >/dev/null 2>&1); then
+                    fail "Snapshot checksum validation failed for $(basename "$LATEST_SNAPSHOT")"
+                    exit 1
+                fi
+                ok "Snapshot checksum verified"
+            else
+                warn "No checksum file found for $(basename "$LATEST_SNAPSHOT")"
+            fi
             tar -xzf "$LATEST_SNAPSHOT" -C "$SCRIPT_DIR"
             ok "Genesis restored from snapshot"
         else
@@ -465,6 +584,7 @@ fi
 # ═════════════════════════════════════════════════════════════
 # STEP 3: START RETH (Docker)
 # ═════════════════════════════════════════════════════════════
+CURRENT_PHASE="start-reth"
 header "STEP 3: START RETH"
 
 # Wipe reth datadir volume if genesis was just regenerated
@@ -543,6 +663,7 @@ done
 # ═════════════════════════════════════════════════════════════
 # STEP 4: LAUNCH SERVICES
 # ═════════════════════════════════════════════════════════════
+CURRENT_PHASE="launch-services"
 header "STEP 4: LAUNCH SERVICES"
 
 BUILD_FLAG=""
@@ -553,9 +674,9 @@ docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG postg
 
 step "4b" "Waiting for indexer health..."
 INDEXER_URL="http://localhost:${INDEXER_PORT:-8080}"
+STATUS="missing"
 for i in $(seq 1 120); do
     INDEXER_CID="$(compose_cid "$COMPOSE_RETH" indexer)"
-    STATUS="missing"
     if [ -n "$INDEXER_CID" ]; then
         STATUS=$(docker inspect --format '{{.State.Health.Status}}' "$INDEXER_CID" 2>/dev/null || echo "starting")
     fi
@@ -566,6 +687,11 @@ for i in $(seq 1 120); do
     [ $((i % 20)) -eq 0 ] && dim "Waiting for indexer... ($STATUS)"
     sleep 1
 done
+if [ "$STATUS" != "healthy" ]; then
+    fail "Indexer failed health check (status=$STATUS)"
+    docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" logs indexer --tail 50 2>&1 || true
+    exit 1
+fi
 
 # Seed the indexer DB — this is what the deployer does in Anvil mode.
 # The indexer reads deployment.json from its mounted /config/deployment.json
@@ -575,6 +701,7 @@ RESET_HEADERS=()
 if [ -n "${INDEXER_ADMIN_TOKEN:-}" ]; then
     RESET_HEADERS=(-H "X-Admin-Token: ${INDEXER_ADMIN_TOKEN}")
 fi
+RESET_STATUS="000"
 for i in $(seq 1 30); do
     RESET_STATUS=$(curl -sf -X POST "${RESET_HEADERS[@]}" "$INDEXER_URL/admin/reset" -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
     if [ "$RESET_STATUS" = "200" ]; then
@@ -584,9 +711,15 @@ for i in $(seq 1 30); do
     [ $((i % 10)) -eq 0 ] && dim "Indexer reset returned $RESET_STATUS, retrying..."
     sleep 2
 done
+if [ "$RESET_STATUS" != "200" ]; then
+    fail "Indexer reset failed after retries (status=$RESET_STATUS)"
+    docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" logs indexer --tail 50 2>&1 || true
+    exit 1
+fi
 
 # Verify /config now returns 200
 step "4d" "Verifying /config endpoint..."
+CONFIG_STATUS="000"
 for i in $(seq 1 15); do
     CONFIG_STATUS=$(curl -sf -o /dev/null -w '%{http_code}' "$INDEXER_URL/config" 2>/dev/null || echo "000")
     if [ "$CONFIG_STATUS" = "200" ]; then
@@ -596,7 +729,9 @@ for i in $(seq 1 15); do
     sleep 2
 done
 if [ "$CONFIG_STATUS" != "200" ]; then
-    warn "/config still returning $CONFIG_STATUS — daemons may be slow to start"
+    fail "/config did not become ready (status=$CONFIG_STATUS)"
+    docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" logs indexer --tail 50 2>&1 || true
+    exit 1
 fi
 
 # ── 4e. Seed initial pool state ──────────────────────────────
@@ -734,6 +869,13 @@ else
     info "MM/Chaos bots skipped (use --with-bots when ready)"
 fi
 
+step "4h" "Waiting for runtime services readiness..."
+wait_for_service_ready faucet 90 || exit 1
+if [ "$WITH_BOTS" = true ]; then
+    wait_for_service_ready mm-daemon 90 || exit 1
+    wait_for_service_ready chaos-trader 90 || exit 1
+fi
+
 # ═════════════════════════════════════════════════════════════
 # STATUS REPORT
 # ═════════════════════════════════════════════════════════════
@@ -766,4 +908,4 @@ echo "  Reth log: docker compose -f $COMPOSE_RETH --env-file $ENV_FILE logs -f r
 echo "  Stop:     docker compose -f $COMPOSE_RETH --env-file $ENV_FILE down"
 echo "  Restart:  $0 --skip-genesis   (fast, reuses genesis)"
 echo "  Rebuild:  $0 --fresh          (full fresh genesis)"
-echo "  Anvil:    ./docker/restart.sh (switch back)"
+echo "  Anvil:    legacy path removed (use reth flows in docker/reth/)"

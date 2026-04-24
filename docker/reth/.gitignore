@@ -1,3 +1,4 @@
 # Generated files — do not commit
 genesis.json
 deployment-snapshot.json
+snapshots/*.tar.gz

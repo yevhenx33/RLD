@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import logging
+import threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from web3 import Web3
 from eth_account import Account
@@ -47,6 +48,8 @@ ETH_AMOUNT = Web3.to_wei(10, 'ether')  # 10 ETH
 # Rate limiting: 1 request per address per 60s
 rate_limit = {}
 RATE_LIMIT_SECONDS = 60
+rate_limit_lock = threading.Lock()
+nonce_lock = threading.Lock()
 
 # ── ABIs ──────────────────────────────────────────────────────
 SIM_FUNDER_ABI = [
@@ -190,16 +193,17 @@ def init():
         available = sim_funder.functions.availableWAUSDC().call()
         if available < WAUSDC_FUND:
             logger.info("Priming SimFunder waUSDC reserve via primeReserve...")
-            nonce = w3.eth.get_transaction_count(simfunder_admin.address)
-            tx = sim_funder.functions.primeReserve(100_000_000 * 10**6).build_transaction({
-                'from': simfunder_admin.address,
-                'nonce': nonce,
-                'gas': 3_000_000,
-                'maxFeePerGas': w3.to_wei('2', 'gwei'),
-                'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
-            })
-            signed = w3.eth.account.sign_transaction(tx, SIMFUNDER_ADMIN_KEY)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+            with nonce_lock:
+                nonce = w3.eth.get_transaction_count(simfunder_admin.address, 'pending')
+                tx = sim_funder.functions.primeReserve(100_000_000 * 10**6).build_transaction({
+                    'from': simfunder_admin.address,
+                    'nonce': nonce,
+                    'gas': 3_000_000,
+                    'maxFeePerGas': w3.to_wei('2', 'gwei'),
+                    'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
+                })
+                signed = w3.eth.account.sign_transaction(tx, SIMFUNDER_ADMIN_KEY)
+                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
             receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=90)
             if receipt['status'] == 1:
                 new_avail = sim_funder.functions.availableWAUSDC().call()
@@ -217,18 +221,19 @@ def fund_address(address: str) -> dict:
 
     # 1. Send ETH for gas
     try:
-        nonce = w3.eth.get_transaction_count(whale.address)
-        tx = {
-            'to': address,
-            'value': ETH_AMOUNT,
-            'gas': 21000,
-            'nonce': nonce,
-            'maxFeePerGas': w3.to_wei('2', 'gwei'),
-            'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
-            'chainId': w3.eth.chain_id,
-        }
-        signed = w3.eth.account.sign_transaction(tx, WHALE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        with nonce_lock:
+            nonce = w3.eth.get_transaction_count(whale.address, 'pending')
+            tx = {
+                'to': address,
+                'value': ETH_AMOUNT,
+                'gas': 21000,
+                'nonce': nonce,
+                'maxFeePerGas': w3.to_wei('2', 'gwei'),
+                'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
+                'chainId': w3.eth.chain_id,
+            }
+            signed = w3.eth.account.sign_transaction(tx, WHALE_KEY)
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
         results['eth'] = '10 ETH sent'
         logger.info(f"  ✅ Sent 10 ETH to {address}")
@@ -238,16 +243,17 @@ def fund_address(address: str) -> dict:
 
     # 2. Atomic waUSDC funding via SimFunder (50k)
     try:
-        nonce = w3.eth.get_transaction_count(whale.address)
-        tx = sim_funder.functions.fund(address, WAUSDC_FUND).build_transaction({
-            'from': whale.address,
-            'nonce': nonce,
-            'gas': 500_000,
-            'maxFeePerGas': w3.to_wei('2', 'gwei'),
-            'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
-        })
-        signed = w3.eth.account.sign_transaction(tx, WHALE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        with nonce_lock:
+            nonce = w3.eth.get_transaction_count(whale.address, 'pending')
+            tx = sim_funder.functions.fund(address, WAUSDC_FUND).build_transaction({
+                'from': whale.address,
+                'nonce': nonce,
+                'gas': 500_000,
+                'maxFeePerGas': w3.to_wei('2', 'gwei'),
+                'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
+            })
+            signed = w3.eth.account.sign_transaction(tx, WHALE_KEY)
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
 
         if receipt['status'] != 1:
@@ -270,16 +276,17 @@ def fund_address(address: str) -> dict:
     # Keeps faucet usable in environments where Aave path is unavailable on Reth.
     if 'wausdc' not in results:
         try:
-            nonce = w3.eth.get_transaction_count(simfunder_admin.address)
-            tx = sim_funder.functions.transferReserve(address, WAUSDC_FUND).build_transaction({
-                'from': simfunder_admin.address,
-                'nonce': nonce,
-                'gas': 220_000,
-                'maxFeePerGas': w3.to_wei('2', 'gwei'),
-                'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
-            })
-            signed = w3.eth.account.sign_transaction(tx, SIMFUNDER_ADMIN_KEY)
-            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+            with nonce_lock:
+                nonce = w3.eth.get_transaction_count(simfunder_admin.address, 'pending')
+                tx = sim_funder.functions.transferReserve(address, WAUSDC_FUND).build_transaction({
+                    'from': simfunder_admin.address,
+                    'nonce': nonce,
+                    'gas': 220_000,
+                    'maxFeePerGas': w3.to_wei('2', 'gwei'),
+                    'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
+                })
+                signed = w3.eth.account.sign_transaction(tx, SIMFUNDER_ADMIN_KEY)
+                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
             receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
             if receipt['status'] == 1:
                 results['wausdc'] = f'{WAUSDC_FUND / 10**6:,.0f} waUSDC sent (reserve fallback)'
@@ -292,16 +299,17 @@ def fund_address(address: str) -> dict:
 
     # 3. Direct USDC transfer (50k)
     try:
-        nonce = w3.eth.get_transaction_count(whale.address)
-        tx = usdc_contract.functions.transfer(address, USDC_FUND).build_transaction({
-            'from': whale.address,
-            'nonce': nonce,
-            'gas': 100_000,
-            'maxFeePerGas': w3.to_wei('2', 'gwei'),
-            'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
-        })
-        signed = w3.eth.account.sign_transaction(tx, WHALE_KEY)
-        tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+        with nonce_lock:
+            nonce = w3.eth.get_transaction_count(whale.address, 'pending')
+            tx = usdc_contract.functions.transfer(address, USDC_FUND).build_transaction({
+                'from': whale.address,
+                'nonce': nonce,
+                'gas': 100_000,
+                'maxFeePerGas': w3.to_wei('2', 'gwei'),
+                'maxPriorityFeePerGas': w3.to_wei('1', 'gwei'),
+            })
+            signed = w3.eth.account.sign_transaction(tx, WHALE_KEY)
+            tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
 
         if receipt['status'] == 1:
@@ -314,14 +322,26 @@ def fund_address(address: str) -> dict:
         results['usdc_error'] = str(e)
         logger.error(f"  ❌ USDC transfer failed: {e}")
 
+    required_steps = ("eth", "wausdc", "usdc")
+    results["ok"] = all(step in results for step in required_steps)
+    if not results["ok"]:
+        failed_steps = [step for step in required_steps if step not in results]
+        results["error"] = f"Funding incomplete ({', '.join(failed_steps)} failed)"
+
     return results
 
 
 class FaucetHandler(BaseHTTPRequestHandler):
+    def _send_json(self, status_code: int, payload: dict):
+        self.send_response(status_code)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', FAUCET_CORS_ORIGIN)
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode())
+
     def do_POST(self):
         if self.path != '/faucet':
-            self.send_response(404)
-            self.end_headers()
+            self._send_json(404, {"success": False, "error": "Not found"})
             return
 
         content_length = int(self.headers.get('Content-Length', 0))
@@ -331,32 +351,34 @@ class FaucetHandler(BaseHTTPRequestHandler):
             data = json.loads(body)
             address = data.get('address')
             if not address:
-                raise ValueError("Missing 'address' field")
+                self._send_json(400, {"success": False, "error": "Missing 'address' field"})
+                return
+            if not Web3.is_address(address):
+                self._send_json(400, {"success": False, "error": "Invalid address"})
+                return
 
             # Rate limiting
             addr_lower = address.lower()
             now = time.time()
-            last_request = rate_limit.get(addr_lower, 0)
-            if now - last_request < RATE_LIMIT_SECONDS:
-                wait = int(RATE_LIMIT_SECONDS - (now - last_request))
-                raise ValueError(f"Rate limited. Try again in {wait}s")
+            with rate_limit_lock:
+                last_request = rate_limit.get(addr_lower, 0)
+                if now - last_request < RATE_LIMIT_SECONDS:
+                    wait = int(RATE_LIMIT_SECONDS - (now - last_request))
+                    self._send_json(429, {"success": False, "error": f"Rate limited. Try again in {wait}s"})
+                    return
+                rate_limit[addr_lower] = now
 
             logger.info(f"🚰 Faucet request for {address}")
-            rate_limit[addr_lower] = now
             result = fund_address(address)
+            success = bool(result.get("ok"))
+            status_code = 200 if success else 503
+            self._send_json(status_code, {"success": success, **result})
 
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', FAUCET_CORS_ORIGIN)
-            self.end_headers()
-            self.wfile.write(json.dumps({"success": True, **result}).encode())
-
+        except json.JSONDecodeError:
+            self._send_json(400, {"success": False, "error": "Invalid JSON payload"})
         except Exception as e:
-            self.send_response(400)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Access-Control-Allow-Origin', FAUCET_CORS_ORIGIN)
-            self.end_headers()
-            self.wfile.write(json.dumps({"error": str(e)}).encode())
+            logger.error("Faucet request failed: %s", e)
+            self._send_json(500, {"success": False, "error": str(e)})
 
     def do_OPTIONS(self):
         """Handle CORS preflight."""
@@ -369,21 +391,17 @@ class FaucetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Health check."""
         if self.path == '/health':
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
             whale_addr = whale.address if whale else "not initialized"
             sf_addr = sim_funder.address if sim_funder else "not initialized"
             sf_admin = simfunder_admin.address if simfunder_admin else "not initialized"
-            self.wfile.write(json.dumps({
+            self._send_json(200, {
                 "status": "ok",
                 "whale": whale_addr,
                 "simFunderAdmin": sf_admin,
                 "simFunder": sf_addr,
-            }).encode())
+            })
             return
-        self.send_response(404)
-        self.end_headers()
+        self._send_json(404, {"status": "not_found"})
 
     def log_message(self, format, *args):
         """Suppress default access logs."""

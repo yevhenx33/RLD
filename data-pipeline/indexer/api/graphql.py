@@ -4,7 +4,7 @@ import threading
 import atexit
 import math
 from bisect import bisect_left
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 import clickhouse_connect
@@ -2068,14 +2068,35 @@ def get_usdc_borrow_apy():
     try:
         ch = get_clickhouse_client()
         sql = """
-        SELECT argMax(borrow_apy, timestamp) AS apy
+        SELECT
+            argMax(borrow_apy, timestamp) AS apy,
+            max(timestamp) AS updated_at
         FROM aave_timeseries
         WHERE protocol = 'AAVE_MARKET' AND symbol = 'USDC'
         """
         res = ch.query(sql).result_rows
         if not res or res[0][0] is None:
             return JSONResponse(status_code=404, content={"error": "Rate not found"})
-        return {"symbol": "USDC", "borrow_apy": float(res[0][0])}
+        updated_raw = res[0][1] if len(res[0]) > 1 else None
+        updated_ts: int | None = None
+        if isinstance(updated_raw, datetime):
+            if updated_raw.tzinfo is None:
+                updated_raw = updated_raw.replace(tzinfo=timezone.utc)
+            updated_ts = int(updated_raw.timestamp())
+        elif isinstance(updated_raw, (int, float)):
+            updated_ts = int(updated_raw)
+        elif isinstance(updated_raw, str) and updated_raw.strip():
+            try:
+                updated_ts = int(datetime.fromisoformat(updated_raw.replace("Z", "+00:00")).timestamp())
+            except ValueError:
+                updated_ts = None
+
+        payload = {"symbol": "USDC", "borrow_apy": float(res[0][0])}
+        if updated_ts is not None:
+            now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+            payload["timestamp"] = updated_ts
+            payload["age_seconds"] = max(0, now_ts - updated_ts)
+        return payload
     except Exception as exc:
         close_clickhouse_client()
         return JSONResponse(status_code=500, content={"error": str(exc)})
