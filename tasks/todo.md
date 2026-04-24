@@ -361,3 +361,6 @@ new-front/
 - [ ] Verify METH, EETH, FRXETH, SFRXETH, SUSDS, FXUSD, USR, EZSOL cleanly render via UI Avatar fallback instead of 404 broken image.
 - [ ] Verify remaining 11 Aave tokens (MKR, BTC.B, MUSD, OSETH, RETH, RLUSD, SFRAX, SYRUPUSDT, TETH, USDG, USDTB) correctly render logos from the /icons/ path.
 - [ ] Verify USDTB, USDG, rsETH, mUSD, sFRAX, syrupUSDT, and tETH logos display their true, official images instead of letter avatars.
+
+### Review: Bonds UI Refactor
+- [ ] Verify 75:25 layout split and removal of BondBrandingPanel on Bonds.jsx

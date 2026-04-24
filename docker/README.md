@@ -2,6 +2,9 @@
 
 Single operational truth for launch-grade backend/infra orchestration.
 
+API ingress contract and internal exposure boundaries are defined in:
+- `docs/api-surface.md`
+
 ## Canonical Compose Set
 
 Use only:
@@ -84,7 +87,13 @@ bash docker/scripts/stack.sh up
 bash docker/scripts/stack.sh down
 bash docker/scripts/stack.sh restart
 bash docker/scripts/stack.sh logs indexer
+bash docker/scripts/stack.sh smoke
 ```
+
+Acceptance gate notes:
+- `stack.sh smoke` validates internal simulation/analytics/faucet contracts.
+- `stack.sh smoke --public-base https://rld.fi` additionally validates edge routing contract and control-plane deny-list behavior.
+- During analytics alias migration, smoke checks enforce `Deprecation`/`Sunset`/`Warning` headers on `/envio-graphql`.
 
 ## Frontend + Edge Routing
 
@@ -95,9 +104,11 @@ bash docker/scripts/stack.sh logs indexer
 - Optional systemd unit for live API: `docker/dashboard/rld-dashboard-live.service`
 - Frontend container proxy contract:
   - `/graphql` -> indexer
-  - `/envio-graphql` -> Envio GraphQL API
+  - `/analytics/graphql` -> Envio GraphQL API (canonical)
+  - `/envio-graphql` -> Envio GraphQL API (compatibility alias)
   - `/api/faucet` -> host faucet service
   - only explicit simulation compatibility `/api/*` routes are allowed
+  - compatibility routes include `/api/price-history` for dashboard charts
 
 ## Automation and Observability
 

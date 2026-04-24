@@ -92,6 +92,8 @@ services:
       - BATCH_SIZE=${BATCH_SIZE:-100}
       - INDEXER_ADMIN_TOKEN=${INDEXER_ADMIN_TOKEN:?INDEXER_ADMIN_TOKEN must be set}
       - INDEXER_ALLOW_UNSAFE_ADMIN_RESET=${INDEXER_ALLOW_UNSAFE_ADMIN_RESET:-false}
+      - INDEXER_ADMIN_INTERNAL_ONLY=${INDEXER_ADMIN_INTERNAL_ONLY:-true}
+      - INDEXER_EXPOSE_INTERNAL_ERRORS=${INDEXER_EXPOSE_INTERNAL_ERRORS:-false}
       - INDEXER_CORS_ORIGINS=${INDEXER_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}
       - SIM_CLICKHOUSE_DUAL_WRITE=${SIM_CLICKHOUSE_DUAL_WRITE:-false}
       - SIM_CLICKHOUSE_HOST=${SIM_CLICKHOUSE_HOST:-host.docker.internal}
@@ -127,7 +129,10 @@ services:
       - PRIVATE_KEY=${MM_KEY}
       - MM_KEY=${MM_KEY}
       - ORACLE_ADMIN_KEY=${DEPLOYER_KEY}
-      - API_URL=${API_URL:-http://host.docker.internal:5000}
+      - RATES_API_BASE_URL=${RATES_API_BASE_URL:-${API_URL:-http://host.docker.internal:${RATES_API_PORT:-5000}}}
+      - API_URL=${API_URL:-${RATES_API_BASE_URL:-http://host.docker.internal:${RATES_API_PORT:-5000}}}
+      - ENVIO_API_URL=${ENVIO_API_URL:-${RATES_API_BASE_URL:-${API_URL:-http://host.docker.internal:${RATES_API_PORT:-5000}}}}
+      - RATES_API_URL=${RATES_API_URL:-${RATES_API_BASE_URL:-${API_URL:-http://host.docker.internal:${RATES_API_PORT:-5000}}}}
       - API_KEY=${API_KEY}
       - MIN_BORROW_APY=${MIN_BORROW_APY:-0.0}
       - MAX_BORROW_APY=${MAX_BORROW_APY:-2.0}
@@ -136,6 +141,16 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pgrep -f combined_daemon >/dev/null && python3 -c \"import urllib.request; urllib.request.urlopen('http://host.docker.internal:${RATES_API_PORT:-5000}/readyz', timeout=2)\""
+        ]
+      interval: 20s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
 
   # ─── CHAOS TRADER ────────────────────────────────────────────
   chaos-trader:

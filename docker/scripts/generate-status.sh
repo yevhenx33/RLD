@@ -68,7 +68,13 @@ cron_has_entry() {
 }
 
 INDEXER_PORT=$(read_env_value "INDEXER_PORT" "8080")
-ENVIO_PORT=$(read_env_value "ENVIO_PORT" "5000")
+RATES_API_PORT=$(read_env_value "RATES_API_PORT" "")
+if [ -z "$RATES_API_PORT" ]; then
+  RATES_API_PORT=$(read_env_value "ENVIO_API_PORT" "")
+fi
+if [ -z "$RATES_API_PORT" ]; then
+  RATES_API_PORT=$(read_env_value "ENVIO_PORT" "5000")
+fi
 BOT_PORT="8083"
 
 # Fallback index price from deployment config (genesis-style deploys can have
@@ -161,7 +167,7 @@ done < <(docker ps -a --filter "status=created" --format "{{.Names}}|{{.Status}}
 containers_json+="]"
 
 # ── API health + response times ──
-rates_rt=$(probe_http_time "http://localhost:${ENVIO_PORT}/healthz")
+rates_rt=$(probe_http_time "http://localhost:${RATES_API_PORT}/healthz")
 indexer_rt=$(probe_http_time "http://localhost:${INDEXER_PORT}/healthz")
 bot_rt=$(probe_http_time "http://localhost:${BOT_PORT}/")
 nginx_rt=$(probe_http_time "https://rld.fi/")
@@ -175,15 +181,15 @@ indexer_ms=$(seconds_to_ms "$indexer_rt")
 bot_ms=$(seconds_to_ms "$bot_rt")
 nginx_ms=$(seconds_to_ms "$nginx_rt")
 
-rates_block=$(curl -sf -m 3 "http://localhost:${ENVIO_PORT}/graphql" \
+rates_block=$(curl -sf -m 3 "http://localhost:${RATES_API_PORT}/graphql" \
   -H "Content-Type: application/json" \
   --data '{"query":"{ latestRates { timestamp } }"}' 2>/dev/null \
   | python3 -c "import sys,json; print(json.load(sys.stdin).get('data',{}).get('latestRates',{}).get('timestamp',''))" 2>/dev/null || echo "")
 
-ENVIO_HEALTH=$(curl -sf -m 2 "http://localhost:${ENVIO_PORT}/healthz" 2>/dev/null || echo '{}')
+ENVIO_HEALTH=$(curl -sf -m 2 "http://localhost:${RATES_API_PORT}/healthz" 2>/dev/null || echo '{}')
 
 ENVIO_READY_TMP=$(mktemp)
-ENVIO_READY_HTTP=$(curl -s -m 3 -o "$ENVIO_READY_TMP" -w "%{http_code}" "http://localhost:${ENVIO_PORT}/readyz" 2>/dev/null || echo "000")
+ENVIO_READY_HTTP=$(curl -s -m 3 -o "$ENVIO_READY_TMP" -w "%{http_code}" "http://localhost:${RATES_API_PORT}/readyz" 2>/dev/null || echo "000")
 eval "$(python3 - "$ENVIO_READY_HTTP" "$ENVIO_READY_TMP" <<'PY'
 import json
 import pathlib

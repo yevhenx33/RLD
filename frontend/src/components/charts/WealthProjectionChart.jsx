@@ -46,7 +46,7 @@ const CustomWealthTooltip = ({ active, payload }) => {
   return null;
 };
 
-const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
+const WealthProjectionChart = ({ data, collateral, apy, theme = "cyan" }) => {
   if (!data || data.length === 0) return null;
 
   const finalPoint = data[data.length - 1];
@@ -69,36 +69,31 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
             ${formatNum(valueAtMaturity, 2)}
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-1">
-            {theme === "pink" ? "Projected_Hedge" : "Calculated_Wealth"}
+        <div className="flex items-center gap-8">
+          <div className="text-right">
+            <div className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-1">
+              {theme === "pink" ? "Projected_Hedge" : "Calculated_Wealth"}
+            </div>
+            <div
+              className={`text-3xl font-light ${
+                theme === "pink" ? "text-pink-500" : "text-green-500"
+              } font-mono tracking-tight`}
+            >
+              +${formatNum(calculatedWealth, 2)}
+            </div>
           </div>
-          <div
-            className={`text-xl ${
-              theme === "pink" ? "text-pink-500" : "text-green-500"
-            } font-mono tracking-tight`}
-          >
-            +${formatNum(calculatedWealth, 2)}
+          <div className="text-right border-l border-white/10 pl-8">
+            <div className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-1">
+              Fixed_APY
+            </div>
+            <div className="text-3xl font-light text-cyan-400 font-mono tracking-tight">
+              {formatNum(apy, 2)}%
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="flex justify-between items-center mb-4">
-        <div className="text-sm text-gray-600 uppercase tracking-widest">
-          Simulated_Path
-        </div>
-        <div className="flex gap-4">
-          <div
-            className={`flex items-center gap-2 text-sm ${labelColor} uppercase tracking-wider`}
-          >
-            <div className={`w-2 h-0.5 ${bgColor}`}></div> Fixed
-          </div>
-          <div className="flex items-center gap-2 text-sm text-gray-400 uppercase tracking-wider">
-            <div className="w-2 h-0.5 bg-gray-400 border border-dashed"></div>{" "}
-            Variable
-          </div>
-        </div>
-      </div>
+
 
       <div className="flex-1 min-h-0 border-white/5 bg-[#080808] p-2 relative">
         <ResponsiveContainer width="100%" height="100%">
@@ -116,10 +111,6 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
               >
                 <stop offset="5%" stopColor={mainColor} stopOpacity={0.2} />
                 <stop offset="95%" stopColor={mainColor} stopOpacity={0} />
-              </linearGradient>
-              <linearGradient id="gradientVar" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#9ca3af" stopOpacity={0.1} />
-                <stop offset="95%" stopColor="#9ca3af" stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid
@@ -153,16 +144,6 @@ const WealthProjectionChart = ({ data, collateral, theme = "cyan" }) => {
             <Tooltip
               content={<CustomWealthTooltip />}
               cursor={{ stroke: "#52525b", strokeDasharray: "4 4" }}
-            />
-            <Area
-              type="monotone"
-              dataKey="variable"
-              name="Variable"
-              stroke="#9ca3af"
-              strokeWidth={1}
-              strokeDasharray="3 3"
-              fill="url(#gradientVar)"
-              isAnimationActive={false}
             />
             <Area
               type="monotone"

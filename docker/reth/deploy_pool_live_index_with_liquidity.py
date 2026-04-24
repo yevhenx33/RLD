@@ -28,7 +28,6 @@ from decimal import Decimal, getcontext
 from pathlib import Path
 from typing import Any, Sequence
 
-import requests
 from eth_abi import encode as abi_encode
 from eth_account import Account
 from web3 import Web3
@@ -38,6 +37,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DOCKER_DIR = SCRIPT_DIR.parent
 RLD_ROOT = DOCKER_DIR.parent
 CONTRACTS_DIR = RLD_ROOT / "contracts"
+BACKEND_DIR = RLD_ROOT / "backend"
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
+from rates_client import fetch_valid_rate_sample, policy_from_env
+
 DEFAULT_ENV_FILE = DOCKER_DIR / ".env"
 DEFAULT_DEPLOYMENT_JSON = DOCKER_DIR / "deployment.json"
 
@@ -310,63 +315,20 @@ def send_contract_tx(
     return receipt
 
 
-def normalize_rate_fraction(raw_rate: Decimal) -> Decimal:
-    if raw_rate < 0:
-        die(f"Negative rate from API is invalid: {raw_rate}")
-    # Supports both legacy percent and Envio fraction.
-    if raw_rate > 1:
-        return raw_rate / Decimal(100)
-    return raw_rate
-
-
-def normalize_api_base(url: str | None) -> str:
-    if not url:
-        return ""
-    return url.strip().rstrip("/")
-
-
-def candidate_rate_api_bases(preferred_api_url: str | None) -> list[str]:
-    configured = [
-        preferred_api_url,
-        os.environ.get("ENVIO_API_URL", ""),
-        os.environ.get("API_URL", ""),
-        os.environ.get("RATES_API_URL", ""),
-        f"http://localhost:{os.environ.get('ENVIO_API_PORT', '5000')}",
-        DEFAULT_API_URL,
-        "http://rld_graphql_api:5000",
-    ]
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for candidate in configured:
-        base = normalize_api_base(candidate)
-        if not base or base in seen:
-            continue
-        seen.add(base)
-        ordered.append(base)
-    return ordered
-
-
 def fetch_live_rate_fraction(api_url: str) -> Decimal:
-    endpoints = [
-        f"{base}/api/v1/oracle/usdc-borrow-apy"
-        for base in candidate_rate_api_bases(api_url)
-    ]
+    sample = fetch_valid_rate_sample(
+        api_url,
+        timeout_seconds=float(os.environ.get("RATES_TIMEOUT", "4")),
+        policy=policy_from_env(),
+    )
+    if sample:
+        info(
+            f"Fetched live rate from {sample.endpoint}: "
+            f"r={sample.rate_fraction} (~{(sample.rate_fraction * 100):.6f}%)"
+        )
+        return sample.rate_fraction
 
-    for endpoint in endpoints:
-        try:
-            response = requests.get(endpoint, timeout=4)
-            response.raise_for_status()
-            apy = response.json().get("borrow_apy")
-            if apy is not None:
-                rate_fraction = normalize_rate_fraction(Decimal(str(apy)))
-                info(
-                    f"Fetched live rate from {endpoint}: r={rate_fraction} (~{(rate_fraction * 100):.6f}%)"
-                )
-                return rate_fraction
-        except Exception:
-            continue
-
-    die(f"Could not fetch live rate from endpoints {endpoints}")
+    die("Could not fetch live rate from any configured endpoint")
     return Decimal(0)
 
 
@@ -416,7 +378,8 @@ def main() -> None:
     parser.add_argument(
         "--api-url",
         default=(
-            os.environ.get("ENVIO_API_URL")
+            os.environ.get("RATES_API_BASE_URL")
+            or os.environ.get("ENVIO_API_URL")
             or os.environ.get("API_URL")
             or os.environ.get("RATES_API_URL")
             or DEFAULT_API_URL

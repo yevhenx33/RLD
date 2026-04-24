@@ -17,7 +17,7 @@ services:
       context: ../data-pipeline
       dockerfile: Dockerfile.indexer
     ports:
-      - "127.0.0.1:${ENVIO_PORT:-5000}:5000"
+      - "127.0.0.1:${RATES_API_PORT:-${ENVIO_PORT:-5000}}:5000"
     environment:
       - CLICKHOUSE_HOST=host.docker.internal
       - CLICKHOUSE_PORT=8123

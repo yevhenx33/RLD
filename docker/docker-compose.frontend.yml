@@ -8,7 +8,7 @@
 #    docker compose -f docker/docker-compose.frontend.yml up -d
 #
 #  Deploy new build:
-#    cd frontend && VITE_API_BASE_URL=/api npx vite build
+#    cd frontend && VITE_API_BASE_URL=/api VITE_ANALYTICS_API_BASE=/analytics npx vite build
 #    docker compose -f docker/docker-compose.frontend.yml up -d --force-recreate
 #
 #  Access:

@@ -56,6 +56,7 @@ export default function BondsPage() {
   const [usdcWalletBalance, setUsdcWalletBalance] = useState(null);
   const [waUsdcAllowance, setWaUsdcAllowance] = useState(0);
   const [usdcAllowance, setUsdcAllowance] = useState(0);
+  const [maxSlippage, setMaxSlippage] = useState("0.1");
   // Track whether a bond TX is executing (declared later but ref'd here)
   const bondExecutingRef = useRef(false);
 
@@ -124,7 +125,7 @@ export default function BondsPage() {
       if (!marketInfo?.infrastructure?.bond_factory || !marketInfo?.collateral?.address) return;
       setIsApproving(true);
       const signer = await getSigner();
-      
+
       const provider = rpcProvider;
       let approveTokenAddr = marketInfo.collateral.address;
       if (selectedToken === "USDC") {
@@ -135,18 +136,18 @@ export default function BondsPage() {
         const aToken = new ethers.Contract(aTokenAddr, aTokenABI, provider);
         approveTokenAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
       }
-      
+
       const token = new ethers.Contract(approveTokenAddr, ["function approve(address,uint256) returns (bool)"], signer);
       const tx = await token.approve(marketInfo.infrastructure.bond_factory, ethers.MaxUint256);
       addToast({ type: "info", title: "Approving", message: `Approving ${selectedToken}...` });
       const receipt = await tx.wait();
-      
+
       if (selectedToken === "USDC") {
         setUsdcAllowance(Number.MAX_SAFE_INTEGER);
       } else {
         setWaUsdcAllowance(Number.MAX_SAFE_INTEGER);
       }
-      
+
       addToast({ type: "success", title: "Approved", message: `Successfully approved ${selectedToken} — tx ${receipt.hash.slice(0, 10)}…` });
     } catch (err) {
       console.error(err);
@@ -261,6 +262,7 @@ export default function BondsPage() {
                 <WealthProjectionChart
                   data={projectionData}
                   collateral={tradeLogic.state.notional}
+                  apy={latest.apy}
                   theme={
                     tradeLogic.state.activeProduct === "FIXED_BORROW"
                       ? "pink"
@@ -295,12 +297,12 @@ export default function BondsPage() {
               label: !account
                 ? "Connect Wallet"
                 : activeTab === "OPEN"
-                  ? needsApproval 
+                  ? needsApproval
                     ? isApproving
                       ? `Approving ${selectedToken}...`
                       : `Approve ${selectedToken}`
-                    : bondExecuting 
-                      ? bondStep || "Processing..." 
+                    : bondExecuting
+                      ? bondStep || "Processing..."
                       : "Create Bond"
                   : bondExecuting
                     ? bondStep || "Processing..."
@@ -312,8 +314,8 @@ export default function BondsPage() {
                     ? handleApprove
                     : () => setShowBondModal(true)
                   : () => {
-                      if (selectedBond) setShowCloseModal(true);
-                    },
+                    if (selectedBond) setShowCloseModal(true);
+                  },
               disabled: bondExecuting || isApproving || (activeTab === "CLOSE" && !selectedBond),
               variant: activeProduct === "FIXED_BORROW" ? "pink" : activeTab === "CLOSE" ? "pink" : "cyan",
             }}
@@ -322,7 +324,7 @@ export default function BondsPage() {
             {activeTab === "OPEN" && (
               <>
                 <InputGroup
-                  label="Notional_Amount"
+                  label="Notional"
                   subLabel={
                     <span className="flex items-center gap-1">
                       Bal: {selectedToken === "USDC"
@@ -386,11 +388,10 @@ export default function BondsPage() {
                       Duration
                     </span>
                     <span
-                      className={`text-sm font-mono font-bold ${
-                        activeProduct === "FIXED_BORROW"
-                          ? "text-pink-500"
-                          : "text-cyan-400"
-                      }`}
+                      className={`text-sm font-mono font-bold ${activeProduct === "FIXED_BORROW"
+                        ? "text-pink-500"
+                        : "text-cyan-400"
+                        }`}
                     >
                       {maturityHours < 24
                         ? `${maturityHours}H`
@@ -447,13 +448,12 @@ export default function BondsPage() {
                         <button
                           key={preset.label}
                           onClick={() => handleHoursChange(preset.hours)}
-                          className={`flex-1 py-1.5 text-sm font-bold font-mono transition-all border ${
-                            isActive
-                              ? activeProduct === "FIXED_BORROW"
-                                ? "border-pink-500/50 bg-pink-500/10 text-pink-400"
-                                : "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
-                              : "border-white/10 bg-transparent text-gray-500 hover:border-white/20 hover:text-white"
-                          }`}
+                          className={`flex-1 py-1.5 text-sm font-bold font-mono transition-all border ${isActive
+                            ? activeProduct === "FIXED_BORROW"
+                              ? "border-pink-500/50 bg-pink-500/10 text-pink-400"
+                              : "border-cyan-500/50 bg-cyan-500/10 text-cyan-400"
+                            : "border-white/10 bg-transparent text-gray-500 hover:border-white/20 hover:text-white"
+                            }`}
                         >
                           {preset.label}
                         </button>
@@ -469,8 +469,20 @@ export default function BondsPage() {
                   />
 
                   <SummaryRow
-                    label="Initial_LTV"
-                    value={`${hedgeInfo.ltv.toFixed(1)}%`}
+                    label="Max_Slippage"
+                    value={
+                      <>
+                        <input
+                          type="number"
+                          value={maxSlippage}
+                          onChange={(e) => setMaxSlippage(e.target.value)}
+                          className="w-10 bg-transparent text-right outline-none text-white border-b border-white/30 transition-colors"
+                          step="0.1"
+                          min="0"
+                        />
+                        <span className="text-gray-500 ml-1">%</span>
+                      </>
+                    }
                   />
                   {bondError && (
                     <div className="text-xs text-red-400 font-mono mt-2 break-all">
@@ -596,118 +608,118 @@ export default function BondsPage() {
           </TradingTerminal>
         </div>
 
-      {/* 3. BONDS TABLE (aligned with chart) */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        <div className="xl:col-span-9">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-start-5 lg:col-span-8 border border-white/10 bg-[#080808]">
-          <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <h3 className="text-sm font-bold uppercase tracking-widest">
-                Your Bonds
-              </h3>
-              <span className="text-sm text-gray-600 font-mono">
-                {userBonds.length}
-              </span>
-            </div>
-            <div className="text-sm text-gray-500 uppercase tracking-widest flex items-center gap-2">
-              <Shield size={12} />
-              ACTIVE
-            </div>
-          </div>
-
-          {/* Table Header */}
-          <div className="hidden md:flex items-center px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5">
-            <div className="w-16 shrink-0 text-left">#</div>
-            <div className="flex-1" />
-            <div className="w-24 text-center">Value</div>
-            <div className="w-20 text-center">Rate</div>
-            <div className="w-32 text-center">Maturity</div>
-            <div className="w-16 text-center">Left</div>
-            <div className="w-32 text-center">Accrued</div>
-            <div className="w-32 text-center">Principal</div>
-            <div className="w-24 text-center">Action</div>
-          </div>
-
-          {/* Table Rows */}
-          {userBonds.map((bond) => {
-            const accrued = bond.principal * (bond.fixedRate / 100) * (bond.elapsed / 365);
-            const value = bond.principal + accrued;
-            const remaining = bond.maturityDays - bond.elapsed;
-            const progress = Math.min((bond.elapsed / bond.maturityDays) * 100, 100);
-            const isMatured = remaining <= 0;
-            return (
-              <div key={bond.id}>
-                <div className="flex items-center px-6 py-4 hover:bg-white/[0.02] transition-colors border-b border-white/5 last:border-b-0">
-                  <div className="w-16 shrink-0 text-sm text-gray-500 font-mono text-left">
-                    {String(bond.id).padStart(4, "0")}
-                  </div>
-                  <div className="flex-1" />
-                  <div className="w-24 text-center text-sm font-mono text-white">
-                    ${formatNum(value, 0)}
-                  </div>
-                  <div className="w-20 text-center text-sm font-mono text-cyan-400">
-                    {formatNum(bond.fixedRate)}%
-                  </div>
-                  <div className="w-32 flex items-center justify-center gap-2">
-                    <span className="text-sm font-mono text-white shrink-0">
-                      {bond.maturityDays}D
-                    </span>
-                    <div className="w-12 bg-white/5 h-1">
-                      <div
-                        className="h-full bg-cyan-500/60"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                  </div>
-                  <div className="w-16 text-center text-sm font-mono text-white">
-                    {isMatured ? (
-                      <span className="text-green-400">Done</span>
-                    ) : (
-                      `${remaining}D`
-                    )}
-                  </div>
-                  <div className="w-32 text-center text-sm font-mono">
-                    <span className="text-green-400">
-                      +{formatNum(accrued, 2)} USDC
+        {/* 3. BONDS TABLE (aligned with chart) */}
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+          <div className="xl:col-span-9">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-start-5 lg:col-span-8 border border-white/10 bg-[#080808]">
+                <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-sm font-bold uppercase tracking-widest">
+                      Your Bonds
+                    </h3>
+                    <span className="text-sm text-gray-600 font-mono">
+                      {userBonds.length}
                     </span>
                   </div>
-                  <div className="w-32 text-center text-sm font-mono text-white">
-                    {Number(bond.principal).toLocaleString()} USDC
-                  </div>
-                  <div className="w-24 relative flex justify-center">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActionDropdown(actionDropdown === bond.id ? null : bond.id);
-                      }}
-                      className="p-1.5 text-gray-600 hover:text-white hover:bg-white/5 transition-colors"
-                    >
-                      <ChevronDown size={16} className={`transition-transform ${actionDropdown === bond.id ? 'rotate-180' : ''}`} />
-                    </button>
-                    {actionDropdown === bond.id && (
-                      <div className="absolute right-0 top-full mt-1 z-50 border border-white/10 bg-[#0a0a0a] backdrop-blur-sm min-w-[150px]">
-                        <button
-                          onClick={() => {
-                            setActionDropdown(null);
-                            setSelectedBond(bond.id);
-                            setShowCloseModal(true);
-                          }}
-                          className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5 transition-colors font-mono"
-                        >
-                          Close Bond
-                        </button>
-                      </div>
-                    )}
+                  <div className="text-sm text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                    <Shield size={12} />
+                    ACTIVE
                   </div>
                 </div>
-              </div>
-            );
-          })}
-            </div>{/* close lg:col-start-5 */}
-          </div>{/* close inner lg:grid */}
-        </div>{/* close xl:col-span-9 */}
-      </div>{/* close outer xl:grid */}
+
+                {/* Table Header */}
+                <div className="hidden md:flex items-center px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5">
+                  <div className="w-16 shrink-0 text-left">#</div>
+                  <div className="flex-1" />
+                  <div className="w-24 text-center">Value</div>
+                  <div className="w-20 text-center">Rate</div>
+                  <div className="w-32 text-center">Maturity</div>
+                  <div className="w-16 text-center">Left</div>
+                  <div className="w-32 text-center">Accrued</div>
+                  <div className="w-32 text-center">Principal</div>
+                  <div className="w-24 text-center">Action</div>
+                </div>
+
+                {/* Table Rows */}
+                {userBonds.map((bond) => {
+                  const accrued = bond.principal * (bond.fixedRate / 100) * (bond.elapsed / 365);
+                  const value = bond.principal + accrued;
+                  const remaining = bond.maturityDays - bond.elapsed;
+                  const progress = Math.min((bond.elapsed / bond.maturityDays) * 100, 100);
+                  const isMatured = remaining <= 0;
+                  return (
+                    <div key={bond.id}>
+                      <div className="flex items-center px-6 py-4 hover:bg-white/[0.02] transition-colors border-b border-white/5 last:border-b-0">
+                        <div className="w-16 shrink-0 text-sm text-gray-500 font-mono text-left">
+                          {String(bond.id).padStart(4, "0")}
+                        </div>
+                        <div className="flex-1" />
+                        <div className="w-24 text-center text-sm font-mono text-white">
+                          ${formatNum(value, 0)}
+                        </div>
+                        <div className="w-20 text-center text-sm font-mono text-cyan-400">
+                          {formatNum(bond.fixedRate)}%
+                        </div>
+                        <div className="w-32 flex items-center justify-center gap-2">
+                          <span className="text-sm font-mono text-white shrink-0">
+                            {bond.maturityDays}D
+                          </span>
+                          <div className="w-12 bg-white/5 h-1">
+                            <div
+                              className="h-full bg-cyan-500/60"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="w-16 text-center text-sm font-mono text-white">
+                          {isMatured ? (
+                            <span className="text-green-400">Done</span>
+                          ) : (
+                            `${remaining}D`
+                          )}
+                        </div>
+                        <div className="w-32 text-center text-sm font-mono">
+                          <span className="text-green-400">
+                            +{formatNum(accrued, 2)} USDC
+                          </span>
+                        </div>
+                        <div className="w-32 text-center text-sm font-mono text-white">
+                          {Number(bond.principal).toLocaleString()} USDC
+                        </div>
+                        <div className="w-24 relative flex justify-center">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActionDropdown(actionDropdown === bond.id ? null : bond.id);
+                            }}
+                            className="p-1.5 text-gray-600 hover:text-white hover:bg-white/5 transition-colors"
+                          >
+                            <ChevronDown size={16} className={`transition-transform ${actionDropdown === bond.id ? 'rotate-180' : ''}`} />
+                          </button>
+                          {actionDropdown === bond.id && (
+                            <div className="absolute right-0 top-full mt-1 z-50 border border-white/10 bg-[#0a0a0a] backdrop-blur-sm min-w-[150px]">
+                              <button
+                                onClick={() => {
+                                  setActionDropdown(null);
+                                  setSelectedBond(bond.id);
+                                  setShowCloseModal(true);
+                                }}
+                                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5 transition-colors font-mono"
+                              >
+                                Close Bond
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>{/* close lg:col-start-5 */}
+            </div>{/* close inner lg:grid */}
+          </div>{/* close xl:col-span-9 */}
+        </div>{/* close outer xl:grid */}
       </div>{/* close max-w container */}
 
       {/* Create Bond Confirmation Modal */}

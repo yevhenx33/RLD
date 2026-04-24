@@ -8,6 +8,7 @@ Operational docs are now aligned to a single Reth-only launch baseline.
 |---|---|
 | Docker/infra operations | [`docker/README.md`](../docker/README.md) |
 | Backend services + API contract | [`backend/README.md`](../backend/README.md) |
+| API surface contract map | [`docs/api-surface.md`](./api-surface.md) |
 | Runtime boundaries + ownership | [`docs/runtime-boundaries.md`](./runtime-boundaries.md) |
 | Disaster recovery targets | [`docs/disaster-recovery.md`](./disaster-recovery.md) |
 | Frontend architecture + guardrails | [`docs/frontend-architecture.md`](./frontend-architecture.md) |
@@ -26,6 +27,10 @@ Use only these compose files for V2 launch operations:
 
 Legacy compose paths are retained for compatibility but are not part of launch runbooks.
 
+API ingress and internal endpoint exposure are defined in:
+
+- `docs/api-surface.md`
+
 ## Quick Operations
 
 ```bash
@@ -40,17 +45,22 @@ docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -
 
 # Canonical stack controls
 bash docker/scripts/stack.sh ps
+
+# API contract acceptance gate
+bash docker/scripts/stack.sh smoke
 ```
 
 ## Health Checks
 
 ```bash
 curl -sf http://localhost:8080/healthz
-curl -sf http://localhost:8081/
+curl -sf http://localhost:5000/livez
+curl -sf http://localhost:5000/readyz
 curl -sf http://localhost:8083/
 curl -sf https://rld.fi/graphql
-curl -sf https://rld.fi/api/rates
-curl -sf https://rld.fi/rates-graphql
+curl -sf https://rld.fi/analytics/graphql
+curl -sf https://rld.fi/api/status
+bash docker/scripts/stack.sh smoke --public-base https://rld.fi
 ```
 
 ## Scope Notes

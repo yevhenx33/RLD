@@ -56,6 +56,10 @@ CLICKHOUSE_WAIT_FOR_ASYNC_INSERT = (
     os.getenv("CLICKHOUSE_WAIT_FOR_ASYNC_INSERT", "true").strip().lower()
     in ("1", "true", "yes")
 )
+ENVIO_GRAPHQL_ALIAS_SUNSET = os.getenv(
+    "ENVIO_GRAPHQL_ALIAS_SUNSET",
+    "Wed, 31 Dec 2026 00:00:00 GMT",
+)
 
 _CLICKHOUSE_CLIENT = None
 _CLICKHOUSE_LOCK = threading.Lock()
@@ -1992,6 +1996,18 @@ app.add_middleware(
 )
 app.include_router(graphql_app, prefix="/graphql")
 app.include_router(graphql_app, prefix="/envio-graphql")
+
+
+@app.middleware("http")
+async def envio_graphql_alias_deprecation(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/envio-graphql"):
+        response.headers["Deprecation"] = "true"
+        response.headers["Link"] = '</graphql>; rel="successor-version"'
+        if ENVIO_GRAPHQL_ALIAS_SUNSET:
+            response.headers["Sunset"] = ENVIO_GRAPHQL_ALIAS_SUNSET
+        response.headers["Warning"] = '299 - "/envio-graphql is deprecated; use /graphql"'
+    return response
 
 
 @app.get("/healthz")

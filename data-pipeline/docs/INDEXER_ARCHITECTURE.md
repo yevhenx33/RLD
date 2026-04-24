@@ -82,7 +82,8 @@ Cursor/state tables:
    - Morpho processor writes `morpho_vault_allocations` snapshot rows for allocation API usage.
 
 4. **GraphQL serving**
-   - `/graphql` and `/envio-graphql` served by `indexer/api/graphql.py`.
+   - Canonical prefix: `/graphql` served by `indexer/api/graphql.py`.
+   - Compatibility alias: `/envio-graphql` (deprecated).
    - Snapshot-heavy endpoints read from `api_market_latest`.
    - Historical endpoints still read from base timeseries tables.
 

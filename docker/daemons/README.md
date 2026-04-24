@@ -36,7 +36,8 @@ Runs four sub-systems at two speeds:
 | `PRIVATE_KEY` | MM operator key (Anvil key #3) |
 | `ORACLE_ADMIN_KEY` | Deployer key for oracle updates (Anvil key #0) |
 | `RPC_URL` | Anvil RPC |
-| `API_URL` | Rates API for fetching latest rates |
+| `RATES_API_BASE_URL` | Canonical rates API base URL for fetching latest rates |
+| `API_URL` | Compatibility alias for `RATES_API_BASE_URL` (deprecated) |
 | `API_KEY` | API authentication key |
 | `RLD_CORE` | RLDCore contract (for reading NF) |
 | `MARKET_ID` | Market ID (bytes32) |

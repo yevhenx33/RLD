@@ -50,9 +50,20 @@ def save_chat_id(new_id):
         pass
 
 CHAT_ID = load_chat_id()
-PORT = os.getenv("PORT", "8080")  # Default to 8080 for local testing
-API_URL = os.getenv("API_URL", f"http://localhost:{PORT}")  # Allow override via env
-RATES_API_URL = os.getenv("RATES_API_URL", "http://localhost:8081")  # Rates Indexer
+PORT = os.getenv("PORT", "8080")  # Health endpoint port for this bot process
+RATES_API_PORT = (
+    os.getenv("RATES_API_PORT")
+    or os.getenv("ENVIO_API_PORT")
+    or os.getenv("ENVIO_PORT")
+    or "5000"
+)
+RATES_API_BASE_URL = (
+    os.getenv("RATES_API_BASE_URL")
+    or os.getenv("RATES_API_URL")
+    or os.getenv("ENVIO_API_URL")
+    or os.getenv("API_URL")
+    or f"http://localhost:{RATES_API_PORT}"
+)
 RPC_URL = os.getenv("MAINNET_RPC_URL")
 
 # Refresh Interval for Background Checks
@@ -67,8 +78,7 @@ if not TOKEN:
     exit(1)
 
 # Debug: Log loaded config
-logger.info(f"Loaded API_URL: {API_URL}")
-logger.info(f"Loaded RATES_API_URL: {RATES_API_URL}")
+logger.info(f"Loaded RATES_API_BASE_URL: {RATES_API_BASE_URL}")
 logger.info(f"Loaded RPC_URL: {RPC_URL[:50] if RPC_URL else 'None'}...")
 
 def get_headers():
@@ -108,7 +118,7 @@ def answer_callback(callback_query_id, text=None):
 def check_api_health():
     try:
         start = time.time()
-        res = requests.get(f"{RATES_API_URL}/healthz", headers=get_headers(), timeout=5)
+        res = requests.get(f"{RATES_API_BASE_URL}/healthz", headers=get_headers(), timeout=5)
         latency = (time.time() - start) * 1000
         if res.status_code == 200:
             res.json()
@@ -153,7 +163,7 @@ def fetch_all_rates_graphql():
     """
     try:
         res = requests.post(
-            f"{RATES_API_URL}/graphql",
+            f"{RATES_API_BASE_URL}/graphql",
             json={"query": query},
             headers=get_headers(),
             timeout=10,

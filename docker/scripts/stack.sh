@@ -17,6 +17,7 @@ Commands:
   restart        Restart canonical runtime stacks
   ps             Show status for canonical runtime stacks
   logs <service> Follow logs for service from canonical stacks
+  smoke [args]   Run API contract smoke checks (acceptance gate)
 
 Notes:
   - This command is for steady-state runtime control only.
@@ -67,6 +68,10 @@ case "$cmd" in
     compose_cmd "$COMPOSE_INFRA" logs -f "$service" 2>/dev/null \
       || compose_cmd "$COMPOSE_SIM" logs -f "$service" 2>/dev/null \
       || compose_cmd "$COMPOSE_FRONTEND" logs -f "$service"
+    ;;
+  smoke)
+    shift || true
+    python3 "$ROOT_DIR/docker/scripts/smoke_api_contracts.py" "$@"
     ;;
   *)
     usage

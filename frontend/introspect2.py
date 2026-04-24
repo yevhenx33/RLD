@@ -1,7 +1,7 @@
 import urllib.request
 import json
 
-url = "http://localhost:5173/envio-graphql"
+url = "http://localhost:5173/analytics/graphql"
 query = "{ __schema { types { name } } }"
 req = urllib.request.Request(url, json.dumps({"query": query}).encode('utf-8'), {'Content-Type': 'application/json'})
 try:

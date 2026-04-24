@@ -130,6 +130,11 @@ envio_health_ok() {
     curl -sf --connect-timeout 2 --max-time 4 "${base_url}/healthz" >/dev/null 2>&1
 }
 
+envio_ready_ok() {
+    local base_url="$1"
+    curl -sf --connect-timeout 2 --max-time 4 "${base_url}/readyz" >/dev/null 2>&1
+}
+
 ensure_envio_api() {
     local base_url="$1"
     local max_attempts="${2:-45}"
@@ -158,6 +163,21 @@ ensure_envio_api() {
             docker compose -f "$ENVIO_COMPOSE" up -d --force-recreate graphql_api >/dev/null 2>&1 || true
         fi
 
+        [ "$i" -lt "$max_attempts" ] && sleep 1
+    done
+
+    return 1
+}
+
+ensure_envio_api_ready() {
+    local base_url="$1"
+    local max_attempts="${2:-45}"
+
+    for i in $(seq 1 "$max_attempts"); do
+        if envio_ready_ok "$base_url"; then
+            return 0
+        fi
+        [ $((i % 15)) -eq 0 ] && dim "Waiting for rates readiness at ${base_url}/readyz ... (${i}/${max_attempts}s)"
         [ "$i" -lt "$max_attempts" ] && sleep 1
     done
 
@@ -264,11 +284,20 @@ ok "Docker compose v2 available"
 
 [ ! -f "$ENV_FILE" ] && { fail "$ENV_FILE not found"; exit 1; }
 
-source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|DEPLOYER_KEY|USER_A_KEY|USER_B_KEY|USER_C_KEY|MM_KEY|CHAOS_KEY|INDEXER_PORT|DB_PORT|RATES_PORT|ENVIO_API_URL|ENVIO_API_PORT|API_URL|RATES_API_URL|INDEXER_ADMIN_TOKEN|INDEXER_ALLOW_UNSAFE_ADMIN_RESET|MIN_BORROW_APY|MAX_BORROW_APY|MAX_RATE_AGE_SECONDS|REQUIRE_RATE_TIMESTAMP|RATES_TIMEOUT)=' "$ENV_FILE" | sed 's/^/export /')
+source <(grep -E '^(MAINNET_RPC_URL|FORK_BLOCK|DEPLOYER_KEY|USER_A_KEY|USER_B_KEY|USER_C_KEY|MM_KEY|CHAOS_KEY|INDEXER_PORT|DB_PORT|RATES_PORT|RATES_API_BASE_URL|RATES_API_PORT|ENVIO_API_URL|ENVIO_API_PORT|ENVIO_PORT|API_URL|RATES_API_URL|INDEXER_ADMIN_TOKEN|INDEXER_ALLOW_UNSAFE_ADMIN_RESET|MIN_BORROW_APY|MAX_BORROW_APY|MAX_RATE_AGE_SECONDS|REQUIRE_RATE_TIMESTAMP|RATES_TIMEOUT)=' "$ENV_FILE" | sed 's/^/export /')
 if [ -z "${FORK_BLOCK:-}" ] && [ -f "$RLD_ROOT/.env" ]; then
     FORK_BLOCK=$(grep -E '^FORK_BLOCK=' "$RLD_ROOT/.env" 2>/dev/null | cut -d= -f2 || echo "")
 fi
 FORK_BLOCK="${FORK_BLOCK:-24660000}"
+RATES_API_PORT="${RATES_API_PORT:-${ENVIO_API_PORT:-${ENVIO_PORT:-5000}}}"
+RATES_API_BASE_URL="${RATES_API_BASE_URL:-${ENVIO_API_URL:-${API_URL:-${RATES_API_URL:-http://localhost:${RATES_API_PORT}}}}}"
+# Backward-compatible aliases for one migration window.
+API_URL="${API_URL:-$RATES_API_BASE_URL}"
+ENVIO_API_URL="${ENVIO_API_URL:-$RATES_API_BASE_URL}"
+RATES_API_URL="${RATES_API_URL:-$RATES_API_BASE_URL}"
+ENVIO_API_PORT="${ENVIO_API_PORT:-$RATES_API_PORT}"
+ENVIO_PORT="${ENVIO_PORT:-$RATES_API_PORT}"
+ACTIVE_RATE_API_URL="${RATES_API_BASE_URL:-http://localhost:${RATES_API_PORT}}"
 if [ -z "${INDEXER_ADMIN_TOKEN:-}" ] && [ "${INDEXER_ALLOW_UNSAFE_ADMIN_RESET:-false}" != "true" ]; then
     fail "INDEXER_ADMIN_TOKEN is required (set INDEXER_ALLOW_UNSAFE_ADMIN_RESET=true only for local unsafe workflows)"
     exit 1
@@ -362,8 +391,8 @@ if [ "$SKIP_GENESIS" = false ]; then
     docker compose -f "$COMPOSE_ANVIL" --env-file "$ENV_FILE" up -d $BUILD_FLAG postgres indexer 2>&1 | tail -3
 
     # Deployer now pulls index rate from the unified REST oracle endpoint.
-    ENVIO_DEFAULT_URL="http://localhost:${ENVIO_API_PORT:-5000}"
-    LIVE_RATE_API_URL="${ENVIO_API_URL:-${API_URL:-${RATES_API_URL:-$ENVIO_DEFAULT_URL}}}"
+    ENVIO_DEFAULT_URL="http://localhost:${RATES_API_PORT}"
+    LIVE_RATE_API_URL="${RATES_API_BASE_URL}"
     if ensure_envio_api "$LIVE_RATE_API_URL" 20; then
         ok "Live rate API reachable at ${LIVE_RATE_API_URL}"
     else
@@ -377,12 +406,23 @@ if [ "$SKIP_GENESIS" = false ]; then
             exit 1
         fi
     fi
+    ACTIVE_RATE_API_URL="$LIVE_RATE_API_URL"
+    if ensure_envio_api_ready "$LIVE_RATE_API_URL" 45; then
+        ok "Live rate API readiness passed at ${LIVE_RATE_API_URL}/readyz"
+    else
+        fail "Live rate API is reachable but not ready at ${LIVE_RATE_API_URL}/readyz"
+        kill "$ANVIL_PID" 2>/dev/null || true
+        exit 1
+    fi
 
     # Run deployment orchestrator on host to avoid container→host RPC routing
     # issues observed in this environment (host.docker.internal timeouts).
     step "2b.1" "Running host deployment orchestrator..."
     INDEXER_RESET_URL="http://localhost:${INDEXER_PORT:-8080}/admin/reset"
+    RATES_API_BASE_URL="$LIVE_RATE_API_URL" \
     API_URL="$LIVE_RATE_API_URL" \
+    ENVIO_API_URL="$LIVE_RATE_API_URL" \
+    RATES_API_URL="$LIVE_RATE_API_URL" \
     REQUIRE_LIVE_RATE=1 \
     INDEXER_RESET_URL="$INDEXER_RESET_URL" \
     INDEXER_ADMIN_TOKEN="${INDEXER_ADMIN_TOKEN:-}" \
@@ -860,6 +900,16 @@ fi
 # ── 4g. Start runtime services ────────────────────────────────
 if [ "$WITH_BOTS" = true ]; then
     step "4g" "Starting mm-daemon + chaos-trader + faucet..."
+    if ! ensure_envio_api_ready "$ACTIVE_RATE_API_URL" 30; then
+        FALLBACK_RATE_API_URL="http://localhost:${RATES_API_PORT}"
+        if [ "$ACTIVE_RATE_API_URL" != "$FALLBACK_RATE_API_URL" ] && ensure_envio_api_ready "$FALLBACK_RATE_API_URL" 30; then
+            warn "Primary rates readiness unavailable at ${ACTIVE_RATE_API_URL}; falling back to ${FALLBACK_RATE_API_URL}"
+            ACTIVE_RATE_API_URL="$FALLBACK_RATE_API_URL"
+        else
+            fail "Rates API readiness failed at ${ACTIVE_RATE_API_URL}/readyz — refusing to start bots"
+            exit 1
+        fi
+    fi
     docker compose -f "$COMPOSE_RETH" --env-file "$ENV_FILE" up -d $BUILD_FLAG mm-daemon chaos-trader faucet 2>&1 | tail -5
     ok "Trading bots + faucet started"
 else

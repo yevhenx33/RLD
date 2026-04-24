@@ -32,7 +32,6 @@ import time
 import logging
 import urllib.request
 import urllib.error
-from datetime import datetime
 import requests
 from web3 import Web3
 from eth_account import Account
@@ -42,6 +41,7 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.v4_pool import V4PoolReader
 from services.v4_swap import V4SwapExecutor, GhostRouterSwapExecutor
+from rates_client import fetch_valid_rate_sample, policy_from_env
 
 # Configure logging with colors
 class ColoredFormatter(logging.Formatter):
@@ -74,15 +74,19 @@ load_dotenv("../.env")
 
 # Configuration — keys from env, contract addresses from indexer API
 RPC_URL = os.getenv("RPC_URL", "http://localhost:8545")
-API_URL = os.getenv("API_URL", "http://127.0.0.1:5000")
+API_URL = (
+    os.getenv("RATES_API_BASE_URL")
+    or os.getenv("API_URL")
+    or os.getenv("ENVIO_API_URL")
+    or os.getenv("RATES_API_URL")
+    or "http://127.0.0.1:5000"
+)
 INDEXER_URL = os.getenv("INDEXER_URL", "http://indexer:8080")
 PRIVATE_KEY = os.getenv("PRIVATE_KEY")  # MM user key for swaps
 ORACLE_ADMIN_KEY = os.getenv("ORACLE_ADMIN_KEY", PRIVATE_KEY)  # Deployer key for oracle updates
 INDEXER_TIMEOUT = float(os.getenv("INDEXER_TIMEOUT", "3"))
 RATES_TIMEOUT = float(os.getenv("RATES_TIMEOUT", "2"))
-MIN_BORROW_APY = float(os.getenv("MIN_BORROW_APY", "0.0"))
-MAX_BORROW_APY = float(os.getenv("MAX_BORROW_APY", "2.0"))
-MAX_RATE_AGE_SECONDS = int(os.getenv("MAX_RATE_AGE_SECONDS", "900"))
+RATE_POLICY = policy_from_env(logger=logger)
 
 # These will be set by load_config_from_indexer()
 MOCK_ORACLE_ADDR = None
@@ -242,100 +246,24 @@ JTM_HOOK_ABI = [
      "stateMutability": "nonpayable", "type": "function"},
 ]
 
-
-def _parse_rate_timestamp(value):
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        try:
-            return int(float(raw))
-        except ValueError:
-            pass
-        try:
-            return int(datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp())
-        except ValueError:
-            return None
-    return None
-
-
-def _normalize_rate_fraction(raw_rate):
-    if raw_rate < 0:
-        return None
-    if raw_rate > 1:
-        # Support percent-like payloads (e.g. 14.2 -> 0.142).
-        return raw_rate / 100.0
-    return raw_rate
-
-
 def fetch_latest_rate():
-    """Fetch latest USDC borrow rate fraction strictly from the unified REST endpoint."""
-    endpoints = [
-        "http://rld_graphql_api:5000/api/v1/oracle/usdc-borrow-apy",  # Docker internal mesh
-        f"{API_URL}/api/v1/oracle/usdc-borrow-apy"                    # Local fallback via API_URL
-    ]
-    
-    for endpoint in endpoints:
-        try:
-            resp = requests.get(endpoint, timeout=RATES_TIMEOUT)
-            resp.raise_for_status()
-            payload = resp.json()
-            if "borrow_apy" not in payload:
-                logger.warning("⚠️ Oracle payload missing borrow_apy from %s", endpoint)
-                continue
-            raw_rate = float(payload["borrow_apy"])
-            rate_fraction = _normalize_rate_fraction(raw_rate)
-            if rate_fraction is None:
-                logger.warning("⚠️ Ignoring invalid APY %r from %s", payload.get("borrow_apy"), endpoint)
-                continue
-            if not (MIN_BORROW_APY <= rate_fraction <= MAX_BORROW_APY):
-                logger.warning(
-                    "⚠️ Ignoring out-of-range APY %.6f (normalized %.6f) from %s (expected %.6f..%.6f)",
-                    raw_rate,
-                    rate_fraction,
-                    endpoint,
-                    MIN_BORROW_APY,
-                    MAX_BORROW_APY,
-                )
-                continue
+    """Fetch latest USDC borrow rate fraction from shared rate client."""
+    sample = fetch_valid_rate_sample(
+        API_URL,
+        timeout_seconds=RATES_TIMEOUT,
+        policy=RATE_POLICY,
+        logger=logger,
+    )
+    if sample is not None:
+        rate_fraction = float(sample.rate_fraction)
+        logger.info(
+            "📡 Live USDC rate from REST API: r=%.6f (~%.4f%%)%s",
+            rate_fraction,
+            rate_fraction * 100,
+            f" age={sample.age_seconds}s" if sample.age_seconds is not None else "",
+        )
+        return rate_fraction
 
-            updated_at = _parse_rate_timestamp(
-                payload.get("timestamp")
-                or payload.get("updated_at")
-                or payload.get("updatedAt")
-                or payload.get("ts")
-            )
-            age_seconds = None
-            if MAX_RATE_AGE_SECONDS > 0:
-                if updated_at is None:
-                    logger.warning("⚠️ Ignoring oracle payload without timestamp from %s", endpoint)
-                    continue
-                age_seconds = max(0, int(time.time()) - int(updated_at))
-                if age_seconds > MAX_RATE_AGE_SECONDS:
-                    logger.warning(
-                        "⚠️ Ignoring stale APY %.6f from %s (age=%ss > %ss)",
-                        rate_fraction,
-                        endpoint,
-                        age_seconds,
-                        MAX_RATE_AGE_SECONDS,
-                    )
-                    continue
-
-            logger.info(
-                "📡 Live USDC rate from REST API: r=%.6f (~%.4f%%)%s",
-                rate_fraction,
-                rate_fraction * 100,
-                f" age={age_seconds}s" if age_seconds is not None else "",
-            )
-            return rate_fraction
-        except Exception as exc:
-            logger.debug("Rate fetch failed at %s: %s", endpoint, exc)
-            continue
-            
     logger.warning("⚠️ Oracle fetch failed across all endpoints. Maintaining previous rate.")
     return None
 

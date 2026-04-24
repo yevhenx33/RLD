@@ -131,6 +131,12 @@ export default defineConfig({
         target: "http://127.0.0.1:8080",
         changeOrigin: true,
       },
+      "/analytics/graphql": {
+        target: "http://127.0.0.1:5000",
+        changeOrigin: true,
+        rewrite: () => "/graphql",
+      },
+      // Deprecated compatibility path; canonical analytics GraphQL route is /analytics/graphql.
       "/envio-graphql": {
         target: "http://127.0.0.1:5000",
         changeOrigin: true,

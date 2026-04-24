@@ -8,28 +8,23 @@ Health at: /healthz
 import os
 import json
 import math
+import ipaddress
+import logging
 from typing import Optional, List, Dict, Any
 import strawberry
 from strawberry.fastapi import GraphQLRouter
 from strawberry.scalars import JSON
-from fastapi import FastAPI, Header, Query as FastAPIQuery
+from fastapi import FastAPI, Header, Query as FastAPIQuery, Request
 from fastapi.responses import JSONResponse
 import asyncpg
-
-# ── Pool singleton ─────────────────────────────────────────────────────────
-
-_pool: Optional[asyncpg.Pool] = None
-
+import db
 
 async def get_pool() -> asyncpg.Pool:
-    global _pool
-    if _pool is None:
-        _pool = await asyncpg.create_pool(
-            dsn=os.environ["DATABASE_URL"],
-            min_size=2, max_size=10,
-            command_timeout=30,
-        )
-    return _pool
+    return await db.get_pool(
+        dsn=os.environ.get("DATABASE_URL"),
+        min_size=2,
+        max_size=10,
+    )
 
 
 # ── Types ──────────────────────────────────────────────────────────────────
@@ -885,6 +880,44 @@ def _parse_cors_origins(env_name: str, default_origins: list[str]) -> list[str]:
     return [origin for origin in origins if origin != "*"] or default_origins
 
 
+api_log = logging.getLogger("indexer.api")
+
+
+def _env_truthy(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "true" if default else "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _is_internal_client(host: str | None) -> bool:
+    if not host:
+        return False
+    normalized = host.strip().lower()
+    if normalized in {"localhost"}:
+        return True
+    if normalized.startswith("::ffff:"):
+        normalized = normalized[7:]
+    try:
+        ip = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    return ip.is_loopback or ip.is_private
+
+
+def _error_response(
+    status_code: int,
+    detail: str,
+    *,
+    exc: Exception | None = None,
+    expose_errors: bool = False,
+) -> JSONResponse:
+    if exc is not None:
+        api_log.error(detail, exc_info=exc)
+    payload: dict[str, Any] = {"status": "error", "detail": detail}
+    if exc is not None and expose_errors:
+        payload["error"] = str(exc)
+    return JSONResponse(payload, status_code=status_code)
+
+
 # ── App factory ────────────────────────────────────────────────────────────
 
 def create_app() -> FastAPI:
@@ -918,6 +951,8 @@ def create_app() -> FastAPI:
         "true",
         "yes",
     }
+    expose_internal_errors = _env_truthy("INDEXER_EXPOSE_INTERNAL_ERRORS", False)
+    admin_internal_only = _env_truthy("INDEXER_ADMIN_INTERNAL_ONLY", True)
 
     @app.get("/healthz")
     async def healthz():
@@ -927,15 +962,29 @@ def create_app() -> FastAPI:
                 await conn.fetchval("SELECT 1")
             return {"status": "ok"}
         except Exception as e:
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            return _error_response(
+                503,
+                "database unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     @app.post("/admin/reset")
-    async def admin_reset(x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token")):
+    async def admin_reset(
+        request: Request,
+        x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+    ):
         """Deployer calls this after writing deployment.json to wipe stale data."""
         import bootstrap
-        import logging
         log = logging.getLogger("admin.reset")
         try:
+            client_host = request.client.host if request.client else None
+            if admin_internal_only and not _is_internal_client(client_host):
+                log.warning("Rejected /admin/reset from non-internal client host=%s", client_host)
+                return JSONResponse(
+                    {"status": "forbidden", "detail": "admin reset is internal-only"},
+                    status_code=403,
+                )
             if not admin_token and not allow_unsafe_reset:
                 log.warning("Rejected /admin/reset because INDEXER_ADMIN_TOKEN is not configured")
                 return JSONResponse(
@@ -957,7 +1006,12 @@ def create_app() -> FastAPI:
             return {"status": "ok", "market_id": market_id}
         except Exception as e:
             log.error("Reset failed: %s", e, exc_info=True)
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+            return _error_response(
+                500,
+                "reset failed",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     @app.get("/config")
     async def get_config():
@@ -993,7 +1047,12 @@ def create_app() -> FastAPI:
                 pass
             return cfg
         except Exception as e:
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            return _error_response(
+                503,
+                "config unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     # Compatibility routes retained for older UI paths.
     @app.get("/api/market-info")
@@ -1018,7 +1077,12 @@ def create_app() -> FastAPI:
                 )
             return _market_info_payload(row)
         except Exception as e:
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            return _error_response(
+                503,
+                "market info unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     @app.get("/api/status")
     async def api_status():
@@ -1053,7 +1117,12 @@ def create_app() -> FastAPI:
                 "index_price": index_price,
             }
         except Exception as e:
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            return _error_response(
+                503,
+                "status unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     @app.get("/api/events")
     async def api_events(limit: int = FastAPIQuery(default=100, ge=1, le=500)):
@@ -1083,7 +1152,12 @@ def create_app() -> FastAPI:
                 ]
             }
         except Exception as e:
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            return _error_response(
+                503,
+                "events unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     @app.get("/api/volume")
     async def api_volume():
@@ -1106,7 +1180,12 @@ def create_app() -> FastAPI:
                 "volume_formatted": _format_usd_compact(volume_usd),
             }
         except Exception as e:
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            return _error_response(
+                503,
+                "volume unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     @app.get("/api/latest")
     async def api_latest():
@@ -1154,7 +1233,12 @@ def create_app() -> FastAPI:
                 response["brokers"] = snapshot.get("brokers", [])
             return response
         except Exception as e:
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            return _error_response(
+                503,
+                "latest snapshot unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     @app.get("/api/price-history")
     async def api_price_history(
@@ -1202,7 +1286,12 @@ def create_app() -> FastAPI:
                 "count": len(points),
             }
         except Exception as e:
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=503)
+            return _error_response(
+                503,
+                "price history unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
 
     return app
 

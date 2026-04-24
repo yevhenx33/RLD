@@ -23,11 +23,23 @@ Compatibility REST endpoints (kept for older UI paths):
 - `GET /api/events`
 - `GET /api/volume`
 - `GET /api/latest`
+- `GET /api/price-history`
 
 Admin/reset endpoint:
 - `POST /admin/reset`
 - Requests must include `X-Admin-Token` matching `INDEXER_ADMIN_TOKEN`.
 - Unsafe reset bypass (`INDEXER_ALLOW_UNSAFE_ADMIN_RESET=true`) is for local-only workflows.
+- `INDEXER_ADMIN_INTERNAL_ONLY=true` keeps reset internal/private-network only.
+- `INDEXER_EXPOSE_INTERNAL_ERRORS=false` suppresses raw exception leakage in API responses.
+
+Rates/analytics API contract (served by `data-pipeline`):
+- GraphQL: `POST /graphql` (canonical)
+- GraphQL alias: `POST /envio-graphql` (temporary compatibility path)
+- Alias responses include `Deprecation`, `Link`, `Sunset`, and `Warning` headers for rollout signaling.
+- Health/liveness/readiness: `GET /healthz`, `GET /livez`, `GET /readyz`
+- Oracle feed: `GET /api/v1/oracle/usdc-borrow-apy`
+
+See `docs/api-surface.md` for the full public and internal routing map.
 
 ## Canonical Deployment Context
 
@@ -43,6 +55,7 @@ docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
 bash docker/reth/restart-reth.sh --fresh --with-users
 docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -d
 bash docker/scripts/stack.sh ps
+bash docker/scripts/stack.sh smoke
 ```
 
 ## Local Development
@@ -63,7 +76,7 @@ MAINNET_RPC_URL=... PORT=8080 python3 start_rates.sh
 Run monitor bot locally:
 
 ```bash
-TELEGRAM_BOT_TOKEN=... RATES_API_URL=http://localhost:8081 python3 services/monitor_bot.py
+TELEGRAM_BOT_TOKEN=... RATES_API_BASE_URL=http://localhost:5000 python3 services/monitor_bot.py
 ```
 
 ## Scope Note
