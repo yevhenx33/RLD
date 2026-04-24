@@ -196,7 +196,9 @@ def main() -> int:
 
     # Faucet API gates
     status, payload, _ = _http_json("GET", _join(args.faucet_base, "/health"), timeout=args.timeout)
-    faucet_health_ok = status == 200 and payload.get("status") == "healthy"
+    faucet_health_ok = status == 200 and (
+        payload.get("status") in {"healthy", "ok"} or bool(payload.get("ok"))
+    )
     _mark(results, "faucet.health", faucet_health_ok, f"http={status}")
 
     if args.faucet_attempts > 0:

@@ -55,8 +55,6 @@ const WealthProjectionChart = ({ data, collateral, apy, theme = "cyan" }) => {
 
   // Define colors based on theme
   const mainColor = theme === "pink" ? "#ec4899" : "#22d3ee"; // Pink-500 vs Cyan-400
-  const labelColor = theme === "pink" ? "text-pink-500" : "text-cyan-400";
-  const bgColor = theme === "pink" ? "bg-pink-500" : "bg-cyan-400";
 
   return (
     <div className="w-full h-full select-none bg-[#080808] border border-white/10 p-4 md:p-6 flex flex-col">
