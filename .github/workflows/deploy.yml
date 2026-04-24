@@ -67,6 +67,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_SSH_PASSPHRASE: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
         run: |
           set -euo pipefail
@@ -81,19 +82,52 @@ jobs:
             exit 1
           fi
 
+          host="$(printf '%s' "${DEPLOY_HOST}" | tr -d '\r\n' | xargs)"
+          user="$(printf '%s' "${DEPLOY_USER}" | tr -d '\r\n' | xargs)"
+          if [ -z "$host" ] || [ -z "$user" ]; then
+            echo "::error::DEPLOY_HOST/DEPLOY_USER resolve to empty after trimming"
+            exit 1
+          fi
+          echo "DEPLOY_HOST=$host" >> "$GITHUB_ENV"
+          echo "DEPLOY_USER=$user" >> "$GITHUB_ENV"
+
           if [ -n "${DEPLOY_PORT:-}" ]; then
-            echo "DEPLOY_PORT=$DEPLOY_PORT" >> "$GITHUB_ENV"
+            port="$(printf '%s' "${DEPLOY_PORT}" | tr -d '\r\n' | xargs)"
           else
-            echo "DEPLOY_PORT=22" >> "$GITHUB_ENV"
+            port="22"
+          fi
+          if ! [[ "$port" =~ ^[0-9]+$ ]]; then
+            echo "::error::DEPLOY_PORT must be numeric (got: '$port')"
+            exit 1
+          fi
+          echo "DEPLOY_PORT=$port" >> "$GITHUB_ENV"
+
+      - name: Prepare SSH key file
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_SSH_PASSPHRASE: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+
+          key_file="$RUNNER_TEMP/deploy_ssh_key"
+          # Normalize multiline key secret (especially CRLF) before auth actions consume it.
+          printf '%s\n' "$DEPLOY_SSH_KEY" | sed 's/\r$//' > "$key_file"
+          chmod 600 "$key_file"
+          echo "DEPLOY_SSH_KEY_PATH=$key_file" >> "$GITHUB_ENV"
+
+          if [ -n "${DEPLOY_SSH_PASSPHRASE:-}" ]; then
+            ssh-keygen -y -P "$DEPLOY_SSH_PASSPHRASE" -f "$key_file" >/dev/null
+          else
+            ssh-keygen -y -f "$key_file" >/dev/null
           fi
 
       - name: Deploy frontend to server
         uses: appleboy/scp-action@master
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
           port: ${{ env.DEPLOY_PORT }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          key_path: ${{ env.DEPLOY_SSH_KEY_PATH }}
           passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
           timeout: 90s
@@ -106,10 +140,10 @@ jobs:
       - name: Restart services
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
           port: ${{ env.DEPLOY_PORT }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          key_path: ${{ env.DEPLOY_SSH_KEY_PATH }}
           passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
           timeout: 90s
