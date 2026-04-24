@@ -696,56 +696,112 @@ contract GhostRouter is IGhostRouter, ReentrancyGuard, Owned {
         }
     }
 
+    /// @notice Maps a logical offset from the oldest observation to a ring slot.
+    /// @dev `logicalOffset = 0` => oldest slot, `logicalOffset = cardinality-1` => newest slot.
+    function _logicalToRingIndex(
+        uint16 oldestIndex,
+        uint256 logicalOffset
+    ) internal pure returns (uint16) {
+        return
+            uint16(
+                (uint256(oldestIndex) + logicalOffset) %
+                    uint256(ORACLE_CARDINALITY)
+            );
+    }
+
+    /// @notice Finds the logical offset of the latest observation with timestamp <= target.
+    /// @dev Searches over logical timeline [oldest ... newest].
+    function _findBeforeObservationOffset(
+        bytes32 marketId,
+        OracleState storage state,
+        uint16 oldestIndex,
+        uint32 target
+    ) internal view returns (uint256) {
+        uint256 lo = 0;
+        uint256 hi = uint256(state.cardinality) - 1;
+
+        while (lo < hi) {
+            uint256 mid = (lo + hi + 1) / 2;
+            uint16 midIdx = _logicalToRingIndex(oldestIndex, mid);
+            uint32 midTs = oracleObservations[marketId][midIdx].blockTimestamp;
+
+            if (midTs <= target) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+
+        return lo;
+    }
+
+    /// @notice Interpolates cumulative price at target using bracketing observations.
+    function _interpolateObservation(
+        bytes32 marketId,
+        OracleState storage state,
+        uint16 oldestIndex,
+        uint32 target
+    ) internal view returns (uint256) {
+        uint256 beforeOffset = _findBeforeObservationOffset(
+            marketId,
+            state,
+            oldestIndex,
+            target
+        );
+
+        uint16 beforeIdx = _logicalToRingIndex(oldestIndex, beforeOffset);
+        uint32 beforeTs = oracleObservations[marketId][beforeIdx].blockTimestamp;
+        uint256 beforeCum = oracleObservations[marketId][beforeIdx]
+            .priceCumulative;
+        if (beforeTs == target) {
+            return beforeCum;
+        }
+
+        // target < newest.blockTimestamp due Case 1 in _observeSingle,
+        // so beforeOffset + 1 always exists.
+        uint16 afterIdx = _logicalToRingIndex(oldestIndex, beforeOffset + 1);
+        uint32 afterTs = oracleObservations[marketId][afterIdx].blockTimestamp;
+        uint256 afterCum = oracleObservations[marketId][afterIdx]
+            .priceCumulative;
+
+        uint32 span = afterTs - beforeTs;
+        uint256 cumDelta = afterCum - beforeCum;
+        uint32 targetDelta = target - beforeTs;
+        return beforeCum + (cumDelta * targetDelta) / span;
+    }
+
     /// @notice Resolve the price cumulative at an arbitrary historical timestamp.
     /// @dev Three cases:
     ///      1. target ≥ newest observation → extrapolate forward with current spot.
     ///      2. target < oldest observation → revert (not enough history).
-    ///      3. between two observations → linear interpolation.
+    ///      3. between two observations → binary-search bracket + interpolation.
     function _observeSingle(
         bytes32 marketId,
         OracleState storage state,
         uint32 target,
         uint256 currentSpot
     ) internal view returns (uint256) {
-        Observation storage newest = oracleObservations[marketId][state.index];
+        uint16 newestIndex = state.index;
+        uint32 newestTs = oracleObservations[marketId][newestIndex]
+            .blockTimestamp;
 
         // Case 1: target is at or after the latest observation — extrapolate.
-        if (target >= newest.blockTimestamp) {
-            uint32 elapsed = target - newest.blockTimestamp;
-            return newest.priceCumulative + (currentSpot * elapsed);
+        if (target >= newestTs) {
+            uint32 elapsed = target - newestTs;
+            uint256 newestCum = oracleObservations[marketId][newestIndex]
+                .priceCumulative;
+            return newestCum + (currentSpot * elapsed);
         }
 
         // Case 2: check if target is before the oldest observation we have.
         uint16 oldestIndex = state.cardinality < ORACLE_CARDINALITY
             ? 0
             : (state.index + 1) % ORACLE_CARDINALITY;
-        Observation storage oldest = oracleObservations[marketId][oldestIndex];
-        if (target < oldest.blockTimestamp) revert ObservationTooOld();
+        uint32 oldestTs = oracleObservations[marketId][oldestIndex]
+            .blockTimestamp;
+        if (target < oldestTs) revert ObservationTooOld();
 
-        // Case 3: scan backwards from newest to find the two observations
-        //         bracketing the target timestamp, then interpolate.
-        for (uint16 j = 1; j < state.cardinality; j++) {
-            uint16 prevIdx = state.index >= j
-                ? state.index - j
-                : ORACLE_CARDINALITY + state.index - j;
-
-            Observation storage before = oracleObservations[marketId][prevIdx];
-
-            if (before.blockTimestamp <= target) {
-                // `before` is at or below target. The slot after it brackets from above.
-                uint16 afterIdx = (prevIdx + 1) % ORACLE_CARDINALITY;
-                Observation storage after_ = oracleObservations[marketId][afterIdx];
-
-                // Linear interpolation between `before` and `after_`.
-                uint32 span = after_.blockTimestamp - before.blockTimestamp;
-                uint256 cumDelta = after_.priceCumulative - before.priceCumulative;
-                uint32 targetDelta = target - before.blockTimestamp;
-
-                return before.priceCumulative + (cumDelta * targetDelta) / span;
-            }
-        }
-
-        // Should be unreachable if oldest-check passed, but guard anyway.
-        revert ObservationTooOld();
+        // Case 3: binary-search bracket + interpolation.
+        return _interpolateObservation(marketId, state, oldestIndex, target);
     }
 }
