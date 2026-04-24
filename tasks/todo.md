@@ -364,3 +364,8 @@ new-front/
 
 ### Review: Bonds UI Refactor
 - [ ] Verify 75:25 layout split and removal of BondBrandingPanel on Bonds.jsx
+
+### Review: CDS Individual Market Refactor
+- [ ] Verify the "Your Contracts" table appears below the terminal on the individual CDS market page.
+- [ ] Verify the layout is aligned identically to the Bonds market page (lg:col-start-5).
+- [ ] Verify the empty state renders cleanly when no active contracts exist.

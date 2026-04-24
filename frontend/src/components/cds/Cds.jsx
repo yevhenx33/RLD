@@ -1,5 +1,5 @@
 import React from "react";
-import { Terminal } from "lucide-react";
+import { Terminal, Shield } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
 import { useSim } from "../../context/SimulationContext";
 import { useTradeLogic } from "../../hooks/useTradeLogic";
@@ -26,6 +26,9 @@ export default function CdsMarketPage() {
 
   const notionalAmount = Number(notional) || 0;
   const projectionData = useWealthProjection(notionalAmount, latest.apy, maturityDays);
+
+  // Mock data for CDS positions until backend is wired
+  const userCdsPositions = [];
 
   if (error)
     return (
@@ -166,6 +169,55 @@ export default function CdsMarketPage() {
             )}
           </TradingTerminal>
         </div>
+
+        {/* CDS POSITIONS TABLE (aligned with chart) */}
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+          <div className="xl:col-span-9">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              <div className="lg:col-start-5 lg:col-span-8 border border-white/10 bg-[#080808]">
+                <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-sm font-bold uppercase tracking-widest">
+                      Your Contracts
+                    </h3>
+                    <span className="text-sm text-gray-600 font-mono">
+                      {userCdsPositions.length}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                    <Shield size={12} />
+                    ACTIVE
+                  </div>
+                </div>
+
+                {/* Table Header */}
+                <div className="hidden md:flex items-center px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5">
+                  <div className="w-16 shrink-0 text-left">#</div>
+                  <div className="flex-1" />
+                  <div className="w-32 text-center">Coverage</div>
+                  <div className="w-24 text-center">Premium</div>
+                  <div className="w-32 text-center">Duration</div>
+                  <div className="w-24 text-center">Status</div>
+                  <div className="w-24 text-center">Action</div>
+                </div>
+
+                {/* Table Rows */}
+                {userCdsPositions.length === 0 ? (
+                  <div className="flex items-center justify-center p-8 text-sm font-mono text-gray-500 uppercase tracking-widest">
+                    No active coverage contracts
+                  </div>
+                ) : (
+                  userCdsPositions.map((pos) => (
+                    <div key={pos.id} className="flex items-center px-6 py-4 hover:bg-white/[0.02] transition-colors border-b border-white/5 last:border-b-0">
+                      {/* Placeholder for future rows */}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );
