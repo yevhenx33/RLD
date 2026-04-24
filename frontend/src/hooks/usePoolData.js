@@ -108,7 +108,7 @@ export function usePoolData() {
   const buildLocalBins = useCallback((positions, price) => {
     if (!positions?.length || !price) return [];
     const NUM_BINS = 60;
-    const minP = price * 0.5, maxP = price * 2.0;
+    const minP = 0, maxP = 100;
     const binW = (maxP - minP) / NUM_BINS;
     return Array.from({ length: NUM_BINS }, (_, i) => {
       const priceFrom = minP + i * binW;
@@ -148,7 +148,7 @@ export function usePoolData() {
           if (!cancelled && rawBins?.length) {
             const curPrice = pool?.markPrice || 1;
             const bins = rawBins
-              .filter((b) => b.priceHigh >= 1 && b.priceLow <= 10)
+              .filter((b) => b.priceHigh >= 2 && b.priceLow <= 20)
               .map((b) => {
                 const priceFrom = b.priceLow;
                 const priceTo = b.priceHigh;
