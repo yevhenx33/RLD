@@ -52,7 +52,8 @@ def _http_json(
             raw = resp.read().decode("utf-8", errors="replace")
             status = int(resp.status)
             parsed = json.loads(raw) if raw else {}
-            return status, parsed if isinstance(parsed, dict) else {"raw": parsed}, dict(resp.headers.items())
+            resp_headers = {str(k).lower(): str(v) for k, v in resp.headers.items()}
+            return status, parsed if isinstance(parsed, dict) else {"raw": parsed}, resp_headers
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", errors="replace")
         try:
@@ -61,7 +62,8 @@ def _http_json(
                 parsed = {"raw": parsed}
         except json.JSONDecodeError:
             parsed = {"raw": raw[:500]}
-        return int(exc.code), parsed, dict(exc.headers.items())
+        err_headers = {str(k).lower(): str(v) for k, v in exc.headers.items()}
+        return int(exc.code), parsed, err_headers
 
 
 def _post_graphql(url: str, query: str, timeout: float) -> tuple[int, dict[str, Any], dict[str, str]]:
@@ -178,20 +180,20 @@ def main() -> int:
     _mark(
         results,
         "analytics.graphql.alias.deprecation-header",
-        bool(alias_headers.get("Deprecation")),
-        f"Deprecation={alias_headers.get('Deprecation', '')!r}",
+        bool(alias_headers.get("deprecation")),
+        f"deprecation={alias_headers.get('deprecation', '')!r}",
     )
     _mark(
         results,
         "analytics.graphql.alias.sunset-header",
-        bool(alias_headers.get("Sunset")),
-        f"Sunset={alias_headers.get('Sunset', '')!r}",
+        bool(alias_headers.get("sunset")),
+        f"sunset={alias_headers.get('sunset', '')!r}",
     )
     _mark(
         results,
         "analytics.graphql.alias.warning-header",
-        bool(alias_headers.get("Warning")),
-        f"Warning={alias_headers.get('Warning', '')!r}",
+        bool(alias_headers.get("warning")),
+        f"warning={alias_headers.get('warning', '')!r}",
     )
 
     # Faucet API gates
@@ -268,20 +270,20 @@ def main() -> int:
         _mark(
             results,
             "public.graphql.analytics.alias.deprecation-header",
-            bool(alias_headers.get("Deprecation")),
-            f"Deprecation={alias_headers.get('Deprecation', '')!r}",
+            bool(alias_headers.get("deprecation")),
+            f"deprecation={alias_headers.get('deprecation', '')!r}",
         )
         _mark(
             results,
             "public.graphql.analytics.alias.sunset-header",
-            bool(alias_headers.get("Sunset")),
-            f"Sunset={alias_headers.get('Sunset', '')!r}",
+            bool(alias_headers.get("sunset")),
+            f"sunset={alias_headers.get('sunset', '')!r}",
         )
         _mark(
             results,
             "public.graphql.analytics.alias.warning-header",
-            bool(alias_headers.get("Warning")),
-            f"Warning={alias_headers.get('Warning', '')!r}",
+            bool(alias_headers.get("warning")),
+            f"warning={alias_headers.get('warning', '')!r}",
         )
 
         status, _, _ = _http_json("GET", _join(args.public_base, "/healthz"), timeout=args.timeout)
