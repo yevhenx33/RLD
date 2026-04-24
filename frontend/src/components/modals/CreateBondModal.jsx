@@ -25,6 +25,19 @@ export default function CreateBondModal({
 
   const estimatedYield = notional * (entryRate / 100) * (maturityDays / 365);
 
+  const d = Math.floor(maturityDays);
+  const h = Math.round((maturityDays - d) * 24);
+  const maturityText = d > 0 && h > 0
+    ? `${d} Days ${h} Hours`
+    : d > 0
+      ? `${d} Days`
+      : `${h} Hours`;
+  const maturityShort = d > 0 && h > 0
+    ? `${d}D ${h}H`
+    : d > 0
+      ? `${d}D`
+      : `${h}H`;
+
   const rows = [
     {
       label: "Principal",
@@ -37,7 +50,7 @@ export default function CreateBondModal({
     },
     {
       label: "Maturity",
-      value: `${maturityDays} Days`,
+      value: maturityText,
     },
     {
       label: "Maturity_Date",
@@ -49,7 +62,7 @@ export default function CreateBondModal({
       value: `${formatNum(initialLTV, 1)}%`,
     },
     {
-      label: "Est._Yield",
+      label: "Yield",
       value: `${formatNum(estimatedYield, 2)} USDC`,
       color: "text-green-400",
     },
@@ -117,7 +130,7 @@ export default function CreateBondModal({
                 {formatNum(entryRate)}% Fixed
               </span>
               <span className="text-xs text-gray-500 uppercase tracking-widest">
-                {maturityDays}D Bond
+                {maturityShort} Bond
               </span>
             </div>
           </div>
@@ -133,9 +146,8 @@ export default function CreateBondModal({
                   {row.label}
                 </span>
                 <span
-                  className={`text-[12px] font-mono ${
-                    row.color || "text-gray-300"
-                  }`}
+                  className={`text-[12px] font-mono ${row.color || "text-gray-300"
+                    }`}
                 >
                   {row.value}
                 </span>
@@ -149,9 +161,8 @@ export default function CreateBondModal({
           <button
             onClick={onConfirm}
             disabled={executing}
-            className={`w-full py-4 text-xs font-bold tracking-[0.2em] uppercase transition-all focus:outline-none rounded-none flex items-center justify-center gap-2 bg-cyan-500 text-black hover:bg-cyan-400 ${
-              executing ? "opacity-70 cursor-wait" : "hover:opacity-90"
-            }`}
+            className={`w-full py-4 text-xs font-bold tracking-[0.2em] uppercase transition-all focus:outline-none rounded-none flex items-center justify-center gap-2 bg-cyan-500 text-black hover:bg-cyan-400 ${executing ? "opacity-70 cursor-wait" : "hover:opacity-90"
+              }`}
           >
             {executing ? (
               <>
