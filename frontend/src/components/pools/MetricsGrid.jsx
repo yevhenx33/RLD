@@ -37,15 +37,15 @@ export const StatItem = ({ label, value, change }) => (
   </div>
 );
 
-const MetricsGrid = ({ 
-  latest, 
-  dailyChange, 
-  openInterest, 
+const MetricsGrid = ({
+  latest,
+  dailyChange,
+  openInterest,
   liquidity,
   paramLabel = "PARAMETERS",
   paramItems = [
     { label: "MATURITY", value: "1H — 1Y" },
-    { label: "WITHDRAW", value: "Inst." }
+    { label: "WITHDRAW", value: "Instant" }
   ],
   extraPanel
 }) => (
@@ -61,9 +61,8 @@ const MetricsGrid = ({
           </div>
           <div className="text-[9px] md:text-sm text-gray-500 uppercase tracking-widest">
             <div
-              className={`flex items-center gap-1 md:gap-2 ${
-                dailyChange >= 0 ? "text-green-500" : "text-red-500"
-              }`}
+              className={`flex items-center gap-1 md:gap-2 ${dailyChange >= 0 ? "text-green-500" : "text-red-500"
+                }`}
             >
               {dailyChange >= 0 ? (
                 <TrendingUp size={12} className="md:w-[15px] md:h-[15px]" />
