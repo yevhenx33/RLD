@@ -181,7 +181,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               <span className="text-white/10">|</span>
 
               <a
-                href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
+                href="https://docs.rld.fi"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="transition-colors px-2 tracking-widest text-white hover:text-cyan-500 cursor-pointer"
@@ -312,7 +312,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                 DATA
               </Link>
               <a
-                href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
+                href="https://docs.rld.fi"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="py-2 text-gray-500 hover:text-cyan-500 transition-colors"
