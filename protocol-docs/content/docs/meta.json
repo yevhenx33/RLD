@@ -1,0 +1,17 @@
+{
+  "title": "RLD Protocol",
+  "pages": [
+    "index",
+    "protocol-primer",
+    "architecture",
+    "mechanics",
+    "contracts",
+    "oracles-funding",
+    "synthetic-bonds",
+    "cds",
+    "risk-liquidations",
+    "frontend-integration",
+    "operations-governance",
+    "glossary"
+  ]
+}

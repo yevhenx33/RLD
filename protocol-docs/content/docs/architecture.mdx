@@ -1,0 +1,116 @@
+---
+title: Architecture
+description: How RLD composes core accounting, smart margin accounts, liquidity, oracles, and product factories.
+---
+
+RLD is built around a singleton core and user-owned smart margin accounts. The core owns the debt ledger and market state. The broker owns the assets and reports net account value back to the core.
+
+## System Map
+
+```text
+User wallet
+  |
+  | owns broker NFT
+  v
+PrimeBrokerFactory ---- creates ----> PrimeBroker clone
+                                           |
+                                           | holds collateral, wRLP, LP NFTs, TWAMM orders
+                                           v
+                                     RLDCore checks solvency
+                                           |
+                                           | mints / burns
+                                           v
+                                      PositionToken (wRLP)
+                                           |
+                                           | trades
+                                           v
+                              Uniswap v4 / GhostRouter / TWAMM
+```
+
+## Major Components
+
+| Component | Contract paths | Responsibility |
+| --- | --- | --- |
+| Core singleton | `contracts/src/rld/core/RLDCore.sol`, `RLDStorage.sol` | Market registry, position debt, funding, solvency, liquidation, global settlement hooks. |
+| Market factory | `contracts/src/rld/core/RLDMarketFactory.sol` | Deploys broker factory, verifier, position token, v4 pool, and registers a market. |
+| Broker factory | `contracts/src/rld/core/PrimeBrokerFactory.sol` | Creates broker clones and mints ownership NFTs. |
+| Smart margin account | `contracts/src/rld/broker/PrimeBroker.sol` | Holds assets and reports NAV for solvency. |
+| Broker ops module | `contracts/src/rld/broker/PrimeBrokerOpsModule.sol` | Delegatecall module for V4 LP, TWAMM, and operator operations. |
+| Debt token | `contracts/src/rld/tokens/PositionToken.sol` | ERC-20 `wRLP`, minted and burned by core-owned position logic. |
+| Funding modules | `StandardFundingModel.sol`, `CDSDecayFundingModel.sol` | Compute normalization-factor updates. |
+| Oracle modules | `RLDAaveOracle.sol`, `GhostSingletonOracle.sol`, `ChainlinkSpotOracle.sol` | Price the index, mark, and collateral where required. |
+| Liquidation module | `DutchLiquidationModule.sol` | Calculates health-based liquidation bonus and seize amount. |
+| Execution periphery | `BrokerRouter.sol`, `BondFactory.sol`, `BasisTradeFactory.sol` | User-facing transaction composition. |
+| DEX layer | `GhostRouter.sol`, `TwapEngine.sol`, `LimitEngine.sol` | Swaps, TWAP/TWAMM execution, and liquidity mechanics. |
+
+## Market State
+
+Each market is keyed by a deterministic `MarketId`, derived from the collateral token, underlying token, and underlying pool.
+
+Core stores:
+
+| State | Meaning |
+| --- | --- |
+| `marketAddresses` | Collateral, underlying, pool, oracle, funding, liquidation, position token, and optional settlement module addresses. |
+| `marketConfigs` | Risk ratios, close factor, funding period, bad debt period, debt cap, liquidation params, CDS decay, broker verifier. |
+| `marketStates` | Normalization factor, total debt, last funding timestamp, global settlement timestamp, bad debt. |
+| `positions` | Per-market, per-broker debt principal. Collateral is not stored in core. |
+
+The most important design choice is that core only tracks debt. Collateral and strategy assets remain in `PrimeBroker`.
+
+## Broker State
+
+Each `PrimeBroker` is bound to one market. It caches market addresses and can hold:
+
+| Asset type | Why it matters |
+| --- | --- |
+| Collateral token | Primary margin asset. |
+| `wRLP` | Long inventory or minted debt proceeds. |
+| V4 LP position NFT | Counts toward NAV if actively tracked and owned by the broker. |
+| TWAMM order | Counts toward NAV if actively tracked and owned by the broker. |
+| Queued withdrawals | Used for CDS debt-bearing brokers with a 7-day delay. |
+
+The broker ownership NFT has `tokenId = uint256(uint160(brokerAddress))`. Transferring the NFT transfers account ownership.
+
+## Flash Accounting
+
+Core uses a Uniswap v4-style lock pattern:
+
+```text
+RLDCore.lock(data)
+  set lock holder in transient storage
+  call lockAcquired(data) on the caller
+  caller performs modifyPosition()
+  core records every touched market/account pair
+  core checks solvency for all touched positions
+  clear transient lock state
+```
+
+This lets multi-step operations be atomic while enforcing that every touched broker ends the transaction solvent.
+
+## Liquidity Layer
+
+Every market has a tradable pool for `wRLP` against the collateral token. The factory initializes that pool from the index price reported by the rate oracle, and the Ghost/TWAMM layer maintains observations for mark pricing and streaming orders.
+
+Execution flows use:
+
+| Flow | Contract |
+| --- | --- |
+| Long `wRLP` | `BrokerRouter.executeLong()` |
+| Close long | `BrokerRouter.closeLong()` |
+| Short and sell | `BrokerRouter.executeShort()` / `executeShortWithMinOut()` |
+| Close short | `BrokerRouter.closeShort()` |
+| Create synthetic bond | `BondFactory.mintBond()` |
+| Close synthetic bond | `BondFactory.closeBond()` |
+
+## Separation of Concerns
+
+| Layer | Does | Does not |
+| --- | --- | --- |
+| `RLDCore` | Tracks debt, funding, risk, settlement, liquidation. | Hold user collateral or execute arbitrary DeFi strategies. |
+| `PrimeBroker` | Holds assets and reports NAV. | Decide global market parameters. |
+| Funding modules | Calculate NF changes. | Move tokens. |
+| Oracle modules | Report index or spot/mark prices. | Enforce account-level solvency. |
+| Periphery | Bundles UX flows. | Own protocol accounting. |
+
+This keeps the invariant surface small: the protocol is solvent if valid brokers truthfully report NAV, oracles report bounded prices, and core enforces margin after every mutation.

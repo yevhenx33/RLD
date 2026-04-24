@@ -1,0 +1,118 @@
+---
+title: Synthetic Bonds
+description: How RLD uses short rate exposure and TWAMM duration matching to create programmable fixed-yield positions.
+---
+
+Synthetic bonds are the flagship structured product built on RLD. They convert a floating lending position into a fixed-duration yield exposure without creating a new token or pool for every maturity.
+
+## Core Idea
+
+A lender who wants fixed yield shorts `wRLP`. If rates fall, the short gains value and offsets the lower floating yield. If rates rise, the floating collateral yield rises and offsets the short's loss.
+
+Because the base `wRLP` token is perpetual, the hedge must shrink as the bond approaches maturity. RLD uses TWAMM execution to unwind linearly:
+
+```text
+Q(t) = Q_initial * (1 - elapsed / duration)
+```
+
+This gives a perpetual token a programmable synthetic maturity.
+
+## Why TWAMM Matters
+
+Without duration matching, a user can become over-hedged late in the bond. A one-year hedge should have one year of rate exposure on day one, but almost none on the final day.
+
+The TWAMM order gradually closes the hedge, realizing rate exposure over time and reducing debt as maturity approaches.
+
+## BondFactory Flow
+
+`BondFactory.mintBond()` bundles the flow:
+
+1. Create a fresh broker through `PrimeBrokerFactory`.
+2. Pull the user's notional into the broker, optionally wrapping underlying into collateral.
+3. Call `PrimeBroker.modifyPosition()` to mint `wRLP` debt.
+4. Withdraw minted `wRLP` to the factory.
+5. Swap `wRLP` into collateral through the v4 pool.
+6. Send proceeds back to the broker.
+7. Submit a TWAMM buy-back order using those proceeds.
+8. Freeze the broker.
+9. Track the user's bond ownership.
+
+The result is a frozen broker that contains collateral, a short debt position, and a scheduled TWAMM order that buys back `wRLP` over the bond duration.
+
+## Closing A Bond
+
+`BondFactory.closeBond()`:
+
+1. Verifies ownership.
+2. Unfreezes the broker.
+3. Cancels or claims the TWAMM order.
+4. If the broker is short `wRLP`, swaps collateral for the exact shortfall.
+5. Repays remaining debt.
+6. Converts leftover `wRLP` to collateral.
+7. Withdraws collateral to the user, optionally unwrapping to underlying.
+
+## Hedge Sizing
+
+The paper frames hedge size as:
+
+```text
+Q_hedge = (N / K * T) * gamma * beta
+```
+
+| Term | Meaning |
+| --- | --- |
+| `N` | Notional principal. |
+| `K` | Rate scalar, usually 100. |
+| `T` | Duration as a fraction of a year. |
+| `gamma` | Convexity or compounding scalar. |
+| `beta` | Supply-vs-borrow rate adjustment, such as utilization times one minus reserve factor. |
+
+The implementation leaves strategy-level sizing to periphery, backend, or UI logic. The protocol enforces debt, margin, and settlement; it does not assert that a bond is economically "perfectly hedged."
+
+## Natural Over-Collateralization
+
+The paper's core safety argument is that rate hedges are small relative to principal at ordinary rates.
+
+Example:
+
+| Item | Value |
+| --- | --- |
+| Principal | 100,000 |
+| Rate | 10% |
+| Approximate hedge debt | 10,000 |
+| Resupplied proceeds | 10,000 |
+| Total collateral | 110,000 |
+| Initial LTV | About 9.09% |
+
+That is far below liquidation thresholds such as a 109% collateralization ratio. The risk grows when rates spike, collateral loses value, funding moves against the short, or the TWAMM unwind fails to execute as expected.
+
+## Product Properties
+
+| Property | Explanation |
+| --- | --- |
+| One pool, many maturities | Every duration trades against the same `wRLP` liquidity. |
+| Programmable maturity | Duration is encoded in broker/TWAMM strategy, not in token identity. |
+| Composable collateral | Brokers can hold collateral, proceeds, LP inventory, and TWAMM claims. |
+| No date fragmentation | There is no separate quarterly or annual maturity pool. |
+| Residual risk | Slippage, oracle risk, funding, liquidation, and TWAMM execution still matter. |
+
+## User-Facing Routes
+
+The frontend exposes bond flows under:
+
+| Route | Surface |
+| --- | --- |
+| `/bonds` | Bonds directory. |
+| `/bonds/:address` | Bond detail and interaction page. |
+
+The transaction hook is `frontend/src/hooks/useBondExecution.js`, which calls `BondFactory.mintBond()` and `BondFactory.closeBond()`.
+
+## Operator Notes
+
+For production-grade bond markets:
+
+1. Verify TWAMM order ownership is tracked by the broker.
+2. Ensure broker freeze behavior blocks unwanted mutation while preserving liquidation and close paths.
+3. Monitor active orders and maturity status through the indexer.
+4. Keep quote and slippage logic conservative, especially on close.
+5. Make the sizing model explicit in frontend and docs so users understand the bond target is a strategy outcome, not a protocol guarantee.
