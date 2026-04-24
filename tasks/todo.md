@@ -348,3 +348,16 @@ new-front/
 - [x] Replaced the hardcoded `$500M` string in the Isolated TVL stat block with the static placeholder `(soon)`.
 - [x] Implemented a native React view-layer ternary (`pool.protocol === "AAVE_MARKET" || pool.protocol === "AAVE" ? "AAVE_V3" : pool.protocol`) in the Markets Table loop to correctly display "AAVE_V3".
 - [x] Verified mapping structure via `tests/verify_ui_copy.py`.
+
+## Data Page UI Review
+- [ ] Verify 'Liquidity' column header rendering.
+- [ ] Test pagination next/prev buttons.
+- [ ] Verify out-of-bounds reset when data shrinks.
+- [ ] Verify 10-item page limit.
+- [ ] Verify pagination controls are centered with gap.
+- [ ] Verify Borrow APY column renders in cyan instead of red.
+- [ ] Verify missing logos (FLUID, mETH, FBTC, ezSOL, eUSDe, etc.) are rendering correctly and are not broken.
+- [ ] Verify local rendering of cbBTC, rsETH, FBTC, LBTC, eUSDe, and cbETH (including their PT derivatives) from /icons/ path.
+- [ ] Verify METH, EETH, FRXETH, SFRXETH, SUSDS, FXUSD, USR, EZSOL cleanly render via UI Avatar fallback instead of 404 broken image.
+- [ ] Verify remaining 11 Aave tokens (MKR, BTC.B, MUSD, OSETH, RETH, RLUSD, SFRAX, SYRUPUSDT, TETH, USDG, USDTB) correctly render logos from the /icons/ path.
+- [ ] Verify USDTB, USDG, rsETH, mUSD, sFRAX, syrupUSDT, and tETH logos display their true, official images instead of letter avatars.

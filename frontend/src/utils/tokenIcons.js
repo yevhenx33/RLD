@@ -36,7 +36,7 @@ const TOKEN_ICONS = {
   // ─── ETH & LSTs ────────────────────────────────────────────
   WETH:     TW("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
   WSTETH:   TW("0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"),
-  CBETH:    TW("0xBe9895146f7AF43049ca1c1AE358B0541Ea49704"),
+  CBETH:    "/icons/cbETH.png",
   EZETH:    TW("0xbf5495Efe5DB9ce00f80364C8B423567e58d2110"),
   WEETH:    TW("0xCd5fE23C85820F7B72D0926FC9b05b43E359b7ee"),
 
@@ -44,8 +44,9 @@ const TOKEN_ICONS = {
   WBTC:     TW("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"),
   TBTC:     TW("0x18084fbA666a33d37592fA2633fD49a74DD93a88"),
   EBTC:     TW("0x657e8C867D8B37dCC18fA4Caead9C45EB088C642"),
-  CBBTC:    TW("0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf"),
-  LBTC:     TW("0x8236a87084f8B84306f72007F36F2618A5634494"),
+  CBBTC:    "/icons/cbBTC.png",
+  LBTC:     "/icons/LBTC.png",
+  FBTC:     "/icons/FBTC.png",
 
   // ─── DeFi Blue Chips ──────────────────────────────────────
   AAVE:     TW("0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9"),
@@ -63,14 +64,28 @@ const TOKEN_ICONS = {
   STG:      TW("0xAf5191B0De278C7286d6C7CC6ab6BB8A73bA2Cd6"),
   WNXM:     TW("0x0d438F3b5175Bebc262bF23753C1E53d03432bDE"),
   "0X9F8F72": TW("0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2"), // MKR
+  FLUID:    TW("0x6f40d4A6237C257fff2dB00FA0510DeEECd303eb"),
 
   // ─── Verified niche tokens ────────────────────────────────
   USD0:     TW("0x73A15FeD60Bf67631dC6cd7Bc5B6e8da8190aCF5"),
   USUAL:    TW("0xC4441c2BE5d8fA8126822B9929CA0b81Ea0DE38E"),
   XAUT:     TW("0x68749665FF8D2d112Fa859AA293F07A622782F38"),
   PAXG:     TW("0x45804880De22913dAFE09f4980848ECE6EcbAf78"),
-  RSETH:    TW("0xA1290d69c65A6Fe4DF752f95823fae25cB99e5A7"),
-  SUSDS:    TW("0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD"),
+  RSETH:    "/icons/RSETH.png",
+  EUSDE:    "/icons/eUSDE.png",
+  AGEUR:    TW("0x1a7e4e63778B4f12a199C062f3eFdD288afCBce8"),
+  "0X9F8F72": "/icons/MKR.png",
+  MKR:      "/icons/MKR.png",
+  "BTC.B":  "/icons/BTC_B.png",
+  MUSD:     "/icons/MUSD.png",
+  OSETH:    "/icons/OSETH.png",
+  RETH:     "/icons/RETH.png",
+  RLUSD:    "/icons/RLUSD.png",
+  SFRAX:    "/icons/SFRAX.png",
+  SYRUPUSDT: "/icons/SYRUPUSDT.png",
+  TETH:     "/icons/TETH.png",
+  USDG:     "/icons/USDG.png",
+  USDTB:    "/icons/USDTB.png",
 };
 
 /**

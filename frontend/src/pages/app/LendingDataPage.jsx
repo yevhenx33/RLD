@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
@@ -82,6 +82,7 @@ export default function LendingDataPage() {
   const [displayUnit, setDisplayUnit] = useState("USD");
   const [showSupplyApyHistory, setShowSupplyApyHistory] = useState(false);
   const [showBorrowApyHistory, setShowBorrowApyHistory] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
   const { data: gqlData, error: _error, isLoading: loading } = useSWR(
     [ENVIO_GRAPHQL_URL, `envio.lending-data-hub.${displayUnit}.v6`],
     ([url]) =>
@@ -212,6 +213,22 @@ export default function LendingDataPage() {
 
     return { stats, chartData: chart, marketsData: tableData };
   }, [gqlData]);
+
+  // POKA-YOKE: Auto-reset pagination if data length shrinks out of bounds
+  useEffect(() => {
+    const maxPage = Math.ceil(marketsData.length / 10);
+    if (currentPage > maxPage && maxPage > 0) {
+      setCurrentPage(1);
+    }
+  }, [marketsData.length, currentPage]);
+
+  const ITEMS_PER_PAGE = 10;
+  const paginatedMarkets = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    return marketsData.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [marketsData, currentPage]);
+  
+  const totalPages = Math.ceil(marketsData.length / ITEMS_PER_PAGE);
 
   const tvlArea = useMemo(() => {
     if (displayUnit === "USD") {
@@ -402,7 +419,7 @@ export default function LendingDataPage() {
               {/* Table Header */}
               <div className="grid grid-cols-9 gap-4 px-4 md:px-6 py-3 text-[11px] md:text-[13px] text-gray-500 uppercase tracking-widest border-b border-white/10 bg-[#050505]">
                 <div className="col-span-2">Asset</div>
-                <div className="text-center">Net Worth</div>
+                <div className="text-center">Liquidity</div>
                 <div className="text-center">Total Supply</div>
                 <div className="text-center">Total Borrow</div>
                 <div className="text-center">Supply APY</div>
@@ -419,7 +436,7 @@ export default function LendingDataPage() {
                     <Loader2 className="w-6 h-6 text-cyan-500 animate-spin mb-2" />
                   </div>
                 ) : (
-                  marketsData.map((pool, idx) => (
+                  paginatedMarkets.map((pool, idx) => (
                     <div 
                       key={`${pool.symbol}-${idx}`} 
                       onClick={() => pool.entityId && navigate(`/data/aave/${pool.entityId}`)}
@@ -437,13 +454,38 @@ export default function LendingDataPage() {
                       <div className="text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.supplyUsd)}</div>
                       <div className="text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.borrowUsd)}</div>
                       <div className="text-center text-[10px] md:text-[13px] text-green-500 tracking-widest">{formatApy(pool.supplyApy)}</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-red-500 tracking-widest">{formatApy(pool.borrowApy)}</div>
+                      <div className="text-center text-[10px] md:text-[13px] text-cyan-500 tracking-widest">{formatApy(pool.borrowApy)}</div>
                       <div className="text-center text-[10px] md:text-[13px] text-gray-300 tracking-widest">{(pool.utilization * 100).toFixed(1)}%</div>
                       <div className="text-center text-[10px] md:text-[13px] text-gray-400 tracking-widest">{pool.protocol === "AAVE_MARKET" || pool.protocol === "AAVE" ? "AAVE_V3" : pool.protocol}</div>
                     </div>
                   ))
                 )}
               </div>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-center gap-6 px-4 md:px-6 py-4 border-t border-white/10 bg-[#080808]">
+                  <span className="text-xs text-gray-500 uppercase tracking-widest">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-1 bg-[#111] border border-white/10 text-xs text-gray-300 uppercase tracking-widest hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Prev
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-1 bg-[#111] border border-white/10 text-xs text-gray-300 uppercase tracking-widest hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </section>
