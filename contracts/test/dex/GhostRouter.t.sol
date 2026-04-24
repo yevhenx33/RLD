@@ -72,6 +72,15 @@ contract GhostRouterIntegrationTest is Test {
         t0.approve(address(router), type(uint256).max);
     }
 
+    function _recordObservations(bytes32 marketId, uint256 count, uint256 amountIn) internal {
+        vm.startPrank(taker);
+        for (uint256 i = 0; i < count; i++) {
+            vm.warp(block.timestamp + 1);
+            router.swap(marketId, true, amountIn, 1);
+        }
+        vm.stopPrank();
+    }
+
     function test_getSpotPriceUsesExternalOracleAndSwapPassesPriceToEngine() external {
         bytes32 marketId = router.initializeMarket(key, address(oracle));
         oracle.setPrice(marketId, 2e18);
@@ -248,5 +257,39 @@ contract GhostRouterIntegrationTest is Test {
 
         assertEq(firstOut, 10e18, "unexpected first fallback output");
         assertEq(secondOut, 10e18, "unexpected second fallback output");
+    }
+
+    function test_observeAfterRingWrapKeepsTwapAndTooOldBoundary() external {
+        bytes32 marketId = router.initializeMarket(key, address(oracle));
+        uint256 spotPrice = 2e18;
+        oracle.setPrice(marketId, spotPrice);
+
+        uint256 amountIn = 1e18;
+        uint256 swapCount = uint256(router.ORACLE_CARDINALITY()) + 6;
+        _fundSwapPath(swapCount * amountIn, swapCount * amountIn);
+
+        // Ensure intercept path handles all flow so each swap writes one observation.
+        engine.setGhost(0, (swapCount + 1) * amountIn);
+        engine.setTakeBehavior(true, 0, 0);
+        _recordObservations(marketId, swapCount, amountIn);
+
+        (, uint16 cardinality) = router.oracleStates(marketId);
+        assertEq(cardinality, router.ORACLE_CARDINALITY(), "oracle cardinality should saturate");
+
+        uint32[] memory lookback = new uint32[](2);
+        lookback[0] = 900;
+        lookback[1] = 0;
+        uint256 gasBeforeObserve = gasleft();
+        uint256[] memory cumulatives = router.observe(marketId, lookback);
+        uint256 observeGasUsed = gasBeforeObserve - gasleft();
+        assertLt(observeGasUsed, 250_000, "observe gas should stay sub-linear after wrap");
+        uint256 twap = (cumulatives[1] - cumulatives[0]) / lookback[0];
+        assertEq(twap, spotPrice, "twap should match constant oracle price");
+
+        uint32[] memory tooOld = new uint32[](2);
+        tooOld[0] = uint32(router.ORACLE_CARDINALITY());
+        tooOld[1] = 0;
+        vm.expectRevert(GhostRouter.ObservationTooOld.selector);
+        router.observe(marketId, tooOld);
     }
 }

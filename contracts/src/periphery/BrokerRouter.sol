@@ -196,6 +196,7 @@ contract BrokerRouter is ReentrancyGuard {
     error NoDepositRoute();
     error NotPoolManager();
     error PoolKeyMismatch();
+    error SlippageExceeded();
 
     /* ============================================================================================ */
     /*                                          MODIFIERS                                           */
@@ -532,6 +533,52 @@ contract BrokerRouter is ReentrancyGuard {
         nonReentrant
         returns (uint256 proceeds)
     {
+        return
+            _executeShort(
+                broker,
+                initialCollateral,
+                targetDebtAmount,
+                poolKey,
+                0
+            );
+    }
+
+    /// @notice Leveraged short with slippage guard on collateral proceeds.
+    /// @param broker The PrimeBroker to trade from
+    /// @param initialCollateral Amount of collateral to use as margin
+    /// @param targetDebtAmount Amount of wRLP debt to mint
+    /// @param poolKey V4 pool key for routing the swap
+    /// @param minProceeds Minimum collateral proceeds required from the swap
+    /// @return proceeds Amount of collateral received from selling wRLP
+    function executeShortWithMinOut(
+        address broker,
+        uint256 initialCollateral,
+        uint256 targetDebtAmount,
+        PoolKey calldata poolKey,
+        uint256 minProceeds
+    )
+        external
+        onlyBrokerAuthorized(broker)
+        nonReentrant
+        returns (uint256 proceeds)
+    {
+        return
+            _executeShort(
+                broker,
+                initialCollateral,
+                targetDebtAmount,
+                poolKey,
+                minProceeds
+            );
+    }
+
+    function _executeShort(
+        address broker,
+        uint256 initialCollateral,
+        uint256 targetDebtAmount,
+        PoolKey calldata poolKey,
+        uint256 minProceeds
+    ) internal returns (uint256 proceeds) {
         PrimeBroker pb = PrimeBroker(payable(broker));
         address collateral = pb.collateralToken();
         address position = pb.positionToken();
@@ -582,6 +629,8 @@ contract BrokerRouter is ReentrancyGuard {
                 : uint256(int256(delta.amount0()));
         }
 
+        if (proceeds < minProceeds) revert SlippageExceeded();
+
         // 6. Transfer swap proceeds back to broker
         IERC20(collateral).transfer(broker, proceeds);
 
@@ -615,7 +664,6 @@ contract BrokerRouter is ReentrancyGuard {
         PrimeBroker pb = PrimeBroker(payable(broker));
         address collateral = pb.collateralToken();
         address position = pb.positionToken();
-        bytes32 rawMarketId = MarketId.unwrap(pb.marketId());
         _validatePoolKey(poolKey, collateral, position);
 
         // 1. Withdraw collateral (waUSDC) from broker to buy wRLP

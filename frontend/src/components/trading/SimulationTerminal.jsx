@@ -20,6 +20,7 @@ import {
   Calculator,
   ChevronDown,
   Link2,
+  Settings,
 } from "lucide-react";
 import { useSim } from "../../context/SimulationContext";
 import { useChartControls } from "../../hooks/useChartControls";
@@ -253,6 +254,24 @@ export default function SimulationTerminal() {
   const [tradeSide, setTradeSide] = useState("LONG");
   const [activeAction, setActiveAction] = useState(null);
 
+  // Settings / Slippage State
+  const [maxSlippage, setMaxSlippage] = useState("5.0");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (
+        settingsRef.current &&
+        !settingsRef.current.contains(e.target)
+      ) {
+        setSettingsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   // Collateral registration confirmation modal
   const [collateralConfirm, setCollateralConfirm] = useState(null);
   const [claimConfirm, setClaimConfirm] = useState(null);
@@ -327,10 +346,42 @@ export default function SimulationTerminal() {
     return () => clearInterval(interval);
   }, [brokerAddress, enrichedMarketInfo?.position_token?.address]);
 
-  // Determine which amount to quote and in which direction
-  // Close Long = SELL wRLP; Close Short = BUY wRLP (same direction as Open Long)
+  const closeAmountNum = Number.parseFloat(closeAmount);
+  const hasCloseAmount = Number.isFinite(closeAmountNum) && closeAmountNum > 0;
+  const closeLongExceedsBalance =
+    tradeAction === "CLOSE" &&
+    tradeSide === "LONG" &&
+    brokerWrlpBalance != null &&
+    hasCloseAmount &&
+    closeAmountNum > brokerWrlpBalance + 1e-6;
+  const closeShortDebtNum = Number.parseFloat(closeShortDebt);
+  const hasCloseShortDebt =
+    Number.isFinite(closeShortDebtNum) && closeShortDebtNum > 0;
+  const closeShortAmountNum = Number.parseFloat(closeShortAmount);
+  const hasCloseShortAmount =
+    Number.isFinite(closeShortAmountNum) && closeShortAmountNum > 0;
+  const closeShortDebtExceedsOutstanding =
+    tradeAction === "CLOSE" &&
+    tradeSide === "SHORT" &&
+    closeShortRepayMode === "wRLP" &&
+    hasCloseShortDebt &&
+    (brokerState?.debtPrincipal ?? 0) >= 0 &&
+    closeShortDebtNum > (brokerState?.debtPrincipal ?? 0) + 1e-6;
+  const closeShortDebtExceedsBrokerWrlp =
+    tradeAction === "CLOSE" &&
+    tradeSide === "SHORT" &&
+    closeShortRepayMode === "wRLP" &&
+    brokerWrlpBalance != null &&
+    hasCloseShortDebt &&
+    closeShortDebtNum > brokerWrlpBalance + 1e-6;
+
+  // Determine which amount to quote and in which direction.
+  // SELL paths: close long (wRLP -> waUSDC), open short (mint wRLP -> sell for waUSDC)
   const quoteDirection =
-    tradeAction === "CLOSE" && tradeSide === "LONG" ? "SELL" : "BUY";
+    (tradeAction === "CLOSE" && tradeSide === "LONG") ||
+    (tradeAction === "OPEN" && tradeSide === "SHORT")
+      ? "SELL"
+      : "BUY";
   const quoteAmountIn =
     tradeAction === "CLOSE"
       ? tradeSide === "LONG"
@@ -338,7 +389,9 @@ export default function SimulationTerminal() {
         : parseFloat(closeShortAmount) || 0
       : tradeSide === "LONG"
         ? collateral
-        : 0;
+        : tradeSide === "SHORT"
+          ? shortAmount
+          : 0;
 
   // Swap quote (V4Quoter on-chain)
   const {
@@ -352,6 +405,25 @@ export default function SimulationTerminal() {
     quoteAmountIn,
     quoteDirection,
   );
+
+  const shortOpenSlippageBps = useMemo(() => {
+    const parsed = Number(maxSlippage);
+    if (!Number.isFinite(parsed) || parsed < 0) return 100; // default 1.00%
+    return Math.min(5000, Math.round(parsed * 100)); // cap at 50%
+  }, [maxSlippage]);
+  const shortOpenQuotedOut =
+    tradeSide === "SHORT" && tradeAction === "OPEN"
+      ? Number(swapQuote?.amountOut || 0)
+      : 0;
+  const hasShortOpenQuote = shortOpenQuotedOut > 0;
+  const shortOpenMinOut = hasShortOpenQuote
+    ? Number(
+        (
+          (shortOpenQuotedOut * (10_000 - shortOpenSlippageBps)) /
+          10_000
+        ).toFixed(6),
+      )
+    : 0;
 
   // Swap execution (MetaMask-signed)
   const {
@@ -1016,7 +1088,38 @@ export default function SimulationTerminal() {
               connectWallet={connectWallet}
               title="Synthetic_Rates"
               Icon={Terminal}
-              subTitle="SIM"
+              subTitle={
+                <div className="relative" ref={settingsRef}>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsOpen(!settingsOpen)}
+                    className={`flex items-center transition-colors ${settingsOpen ? 'text-white' : 'text-gray-500 hover:text-white'}`}
+                  >
+                    <Settings size={15} />
+                  </button>
+                  {settingsOpen && (
+                    <div className="absolute right-0 top-full mt-2 w-56 bg-[#0a0a0a] border border-white/10 p-4 z-50 shadow-xl cursor-default">
+                      <div className="text-white text-sm tracking-widest font-bold uppercase mb-4">Settings</div>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[11px] text-gray-500 font-bold uppercase tracking-widest">
+                          <span>Max_Slippage</span>
+                        </div>
+                        <div className="relative flex items-center group">
+                          <input
+                            type="number"
+                            step="0.1"
+                            value={maxSlippage}
+                            onChange={(e) => setMaxSlippage(e.target.value)}
+                            className="w-full bg-transparent border-b border-white/20 text-sm font-mono text-white py-1 focus:outline-none focus:border-white transition-colors placeholder-gray-800"
+                            placeholder="5.0"
+                          />
+                          <span className="absolute right-0 text-sm text-gray-600 font-mono">%</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              }
               tabs={[
                 {
                   id: "LONG",
@@ -1061,13 +1164,20 @@ export default function SimulationTerminal() {
                     (!collateral || quoteLoading)) ||
                   (tradeSide === "LONG" &&
                     tradeAction === "CLOSE" &&
-                    (!closeAmount || quoteLoading)) ||
+                    (!hasCloseAmount || quoteLoading || closeLongExceedsBalance)) ||
                   (tradeSide === "SHORT" &&
                     tradeAction === "OPEN" &&
-                    (!collateral || shortAmount <= 0)) ||
+                    (!collateral ||
+                      shortAmount <= 0 ||
+                      quoteLoading ||
+                      !hasShortOpenQuote)) ||
                   (tradeSide === "SHORT" &&
                     tradeAction === "CLOSE" &&
-                    (!closeShortAmount || quoteLoading)),
+                    (closeShortRepayMode === "wRLP"
+                      ? (!hasCloseShortDebt ||
+                        closeShortDebtExceedsOutstanding ||
+                        closeShortDebtExceedsBrokerWrlp)
+                      : (!hasCloseShortAmount || quoteLoading))),
                 variant:
                   tradeAction === "CLOSE"
                     ? "pink"
@@ -1148,6 +1258,11 @@ export default function SimulationTerminal() {
                     suffix="wRLP"
                     onMax={() => setCloseAmount(String(brokerWrlpBalance || 0))}
                   />
+                  {closeLongExceedsBalance && (
+                    <div className="text-[11px] font-mono text-red-400 uppercase tracking-widest">
+                      Sell amount exceeds available wRLP.
+                    </div>
+                  )}
                   <InputGroup
                     label="Amount_Out"
                     subLabel={
@@ -1272,6 +1387,18 @@ export default function SimulationTerminal() {
                       }
                     }}
                   />
+                  {closeShortRepayMode === "wRLP" &&
+                    closeShortDebtExceedsOutstanding && (
+                      <div className="text-[11px] font-mono text-red-400 uppercase tracking-widest">
+                        Repay amount exceeds outstanding debt.
+                      </div>
+                    )}
+                  {closeShortRepayMode === "wRLP" &&
+                    closeShortDebtExceedsBrokerWrlp && (
+                      <div className="text-[11px] font-mono text-red-400 uppercase tracking-widest">
+                        Insufficient broker wRLP. Deposit wRLP first or lower repay amount.
+                      </div>
+                    )}
 
                   {/* Amount_To_Pay — only in waUSDC mode */}
                   {closeShortRepayMode === "waUSDC" && (
@@ -2041,7 +2168,7 @@ export default function SimulationTerminal() {
             }
           } else if (tradeSide === "SHORT" && tradeAction === "OPEN") {
             // Open Short flow — shortAmount is already in wRLP
-            executeShort(collateral, shortAmount, () => {
+            executeShort(collateral, shortAmount, shortOpenMinOut, () => {
               setShowSwapConfirm(false);
                             refresh();
               addToast({

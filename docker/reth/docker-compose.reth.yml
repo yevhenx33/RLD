@@ -145,7 +145,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pgrep -f combined_daemon >/dev/null && python3 -c \"import urllib.request; urllib.request.urlopen('http://host.docker.internal:${RATES_API_PORT:-5000}/readyz', timeout=2)\""
+          "python3 -c \"import urllib.request; urllib.request.urlopen('http://indexer:8080/healthz', timeout=2)\""
         ]
       interval: 20s
       timeout: 5s
