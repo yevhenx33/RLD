@@ -1,0 +1,123 @@
+---
+title: CDS Markets
+description: "RLD as parametric credit protection: rate-triggered insurance, isolated collateral, withdrawal delays, and settlement."
+---
+
+RLD can be configured as a credit-default swap market because lending-pool stress appears directly in utilization and borrow rates. When liquidity exits a lending pool, utilization rises. When utilization reaches the steep part of the interest-rate curve, borrow rates can jump sharply. Since RLD maps rates into token price, a long `wRLP` position can act like parametric protection.
+
+## Economic Model
+
+In a healthy market:
+
+```text
+borrow rate = 10%
+P_index = 10.00
+```
+
+In a stressed or default-like market:
+
+```text
+borrow rate = 75% to 100%
+P_index = 75.00 to 100.00
+```
+
+A long protection buyer benefits from the rate spike. The payoff is parametric: it follows a rate/utilization condition rather than a governance claims process.
+
+## Why CDS Needs A Different Collateral Model
+
+Standard rate-lock markets can use yield-bearing tokens from the same lending ecosystem as collateral. CDS cannot safely rely on correlated collateral.
+
+If a market insures Aave USDC and uses `aUSDC` as underwriter collateral, a severe Aave failure can destroy both:
+
+1. The protected deposit.
+2. The insurance collateral.
+
+CDS markets therefore require isolated, uncorrelated collateral such as ETH or stETH. The point is not only to trade rates, but to keep the insurance pot solvent when the referenced protocol fails.
+
+## CDS Actors
+
+| Actor | Action | Risk |
+| --- | --- | --- |
+| Protection buyer | Goes long `wRLP` or the CDS wrapper | Pays premium/decay and expects payout during stress. |
+| Underwriter | Shorts `wRLP` against isolated collateral | Earns premium but can lose collateral in settlement. |
+| Settlement module | Declares or executes global settlement | Must be governed by objective trigger rules. |
+| Liquidator | Clears undercollateralized underwriters before settlement | Earns liquidation bonus. |
+
+## Contract Primitives
+
+The current implementation has CDS hooks in core and broker state:
+
+| Primitive | Location | Meaning |
+| --- | --- | --- |
+| `settlementModule` | `MarketAddresses` | Non-zero address marks a market as settlement-capable. |
+| `globalSettlementTimestamp` | `MarketState` | Non-zero timestamp means terminal settlement mode has started. |
+| `enterGlobalSettlement()` | `RLDCore` | Callable only by the market settlement module. |
+| `invalidateBrokerWithdrawalQueue()` | `RLDCore` | Lets settlement invalidate queued broker withdrawals. |
+| `WITHDRAWAL_DELAY` | `PrimeBroker` | Fixed 7-day delay for debt-bearing CDS broker withdrawals. |
+| `withdrawalQueueEpoch` | `PrimeBroker` | O(1) invalidation mechanism during settlement. |
+| `CDSDecayFundingModel` | Funding module | Applies deterministic premium decay through NF. |
+
+The production settlement module is the policy layer that should encode exact trigger, snapshot, sweep, and distribution behavior.
+
+## Withdrawal Delay
+
+Debt-bearing CDS brokers cannot instantly withdraw collateral when a settlement module is active. They enter a withdrawal queue with a 7-day delay.
+
+The delay is designed to prevent underwriters from withdrawing immediately before a default event. If settlement begins, the settlement module can invalidate the queue by bumping the broker epoch.
+
+## Global Settlement
+
+Global settlement is terminal for a market:
+
+1. Settlement module calls `RLDCore.enterGlobalSettlement(marketId)`.
+2. Core records `globalSettlementTimestamp`.
+3. Future `modifyPosition()` calls revert for that market.
+4. Settlement flows can invalidate broker queues and seize/distribute collateral according to module policy.
+
+The paper proposes a trigger such as sustained utilization above 99% and rates above 80% for 24 hours. The current core does not hardcode that rule; it delegates the trigger and sweep policy to `settlementModule`.
+
+## CDS Funding
+
+CDS markets can use deterministic decay:
+
+```text
+NF_new = NF_old * exp(-F * dt / year)
+```
+
+Where `F` is `decayRateWad`. This represents premium decay paid through the market's debt scaler. It differs from standard mark-index funding and should be documented separately in product UI.
+
+## Research Signals
+
+The repository includes CDS research scaffolding:
+
+| File | Signal |
+| --- | --- |
+| `backend/rates/cds_backtest.py` | Uses bounded `P = 100 * r` pricing and stress scenarios. |
+| `backend/rates/underwriter_model.py` | Models underwriter capital across isolated market silos and synthetic exploit shocks. |
+| `Paper/rld_paper.md` | Frames Stream-style liquidity stress as a CDS trigger narrative. |
+
+The research direction is clear: isolate underwriter risk per market, cap derivative payouts, and let rate spikes represent liquidity stress.
+
+## Frontend Status
+
+The app exposes CDS routes:
+
+| Route | Surface |
+| --- | --- |
+| `/markets/cds` | CDS market directory. |
+| `/markets/cds/:address` | CDS market page. |
+
+The current CDS page shows coverage amount, duration, trigger-style metrics, payout simulation, and an inactive "Create Protection" button. The positions table uses mock data until backend and settlement execution are wired.
+
+## Production Checklist
+
+Before a CDS market is production-ready:
+
+1. Implement and audit the settlement module.
+2. Define objective trigger thresholds, windows, oracle sources, and challenge process.
+3. Specify snapshot timing for longs and shorts.
+4. Specify collateral seizure and pro-rata distribution math.
+5. Stress-test underwriter collateral under correlated market moves.
+6. Ensure withdrawal queues cannot be bypassed through broker operations.
+7. Make decay, premium, payout cap, and settlement status visible in UI.
+8. Run scenario tests for stale oracles, partial stress, invalidated queues, and market recovery before threshold.

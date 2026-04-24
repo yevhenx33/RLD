@@ -1,13 +1,45 @@
 ---
-title: Hello World
-description: Your first document
+title: RLD Protocol
+description: Rate-Level Derivatives documentation for builders, operators, and integrators.
 ---
 
-Welcome to the docs! You can start writing documents in `/content/docs`.
+RLD turns lending-market interest rates into programmable on-chain instruments. The protocol mints a fungible rate token, `wRLP`, whose index value is derived from a lending pool borrow rate:
 
-## What is Next?
+```text
+P_index = K * r_t
+```
 
-<Cards>
-  <Card title="Learn more about Next.js" href="https://nextjs.org/docs" />
-  <Card title="Learn more about Fumadocs" href="https://fumadocs.dev" />
-</Cards>
+With `K = 100`, a 5% borrow rate maps to a 5.00 index price. That simple scalar lets users trade rates the same way they trade assets: longs buy `wRLP`, shorts mint it from collateral, and the market price is kept economically tied to the index through funding, arbitrage, and liquidation.
+
+## What RLD Enables
+
+| Product | User action | Protocol role |
+| --- | --- | --- |
+| Rate-level perps | Long or short borrow-rate exposure | Converts algorithmic interest rates into tradable spot liquidity. |
+| Synthetic bonds | Short `wRLP` plus TWAMM unwind | Converts floating lending yield into programmable fixed-duration yield. |
+| Fixed-rate borrowing | Long `wRLP` over loan duration | Offsets rising variable borrowing costs. |
+| Rate volatility trades | Long or short rate beta | Expresses views on leverage demand and utilization shocks. |
+| CDS markets | Long protection, short underwriting | Uses rate spikes and settlement rules as parametric solvency insurance. |
+
+## Canonical Sources
+
+These docs are built from the current repository state:
+
+| Source | Role |
+| --- | --- |
+| `Paper/rld_paper.md` | Protocol thesis, product model, synthetic bonds, CDS design, and research narrative. |
+| `contracts/src/rld/core/RLDCore.sol` | Core market registry, debt accounting, funding application, solvency, liquidation, and global settlement hooks. |
+| `contracts/src/rld/broker/PrimeBroker.sol` | User-owned smart margin account that holds collateral, `wRLP`, LP positions, and TWAMM orders. |
+| `contracts/src/rld/modules/funding/*` | Standard mark-index funding and CDS absolute decay funding. |
+| `contracts/src/rld/modules/oracles/*` | Rate index and mark/spot oracle adapters. |
+| `contracts/src/periphery/*` | Router, bond, basis, and broker execution flows. |
+| `backend/rates/*` | CDS and underwriter research scaffolding. |
+| `frontend/src/*` | User-facing routes, transaction hooks, simulation indexer integration, and CDS/bond/perp UI surfaces. |
+
+## Implementation Status
+
+RLD is implemented as a smart-contract system with a simulation-first frontend and indexer. The core rate-perp, broker, funding, liquidation, market factory, bond, DEX, and TWAMM surfaces are present. CDS has concrete primitives in the contracts, including `settlementModule`, `globalSettlementTimestamp`, withdrawal queues, and `CDSDecayFundingModel`; the full production settlement module and live CDS UI execution remain integration surfaces to complete.
+
+## Read Next
+
+Start with [Protocol Primer](/docs/protocol-primer) for the mental model, then [Architecture](/docs/architecture) and [Contracts](/docs/contracts) for implementation detail. For product-specific flows, read [Synthetic Bonds](/docs/synthetic-bonds) and [CDS](/docs/cds).
