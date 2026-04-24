@@ -18,7 +18,10 @@ import { RPC_URL } from "./connection";
 // Chain ID 31337 = Anvil / Reth dev mode
 const CHAIN_ID = 31337;
 
-export const rpcProvider = new ethers.JsonRpcProvider(RPC_URL, CHAIN_ID, {
+const req = new ethers.FetchRequest(RPC_URL);
+req.setThrottleParams({ maxAttempts: 1 });
+
+export const rpcProvider = new ethers.JsonRpcProvider(req, CHAIN_ID, {
   staticNetwork: true,
-  batchMaxCount: 10,
+  batchMaxCount: 1,
 });
