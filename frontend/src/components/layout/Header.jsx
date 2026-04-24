@@ -98,9 +98,19 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               <Link
                 to="/bonds"
                 onMouseEnter={() => prefetchRoute("/bonds")}
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/bonds" ? "text-cyan-500 cursor-default" : "text-white hover:text-cyan-500 cursor-pointer"}`}
               >
                 BONDS
+              </Link>
+
+              <span className="text-white/10">|</span>
+
+              <Link
+                to="/markets/cds"
+                onMouseEnter={() => prefetchRoute("/markets/cds")}
+                className={`transition-colors px-2 tracking-widest ${location.pathname.startsWith("/markets/cds") ? "text-cyan-500 cursor-default" : "text-white hover:text-cyan-500 cursor-pointer"}`}
+              >
+                CDS
               </Link>
 
               <span className="text-white/10">|</span>
@@ -109,7 +119,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                 <Link
                   to="/markets"
                   onMouseEnter={() => prefetchRoute("/markets/perps")}
-                  className={`transition-colors px-2 tracking-widest flex items-center gap-1 ${location.pathname.startsWith("/markets") ? "text-cyan-400 cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+                  className={`transition-colors px-2 tracking-widest flex items-center gap-1 ${(location.pathname.startsWith("/markets/perps") || location.pathname.startsWith("/markets/pools") || location.pathname === "/markets") ? "text-cyan-500 cursor-default" : "text-white hover:text-cyan-500 cursor-pointer"}`}
                 >
                   Markets
                   <svg
@@ -138,13 +148,6 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                       Perps
                     </Link>
                     <Link
-                      to="/markets/cds"
-                      onMouseEnter={() => prefetchRoute("/markets/cds")}
-                      className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors border-b border-white/5"
-                    >
-                      CDS
-                    </Link>
-                    <Link
                       to="/markets/pools"
                       onMouseEnter={() => prefetchRoute("/markets/pools")}
                       className="flex items-center gap-2.5 px-4 py-3 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-cyan-400 hover:bg-white/[0.03] transition-colors"
@@ -160,7 +163,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               <Link
                 to="/portfolio"
                 onMouseEnter={() => prefetchRoute("/portfolio")}
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/portfolio" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/portfolio" ? "text-cyan-500 cursor-default" : "text-white hover:text-cyan-500 cursor-pointer"}`}
               >
                 PORTFOLIO
               </Link>
@@ -170,7 +173,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               <Link
                 to="/data"
                 onMouseEnter={() => prefetchRoute("/data")}
-                className={`transition-colors px-2 tracking-widest ${location.pathname === "/data" ? "text-white cursor-default" : "text-white hover:text-cyan-400 cursor-pointer"}`}
+                className={`transition-colors px-2 tracking-widest ${location.pathname === "/data" ? "text-cyan-500 cursor-default" : "text-white hover:text-cyan-500 cursor-pointer"}`}
               >
                 DATA
               </Link>
@@ -181,7 +184,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                 href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="transition-colors px-2 tracking-widest text-white hover:text-cyan-400 cursor-pointer"
+                className="transition-colors px-2 tracking-widest text-white hover:text-cyan-500 cursor-pointer"
               >
                 DOCS
               </a>
@@ -258,13 +261,20 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
             <nav className="flex flex-col gap-4 text-sm font-bold tracking-[0.15em] uppercase pb-6">
               <Link
                 to="/bonds"
-                className={`py-2 ${location.pathname === "/bonds" ? "text-white" : "text-gray-500"}`}
+                className={`py-2 transition-colors ${location.pathname === "/bonds" ? "text-cyan-500" : "text-gray-500 hover:text-cyan-500"}`}
               >
                 BONDS
               </Link>
+              <Link
+                to="/markets/cds"
+                onMouseEnter={() => prefetchRoute("/markets/cds")}
+                className={`py-2 transition-colors ${location.pathname.startsWith("/markets/cds") ? "text-cyan-500" : "text-gray-500 hover:text-cyan-500"}`}
+              >
+                CDS
+              </Link>
               <div>
                 <span
-                  className={`py-2 block ${location.pathname.startsWith("/markets") ? "text-white" : "text-gray-500"}`}
+                  className={`py-2 block transition-colors ${(location.pathname.startsWith("/markets/perps") || location.pathname.startsWith("/markets/pools") || location.pathname === "/markets") ? "text-cyan-500" : "text-gray-500 hover:text-cyan-500"}`}
                 >
                   MARKETS
                 </span>
@@ -276,14 +286,6 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                   >
                     <div className="w-1 h-1 bg-cyan-500/50" />
                     Perps
-                  </Link>
-                  <Link
-                    to="/markets/cds"
-                    onMouseEnter={() => prefetchRoute("/markets/cds")}
-                    className={`py-1 text-[11px] flex items-center gap-2 ${location.pathname.startsWith("/markets/cds") ? "text-cyan-400" : "text-gray-500"}`}
-                  >
-                    <div className="w-1 h-1 bg-cyan-500/50" />
-                    CDS
                   </Link>
                   <Link
                     to="/markets/pools"
@@ -298,14 +300,14 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
               <Link
                 to="/portfolio"
                 onMouseEnter={() => prefetchRoute("/portfolio")}
-                className={`py-2 ${location.pathname === "/portfolio" ? "text-white" : "text-gray-500"}`}
+                className={`py-2 transition-colors ${location.pathname === "/portfolio" ? "text-cyan-500" : "text-gray-500 hover:text-cyan-500"}`}
               >
                 PORTFOLIO
               </Link>
               <Link
                 to="/data"
                 onMouseEnter={() => prefetchRoute("/data")}
-                className={`py-2 ${location.pathname === "/data" ? "text-white" : "text-gray-500"}`}
+                className={`py-2 transition-colors ${location.pathname === "/data" ? "text-cyan-500" : "text-gray-500 hover:text-cyan-500"}`}
               >
                 DATA
               </Link>
@@ -313,7 +315,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
                 href="https://docs.rld.fi/introduction/rate-level-derivatives.html"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="py-2 text-gray-500 hover:text-white transition-colors"
+                className="py-2 text-gray-500 hover:text-cyan-500 transition-colors"
               >
                 DOCS
               </a>
