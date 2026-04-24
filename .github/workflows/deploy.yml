@@ -120,61 +120,77 @@ jobs:
           else
             ssh-keygen -y -f "$key_file" >/dev/null
           fi
+          echo "Using deploy key fingerprint:"
+          ssh-keygen -lf "$key_file" -E sha256
 
-      - name: Deploy frontend to server
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          port: ${{ env.DEPLOY_PORT }}
-          key_path: ${{ env.DEPLOY_SSH_KEY_PATH }}
-          passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
-          password: ${{ secrets.DEPLOY_PASSWORD }}
-          timeout: 90s
-          command_timeout: 10m
-          debug: true
-          source: "dist/*"
-          target: "/home/ubuntu/RLD/frontend/"
-          strip_components: 0
+      - name: Add deploy host to known_hosts
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: Restart services
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          port: ${{ env.DEPLOY_PORT }}
-          key_path: ${{ env.DEPLOY_SSH_KEY_PATH }}
-          passphrase: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
-          password: ${{ secrets.DEPLOY_PASSWORD }}
-          timeout: 90s
-          command_timeout: 20m
-          debug: true
-          script: |
-            cd /home/ubuntu/RLD
+      - name: SSH preflight (native OpenSSH)
+        run: |
+          set -euo pipefail
+          ssh \
+            -i "$DEPLOY_SSH_KEY_PATH" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "echo 'SSH auth OK'"
 
-            # Sync ALL config files first (docker-compose, nginx.conf, etc.)
-            git fetch origin main
-            git reset --hard origin/main
+      - name: Deploy frontend to server (native SCP)
+        run: |
+          set -euo pipefail
+          scp \
+            -i "$DEPLOY_SSH_KEY_PATH" \
+            -P "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            -r dist/* \
+            "$DEPLOY_USER@$DEPLOY_HOST:/home/ubuntu/RLD/frontend/dist/"
 
-            # Force fonts.css and font files from git into dist/ (SCP unreliable for root files)
-            mkdir -p /home/ubuntu/RLD/frontend/dist/fonts
-            cp /home/ubuntu/RLD/frontend/public/fonts.css /home/ubuntu/RLD/frontend/dist/fonts.css
-            cp /home/ubuntu/RLD/frontend/public/fonts/*.woff2 /home/ubuntu/RLD/frontend/dist/fonts/
-            echo "✅ fonts.css: $(wc -c < /home/ubuntu/RLD/frontend/dist/fonts.css) bytes, has JBM: $(grep -c 'JetBrains Mono' /home/ubuntu/RLD/frontend/dist/fonts.css || echo 0)"
+      - name: Restart services (native SSH)
+        run: |
+          set -euo pipefail
+          ssh \
+            -i "$DEPLOY_SSH_KEY_PATH" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            "$DEPLOY_USER@$DEPLOY_HOST" <<'EOF'
+          set -euo pipefail
+          cd /home/ubuntu/RLD
 
-            # Force-recreate the frontend container with the new dist/
-            # docker-compose.frontend.yml now uses volume mounts — no image rebuild
-            echo "🔄 Restarting frontend container..."
-            docker compose -f docker/docker-compose.frontend.yml up -d --no-deps --force-recreate frontend
-            echo "✅ Frontend live"
+          # Sync ALL config files first (docker-compose, nginx.conf, etc.)
+          git fetch origin main
+          git reset --hard origin/main
 
-            # Rebuild canonical backend services if backend changed
-            if git diff HEAD~1 --name-only | grep -q "^backend/"; then
-              echo "🔄 Backend changed — rebuilding simulation indexer + monitor-bot..."
-              docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env build indexer
-              docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env up -d --no-deps indexer
-              docker compose -f docker/docker-compose.infra.yml --env-file docker/.env build monitor-bot
-              docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d --no-deps --force-recreate monitor-bot
-            fi
+          # Force fonts.css and font files from git into dist/ (SCP unreliable for root files)
+          mkdir -p /home/ubuntu/RLD/frontend/dist/fonts
+          cp /home/ubuntu/RLD/frontend/public/fonts.css /home/ubuntu/RLD/frontend/dist/fonts.css
+          cp /home/ubuntu/RLD/frontend/public/fonts/*.woff2 /home/ubuntu/RLD/frontend/dist/fonts/
+          echo "✅ fonts.css: $(wc -c < /home/ubuntu/RLD/frontend/dist/fonts.css) bytes, has JBM: $(grep -c 'JetBrains Mono' /home/ubuntu/RLD/frontend/dist/fonts.css || echo 0)"
 
-            echo "✅ Deploy complete"
+          # Force-recreate the frontend container with the new dist/
+          # docker-compose.frontend.yml now uses volume mounts — no image rebuild
+          echo "🔄 Restarting frontend container..."
+          docker compose -f docker/docker-compose.frontend.yml up -d --no-deps --force-recreate frontend
+          echo "✅ Frontend live"
+
+          # Rebuild canonical backend services if backend changed
+          if git diff HEAD~1 --name-only | grep -q "^backend/"; then
+            echo "🔄 Backend changed — rebuilding simulation indexer + monitor-bot..."
+            docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env build indexer
+            docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env up -d --no-deps indexer
+            docker compose -f docker/docker-compose.infra.yml --env-file docker/.env build monitor-bot
+            docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d --no-deps --force-recreate monitor-bot
+          fi
+
+          echo "✅ Deploy complete"
+          EOF
