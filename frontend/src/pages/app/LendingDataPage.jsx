@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
@@ -214,21 +214,16 @@ export default function LendingDataPage() {
     return { stats, chartData: chart, marketsData: tableData };
   }, [gqlData]);
 
-  // POKA-YOKE: Auto-reset pagination if data length shrinks out of bounds
-  useEffect(() => {
-    const maxPage = Math.ceil(marketsData.length / 10);
-    if (currentPage > maxPage && maxPage > 0) {
-      setCurrentPage(1);
-    }
-  }, [marketsData.length, currentPage]);
-
   const ITEMS_PER_PAGE = 10;
+  const maxPage = Math.ceil(marketsData.length / ITEMS_PER_PAGE) || 1;
+  const safeCurrentPage = Math.min(currentPage, maxPage);
+
   const paginatedMarkets = useMemo(() => {
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+    const startIndex = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
     return marketsData.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-  }, [marketsData, currentPage]);
+  }, [marketsData, safeCurrentPage]);
   
-  const totalPages = Math.ceil(marketsData.length / ITEMS_PER_PAGE);
+  const totalPages = maxPage;
 
   const tvlArea = useMemo(() => {
     if (displayUnit === "USD") {
@@ -466,19 +461,19 @@ export default function LendingDataPage() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-center gap-6 px-4 md:px-6 py-4 border-t border-white/10 bg-[#080808]">
                   <span className="text-xs text-gray-500 uppercase tracking-widest">
-                    Page {currentPage} of {totalPages}
+                    Page {safeCurrentPage} of {totalPages}
                   </span>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage(safeCurrentPage - 1)}
+                      disabled={safeCurrentPage === 1}
                       className="px-3 py-1 bg-[#111] border border-white/10 text-xs text-gray-300 uppercase tracking-widest hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                     >
                       Prev
                     </button>
                     <button
-                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                      disabled={currentPage === totalPages}
+                      onClick={() => setCurrentPage(safeCurrentPage + 1)}
+                      disabled={safeCurrentPage === totalPages}
                       className="px-3 py-1 bg-[#111] border border-white/10 text-xs text-gray-300 uppercase tracking-widest hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                     >
                       Next
