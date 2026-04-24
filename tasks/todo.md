@@ -370,5 +370,4 @@ new-front/
 - [ ] Verify the layout is aligned identically to the Bonds market page (lg:col-start-5).
 - [ ] Verify the empty state renders cleanly when no active contracts exist.
 
-### Review: External Links
-- [ ] Verify the DOCS link in the header routes to `https://docs.rld.fi` and successfully loads the documentation SPA without white-screening.
+
