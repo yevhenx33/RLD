@@ -10,3 +10,19 @@ html > body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
 }
+
+.dark {
+  --radius: 0rem;
+  --fd-radius: 0rem;
+}
+
+/* Brutalist Edge Enforcement */
+.rounded, .rounded-sm, .rounded-md, .rounded-lg, .rounded-xl, .rounded-2xl, .rounded-3xl, 
+[class*="rounded-"] {
+  border-radius: 0px !important;
+}
+
+.rounded-full {
+  /* Preserve full rounding for specific icons/spinners if strictly necessary, otherwise 0 */
+  border-radius: 9999px;
+}
