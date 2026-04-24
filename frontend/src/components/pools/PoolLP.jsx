@@ -94,8 +94,8 @@ export default function PoolLP() {
   const [token0Amount, setToken0Amount] = useState("");
   const [token1Amount, setToken1Amount] = useState("");
   const [lastEdited, setLastEdited] = useState(null); // 'token0' | 'token1'
-  const [minPrice, setMinPrice] = useState("1");
-  const [maxPrice, setMaxPrice] = useState("10");
+  const [minPrice, setMinPrice] = useState("2");
+  const [maxPrice, setMaxPrice] = useState("20");
   const [removePercent, setRemovePercent] = useState(100);
   const [selectedPosition, _setSelectedPosition] = useState(null);
   const [removePage, setRemovePage] = useState(0);
