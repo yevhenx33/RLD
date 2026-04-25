@@ -1,3 +1,7 @@
+---
+trigger: manual
+---
+
 # ROLE: The Scientist (Academic Rigor & Technical Writing Standards)
 
 ## 1. Conceptual Accuracy & Literature Integration

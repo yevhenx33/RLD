@@ -6,6 +6,7 @@
 
 CREATE TABLE IF NOT EXISTS markets (
   market_id           TEXT PRIMARY KEY,
+  market_type         TEXT NOT NULL DEFAULT 'perp',
   deploy_block        BIGINT NOT NULL,
   deploy_timestamp    BIGINT NOT NULL,
   -- RLD contracts
@@ -25,6 +26,10 @@ CREATE TABLE IF NOT EXISTS markets (
   v4_state_view       TEXT,
   pool_manager        TEXT,
   -- Tokens
+  collateral_token    TEXT,
+  collateral_symbol   TEXT,
+  position_token      TEXT,
+  position_symbol     TEXT,
   wausdc              TEXT NOT NULL,
   wausdc_symbol       TEXT NOT NULL,
   wrlp                TEXT NOT NULL,
@@ -38,7 +43,11 @@ CREATE TABLE IF NOT EXISTS markets (
   maintenance_margin  TEXT NOT NULL,
   liq_close_factor    TEXT NOT NULL,
   funding_period_sec  BIGINT NOT NULL,
+  funding_model       TEXT,
+  settlement_module   TEXT,
+  decay_rate_wad      TEXT,
   debt_cap            TEXT NOT NULL,
+  product_metadata    JSONB DEFAULT '{}'::jsonb,
   -- Global market state (latest snapshot)
   normalization_factor NUMERIC DEFAULT 1000000000000000000,
   total_debt_raw       NUMERIC DEFAULT 0,
@@ -56,6 +65,22 @@ CREATE TABLE IF NOT EXISTS markets (
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS ghost_router TEXT;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS twap_engine TEXT;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS twap_engine_lens TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS market_type TEXT NOT NULL DEFAULT 'perp';
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS collateral_token TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS collateral_symbol TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS position_token TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS position_symbol TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS funding_model TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS settlement_module TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS decay_rate_wad TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS product_metadata JSONB DEFAULT '{}'::jsonb;
+UPDATE markets
+SET collateral_token = COALESCE(collateral_token, wausdc),
+    collateral_symbol = COALESCE(collateral_symbol, wausdc_symbol),
+    position_token = COALESCE(position_token, wrlp),
+    position_symbol = COALESCE(position_symbol, wrlp_symbol)
+WHERE collateral_token IS NULL OR collateral_symbol IS NULL
+   OR position_token IS NULL OR position_symbol IS NULL;
 
 -- ── INDEXER PROGRESS ────────────────────────────────────────────────────────
 
@@ -65,6 +90,22 @@ CREATE TABLE IF NOT EXISTS indexer_state (
   last_indexed_at     TIMESTAMPTZ,
   total_events        BIGINT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS source_status (
+  source               TEXT NOT NULL,
+  kind                 TEXT NOT NULL,
+  market_id            TEXT,
+  market_type          TEXT,
+  last_scanned_block   BIGINT NOT NULL DEFAULT 0,
+  last_event_block     BIGINT NOT NULL DEFAULT 0,
+  last_processed_block BIGINT NOT NULL DEFAULT 0,
+  source_head_block    BIGINT NOT NULL DEFAULT 0,
+  last_success_at      TIMESTAMPTZ,
+  last_error           TEXT NOT NULL DEFAULT '',
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (source, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_source_status_market ON source_status(market_id, kind);
 
 -- ── BROKERS ─────────────────────────────────────────────────────────────────
 

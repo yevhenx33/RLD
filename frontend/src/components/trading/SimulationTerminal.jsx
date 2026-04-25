@@ -1,4 +1,5 @@
 import React, { Suspense, lazy, useState, useMemo, useEffect, useRef } from "react";
+import { useParams } from "react-router-dom";
 import { ethers } from "ethers";
 import { getSigner } from "../../utils/connection";
 import { rpcProvider } from "../../utils/provider";
@@ -22,7 +23,6 @@ import {
   Link2,
   Settings,
 } from "lucide-react";
-import { useSim } from "../../context/SimulationContext";
 import { useChartControls } from "../../hooks/useChartControls";
 import { useWallet } from "../../context/WalletContext";
 
@@ -83,6 +83,8 @@ function OperationsFeed({
   operations = [],
   loading = false,
   connected = false,
+  collateralSymbol = "waUSDC",
+  positionSymbol = "wRLP",
 }) {
   if (!connected) {
     return (
@@ -114,15 +116,15 @@ function OperationsFeed({
         // Format amounts based on event type
         let detail = "";
         if (op.type === "LongExecuted") {
-          detail = `${formatOpAmount(op.args[1])} waUSDC → ${formatOpAmount(op.args[2])} wRLP`;
+          detail = `${formatOpAmount(op.args[1])} ${collateralSymbol} → ${formatOpAmount(op.args[2])} ${positionSymbol}`;
         } else if (op.type === "LongClosed") {
-          detail = `${formatOpAmount(op.args[1])} wRLP → ${formatOpAmount(op.args[2])} waUSDC`;
+          detail = `${formatOpAmount(op.args[1])} ${positionSymbol} → ${formatOpAmount(op.args[2])} ${collateralSymbol}`;
         } else if (op.type === "ShortExecuted") {
           detail = `${formatOpAmount(op.args[1])} debt · ${formatOpAmount(op.args[2])} proceeds`;
         } else if (op.type === "ShortClosed") {
           detail = `${formatOpAmount(op.args[1])} repaid · ${formatOpAmount(op.args[2])} spent`;
         } else if (op.type === "Deposited") {
-          detail = `${formatOpAmount(op.args[1])} → ${formatOpAmount(op.args[2])} waUSDC`;
+          detail = `${formatOpAmount(op.args[1])} → ${formatOpAmount(op.args[2])} ${collateralSymbol}`;
         }
 
         return (
@@ -151,7 +153,13 @@ function OperationsFeed({
 // ── Main Component ────────────────────────────────────────────
 
 export default function SimulationTerminal() {
-  const sim = useSim();
+  const { address } = useParams();
+  const routeMarket = String(address || "").toLowerCase();
+  const marketKey =
+    routeMarket && routeMarket !== ethers.ZeroAddress.toLowerCase()
+      ? routeMarket
+      : null;
+  const sim = useSimulation({ marketKey });
   const {
     connected,
     loading: _loading,
@@ -189,6 +197,12 @@ export default function SimulationTerminal() {
       },
     };
   }, [marketInfo]);
+  const collateralSymbol = marketInfo?.collateral?.symbol || "waUSDC";
+  const positionSymbol =
+    marketInfo?.collateral?.symbol === "USDC"
+      ? "wCDS"
+      : marketInfo?.position_token?.symbol || "wRLP";
+  const productLabel = marketInfo?.collateral?.symbol === "USDC" ? "CDS MARKET" : "RLP MARKET";
 
   // Wallet & Faucet
   const { account, connectWallet } = useWallet();
@@ -280,8 +294,8 @@ export default function SimulationTerminal() {
   // LP fee claim / withdraw modals (use same components as Pool page)
   const [claimFeesLp, setClaimFeesLp] = useState(null);
   const [withdrawLp, setWithdrawLp] = useState(null);
-  const [depositToken, setDepositToken] = useState(null);   // "waUSDC" | "wRLP" | null
-  const [withdrawToken, setWithdrawToken] = useState(null); // "waUSDC" | "wRLP" | null
+  const [depositToken, setDepositToken] = useState(null);
+  const [withdrawToken, setWithdrawToken] = useState(null);
   const [actionsHeight, setActionsHeight] = useState(null);
   const actionsRef = useRef(null);
 
@@ -299,9 +313,9 @@ export default function SimulationTerminal() {
 
   const [tradeAction, setTradeAction] = useState("OPEN"); // OPEN or CLOSE
   const [collateral, setCollateral] = useState(1000);
-  const [closeAmount, setCloseAmount] = useState(""); // wRLP to sell (close long)
-  const [closeShortAmount, setCloseShortAmount] = useState(""); // waUSDC to spend (close short)
-  const [closeShortDebt, setCloseShortDebt] = useState(""); // wRLP debt to repay (close short)
+  const [closeAmount, setCloseAmount] = useState("");
+  const [closeShortAmount, setCloseShortAmount] = useState("");
+  const [closeShortDebt, setCloseShortDebt] = useState("");
   const [_lastCloseShortEdit, setLastCloseShortEdit] = useState(null); // 'debt' or 'collateral'
   const [closeShortRepayMode, setCloseShortRepayMode] = useState("wRLP"); // 'wRLP' or 'waUSDC'
   const [payDropdownOpen, setPayDropdownOpen] = useState(false);
@@ -323,7 +337,7 @@ export default function SimulationTerminal() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Broker wRLP (position token) balance — for close long
+  // Broker position-token balance — for close long
   const [brokerWrlpBalance, setBrokerWrlpBalance] = useState(null);
   useEffect(() => {
     if (!brokerAddress || !enrichedMarketInfo?.position_token?.address) return;
@@ -338,7 +352,7 @@ export default function SimulationTerminal() {
         const bal = await token.balanceOf(brokerAddress);
         setBrokerWrlpBalance(parseFloat(ethers.formatUnits(bal, 6)));
       } catch (e) {
-        console.warn("Failed to fetch wRLP balance:", e);
+        console.warn(`Failed to fetch ${positionSymbol} balance:`, e);
       }
     };
     fetchWrlp();
@@ -510,6 +524,7 @@ export default function SimulationTerminal() {
     chartResolution: resolution,
     chartStartTime,
     chartEndTime,
+    marketKey,
   });
   const { chartData } = simChart;
 
@@ -623,7 +638,7 @@ export default function SimulationTerminal() {
     if (tradeSide === "LONG") {
       return { notional: collateral, liqRate: null };
     }
-    // SHORT: notional = shortAmount (wRLP) × currentRate
+    // SHORT: notional = shortAmount (position token) × currentRate
     const notionalUSD = shortAmount * currentRate;
     return {
       notional: notionalUSD,
@@ -722,14 +737,14 @@ export default function SimulationTerminal() {
                       {(market?.marketId || "").slice(-8)}
                     </div>
                     <h2 className="text-3xl font-medium tracking-tight mb-2 leading-none">
-                      RLD PROTOCOL
+                      {positionSymbol} / USD
                       <br />
-                      <span className="text-gray-600">SIMULATION</span>
+                      <span className="text-gray-600">{productLabel}</span>
                     </h2>
                   </div>
                   <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between">
                     <span className="text-sm uppercase tracking-widest text-gray-500">
-                      RLD_Core
+                      {marketInfo?.collateral?.symbol === "USDC" ? "CDS_Core" : "RLD_Core"}
                     </span>
                     <Link2 size={14} className="text-cyan-500 hover:text-cyan-400 transition-colors cursor-pointer" />
                   </div>
@@ -1213,7 +1228,7 @@ export default function SimulationTerminal() {
                 <>
                   <InputGroup
                     label="Collateral"
-                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} waUSDC` : hasBroker ? "..." : "—"}`}
+                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} ${collateralSymbol}` : hasBroker ? "..." : "—"}`}
                     value={collateral}
                     onChange={(v) => setCollateral(Number(v))}
                     suffix="USDC"
@@ -1240,27 +1255,27 @@ export default function SimulationTerminal() {
                           : ""
                       }
                       onChange={() => {}}
-                      suffix="wRLP"
+                      suffix={positionSymbol}
                       readOnly
                     />
                   )}
                 </>
               )}
 
-              {/* === CLOSE LONG: wRLP Input + waUSDC Out === */}
+              {/* === CLOSE LONG: position token input + collateral out === */}
               {tradeSide === "LONG" && tradeAction === "CLOSE" && (
                 <>
                   <InputGroup
-                    label="Sell_wRLP"
-                    subLabel={`Available: ${brokerWrlpBalance != null ? `${brokerWrlpBalance.toFixed(1)} wRLP` : "—"}`}
+                    label={`Sell_${positionSymbol}`}
+                    subLabel={`Available: ${brokerWrlpBalance != null ? `${brokerWrlpBalance.toFixed(1)} ${positionSymbol}` : "—"}`}
                     value={closeAmount}
                     onChange={(v) => setCloseAmount(v)}
-                    suffix="wRLP"
+                    suffix={positionSymbol}
                     onMax={() => setCloseAmount(String(brokerWrlpBalance || 0))}
                   />
                   {closeLongExceedsBalance && (
                     <div className="text-[11px] font-mono text-red-400 uppercase tracking-widest">
-                      Sell amount exceeds available wRLP.
+                      Sell amount exceeds available {positionSymbol}.
                     </div>
                   )}
                   <InputGroup
@@ -1283,7 +1298,7 @@ export default function SimulationTerminal() {
                         : ""
                     }
                     onChange={() => {}}
-                    suffix="waUSDC"
+                    suffix={collateralSymbol}
                     readOnly
                   />
                 </>
@@ -1315,8 +1330,8 @@ export default function SimulationTerminal() {
                       {payDropdownOpen && (
                         <div className="absolute top-full right-0 mt-1 bg-[#0a0a0a] border border-white/10 z-50 flex flex-col shadow-xl whitespace-nowrap">
                           {[
-                            { value: "wRLP", label: "wRLP — Direct Repay" },
-                            { value: "waUSDC", label: "waUSDC — Swap & Repay" },
+                            { value: "wRLP", label: `${positionSymbol} — Direct Repay` },
+                            { value: "waUSDC", label: `${collateralSymbol} — Swap & Repay` },
                           ].map((opt) => {
                             const isSelected =
                               closeShortRepayMode === opt.value;
@@ -1351,7 +1366,7 @@ export default function SimulationTerminal() {
                   {/* Debt_To_Repay — always shown */}
                   <InputGroup
                     label="Debt_To_Repay"
-                    subLabel={`Total_Debt: ${brokerState?.debtPrincipal > 0 ? brokerState.debtPrincipal.toFixed(1) + " wRLP" : "—"}`}
+                    subLabel={`Total_Debt: ${brokerState?.debtPrincipal > 0 ? brokerState.debtPrincipal.toFixed(1) + ` ${positionSymbol}` : "—"}`}
                     value={closeShortDebt}
                     onChange={(v) => {
                       setCloseShortDebt(v);
@@ -1368,7 +1383,7 @@ export default function SimulationTerminal() {
                         setCloseShortAmount(v);
                       }
                     }}
-                    suffix="wRLP"
+                    suffix={positionSymbol}
                     onMax={() => {
                       const onChainDebt = brokerState?.debtPrincipal ?? 0;
                       setCloseShortDebt(String(onChainDebt));
@@ -1396,15 +1411,15 @@ export default function SimulationTerminal() {
                   {closeShortRepayMode === "wRLP" &&
                     closeShortDebtExceedsBrokerWrlp && (
                       <div className="text-[11px] font-mono text-red-400 uppercase tracking-widest">
-                        Insufficient broker wRLP. Deposit wRLP first or lower repay amount.
+                        Insufficient broker {positionSymbol}. Deposit {positionSymbol} first or lower repay amount.
                       </div>
                     )}
 
-                  {/* Amount_To_Pay — only in waUSDC mode */}
+                  {/* Amount_To_Pay — only in collateral mode */}
                   {closeShortRepayMode === "waUSDC" && (
                     <InputGroup
                       label="Amount_To_Pay"
-                      subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} waUSDC` : hasBroker ? "..." : "—"}`}
+                      subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} ${collateralSymbol}` : hasBroker ? "..." : "—"}`}
                       value={closeShortAmount}
                       onChange={(v) => {
                         setCloseShortAmount(v);
@@ -1416,7 +1431,7 @@ export default function SimulationTerminal() {
                           );
                         }
                       }}
-                      suffix="waUSDC"
+                      suffix={collateralSymbol}
                       onMax={() => {
                         const max = String(parseFloat(brokerBalance) || 0);
                         setCloseShortAmount(max);
@@ -1430,13 +1445,13 @@ export default function SimulationTerminal() {
                     />
                   )}
 
-                  {/* wRLP mode: show broker wRLP balance info */}
+                  {/* Position-token mode: show broker position-token balance info */}
                   {closeShortRepayMode === "wRLP" && (
                     <div className="flex justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
-                      <span>Broker_wRLP</span>
+                      <span>Broker_{positionSymbol}</span>
                       <span className="text-white font-mono">
                         {brokerWrlpBalance != null
-                          ? brokerWrlpBalance.toFixed(1) + " wRLP"
+                          ? brokerWrlpBalance.toFixed(1) + ` ${positionSymbol}`
                           : "—"}
                       </span>
                     </div>
@@ -1449,7 +1464,7 @@ export default function SimulationTerminal() {
                 <>
                   <InputGroup
                     label="Collateral"
-                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} waUSDC` : hasBroker ? "..." : "—"}`}
+                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} ${collateralSymbol}` : hasBroker ? "..." : "—"}`}
                     value={collateral}
                     onChange={(v) => setCollateral(Number(v))}
                     suffix="USDC"
@@ -1462,7 +1477,7 @@ export default function SimulationTerminal() {
                       shortAmount > 0 ? parseFloat(shortAmount.toFixed(6)) : ""
                     }
                     onChange={() => {}}
-                    suffix="wRLP"
+                    suffix={positionSymbol}
                     readOnly
                   />
 
@@ -1639,8 +1654,8 @@ export default function SimulationTerminal() {
                           <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">Tokens</div>
                           <div className="space-y-1">
                             {[
-                              { name: "waUSDC", value: brokerState ? `$${brokerState.collateralBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
-                              { name: "wRLP", value: brokerState ? `${(brokerState.wrlpTokenBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
+                              { name: collateralSymbol, value: brokerState ? `$${brokerState.collateralBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
+                              { name: positionSymbol, value: brokerState ? `${(brokerState.wrlpTokenBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
                             ].map((t) => (
                               <div key={t.name} className="relative">
                                 <button
@@ -1722,8 +1737,8 @@ export default function SimulationTerminal() {
                                         )}
                                         {lp.amount0 !== undefined && (
                                           <>
-                                            <div className="flex justify-between"><span>Token0 (wRLP)</span><span>{lp.amount0.toFixed(2)}</span></div>
-                                            <div className="flex justify-between"><span>Token1 (waUSDC)</span><span>{lp.amount1.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>Token0 ({positionSymbol})</span><span>{lp.amount0.toFixed(2)}</span></div>
+                                            <div className="flex justify-between"><span>Token1 ({collateralSymbol})</span><span>{lp.amount1.toFixed(2)}</span></div>
                                           </>
                                         )}
                                         {lp.entryPrice && (
@@ -1930,8 +1945,8 @@ export default function SimulationTerminal() {
                       <div className="p-6 space-y-4">
                         <div className="text-sm text-gray-500 uppercase tracking-widest mb-3">Debt</div>
                         {[
-                          { label: "Principal", value: brokerState ? `${brokerState.debtPrincipal.toFixed(2)} wRLP` : "—", color: "text-white" },
-                          { label: "True Debt", value: brokerState ? `${brokerState.trueDebt.toFixed(2)} wRLP` : "—", color: "text-white" },
+                          { label: "Principal", value: brokerState ? `${brokerState.debtPrincipal.toFixed(2)} ${positionSymbol}` : "—", color: "text-white" },
+                          { label: "True Debt", value: brokerState ? `${brokerState.trueDebt.toFixed(2)} ${positionSymbol}` : "—", color: "text-white" },
                           { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toFixed(2)}` : "$0.00", color: "text-red-400" },
                         ].map((d) => (
                           <div key={d.label} className="flex justify-between items-center">
@@ -1978,7 +1993,7 @@ export default function SimulationTerminal() {
                 </div>
                 <div className="p-4 flex flex-col gap-2">
                   {[
-                    { id: "mint", label: "Mint", desc: "Mint wRLP from collateral" },
+                    { id: "mint", label: "Mint", desc: `Mint ${positionSymbol} from collateral` },
                     { id: "twap", label: "TWAP", desc: "Time-weighted swap" },
                     { id: "lp", label: "LP", desc: "Provide liquidity" },
                     { id: "loop", label: "Loop", desc: "Leveraged position", soon: true },
@@ -2131,7 +2146,7 @@ export default function SimulationTerminal() {
               addToast({
                 type: "success",
                 title: "Long Closed",
-                message: `Sold ${parseFloat(closeAmount).toLocaleString()} wRLP for waUSDC`,
+                message: `Sold ${parseFloat(closeAmount).toLocaleString()} ${positionSymbol} for ${collateralSymbol}`,
                 duration: 5000,
               });
               setCloseAmount("");
@@ -2146,7 +2161,7 @@ export default function SimulationTerminal() {
                 addToast({
                   type: "success",
                   title: "Debt Repaid",
-                  message: `Repaid ${parseFloat(closeShortDebt).toLocaleString()} wRLP debt directly`,
+                  message: `Repaid ${parseFloat(closeShortDebt).toLocaleString()} ${positionSymbol} debt directly`,
                   duration: 5000,
                 });
                 setCloseShortDebt("");
@@ -2160,7 +2175,7 @@ export default function SimulationTerminal() {
                 addToast({
                   type: "success",
                   title: "Short Closed",
-                  message: `Spent ${parseFloat(closeShortAmount).toLocaleString()} waUSDC to repay wRLP debt`,
+                  message: `Spent ${parseFloat(closeShortAmount).toLocaleString()} ${collateralSymbol} to repay ${positionSymbol} debt`,
                   duration: 5000,
                 });
                 setCloseShortAmount("");
@@ -2186,7 +2201,7 @@ export default function SimulationTerminal() {
               addToast({
                 type: "success",
                 title: "Long Opened",
-                message: `Swapped ${Number(collateral).toLocaleString()} waUSDC for wRLP`,
+                message: `Swapped ${Number(collateral).toLocaleString()} ${collateralSymbol} for ${positionSymbol}`,
                 duration: 5000,
               });
             });
@@ -2320,8 +2335,8 @@ export default function SimulationTerminal() {
           );
         }}
         position={claimFeesLp}
-        token0={{ symbol: "wRLP" }}
-        token1={{ symbol: "waUSDC" }}
+        token0={{ symbol: positionSymbol }}
+        token1={{ symbol: collateralSymbol }}
         executing={lpExecuting}
         executionStep={lpStep}
         executionError={lpError}
@@ -2350,8 +2365,8 @@ export default function SimulationTerminal() {
           );
         }}
         position={withdrawLp}
-        token0={{ symbol: "wRLP" }}
-        token1={{ symbol: "waUSDC" }}
+        token0={{ symbol: positionSymbol }}
+        token1={{ symbol: collateralSymbol }}
         executing={lpExecuting}
         executionStep={lpStep}
         executionError={lpError}
@@ -2363,11 +2378,11 @@ export default function SimulationTerminal() {
         onClose={() => setDepositToken(null)}
         brokerAddress={brokerAddress}
         tokenAddress={
-          depositToken === "waUSDC"
+          depositToken === collateralSymbol
             ? marketInfo?.collateral?.address
             : enrichedMarketInfo?.position_token?.address
         }
-        tokenSymbol={depositToken || "waUSDC"}
+        tokenSymbol={depositToken || collateralSymbol}
         tokenDecimals={6}
         txPauseRef={txPauseRef}
         onSuccess={() => {
@@ -2381,9 +2396,9 @@ export default function SimulationTerminal() {
         isOpen={!!withdrawToken}
         onClose={() => setWithdrawToken(null)}
         brokerAddress={brokerAddress}
-        tokenSymbol={withdrawToken || "waUSDC"}
+        tokenSymbol={withdrawToken || collateralSymbol}
         brokerTokenBalance={
-          withdrawToken === "waUSDC"
+          withdrawToken === collateralSymbol
             ? parseFloat(brokerBalance || 0)
             : brokerWrlpBalance ?? 0
         }

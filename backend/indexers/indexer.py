@@ -22,6 +22,7 @@ from web3 import Web3
 import db
 import bootstrap
 from clickhouse_writer import SimClickHouseMirrorWriter
+from state import update_source_status
 from handlers import market as market_handler
 from handlers import broker as broker_handler
 from handlers import pool as pool_handler
@@ -181,6 +182,9 @@ TOPIC1_MARKET_ID_EVENTS = {
 
 # Events whose topic1 is Ghost marketId (V4 pool_id). Resolve via markets.pool_id.
 TOPIC1_POOL_ID_TO_MARKET_EVENTS = {
+    "Swap",
+    "ModifyLiquidity",
+    "Initialize",
     "StreamSubmitted",
     "AuctionCleared",
     "TokensClaimed",
@@ -413,9 +417,23 @@ async def dispatch(
         # newRateRay → compute index price: (rate * K_SCALAR) / 1e9 = WAD price
         new_rate_ray = decoded[0]
         index_price_wad = (new_rate_ray * 100) // 10**9  # K=100, RAY→WAD
-        await market_handler.handle_rate_updated(
-            conn, market_id, block_number, block_timestamp, index_price_wad
+        shared_oracle_markets = await conn.fetch(
+            "SELECT market_id FROM markets WHERE LOWER(mock_oracle) = $1",
+            contract,
         )
+        if shared_oracle_markets:
+            for row in shared_oracle_markets:
+                await market_handler.handle_rate_updated(
+                    conn,
+                    row["market_id"],
+                    block_number,
+                    block_timestamp,
+                    index_price_wad,
+                )
+        else:
+            await market_handler.handle_rate_updated(
+                conn, market_id, block_number, block_timestamp, index_price_wad
+            )
 
     elif event_name == "Swap":
         # id is topics[1] — resolve market from pool_id
@@ -498,7 +516,9 @@ async def dispatch(
             token_id = int.from_bytes(salt, 'big')
             if token_id > 0:
                 await lp_handler.enrich_tick_range(
-                    conn, token_id, tick_lower, tick_upper, pool_id=pool_id
+                    conn, token_id, tick_lower, tick_upper,
+                    liquidity_delta=liquidity_delta,
+                    pool_id=pool_id,
                 )
                 log.info("[dispatch] ModifyLiquidity enriched tokenId=%d ticks=[%d,%d] pool=%s",
                          token_id, tick_lower, tick_upper, pool_id[:18])
@@ -1131,6 +1151,18 @@ async def run(
                               last_indexed_at = EXCLUDED.last_indexed_at
                             WHERE indexer_state.last_indexed_block < EXCLUDED.last_indexed_block
                         """, mid, to_block)
+                        market_type = await conn.fetchval("SELECT market_type FROM markets WHERE market_id=$1", mid)
+                        await update_source_status(
+                            conn,
+                            f"sim-indexer:{mid}",
+                            "poller",
+                            market_id=mid,
+                            market_type=market_type,
+                            last_scanned_block=to_block,
+                            last_event_block=to_block if logs else last_block,
+                            last_processed_block=to_block,
+                            source_head_block=latest,
+                        )
                         # Step 5: Only materialize snapshot when batch had events
                         if logs:
                             await snapshot_handler.materialize_snapshot(conn, mid)

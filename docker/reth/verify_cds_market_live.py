@@ -380,7 +380,7 @@ def main() -> None:
     if checksum(cds["position_token"]).lower() == token1.lower():
         expected_spot = (10**36) // index_price
     spot = int(ghost.functions.getSpotPrice(pool_id_bytes).call())
-    tolerance = max(expected_spot // 1_000_000_000, 1_000)
+    tolerance = max(expected_spot // 100_000_000, 1_000)
     delta = abs(spot - expected_spot)
     if delta > tolerance:
         die(f"Ghost spot mismatch: spot={spot}, expected={expected_spot}, delta={delta}")

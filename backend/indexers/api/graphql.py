@@ -1069,6 +1069,36 @@ def _error_response(
     return JSONResponse(payload, status_code=status_code)
 
 
+def _admin_forbidden_response(
+    request: Request,
+    x_admin_token: Optional[str],
+    admin_token: str,
+    allow_unsafe_reset: bool,
+    admin_internal_only: bool,
+    log: logging.Logger,
+) -> JSONResponse | None:
+    client_host = request.client.host if request.client else None
+    if admin_internal_only and not _is_internal_client(client_host):
+        log.warning("Rejected admin call from non-internal client host=%s", client_host)
+        return JSONResponse(
+            {"status": "forbidden", "detail": "admin endpoint is internal-only"},
+            status_code=403,
+        )
+    if not admin_token and not allow_unsafe_reset:
+        log.warning("Rejected admin call because INDEXER_ADMIN_TOKEN is not configured")
+        return JSONResponse(
+            {"status": "forbidden", "detail": "admin token is not configured"},
+            status_code=403,
+        )
+    if admin_token and x_admin_token != admin_token:
+        log.warning("Rejected admin call with invalid token")
+        return JSONResponse(
+            {"status": "forbidden", "detail": "missing or invalid X-Admin-Token"},
+            status_code=403,
+        )
+    return None
+
+
 # ── App factory ────────────────────────────────────────────────────────────
 
 def create_app() -> FastAPI:
@@ -1129,25 +1159,16 @@ def create_app() -> FastAPI:
         import bootstrap
         log = logging.getLogger("admin.reset")
         try:
-            client_host = request.client.host if request.client else None
-            if admin_internal_only and not _is_internal_client(client_host):
-                log.warning("Rejected /admin/reset from non-internal client host=%s", client_host)
-                return JSONResponse(
-                    {"status": "forbidden", "detail": "admin reset is internal-only"},
-                    status_code=403,
-                )
-            if not admin_token and not allow_unsafe_reset:
-                log.warning("Rejected /admin/reset because INDEXER_ADMIN_TOKEN is not configured")
-                return JSONResponse(
-                    {"status": "forbidden", "detail": "admin reset token is not configured"},
-                    status_code=403,
-                )
-            if admin_token and x_admin_token != admin_token:
-                log.warning("Rejected /admin/reset call with invalid token")
-                return JSONResponse(
-                    {"status": "forbidden", "detail": "missing or invalid X-Admin-Token"},
-                    status_code=403,
-                )
+            denied = _admin_forbidden_response(
+                request,
+                x_admin_token,
+                admin_token,
+                allow_unsafe_reset,
+                admin_internal_only,
+                log,
+            )
+            if denied is not None:
+                return denied
             pool = await get_pool()
             log.info("POST /admin/reset — truncating all indexed data")
             await bootstrap.reset(pool)  # truncates + re-seeds from deployment.json
@@ -1166,6 +1187,122 @@ def create_app() -> FastAPI:
             return _error_response(
                 500,
                 "reset failed",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
+
+    @app.post("/admin/sync-config")
+    async def admin_sync_config(
+        request: Request,
+        x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+    ):
+        """Non-destructively upsert markets from deployment.json."""
+        import bootstrap
+        log = logging.getLogger("admin.sync_config")
+        try:
+            denied = _admin_forbidden_response(
+                request,
+                x_admin_token,
+                admin_token,
+                allow_unsafe_reset,
+                admin_internal_only,
+                log,
+            )
+            if denied is not None:
+                return denied
+
+            pool = await get_pool()
+            cfg = await bootstrap.sync_config(pool)
+            markets = cfg.get("markets") if isinstance(cfg.get("markets"), dict) else {}
+            market_ids = [
+                entry.get("market_id")
+                for entry in markets.values()
+                if isinstance(entry, dict) and entry.get("market_id")
+            ]
+            if not market_ids and cfg.get("market_id"):
+                market_ids = [cfg["market_id"]]
+            log.info("Sync config complete markets=%s", market_ids)
+            return {"status": "ok", "markets": market_ids, "destructive": False}
+        except Exception as e:
+            log.error("Sync config failed: %s", e, exc_info=True)
+            return _error_response(
+                500,
+                "sync config failed",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
+
+    @app.post("/admin/rewind-market")
+    async def admin_rewind_market(
+        request: Request,
+        market_id: str = FastAPIQuery(...),
+        block: Optional[int] = FastAPIQuery(default=None),
+        x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+    ):
+        """Non-destructively move one market cursor backward for replay."""
+        from state import update_source_status
+
+        log = logging.getLogger("admin.rewind_market")
+        try:
+            denied = _admin_forbidden_response(
+                request,
+                x_admin_token,
+                admin_token,
+                allow_unsafe_reset,
+                admin_internal_only,
+                log,
+            )
+            if denied is not None:
+                return denied
+
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT market_id, market_type, deploy_block FROM markets WHERE market_id=$1",
+                    market_id,
+                )
+                if not row:
+                    return JSONResponse(
+                        {"status": "not_found", "detail": "unknown market_id"},
+                        status_code=404,
+                    )
+                target_block = int(block if block is not None else row["deploy_block"])
+                if target_block < int(row["deploy_block"] or 0):
+                    target_block = int(row["deploy_block"] or 0)
+                await conn.execute(
+                    """
+                    INSERT INTO indexer_state (market_id, last_indexed_block, total_events)
+                    VALUES ($1, $2, 0)
+                    ON CONFLICT (market_id) DO UPDATE SET
+                      last_indexed_block = EXCLUDED.last_indexed_block,
+                      last_indexed_at = NOW()
+                    """,
+                    market_id,
+                    target_block,
+                )
+                await update_source_status(
+                    conn,
+                    f"sim-indexer:{market_id}",
+                    "rewind",
+                    market_id=market_id,
+                    market_type=row["market_type"],
+                    last_scanned_block=target_block,
+                    last_processed_block=target_block,
+                    source_head_block=target_block,
+                )
+
+            log.info("Rewound market %s cursor to block %d", market_id, target_block)
+            return {
+                "status": "ok",
+                "market_id": market_id,
+                "last_indexed_block": target_block,
+                "destructive": False,
+            }
+        except Exception as e:
+            log.error("Rewind market failed: %s", e, exc_info=True)
+            return _error_response(
+                500,
+                "rewind market failed",
                 exc=e,
                 expose_errors=expose_internal_errors,
             )

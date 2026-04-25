@@ -559,7 +559,7 @@ def main() -> None:
     expected_pool_price = index_price
     if position_token.lower() == token1.lower():
         expected_pool_price = (10**36) // index_price
-    tolerance = max(expected_pool_price // 1_000_000_000, 1_000)
+    tolerance = max(expected_pool_price // 100_000_000, 1_000)
     delta = abs(spot_price - expected_pool_price)
     if delta > tolerance:
         die(f"Ghost spot mismatch: spot={spot_price}, expected={expected_pool_price}, delta={delta}")

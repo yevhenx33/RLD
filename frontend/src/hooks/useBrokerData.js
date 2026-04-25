@@ -132,6 +132,8 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
     marketInfo?.infrastructure?.twamm_hook;
   const collateralAddr = marketInfo?.collateral?.address;
   const positionAddr = marketInfo?.positionToken?.address || marketInfo?.position_token?.address;
+  const collateralSymbol = marketInfo?.collateral?.symbol || "waUSDC";
+  const positionSymbol = marketInfo?.position_token?.symbol || marketInfo?.positionToken?.symbol || "wRLP";
 
   // ── Core fetch: GQL + minimal RPC → single setState ───────────
   const fetchAll = useCallback(async (force = false) => {
@@ -194,7 +196,9 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
         const isExpired = timeLeftSec === 0;
         const isDone = isExpired;
         const isBuy = evt.zeroForOne === ZERO_FOR_ONE_LONG;
-        const direction = isBuy ? "waUSDC → wRLP" : "wRLP → waUSDC";
+        const direction = isBuy
+          ? `${collateralSymbol} → ${positionSymbol}`
+          : `${positionSymbol} → ${collateralSymbol}`;
         const tracked =
           trackedOrderId != null &&
           orderIdKey(trackedOrderId) === orderIdKey(evt.orderId);
@@ -208,8 +212,8 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
           direction,
           isBuy,
           amountIn: amountInTokens,
-          sellToken: isBuy ? "waUSDC" : "wRLP",
-          buyToken: isBuy ? "wRLP" : "waUSDC",
+          sellToken: isBuy ? collateralSymbol : positionSymbol,
+          buyToken: isBuy ? positionSymbol : collateralSymbol,
           earned: 0,
           earnedUsd: 0,
           valueUsd: fallbackValueUsd,

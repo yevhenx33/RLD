@@ -1,0 +1,9 @@
+Absolute lowest p-value (Math strongest cointegration):
+Window: 30 days (2025-05-07 to 2025-06-05)
+p-value: 0.00000001
+Correlation: 0.3523
+
+Highest correlation where p-value < 0.05 (Tightest linear coupling):
+Window: 90 days (2025-01-03 to 2025-04-03)
+p-value: 0.00597112
+Correlation: 0.9564

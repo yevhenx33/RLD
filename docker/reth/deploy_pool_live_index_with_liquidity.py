@@ -269,9 +269,21 @@ def deploy_contract_with_forge(
         if match:
             return ensure_checksum(match.group(1))
 
-        if "replacement transaction underpriced" in output.lower() or "nonce too low" in output.lower():
-            info(f"{contract} transient deploy issue (attempt {attempt}/5), retrying...")
-            time.sleep(1)
+        lower = output.lower()
+        retryable = (
+            "replacement transaction underpriced" in lower
+            or "nonce too low" in lower
+            or "temporary internal error" in lower
+            or "please retry" in lower
+            or "failed to get account" in lower
+            or "http error 500" in lower
+            or "code\":19" in lower
+            or "code: 19" in lower
+        )
+        if retryable:
+            sleep_s = min(2 ** (attempt - 1), 8)
+            info(f"{contract} transient deploy issue (attempt {attempt}/5), retrying in {sleep_s}s...")
+            time.sleep(sleep_s)
             continue
         die(f"Could not parse deployment address for {contract}. Output tail:\n{output[-1200:]}")
 

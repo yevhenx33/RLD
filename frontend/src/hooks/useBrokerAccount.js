@@ -102,13 +102,14 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
   // ── Fetch broker's waUSDC balance on demand ────────────────────
   const fetchBrokerBalance = useCallback(
     async (targetBrokerAddress) => {
-      const normalizedTarget = targetBrokerAddress?.toLowerCase();
-      if (!brokerAddress || !waUsdcAddr) return null;
-      if (normalizedTarget && normalizedTarget !== brokerAddress.toLowerCase()) {
+      const resolvedBroker = targetBrokerAddress || brokerAddress;
+      const normalizedTarget = resolvedBroker?.toLowerCase();
+      if (!resolvedBroker || !waUsdcAddr) return null;
+      if (normalizedTarget !== brokerAddress?.toLowerCase()) {
         try {
           const provider = rpcProvider;
           const token = new ethers.Contract(waUsdcAddr, ERC20_ABI, provider);
-          const bal = await token.balanceOf(targetBrokerAddress);
+          const bal = await token.balanceOf(resolvedBroker);
           return ethers.formatUnits(bal, 6);
         } catch (e) {
           console.warn("Failed to fetch broker balance:", e);
@@ -205,12 +206,14 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       const receipt = await tx.wait();
 
       // Parse BrokerCreated event from logs
+      let createdBroker = null;
       const iface = new ethers.Interface(FACTORY_ABI);
       for (const log of receipt.logs) {
         try {
           const parsed = iface.parseLog({ topics: log.topics, data: log.data });
           if (parsed && parsed.name === "BrokerCreated") {
-            setBrokerAddress(parsed.args.broker);
+            createdBroker = parsed.args.broker;
+            setBrokerAddress(createdBroker);
             break;
           }
         } catch {
@@ -220,6 +223,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
 
       setHasBroker(true);
       setStep("Broker deployed ✓");
+      return createdBroker;
     } catch (e) {
       console.error("Broker creation failed:", e);
       // User rejected or tx failed
@@ -229,6 +233,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
           : e.message || "Failed to create broker";
       setError(msg);
       setStep("");
+      return null;
     } finally {
       setCreating(false);
     }
@@ -236,11 +241,11 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
 
   // ── Deposit waUSDC into broker (MetaMask signed) ────────────────
   const depositFunds = useCallback(
-    async (amount) => {
-      if (!account || !brokerAddress || !waUsdcAddr) return;
+    async (amount, targetBrokerAddress = brokerAddress) => {
+      if (!account || !targetBrokerAddress || !waUsdcAddr) return null;
       if (!window.ethereum) {
         setError("MetaMask not found");
-        return;
+        return null;
       }
 
       setDepositing(true);
@@ -256,17 +261,18 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
         const token = new ethers.Contract(waUsdcAddr, ERC20_ABI, signer);
 
         setStep("Confirm in wallet...");
-        const tx = await token.transfer(brokerAddress, amountWei, {
+        const tx = await token.transfer(targetBrokerAddress, amountWei, {
           gasLimit: 200_000,
         });
 
         setStep("Waiting for confirmation...");
-        await tx.wait();
+        const receipt = await tx.wait();
 
         // Refresh broker balance after deposit
-        await fetchBrokerBalance();
+        await fetchBrokerBalance(targetBrokerAddress);
 
         setStep("Deposit confirmed ✓");
+        return receipt;
       } catch (e) {
         console.error("Deposit failed:", e);
         const msg =
@@ -275,6 +281,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
             : e.message || "Failed to deposit funds";
         setError(msg);
         setStep("");
+        return null;
       } finally {
         setDepositing(false);
       }

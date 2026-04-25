@@ -1,0 +1,707 @@
+# Parametric Credit Default Swaps
+
+On-chain insurance via rate-bounded everlasting options
+
+## Abstract
+
+Decentralized lending protocols secure billions of dollars in capital, yet market participants lack objective, continuous-time mechanisms to insure against systemic insolvency events. Existing decentralized insurance models replicate traditional finance paradigms by relying on subjective governance arbitration and discrete expiry dates, resulting in fragmented liquidity and settlement latency. We introduce a trustless parametric credit default swap that utilizes algorithmic interest rate models as deterministic solvency oracles. We prove that calibrating amortization to the insured market's maximum borrow rate makes fixed-coverage premium costs collapse to the observed borrow rate itself. Under this calibration, underwriters earn the pool borrow rate on committed contingent capital, which weakly dominates passive supply yield and typically preserves a strictly positive convex risk premium inherited from the lending market's own interest rate model.
+
+## Introduction
+
+The pricing and transfer of default risk are fundamental to the stability of financial markets. In traditional finance, this is achieved via Credit Default Swaps (CDS) [1]. However, this architecture relies on subjective human arbitration - specifically, the International Swaps and Derivatives Association (ISDA) [2] Determinations Committees - to declare credit events, introducing latency and severe counterparty insolvency risk.
+
+Historically, translating insurance architecture to decentralized finance (DeFi) has proven challenging due to a reliance on similar subjective state resolution. Incumbent decentralized insurance protocols such as Nexus Mutual [3] and Sherlock [4] require governance coordination to adjudicate claims, replicating ISDA friction and introducing subjective denial risk.
+
+Our work builds on structural innovations in continuous-time market design, specifically Everlasting Options [5], Time-Weighted Average Market Makers (TWAMM) [6], and Automated Market Making under Loss-Versus-Rebalancing (LVR) [7].
+
+We propose that the deterministic Interest Rate Models (IRMs) native to protocols such as Aave and Morpho act as continuous, parametric solvency oracles. During systemic liquidity crises, algorithmic lending rates depart from low-variance diffusion and exhibit heavy-tailed jump dynamics toward absolute maximums. By indexing an everlasting option to this rate and executing liquidity continuously via TWAMMs, we construct a fully collateralized, zero-discretion CDS market capable of algorithmically pricing tail risk.
+
+While everlasting options have been applied to asset price exposure (Opyn Squeeth, $P^2$ perps), this work is the first to index the everlasting option structure to algorithmic interest rates as a parametric solvency-detection mechanism.
+
+## Background and Theoretical Motivation
+
+To establish the macroeconomic necessity of a continuous-time Credit Default Swap (CDS) within decentralized finance (DeFi), we must first formalize the exact economic nature of passive liquidity supply. The current architecture of decentralized lending is predicated on deterministic Interest Rate Models (IRMs) and algorithmic liquidation waterfalls, which inherently misprice heavy-tailed volatility and jump-to-default risk.
+
+### The Options-Theoretic Isomorphism of Non-Recourse Debt
+
+In traditional corporate finance, the Merton Model of Corporate Debt [11] established that secured, limited-liability debt is economically isomorphic to holding a risk-free bond while simultaneously writing a put option on the underlying collateral. Because DeFi lending relies strictly on cryptographic escrow - meaning loans are entirely non-recourse and protocols cannot enforce off-chain deficiency judgments - this options-theoretic framework can be applied directly.
+
+Let $V_t$ represent the market value of the collateral and $D$ represent the nominal debt obligation. The borrower retains the right, but not the obligation, to repay $D$ to reclaim $V_t$. Upon terminal default, the borrower's payoff is structurally identical to holding a European call option on the collateral: $\max(V_t - D, 0)$
+
+Conversely, the passive supplier provides $D$ and expects $D$ in return. However, if the collateral value collapses below the debt value $V_t < D$ and the protocol accrues bad debt, the supplier absorbs the loss. The supplier's terminal payoff profile evaluates to:
+
+$$
+\min(V_t, D) = D - \max(D - V_t, 0)
+$$
+
+This identity mathematically proves that supplying liquidity to a DeFi protocol equates to holding a risk-free bond $D$ while simultaneously selling a cash-secured put option $\max(D - V_t, 0)$ to the borrower. Over-collateralization parameters, such as a 75% Loan-to-Value (LTV) limit, only dictate the initial strike price, meaning the supplier is writing an out-of-the-money (OTM) put.
+
+This structural design - where passive yield masks an embedded short-volatility position - has a direct mathematical precedent in automated market maker (AMM) geometry. As formalized by the literature surrounding the Panoptic protocol [12], providing concentrated liquidity to a Constant Function Market Maker (e.g., Uniswap V3) is mathematically equivalent to selling a perpetual, cash-secured put option. 
+
+### Collateral Evolution: From Diffusion to Jump-to-Default
+
+In quantitative finance, the premium collected for writing a put option must scale exponentially with the Implied Volatility $\sigma$ and credit spread of the underlying collateral. Legacy lending protocols were initially architected to accept highly liquid, foundational layer-1 assets (e.g., native ETH, WBTC). Economically, these function as "digital commodities," whose primary risk vector is exogenous market volatility following a continuous diffusion process (Geometric Brownian Motion). Under continuous diffusion, price declines are relatively smooth, allowing the protocol's algorithmic liquidators time to actively delta-hedge the position by auctioning collateral into deep secondary markets before the put option strikes in-the-money.
+
+However, modern isolated lending markets are predominantly capitalized by yield-bearing collateral: Liquid Staking Tokens (LSTs), Liquid Restaking Tokens (LRTs), and synthetic stablecoins. Economically, these assets are not decentralized commodities; they are synthetic corporate debt. They represent unsecured claims on the cash flows, custodial integrity, and smart-contract security of third-party protocols.
+
+Consequently, the risk profile of yield-bearing collateral is dominated not by continuous price diffusion, but by Jump-to-Default (JTD) risk, modeled as a Poisson jump process. If a yield-generating protocol suffers a smart contract exploit, slashing cascade, or custodial failure, the collateral's value does not smoothly decline - it gaps instantaneously to zero.
+
+### The Pricing Failure of Algorithmic Interest Rates
+
+During a JTD event, secondary market liquidity evaporates simultaneously. Algorithmic liquidators are mathematically and physically powerless to intervene because no counterparty bid exists to absorb the auction. The LTV buffer is bypassed instantaneously, the protocol's delta-hedge fails, and the supplier's short put option is violently exercised.
+
+This exposes the fundamental flaw in utilizing static algorithmic IRMs for yield-bearing assets. IRMs natively assume that default risk is mitigated by liquidators, but liquidators cannot hedge Poisson jump risk. Furthermore, IRMs operate as algorithmic curves defined strictly as a function of capital scarcity: $r_t = f(U_t)$. Because IRMs solely price liquidity time-preference rather than credit spreads, suppliers lending against yield-bearing assets are unwittingly underwriting pure corporate default risk for unadjusted, utilization-based yields. Borrowers extract asymmetric value (unpriced volatility), while suppliers bear uncompensated tail risk.
+
+### Unbundling Tail Risk via Parametric CDS
+
+Because base lending protocols are mathematically incapable of dynamically pricing jump-diffusion risk, this tail exposure bleeds out of the protocol uncompensated. This structural market failure necessitates the continuous-time Parametric CDS.
+
+The Parametric CDS unbundles the Merton identity by bifurcating the yield. The Passive Supplier pays a continuous borrow-rate-indexed premium to purchase fixed protection. In doing so, they synthetically buy back the exact put option they implicitly sold to the borrower (a Protective Put). This mathematically mitigates their JTD exposure, transforming their position back into a true risk-free bond:
+
+$$
+\underbrace{[D - \max(D - V_t, 0)]}_{\text{Passive Lending Position}} + \underbrace{\max(D - V_t, 0)}_{\text{Protective Put}} = D
+$$
+
+The Underwriter steps in as the explicit volatility counterparty. By escrowing absolute collateral bounds $P_{max}$ to absorb the naked put, the underwriter earns the tail-risk premium.
+
+Unlike the underlying lending protocol, the parametric CDS successfully prices this options risk. Because a delta-hedge failure inevitably strands bad debt and forces pool utilization toward the steep region of the interest rate curve, the premium paid to underwriters accelerates with the same variable that prices marginal liquidity scarcity: the borrow rate $r_t$. This mechanism isolates the "liquidity yield" (retained by the supplier) from the "solvency yield" (captured by the underwriter), allowing the open market to organically price and trade the implied jump-risk of synthetic corporate debt natively on-chain.
+
+## **State Space: Bounded Jump-Diffusions**
+
+Standard derivative pricing assumes underlying assets follow geometric Brownian motion with normally distributed log-returns. This assumption fails for algorithmic interest rates, which exhibit bounded, mean-reverting behavior in normal regimes but transition to heavy-tailed affine jump-diffusions (AJDs) or self-exciting Hawkes processes during liquidity shocks. Gaussian distributions are explicitly rejected due to their inability to model tail risks in deterministic automated market maker (AMM) structures.
+
+Let $r_t \in [0, r_{max}]$ denote the instantaneous annualized borrowing rate of a lending pool at time $t$. The IRM algorithmically maps pool utilization $U_t \in [0,1]$ to $r_t$. As $U_t \to 1$, the continuous piecewise function strictly dictates $r_t \to r_{max}$ to defensively halt capital flight.
+
+![*Fig 1. Morpho AdaptiveCurveIRM mapped to an option payout profile. The base rate serves as an 'out-of-the-money' baseline, while the Target Utilization ($U_t = 0.90$) acts exclusively as a Strike Price (S). Once $U_t > S$, the algorithm mechanically forces a massive convex APY expansion toward the deterministic constraint boundary.*](assets/irm_option_convexity.png)
+
+*Fig 1. Morpho AdaptiveCurveIRM mapped to an option payout profile. The base rate serves as an 'out-of-the-money' baseline, while the Target Utilization ($U_t = 0.90$) acts exclusively as a Strike Price (S). Once $U_t > S$, the algorithm mechanically forces a massive convex APY expansion toward the deterministic constraint boundary.*
+
+**The Problem Space: Algorithmic Liquidity Freezes**
+
+Real-world data proves that the deterministic transition to jump-diffusion is an inevitability of pool architecture, not a theoretical edge case. Utilization traps are a deterministic feature of pool-based lending protocols IRM geometry.
+
+![*Fig 2. The Stream Finance Default (Nov 2025): A $93M liquidity collapse where lending protocol mechanically forced utilization to 100%, routing the IRM natively across the strike price and into the hardcap boundary (75% APY).*](assets/stream_finance_crisis.png)
+
+*Fig 2. The Stream Finance Default (Nov 2025): A $93M liquidity collapse where lending protocol mechanically forced utilization to 100%, routing the IRM natively across the strike price and into the hardcap boundary (75% APY).*
+
+**Definition 1 (The Solvency Oracle):**
+
+We define the index price $P_{index}(t)$ of the CDS contract relative to a continuous scalar $K$ of the borrowing rate. For dollar-denominated normalization, we set $K = 100$:
+
+$$
+ P_{index}(t) = 100 \cdot r_t
+$$
+
+**Constraint 1 (Absolute Liability Bound):**
+
+To preclude systemic undercollateralization, maximum intrinsic liability must be deterministically capped. Because the IRM is strictly bounded by $r_{max}$, the maximum intrinsic value is:
+
+$$
+ P_{max} = 100 \cdot r_{max}
+$$
+
+Underwriters must escrow exactly $P_{max}$ in orthogonal, exogenous collateral at minting. This defines a strict upper boundary condition, mathematically guaranteeing solvency under worst-case terminal states.
+
+## Amortizing Perpetual Option Mechanics
+
+To eliminate maturity fragmentation, the CDS operates as an Amortizing Perpetual Option (AmPO) [13]. The Normalization Factor provides deterministic accounting for time-decaying token liability and newly available mint capacity. Economic premium is then transferred explicitly through the fixed-coverage stream rather than being hidden as an excessive decay tax on the protection buyer.
+
+**Definition (State Decay):**
+
+Let $F > 0$ represent a constant continuous decay coefficient. The payout coverage of all minted tokens amortizes via a global Normalization Factor $NF(t)$:
+
+$$
+ NF(t) = e^{-F \cdot t}
+$$
+
+where $t$ is expressed in annualized units. Given continuous arbitrage and frictionless execution, the spot price $P_{mkt}(t)$ of the token on a secondary AMM converges strictly to its discounted intrinsic value:
+
+$$
+ P_{mkt}(t) = 100 \cdot r_t \cdot e^{-F \cdot t} 
+$$
+
+![*Fig 3. The Over-Collateralization Trap of Everlasting Option: If liability decays continuously while escrow remains locked, the capital backing-per-token geometrically increases.*](assets/liability_decay.png)
+
+*Fig 3. The Over-Collateralization Trap of Everlasting Option: If liability decays continuously while escrow remains locked, the capital backing-per-token geometrically increases.*
+
+## **Parameter Calibration: Borrow-Rate Premium Invariant**
+
+For continuous market equilibrium, the expected yield captured by the underwriter $Y_{CDS}$ must strictly exceed the opportunity cost of passively supplying capital to the underlying lending pool $r_{supply}$.
+
+**Invariant (Supply-Side Floor):**
+
+$$
+Y_{CDS} \geq r_{supply}
+$$
+
+The passive supply rate is mechanically defined by utilization, the borrow rate, and the unreserved fraction:
+
+$$
+r_{supply}(t) = U_t \cdot r_t \cdot (1 - R)
+$$
+
+where $U_t \in [0,1]$ is utilization and $R \in [0,1)$ is the reserve factor.
+
+**Theorem (Borrow-Rate Premium Calibration):**
+
+*Let $r_t \in [0,r_{max}]$ be the instantaneous borrow rate of the insured lending pool, let $r_{max}$ be the maximum borrow rate admitted by the lending market's IRM, and let $F$ be the AmPO decay coefficient. Setting*
+
+$$
+F = r_{max}
+$$
+
+*makes the continuous fixed-coverage premium paid by the buyer equal to the observed borrow rate of the insured pool, and makes underwriter yield weakly dominate passive supply yield for all valid utilization states.*
+
+**Proof of premium collapse:**
+
+A fiduciary seeking constant absolute coverage $C$ must hold token inventory:
+
+$$
+N(t) = \frac{C}{P_{max} \cdot NF(t)}
+$$
+
+Because $NF(t) = e^{-Ft}$, this becomes:
+
+$$
+N(t) = \frac{C}{P_{max}} e^{Ft}
+$$
+
+The required continuous acquisition rate is:
+
+$$
+\frac{dN}{dt} = \frac{C}{P_{max}}F e^{Ft}
+$$
+
+The market price of the token under the AmPO accounting convention is:
+
+$$
+P_{mkt}(t) = P_{index}(t) \cdot NF(t) = 100r_t e^{-Ft}
+$$
+
+Therefore the cash stream required to maintain fixed coverage is:
+
+$$
+\frac{d\text{Premium}}{dt}
+= \frac{dN}{dt} \cdot P_{mkt}(t)
+= \left(\frac{C}{P_{max}}F e^{Ft}\right)\left(100r_t e^{-Ft}\right)
+$$
+
+Since $P_{max} = 100r_{max}$:
+
+$$
+\frac{d\text{Premium}}{dt} = C \cdot F \cdot \frac{r_t}{r_{max}}
+$$
+
+Under the canonical calibration $F = r_{max}$:
+
+$$
+\frac{d\text{Premium}}{dt} = C \cdot r_t
+$$
+
+Thus the buyer pays the insured pool's own borrow rate to rent contingent default capital from the underwriter. The AmPO decay remains an accounting mechanism that releases minting capacity over time; it does not impose an additional target-utilization tax on the buyer.
+
+**Proof of the underwriter invariant:**
+
+An underwriter who escrows capital $C$ and sells fixed coverage earns:
+
+$$
+Y_{CDS} = r_t
+$$
+
+The passive lender in the underlying pool earns:
+
+$$
+r_{supply} = U_t r_t(1-R)
+$$
+
+The invariant requires:
+
+$$
+r_t \ge U_t r_t(1-R)
+$$
+
+For $r_t \ge 0$, this reduces to:
+
+$$
+1 \ge U_t(1-R)
+$$
+
+This inequality is true for all $U_t \in [0,1]$ and all $R \in [0,1)$. Therefore, with $F=r_{max}$, the underwriter yield is globally bounded below by the passive supply yield without requiring any additional eligibility constraint on $r_{max}$.
+
+**Decomposition of the Structural Risk Premium:**
+
+The structural risk premium $\alpha$ is the spread between the underwriter's borrow-rate premium and the underlying pool's passive supply yield:
+
+$$
+\alpha = Y_{CDS} - r_{supply}
+$$
+
+Substituting $Y_{CDS}=r_t$:
+
+$$
+\alpha = r_t - U_t r_t(1-R)
+$$
+
+$$
+\alpha = r_t \cdot \left(1 - U_t(1-R)\right)
+$$
+
+Because $U_t(1-R) \le 1$, $\alpha \ge 0$ globally. The spread is strictly positive whenever $R>0$, $U_t<1$, or both. At terminal utilization with zero reserve factor, the risk premium converges to zero; in every realistic lending market with reserve capture or non-terminal utilization, the underwriter earns strictly more than the passive supplier.
+
+**Convexity Source:**
+
+The convexity of $Y_{CDS}$ is inherited from the lending protocol's own interest rate model. The premium is linear in $r_t$, but $r_t$ is not linear in utilization. As utilization crosses the IRM kink, the slope of $r_t(U_t)$ increases sharply, causing:
+
+$$
+\frac{dY_{CDS}}{dU_t} = \frac{dr_t}{dU_t}
+$$
+
+to accelerate precisely during liquidity stress. Target utilization therefore enters the CDS model through the lending market's endogenous rate curve, not through a separate exponential calibration of $F$. Using both the IRM kink and $F=-\ln(1-\delta)$ would double-count utilization stress.
+
+**Parameter Sensitivity**
+
+The revised calibration isolates the economically relevant variables:
+
+| Parameter | Perturbation | Effect on $Y_{CDS}$ and $\alpha$ | Interpretation |
+| --- | --- | --- | --- |
+| $r_t$ | Borrow rate rises | $Y_{CDS}$ and $\alpha$ rise linearly | Higher observed borrowing cost directly prices higher contingent-capital rent |
+| $U_t$ | Utilization rises | $r_{supply}$ rises and $\alpha$ narrows at fixed $r_t$ | Passive lender opportunity cost increases with utilization |
+| $R$ | Reserve factor rises | $r_{supply}$ falls and $\alpha$ widens | Protocol reserve capture lowers passive supplier yield |
+| $r_{max}$ | Rate cap changes | Changes $P_{max}$ and token inventory growth, but not premium rate under $F=r_{max}$ | Higher caps increase per-token liability and reduce token count per unit coverage |
+| $\lambda$ | Optional risk multiplier | $Y_{CDS}=\lambda r_t$ | Governance or vaults may demand excess spread for thin or correlated markets |
+
+A market or vault may set $\lambda>1$ to compensate for expected loss, correlation, operational risk, or liquidity imbalance. The canonical primitive, however, requires no such multiplier to satisfy the supply-side floor:
+
+$$
+Y_{CDS}^{(\lambda)} = \lambda r_t,\quad \lambda \ge 1
+$$
+
+$$
+\alpha^{(\lambda)} = r_t \cdot \left(\lambda - U_t(1-R)\right)
+$$
+
+For $\lambda \ge 1$, $\alpha^{(\lambda)} \ge 0$ globally.
+
+## **Market Microstructure and Execution Friction**
+
+Holding a static AmPO balance induces coverage decay. The mechanism therefore distinguishes between the token inventory required to maintain fixed coverage and the economic premium paid to underwriters. The token balance grows through time; the net premium cost does not explode, because the token price decays through the same Normalization Factor.
+
+**Fiduciary Execution: Constant-Coverage TWAMM**
+
+Let a fiduciary target fixed absolute coverage $C$ over term $T$. Effective coverage at time $t$ is:
+
+$$
+\text{Coverage}(t) = N(t) \cdot P_{max} \cdot NF(t)
+$$
+
+The fixed-coverage constraint is:
+
+$$
+N(t) \cdot P_{max} \cdot NF(t) = C
+$$
+
+Solving for required token inventory:
+
+$$
+N(t) = \frac{C}{P_{max} \cdot NF(t)} = \frac{C}{P_{max}}e^{Ft}
+$$
+
+Under canonical calibration $F=r_{max}$:
+
+$$
+N(t) = \frac{C}{P_{max}}e^{r_{max}t}
+$$
+
+The initial token purchase is:
+
+$$
+N_0 = \frac{C}{P_{max}}
+$$
+
+and the required incremental token acquisition is:
+
+$$
+\Delta N_T = \frac{C}{P_{max}}\left(e^{r_{max}T} - 1\right)
+$$
+
+The fiduciary executes this inventory growth through a TWAMM buy order. If the borrow rate is locally constant, the premium budget required for that stream is:
+
+$$
+\text{Premium}_{0,T} = C \cdot r_t \cdot T
+$$
+
+For a variable borrow path, the exact premium is the time integral:
+
+$$
+\text{Premium}_{0,T} = \int_0^T C \cdot r_t \, dt
+$$
+
+This expression is economically transparent: the protection buyer pays the insured market's observed borrow rate on the insured notional for the protection term.
+
+**Buyer Initial and Terminal State**
+
+For a one-year policy with flat borrow rate $r_0$, the fiduciary begins with:
+
+$$
+N_0 = \frac{C}{100r_{max}}, \qquad \text{InitialCost}_0 = N_0 \cdot 100r_0 = C\frac{r_0}{r_{max}}
+$$
+
+During the year, the fiduciary streams:
+
+$$
+\text{Premium}_{0,1} = C r_0
+$$
+
+At maturity, absent settlement/default, the fiduciary holds:
+
+$$
+N_1 = N_0 e^{r_{max}}
+$$
+
+and the token market price is:
+
+$$
+P_{mkt}(1) = 100r_0e^{-r_{max}}
+$$
+
+The terminal reclaim value is:
+
+$$
+N_1 \cdot P_{mkt}(1)
+= \left(\frac{C}{100r_{max}}e^{r_{max}}\right)\left(100r_0e^{-r_{max}}\right)
+= C\frac{r_0}{r_{max}}
+$$
+
+Therefore, in the flat-rate no-default case, the initial token purchase is economically recoverable at maturity, and the net insurance cost is exactly the streamed premium $Cr_0$. In stochastic-rate paths, reclaim value varies with terminal $r_T$, while the premium paid is the realized integral $\int C r_t dt$.
+
+**Numerical Example**
+
+Let $C = \$100{,}000$, $r_0=7.44\%$, and $r_{max}=75\%$. Then:
+
+$$
+P_{max}=75,\qquad N_0=\frac{100{,}000}{75}=1{,}333.33
+$$
+
+The initial token purchase is:
+
+$$
+1{,}333.33 \cdot 7.44 = \$9{,}920
+$$
+
+The one-year fixed-coverage premium stream is:
+
+$$
+100{,}000 \cdot 7.44\% = \$7{,}440
+$$
+
+At maturity:
+
+$$
+N_1 = 1{,}333.33 \cdot e^{0.75} = 2{,}822.55
+$$
+
+and the token price decays to:
+
+$$
+7.44 \cdot e^{-0.75} = \$3.51
+$$
+
+so the reclaim value remains approximately:
+
+$$
+2{,}822.55 \cdot 3.51 = \$9{,}920
+$$
+
+The posted capital is therefore not the same as the insurance cost. The economic premium is the borrow-rate stream; the initial token purchase is recoverable absent settlement and terminal rate movement.
+
+## **Execution Architecture: Isolated Brokers and Strategy Vaults**
+
+The primitive execution unit is not a pooled underwriter vault. It is an isolated broker capable of holding collateral, minting CDS tokens, routing TWAMM orders, providing liquidity, and entering settlement. This preserves open price discovery.
+
+An underwriter may choose any execution surface:
+
+1. mint and sell tokens into the public AMM,
+2. stream tokens through TWAMM,
+3. execute bilateral OTC transactions,
+4. quote bespoke RFQ prices,
+5. delegate capital to a pooled HLP-style vault.
+
+This neutrality is essential. A pooled vault imposes a canonical pricing function, while isolated brokers allow underwriters to price risk above or below the reference model according to their own view of expected loss, liquidity, correlation, and inventory cost.
+
+**Underwriter Execution**
+
+An efficient independent underwriter posts exogenous collateral sufficient to cover the terminal insurance event, mints against that collateral, and sells inventory gradually into real demand. As $NF$ decays, existing liability consumes less collateral capacity, enabling additional minting. The underwriter can therefore run a rolling strategy:
+
+$$
+\text{Collateral} \rightarrow \text{Mint Capacity} \rightarrow \text{wCDS Sale} \rightarrow \text{Premium Income}
+$$
+
+The optimal form of execution is Just-In-Time (JIT) underwriting against observed fiduciary demand. Heavy-tailed jumps in $r_t$ introduce severe LVR for passive AMM liquidity providers. Because passive $x \cdot y = k$ providers suffer deterministic adverse selection against informed arbitrageurs during insolvency events, the microstructure routes underwriter JIT supply directly against TWAMM demand whenever possible. Internalizing the Coincidence of Wants (CoW) circumvents the passive AMM curve, mathematically reducing LVR bleed and allowing underwriters to capture the borrow-rate premium without unnecessary inventory exposure.
+
+**HLP-Style Vaults as Wrappers**
+
+A pooled HLP-style vault can be launched above the broker layer at any time. In that design, underwriters deposit collateral into a shared strategy vault and receive shares. The vault owns one or more isolated brokers and executes a common short-side strategy: mint, sell, rebalance, collect premium, and absorb settlement losses. Underwriters differ only by share entry price.
+
+The pooled vault is therefore a strategy wrapper, not a protocol axiom. It provides passive liquidity and simple UX, but it does not eliminate independent underwriting. The base protocol remains an open market where vaults, individuals, RFQ desks, and OTC counterparties can all compete on price.
+
+**EVM Discrete Integration**
+
+Unlike discrete recursive integration which introduces Euler drift, the implementation evaluates the analytical solution $NF(t_k) = \exp(-F \cdot t_k)$ at discrete block timestamps. Execution error is thus strictly confined to [IEEE-754](https://ieeexplore.ieee.org/document/8766229) equivalent fixed-point precision truncation (e.g., 18-decimal `WAD`), rendering time-discretization drift mathematically non-existent.
+
+**Adversarial Robustness and Boundary Conditions**
+
+Parametric models are vulnerable to oracle manipulation and dependency failures. We enforce structural boundaries to guarantee robust state resolution.
+
+**Constraint 3 (Collateral Orthogonality):**
+
+$$
+ Cov(\text{Collateral Value}, \text{Insured Event}) \le 0 
+$$
+
+Underwriters must post strictly exogenous collateral. This prevents recursive dependency (the "Burning House" paradox), ensuring payout liquidity survives the insured systemic event.
+
+**Constraint 4 (Multi-Track Settlement Trigger):**
+
+Lending pool insolvency is a function of two independent state-space axes: **supply pressure** 
+$U_t = B/D$, endogenous and **collateral adequacy** $HF = \sum C_i P_i / B$, oracle-dependent. To ensure robust detection across both axes while resisting single-vector manipulation, the protocol transitions to terminal global settlement if **at least 2 of 3** independent tracks trigger simultaneously. Each track enforces a 7 days time-weighted moving average (TWMA) filter:
+
+| Track | Condition | Axis | Source | Rationale |
+| --- | --- | --- | --- | --- |
+| **A: Utilization Freeze** | $U_t \ge 0.99$ for 7 days | Supply pressure | Endogenous | Withdrawals revert; capital physically frozen by EVM pool constraints |
+| **B: Collateral Collapse** | Weighted collateral price $\le 0.25 \times P_0$ (−75%) | Borrower health | Oracle (Chainlink / TWAP) | Loans are underwater; liquidation recovery < debt |
+| **C: Bad Debt Accrual** | Protocol-reported bad debt $> 0$ and increasing | Buffer exhaustion | Hybrid (on-chain accounting) | Liquidation mechanism has failed; losses exceed reserves |
+
+The 2-of-3 quorum ensures genuine insolvency - which structurally affects multiple state variables simultaneously - is distinguished from isolated anomalies.
+
+**Adversarial Exploitation Defense:**
+
+To force a false settlement, an attacker must sustain two conditions for 7 days simultaneously:
+
+- **Track A**: Sustaining $U_t \ge 0.99$ for 7 days requires continuously borrowing at $r_{max}$. The pool broadcasts an arbitrage-inducing supply rate; yield-seeking capital and MEV bots route liquidity in for chasing arbitrage opportunities, breaking the attack's expected value.
+- **Track B**: Manipulating weighted collateral price by −75% for 7 days requires attacking spot markets across all venues - economically infeasible for any asset with >$1B market cap.
+- **Track C**: Fabricating bad debt requires either (a) actual protocol exploit (in which case settlement SHOULD fire), or (b) compromising the lending protocol's accounting contracts - an attack on the protocol itself, not on the CDS.
+
+**Conditions set per each market individually.*
+
+**Counterparty Flight Prevention:**
+
+Track A acts as a physical capital trap. A genuine crisis immediately spikes utilization, causing `withdrawCollateral()` to revert due to EVM pool liquidity constraints. Underwriters are physically frozen *before* the 7 days TWMA filter formalizes settlement. Tracks B and C serve as independent circuit-breakers for scenarios where utilization alone is insufficient (e.g., gradual collateral depreciation without an immediate bank run).
+
+**Correlated Settlement Risk**
+
+The portfolio diversification argument assumes pairwise independence $\rho_{ij} \approx 0$ across markets. Under systemic events (e.g., stablecoin depeg, coordinated liquidation cascade), correlation approaches $\rho \to 1$, potentially triggering simultaneous settlements across $k$ of $N$ insured markets.
+
+**Worst-case bound:** An underwriter with total collateral $C_{total}$ distributed across $N$ markets can survive at most $k^* = \lfloor C_{total} / P_{max} \rfloor$ simultaneous settlements. Because each market's maximum liability is bounded by $P_{max}$ (Constraint 2), the problem reduces to a capital adequacy question rather than an unbounded tail risk.
+
+**Oracle Incentive Alignment via Symbiotic Restaking**
+
+Settlement Tracks B (collateral price) and C (bad debt) require external data, introducing an oracle dependency. We propose a flywheel: oracle operators stake `wstETH` via a restaking protocol (e.g., Symbiotic) and receive a proportion $\beta$ of CDS premium revenue in exchange for reporting Track A/B/C observables. Malicious reports trigger slashing of the operator's restaked principal.
+
+**Flywheel structure:**
+
+```
+wstETH holders -> stake -> Oracle Operators -> report -> Settlement Tracks A, B, C
+       ^                                                       |
+       |                  β · Y_CDS revenue                    |
+       └───────────────────────────────────────────────────────┘
+```
+
+The operator's staked `wstETH` simultaneously serves as: (a) oracle security bond, (b) underwriter escrow (via Constraint 3), and (c) ETH staking yield source - triple-utilizing the same capital.
+
+**Hypothesis (Honest Equilibrium):** *Under the proposed symbiotic flywheel, rational oracle operators are incentivized to report correct values and will not cooperate for malicious settlement.*
+
+***Proof of honest equilibrium (sufficient conditions):***
+
+Let $S_i$ denote operator $i$'s staked value, $R$ the continuous CDS revenue share per period, $r_d$ the discount rate, $V_{attack}$ the value capturable via false settlement $= \sum_j P_{max,j}$ across affected markets, and $q$ the quorum fraction required for oracle consensus.
+
+An operator's expected utility under honest reporting is:
+
+$$
+U_{honest} = \frac{R}{r_d} + S_i
+$$
+
+Under a one-shot deviation (collude to force false settlement), the expected utility is:
+
+$$
+U_{attack} = \frac{V_{attack}}{|C|} - p_{slash} \cdot S_i
+$$
+
+where $|C| \ge \lceil qN \rceil$ is the minimum coalition size, and $p_{slash}$ is the slashing probability.
+
+The honest equilibrium holds iff $U_{honest} > U_{attack}$ for all operators:
+
+$$
+\frac{R}{r_d} + S_i > \frac{V_{attack}}{|C|} - p_{slash} \cdot S_i
+$$
+
+$$
+(1 + p_{slash}) \cdot S_i + \frac{R}{r_d} > \frac{V_{attack}}{\lceil qN \rceil}
+$$
+
+For $q = 2/3$ and $p_{slash} = 1$ (full slashing):
+
+$$
+2S_i + \frac{R}{r_d} > \frac{V_{attack}}{\lceil 2N/3 \rceil}
+$$
+
+This holds when operator stake and revenue NPV jointly exceed the per-operator share of the attack value. Under normal conditions - modest CDS TVL relative to aggregate operator stake - this inequality is comfortably satisfied.
+
+***Rejection: the crisis-correlation inversion***
+
+The hypothesis fails under the precise conditions when the CDS is most needed. During a systemic crisis:
+
+1. **Stake depreciation** - Operators stake `wstETH`. A systemic event (e.g., ETH crash, Lido slashing cascade) simultaneously depreciates $S_i$. If ETH drops 50%, slashing penalty is halved in real terms: $S_i \to 0.5 \cdot S_i$. The left side of the inequality **weakens**.
+2. **Attack value inflation** - During a crisis, CDS tokens trade at maximum intrinsic value $P_{max}$. The total settlement payout $V_{attack}$ is at its peak. The right side of the inequality **strengthens**.
+3. **Revenue destruction** - A false settlement terminates the CDS protocol's operation for affected markets, destroying future revenue $R$. But if the attacker profits $V_{attack} / |C|$ from a long CDS position, they are indifferent to future revenue.
+
+**The critical inversion occurs when:**
+
+$$
+2 \cdot S_i^{crisis} + \frac{R}{r_d} < \frac{V_{attack}^{crisis}}{\lceil 2N/3 \rceil}
+$$
+
+Since $S_i^{crisis} < S_i^{normal}$ and $V_{attack}^{crisis} > V_{attack}^{normal}$, there exists a CDS TVL ratio $\lambda^*$ beyond which the inequality inverts. A naive data-reporting oracle is therefore **insufficient** at scale.
+
+**Resolution: ZK-Proven State Attestation**
+
+The crisis-correlation inversion arises because operators *report* data - they can lie. We eliminate the correctness attack surface entirely by requiring operators to generate **zero-knowledge proofs of on-chain state** rather than subjective reports.
+
+**Mechanism:**
+
+Operators read Track B/C observables from their canonical on-chain sources (lending markets native oracle price feeds for collateral prices, `getReserveData()` for bad debt) and generate a ZK proof attesting:
+
+$$
+\pi_t = \text{ZKProof}\Big(\text{source}_{chain}(t) \to \text{value}_t\Big)
+$$
+
+**Attack surface reduction:**
+
+| Model | Attack vector | Quorum to attack | Coordination type |
+| --- | --- | --- | --- |
+| Data reporting | **Correctness** (lie about values) | $\lceil 2N/3 \rceil$ operators collude | Active (agree on false value) |
+| ZK attestation | **Liveness only** (stop proving) | **All $N$ operators** must stop | Passive (silence) |
+
+The CDS settlement contract verifies $\pi_t$ on-chain. A valid proof guarantees that the reported value is the *actual* on-chain state at the attested block - the operator **cannot fabricate data** because no valid proof exists for a false statement.
+
+With ZK proofs, a single honest operator submitting one valid proof is sufficient to provide correct data. The attack is no longer "convince 2/3 to lie" but "convince ALL to stop" - an exponentially harder coordination problem.
+
+**Liveness-as-Default (Fail-Safe):**
+
+If no valid proof is submitted within window $T$ (e.g., 4 hours), the smart contract treats the unreported value as zero:
+
+$$
+\text{value}_t = \begin{cases} \text{ZK-attested value} & \text{if } \pi_t \text{ submitted within } T \\ 0 & \text{if no proof in } [t-T, t] \end{cases}
+$$
+
+A zero-value for Track B (collateral price = 0) and Track C (bad debt treated as maximal) causes both tracks to immediately fire. This makes the system **fail-safe by construction**: silence triggers settlement, forcing the conservative outcome.
+
+**Liveness incentive analysis:**
+
+Under ZK attestation, the attack reduces to coordinated silence. The attacker's utility becomes:
+
+$$
+U_{silence} = \frac{V_{attack}}{N} - p_{slash} \cdot S_i - \frac{R}{r_d}
+$$
+
+The honest equilibrium now requires:
+
+$$
+\frac{R}{r_d} + (1 + p_{slash}) \cdot S_i > \frac{V_{attack}}{N}
+$$
+
+Critically, the denominator is now $N$ (ALL operators must stop), not $\lceil 2N/3 \rceil$. For $N = 10$ operators, the per-operator attack share is $V_{attack}/10$ vs. $V_{attack}/7$ - a 30% reduction. For $N = 100$, it is $V_{attack}/100$ vs. $V_{attack}/67$ → a 3x reduction.
+
+Furthermore, coordinated silence is **self-defeating**: if even one operator defects from the silence cartel and submits a valid proof (earning the full reporting reward while competitors are slashed), the attack fails. This is a anti-coordination game where defection is the dominant strategy.
+
+**Implication:** The ZK-attested oracle with liveness-as-default constitutes a **practically trustless** settlement mechanism when combined with:
+
+1. **Permissionless proving**: Any party can generate and submit a valid ZK proof, not just registered operators - ensuring liveness even if the entire operator set goes offline
+2. **Slashing for liveness failure**: Registered operators who fail to submit proofs within $T$ are slashed, aligning their incentive with continuous attestation
+3. **Track A as trustless anchor**: Utilization remains fully endogenous and requires no oracle - the system degrades gracefully if ZK infrastructure fails
+
+## Limitations and Boundary Conditions
+
+This mechanism design is subject to the following structural constraints and failure modes:
+
+**IRM Governance Risk.** IRM mutability is protocol-specific. Morpho Blue markets are effectively immutable after creation: the market identifier commits to the loan token, collateral token, oracle, IRM contract, and LLTV, so existing market parameters cannot be rewritten by governance. By contrast, Aave-style reserves, SparkLend markets, Fluid liquidity markets, Kamino reserves, and governed Euler EVK vaults expose administratively mutable rate curves, rate strategy modules, caps, or risk parameters unless governance has been explicitly revoked or the market has been finalized into an immutable mode.
+
+Under the canonical calibration $F=r_{max}$, the yield invariant remains valid after such revisions, but the token accounting changes: $P_{max}=100r_{max}$ and $NF(t)=e^{-r_{max}t}$ both depend on the rate cap. If governance raises $r_{max}$, existing coverage requires fewer tokens per dollar of maximum liability but faster amortization; if governance lowers $r_{max}$, existing coverage requires more tokens per dollar of maximum liability but slower amortization. Therefore CDS markets should bind each coverage epoch to a snapshotted effective rate cap:
+
+$$
+r_{max}^{CDS} = \min(r_{max}^{snapshot}, 100\%)
+$$
+
+The 100% ceiling makes worst-case liability legible and prevents external lending governance from griefing underwriters with unbounded future IRM changes. Existing coverage epochs should retain their snapshotted $r_{max}^{CDS}$, while new epochs can adopt updated lending market parameters after explicit review. If a mutable lending protocol changes its IRM materially, fiduciaries and underwriters should migrate or rebalance through a new epoch rather than suffer retroactive wealth transfer.
+
+**Correlated Tail Risk.** The portfolio diversification argument assumes pairwise independence 
+$\rho_{ij} \approx 0$. Systemic events - such as a stablecoin depeg or coordinated liquidation cascade - can drive $\rho \to 1$ across multiple markets simultaneously. Under full correlation, the portfolio reduces to a single effective market, eliminating the $\sqrt{N}$ variance reduction. The worst-case loss is bounded by $k \cdot P_{max}$ for $k$ simultaneous settlements, but capital adequacy must be sized accordingly.
+
+**Liquidity Bootstrapping.** The TWAMM-JIT CoW internalization assumes sufficient bilateral flow between fiduciary buyers and JIT underwriter sellers. In nascent or thin markets, demand-supply imbalance routes residual flow through the passive AMM curve, reintroducing LVR. The mechanism reaches full efficiency only after a critical mass of bilateral flow is established.
+
+**Rate-Cap Operational Constraint.** The prior target-utilization parameterization required a separate mathematical bound on $r_{max}$. The canonical borrow-rate calibration removes that constraint from the yield invariant, because $Y_{CDS}=r_t$ weakly dominates $U_t r_t(1-R)$. However, very high $r_{max}$ still matters operationally: it increases the speed of NF decay and therefore increases the volume of token inventory that fiduciaries and vaults must recycle to maintain fixed coverage. Market eligibility should therefore be governed by execution feasibility, liquidity depth, and settlement correlation rather than by a mathematical supply-yield violation.
+
+**Smart Contract Risk.** The mechanism's adversarial robustness analysis addresses economic attack vectors but is orthogonal to implementation risk. Smart contract bugs in the Normalization Factor computation, the Bivariate Temporal Trap evaluation, or the ERC-4626 JIT Vault logic represent the primary practical attack surface.
+
+**Moral Hazard.** If CDS coverage becomes widespread, insured protocols may tolerate riskier IRM configurations, knowing depositors are hedged. This reflexive dynamic could increase crisis frequency while compressing the risk premium $\alpha$.
+
+**Equilibrium Penetration.** At high insurance penetration, competition can compress any discretionary multiplier $\lambda>1$ toward the canonical floor $\lambda=1$. The mathematical premium $\alpha=r_t(1-U_t(1-R))$ remains non-negative, but real underwriting profitability can still vanish after expected loss, execution cost, and correlation capital charges. In practice, equilibrium penetration is bounded by the underwriter participation constraint: capital exits when net expected return falls below the required hurdle rate.
+
+## Portfolio Cohort Backtest Methodology (2025-2026)
+
+The revised calibration requires re-running historical portfolio simulations under $F_i=r_{max,i}$ for each insured market. The empirical question is no longer whether a large target-utilization decay coefficient can amortize losses quickly enough; it is whether borrow-rate-indexed premium income, tiered exposure limits, and collateral orthogonality are sufficient to compensate underwriters for realized terminal settlements.
+
+The backtest protocol is therefore:
+
+1. Select lending markets with continuous historical utilization, borrow rate, collateral price, and bad-debt observability.
+2. Define terminal settlement using the same 2-of-3 track system used by the live protocol.
+3. For each market $i$, set $F_i=r_{max,i}$ and $P_{max,i}=100r_{max,i}$.
+4. Accrue underwriter premium as $\int C_i r_{t,i}dt$.
+5. Mark fixed-coverage buyers by initial token value, realized premium stream, terminal reclaim value, and settlement proceeds.
+6. Mark underwriters by premium income, collateral yield, terminal settlement loss, and LVR/execution cost.
+7. Compare equal-weight, risk-budgeted, and HLP-style pooled strategies against passive supply exposure.
+
+This methodology preserves the central empirical hypothesis of the original cohort study: algorithmic borrow rates rise during liquidity stress before or during terminal default, and therefore form a continuous premium stream for underwriters. It removes the prior dependence on an aggressive exogenous decay coefficient and forces the strategy to stand on the borrow-rate signal itself.
+
+**Yield-Stacking via Orthogonal Collateral**
+
+Constraint 3 (Collateral Orthogonality) mandates that underwriters post strictly exogenous collateral to prevent recursive dependency. By utilizing cross-margin functionality within isolated brokers or HLP-style wrappers, a sophisticated capital allocator can post yield-bearing assets such as Liquid Staking Tokens like `wstETH` or tokenized T-bills as orthogonal escrow.
+
+The underwriter's total expected return decomposes into:
+
+$$
+Y_{total} = r_{collateral} + r_t - \mathbb{E}[\text{Loss}] - \text{ExecutionCost}
+$$
+
+where $r_{collateral}$ is the native yield of the posted collateral and $r_t$ is the borrow-rate-indexed underwriting premium. This capital efficiency converts passive collateral into active systemic backstop liquidity, while preserving the requirement that expected loss and execution cost remain below the borrow-rate premium plus collateral yield.
+
+## Conclusion
+
+By mapping algorithmic interest rate bounds to amortizing perpetual option mathematics, we establish a verifiable, fully collateralized parametric credit default swap. The canonical calibration $F=r_{max}$ makes fixed-coverage premiums equal to the insured market's own borrow rate, proving that underwriters earn passive supply yield plus a non-negative structural risk premium without imposing an additional target-utilization tax on buyers. Executed through isolated brokers, continuous streaming infrastructure, optional HLP-style wrappers, and governed by multi-track settlement constraints, this design preserves open price discovery while providing a secure primitive for decentralized risk transfer.
+
+## **References**
+
+[1] Duffie, D. (1999). Credit Swap Valuation. Financial Analysts Journal, 55(1), 73-87.
+
+[2] International Swaps and Derivatives Association (ISDA). (2026). Determinations Committees Rules.
+
+[3] Nexus Mutual. (2026). Nexus Mutual Whitepaper.
+
+[4] Sherlock. (2026). Sherlock Protocol Documentation.
+
+[5] White, D., & Bankman-Fried, S. (2021). Everlasting Options. Paradigm Research.
+
+[6] Adams, A., Robinson, D., & White, D. (2021). Time-Weighted Average Market Makers (TWAMM). Paradigm Research.
+
+[7] Milionis, J., Moallemi, C. C., Roughgarden, T., & Zhang, A. L. (2022). Automated Market Making and Loss-Versus-Rebalancing. arXiv preprint arXiv:2208.06046.
+
+[8] Bacry, E., Mastromatteo, I., & Muzy, J. F. (2015). Hawkes Processes in Finance. Market Microstructure and Liquidity, 1(01), 1550005.
+
+[9] Ni, S., & Roughgarden, T. (2025). Amortizing Perpetual Options. arXiv preprint arXiv:2512.06505.
+
+[10] IEEE Computer Society. (2019). IEEE Standard for Floating-Point Arithmetic. IEEE Std 754-2019.
+
+[11] Merton, R. C. (1974). On the Pricing of Corporate Debt: The Risk Structure of Interest Rates. {The Journal of Finance, 29(2), 449-470.
+
+[12] Lambert, G. et al. (2022). Panoptic: A perpetual, oracle-free options protocol. Whitepaper.
+
+[13] Feinstein, Zachary (2026). Amortizing Perpetual Options. arXiv:2512.06505v3

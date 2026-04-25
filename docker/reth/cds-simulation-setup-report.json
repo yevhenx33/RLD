@@ -1,0 +1,25 @@
+{
+  "market_id": "0xc3fec6e9d88d220bf534a625708cc8933147f1b8854454cf96b845cef4b5430a",
+  "underwriter": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "buyer": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  "broker": null,
+  "collateral_token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "position_token": "0xA26C597A194915D3527F7625aC93EDF7b26b6df6",
+  "funded_underwriter_raw": "60000000000000",
+  "locked_collateral_raw": "0",
+  "minted_position_raw": "74818827927",
+  "underwriter_position_balance_raw": "74818827927",
+  "buyer_usdc_balance_raw": "10000000000000",
+  "lp_token_id": "1",
+  "lp_plan": {
+    "pool_id": "0x46d431de3a633e006e4f7ff9a96c74dd477a736d7989e096300a9c7ee783975e",
+    "token0": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "token1": "0xA26C597A194915D3527F7625aC93EDF7b26b6df6",
+    "amount0_raw": "536735769995",
+    "amount1_raw": "74818827927",
+    "liquidity": "458345755133",
+    "tick_lower": -29960,
+    "tick_upper": -6930,
+    "semantic_price": 6.682809846825032
+  }
+}

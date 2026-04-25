@@ -2,3 +2,5 @@
 genesis.json
 deployment-snapshot.json
 snapshots/*.tar.gz
+snapshots/*.tar.gz.sha256
+.sim/

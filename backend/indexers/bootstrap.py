@@ -15,6 +15,8 @@ import logging
 import os
 import pathlib
 
+from state import update_source_status
+
 log = logging.getLogger(__name__)
 
 SCHEMA_PATH = pathlib.Path(__file__).parent / "schema.sql"
@@ -161,6 +163,11 @@ async def reset(pool: asyncpg.Pool) -> None:
     await bootstrap_market(pool)
 
 
+async def sync_config(pool: asyncpg.Pool) -> dict:
+    """Non-destructively upsert markets from deployment.json."""
+    return await bootstrap_market(pool)
+
+
 async def bootstrap(pool: asyncpg.Pool) -> dict:
     """
     Startup-only: apply schema.
@@ -272,6 +279,31 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 str(entry.get("debt_cap", cfg.get("debt_cap", "1000000000000000000000000"))),
             )
 
+            await conn.execute("""
+                UPDATE markets SET
+                    market_type       = $2,
+                    collateral_token  = $3,
+                    collateral_symbol = $4,
+                    position_token    = $5,
+                    position_symbol   = $6,
+                    funding_model     = $7,
+                    settlement_module = $8,
+                    decay_rate_wad    = $9,
+                    product_metadata  = $10::jsonb
+                WHERE market_id = $1
+            """,
+                market_id,
+                entry.get("type", "perp"),
+                entry.get("collateral_token") or entry.get("wausdc") or cfg.get("wausdc", cfg.get("token0", "")),
+                entry.get("collateral_symbol", "waUSDC"),
+                entry.get("position_token") or entry.get("wrlp") or cfg.get("position_token", cfg.get("token1", "")),
+                entry.get("position_symbol", "wRLP"),
+                entry.get("funding_model", ""),
+                entry.get("settlement_module", ""),
+                str(entry.get("decay_rate_wad", "0")),
+                json.dumps(entry),
+            )
+
             # Seed a baseline block_state index price for genesis/live deployments.
             oracle_index_price_wad = entry.get("oracle_index_price_wad", cfg.get("oracle_index_price_wad"))
             seeded_index_price = None
@@ -305,6 +337,18 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 VALUES ($1, $2, 0)
                 ON CONFLICT (market_id) DO NOTHING
             """, market_id, int(entry.get("session_start_block", cfg["session_start_block"]) or 0))
+
+            cursor = int(entry.get("session_start_block", cfg["session_start_block"]) or 0)
+            await update_source_status(
+                conn,
+                f"sim-indexer:{market_id}",
+                "config",
+                market_id=market_id,
+                market_type=entry.get("type", "unknown"),
+                last_scanned_block=cursor,
+                last_processed_block=cursor,
+                source_head_block=cursor,
+            )
 
             log.info("Seeded market %s type=%s oracle=%s pool_id=%s",
                      market_id[:16], entry.get("type", "unknown"),

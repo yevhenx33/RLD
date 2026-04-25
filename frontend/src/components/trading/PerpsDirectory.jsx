@@ -1,7 +1,9 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { TrendingUp, ChevronDown, ChevronUp, ArrowUpDown, Loader2 } from "lucide-react";
-import { useSim } from "../../context/SimulationContext";
+import useSWR from "swr";
+import { SIM_GRAPHQL_URL } from "../../api/endpoints";
+import { postGraphQL } from "../../api/graphqlClient";
 
 const formatUSD = (val) => {
   if (val == null || isNaN(val)) return "—";
@@ -18,49 +20,58 @@ const formatPrice = (val) => {
   return `$${val.toFixed(4)}`;
 };
 
+const MARKETS_QUERY = `
+  query PerpsRepositoryMarkets {
+    perpInfo: marketInfo(market: "perp")
+    perpSnapshot: snapshot(market: "perp")
+    cdsInfo: marketInfo(market: "cds")
+    cdsSnapshot: snapshot(market: "cds")
+  }
+`;
+
+const fetchMarkets = ([url]) => postGraphQL(url, { query: MARKETS_QUERY });
+
+function buildRow({ type, info, snapshot }) {
+  if (!info || !snapshot?.market || !snapshot?.pool) return null;
+
+  const positionSymbol = type === "CDS" ? "wCDS" : "wRLP";
+  const collateralSymbol = info.collateral?.symbol || info.wausdcSymbol || "USDC";
+  const derived = snapshot.derived || {};
+
+  return {
+    type,
+    address: info.marketId || info.market_id,
+    route: type === "CDS" ? "/markets/perps/cds" : `/markets/perps/${info.marketId || info.market_id}`,
+    pair: `${positionSymbol} / USD`,
+    base: collateralSymbol,
+    price: snapshot.market.indexPrice || 0,
+    markPrice: snapshot.pool.markPrice || 0,
+    change24h: derived.index24hChangePct || 0,
+    openInterest: (derived.totalCollateralUsd || 0) + (derived.totalDebtUsd || 0),
+    volume24h: derived.volume24hUsd || 0,
+    liquidity: derived.poolTvlUsd || snapshot.pool.tvlUsd || 0,
+    protocol: "Aave V3",
+  };
+}
+
 export default function PerpsDirectory() {
   const navigate = useNavigate();
   const [sortKey, setSortKey] = useState("volume24h");
   const [sortDir, setSortDir] = useState("desc");
 
-  // ── Live simulation data ─────────────────────────────────────
-  const {
-    connected,
-    loading,
-    market,
-    pool,
-    poolTVL,
-    volumeData,
-    protocolStats,
-    marketInfo,
-    oracleChange24h,
-  } = useSim();
+  const { data, error, isLoading } = useSWR(
+    [SIM_GRAPHQL_URL, "perps.repository.markets.v1"],
+    fetchMarkets,
+    { refreshInterval: 2000, revalidateOnFocus: false, keepPreviousData: true },
+  );
 
   // ── Build markets array from real data ───────────────────────
   const markets = useMemo(() => {
-    if (!market || !pool || !marketInfo) return [];
-
-    const posSymbol = marketInfo.position_token?.symbol || "wRLP";
-    const colSymbol = marketInfo.collateral?.symbol || "USDC";
-
-    // Open Interest = total collateral + total debt in USD
-    const oi = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
-
     return [
-      {
-        address: marketInfo.infrastructure?.twamm_hook || "0x0",
-        pair: `${posSymbol} / USD`,
-        base: colSymbol,
-        price: market.indexPrice || 0,
-        markPrice: pool.markPrice || 0,
-        change24h: oracleChange24h ?? 0,
-        openInterest: oi,
-        volume24h: volumeData?.volume_usd || 0,
-        liquidity: poolTVL || 0,
-        protocol: "Aave V3",
-      },
-    ];
-  }, [market, pool, poolTVL, marketInfo, volumeData, protocolStats, oracleChange24h]);
+      buildRow({ type: "RLP", info: data?.perpInfo, snapshot: data?.perpSnapshot }),
+      buildRow({ type: "CDS", info: data?.cdsInfo, snapshot: data?.cdsSnapshot }),
+    ].filter(Boolean);
+  }, [data]);
 
   const toggleSort = (key) => {
     if (sortKey === key) {
@@ -93,6 +104,8 @@ export default function PerpsDirectory() {
   const totalOI = markets.reduce((s, m) => s + m.openInterest, 0);
   const totalVolume = markets.reduce((s, m) => s + m.volume24h, 0);
   const totalLiquidity = markets.reduce((s, m) => s + m.liquidity, 0);
+  const loading = isLoading && !data;
+  const connected = !error;
 
   return (
     <div className="min-h-screen bg-[#050505] text-[#e0e0e0] font-mono selection:bg-white selection:text-black flex flex-col">
@@ -195,7 +208,7 @@ export default function PerpsDirectory() {
           {sortedMarkets.map((market) => (
             <div
               key={market.address}
-              onClick={() => navigate(`/markets/perps/${market.address}`)}
+              onClick={() => navigate(market.route)}
               className="border-b border-white/5 last:border-b-0 cursor-pointer group hover:bg-white/[0.02] transition-colors"
             >
               {/* ── Desktop Row (lg+) ── */}
@@ -243,7 +256,7 @@ export default function PerpsDirectory() {
                 <div className="flex items-center justify-between px-4 py-3 bg-cyan-500/[0.06] border-b border-cyan-500/10">
                   <div className="text-base font-mono text-cyan-400 font-bold tracking-tight">
                     {market.base}
-                    <span className="text-cyan-600 ml-1.5 font-normal text-sm">[{market.protocol}]</span>
+                    <span className="text-cyan-600 ml-1.5 font-normal text-sm">[{market.type}]</span>
                   </div>
                   <div className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest">
                     {market.pair}

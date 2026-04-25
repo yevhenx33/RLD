@@ -181,6 +181,40 @@ services:
       - CHAOS_MIN_SELL_AMOUNT_WRLP=${CHAOS_MIN_SELL_AMOUNT_WRLP:-1}
     restart: unless-stopped
 
+  # ─── CROSS-MARKET ARB BOT ────────────────────────────────────
+  arb-bot:
+    build:
+      context: ../..
+      dockerfile: docker/daemons/Dockerfile
+    command: ["python", "tools/cross_market_arb.py"]
+    depends_on:
+      indexer:
+        condition: service_healthy
+    environment:
+      - RPC_URL=http://reth:8545
+      - INDEXER_URL=http://indexer:8080
+      - PRIVATE_KEY=${ARB_KEY:-${MM_KEY}}
+      - MM_KEY=${MM_KEY}
+      - WHALE_KEY=${WHALE_KEY}
+      - ARB_DRY_RUN=${ARB_DRY_RUN:-true}
+      - ARB_INTERVAL_SECONDS=${ARB_INTERVAL_SECONDS:-15}
+      - ARB_THRESHOLD_BPS=${ARB_THRESHOLD_BPS:-75}
+      - ARB_TRADE_USD=${ARB_TRADE_USD:-1000}
+      - ARB_MIN_USDC=${ARB_MIN_USDC:-10000}
+      - ARB_STATUS_FILE=/tmp/cross_market_arb_status.json
+      - ARB_MAX_CONSECUTIVE_FAILURES=${ARB_MAX_CONSECUTIVE_FAILURES:-5}
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python - <<'PY'\nimport json, time\np='/tmp/cross_market_arb_status.json'\nd=json.load(open(p))\nage=time.time()-int(d.get('updated_at', 0))\nassert age < 60, age\nassert int(d.get('consecutive_failures', 0)) < int(d.get('max_consecutive_failures', 5))\nPY"
+        ]
+      interval: 20s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
   # ─── FAUCET SERVER ────────────────────────────────────────────
   faucet:
     build:

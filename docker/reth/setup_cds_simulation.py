@@ -26,10 +26,12 @@ import os
 import secrets
 import sys
 import time
+import math
 from pathlib import Path
 from typing import Any
 
 from eth_account import Account
+from eth_abi import encode as abi_encode
 from web3 import Web3
 
 
@@ -59,6 +61,16 @@ ERC20_ABI: list[dict[str, Any]] = [
         "stateMutability": "nonpayable",
         "inputs": [
             {"name": "to", "type": "address"},
+            {"name": "amount", "type": "uint256"},
+        ],
+        "outputs": [{"name": "", "type": "bool"}],
+    },
+    {
+        "type": "function",
+        "name": "approve",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "spender", "type": "address"},
             {"name": "amount", "type": "uint256"},
         ],
         "outputs": [{"name": "", "type": "bool"}],
@@ -97,6 +109,71 @@ BROKER_ABI: list[dict[str, Any]] = [
             {"name": "amount", "type": "uint256"},
         ],
         "outputs": [],
+    },
+]
+
+ORACLE_ABI: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "name": "getIndexPrice",
+        "stateMutability": "view",
+        "inputs": [
+            {"name": "", "type": "address"},
+            {"name": "", "type": "address"},
+        ],
+        "outputs": [{"name": "", "type": "uint256"}],
+    }
+]
+
+GHOST_ROUTER_ABI: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "name": "getSpotPrice",
+        "stateMutability": "view",
+        "inputs": [{"name": "marketId", "type": "bytes32"}],
+        "outputs": [{"name": "", "type": "uint256"}],
+    }
+]
+
+PERMIT2_ABI: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "name": "approve",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "token", "type": "address"},
+            {"name": "spender", "type": "address"},
+            {"name": "amount", "type": "uint160"},
+            {"name": "expiration", "type": "uint48"},
+        ],
+        "outputs": [],
+    }
+]
+
+POSM_ABI: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "name": "modifyLiquidities",
+        "stateMutability": "payable",
+        "inputs": [
+            {"name": "unlockData", "type": "bytes"},
+            {"name": "deadline", "type": "uint256"},
+        ],
+        "outputs": [],
+    },
+    {
+        "type": "function",
+        "name": "nextTokenId",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "", "type": "uint256"}],
+    },
+    {
+        "type": "function",
+        "name": "ownerOf",
+        "stateMutability": "view",
+        "inputs": [{"name": "tokenId", "type": "uint256"}],
+        "outputs": [{"name": "", "type": "address"}],
     },
 ]
 
@@ -150,6 +227,10 @@ def raw_usdc(amount: float) -> int:
     return int(round(amount * 1_000_000))
 
 
+def human_from_raw(amount: int) -> float:
+    return amount / 1_000_000
+
+
 def send_tx(
     w3: Web3,
     private_key: str,
@@ -190,6 +271,87 @@ def parse_broker_from_receipt(receipt: Any) -> str:
             return checksum("0x" + topics[1][-40:])
     fail("BrokerCreated event not found in receipt")
     return ZERO_ADDRESS
+
+
+def price_to_aligned_tick(price: float, spacing: int, *, up: bool) -> int:
+    if price <= 0:
+        fail(f"invalid price for tick conversion: {price}")
+    raw = math.log(price) / math.log(1.0001)
+    fn = math.ceil if up else math.floor
+    return int(fn(raw / spacing) * spacing)
+
+
+def calculate_lp_amounts(
+    *,
+    collateral: str,
+    position: str,
+    minted_position_raw: int,
+    semantic_price: float,
+    semantic_min: float,
+    semantic_max: float,
+    tick_spacing: int,
+) -> dict[str, Any]:
+    """Calculate balanced V4 LP amounts for a semantic price range.
+
+    Semantic price is collateral per position token. V4 raw price is token1/token0.
+    """
+    if semantic_min <= 0 or semantic_max <= semantic_min:
+        fail("invalid semantic price range")
+
+    token0, token1 = sorted([checksum(collateral), checksum(position)], key=lambda a: int(a, 16))
+    collateral_is_token0 = token0.lower() == checksum(collateral).lower()
+    position_is_token0 = token0.lower() == checksum(position).lower()
+
+    if collateral_is_token0:
+        raw_low = 1.0 / semantic_max
+        raw_high = 1.0 / semantic_min
+        raw_current = 1.0 / semantic_price
+    else:
+        raw_low = semantic_min
+        raw_high = semantic_max
+        raw_current = semantic_price
+
+    if not (raw_low < raw_current < raw_high):
+        fail(
+            "current price is outside LP range: "
+            f"raw_low={raw_low}, raw_current={raw_current}, raw_high={raw_high}"
+        )
+
+    tick_lower = price_to_aligned_tick(raw_low, tick_spacing, up=False)
+    tick_upper = price_to_aligned_tick(raw_high, tick_spacing, up=True)
+
+    sqrt_p = math.sqrt(raw_current)
+    sqrt_l = math.sqrt(math.pow(1.0001, tick_lower))
+    sqrt_u = math.sqrt(math.pow(1.0001, tick_upper))
+    position_amount = human_from_raw(minted_position_raw)
+
+    if position_is_token0:
+        denom = (1.0 / sqrt_p) - (1.0 / sqrt_u)
+        liquidity = position_amount / denom
+        amount0 = position_amount
+        amount1 = liquidity * (sqrt_p - sqrt_l)
+    else:
+        denom = sqrt_p - sqrt_l
+        liquidity = position_amount / denom
+        amount0 = liquidity * ((1.0 / sqrt_p) - (1.0 / sqrt_u))
+        amount1 = position_amount
+
+    amount0_raw = raw_usdc(amount0)
+    amount1_raw = raw_usdc(amount1)
+    if amount0_raw <= 0 or amount1_raw <= 0:
+        fail("calculated LP amount is zero")
+
+    return {
+        "token0": token0,
+        "token1": token1,
+        "amount0_raw": amount0_raw,
+        "amount1_raw": amount1_raw,
+        "liquidity": int(liquidity * 1_000_000),
+        "tick_lower": tick_lower,
+        "tick_upper": tick_upper,
+        "raw_current": raw_current,
+        "semantic_price": semantic_price,
+    }
 
 
 def ensure_eth(w3: Web3, whale_key: str, recipient: str, min_eth: float) -> None:
@@ -233,8 +395,13 @@ def main() -> None:
     parser.add_argument("--underwriter-key", default=None)
     parser.add_argument("--buyer-key", default=None)
     parser.add_argument("--whale-key", default=None)
-    parser.add_argument("--underwriter-capital", type=float, default=100_000_000.0)
+    parser.add_argument("--underwriter-fund", type=float, default=60_000_000.0)
+    parser.add_argument("--underwriter-collateral", type=float, default=50_000_000.0)
+    parser.add_argument("--mint-notional", type=float, default=500_000.0)
     parser.add_argument("--buyer-capital", type=float, default=10_000_000.0)
+    parser.add_argument("--range-min", type=float, default=2.0)
+    parser.add_argument("--range-max", type=float, default=20.0)
+    parser.add_argument("--lp-only", action="store_true", help="Skip funding/broker/mint and only add LP from wallet balances.")
     parser.add_argument("--gas-eth", type=float, default=5.0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--out", default=str(SCRIPT_DIR / "cds-simulation-setup-report.json"))
@@ -270,9 +437,13 @@ def main() -> None:
     position = checksum(cds["position_token"])
     broker_factory_addr = checksum(cds["broker_factory"])
     market_id = cds["market_id"]
-    p_max = 100.0 * 0.75
-    mint_amount = int(raw_usdc(args.underwriter_capital / p_max))
-    underwriter_capital_raw = raw_usdc(args.underwriter_capital)
+    rate_oracle = checksum(cds["rate_oracle"])
+    ghost_router = checksum(deploy["ghost_router"])
+    pool_id = cds["pool_id"]
+    pool_fee = int(cds.get("pool_fee", 500))
+    tick_spacing = int(cds.get("tick_spacing", 5))
+    underwriter_fund_raw = raw_usdc(args.underwriter_fund)
+    underwriter_collateral_raw = raw_usdc(args.underwriter_collateral)
     buyer_capital_raw = raw_usdc(args.buyer_capital)
 
     info(f"chainId={w3.eth.chain_id} block={w3.eth.block_number}")
@@ -280,7 +451,52 @@ def main() -> None:
     info(f"buyer={buyer}")
     info(f"whale={whale}")
     info(f"CDS market={market_id}")
-    info(f"underwriter capital=${args.underwriter_capital:,.2f}, mint={mint_amount / 1e6:,.6f} {cds.get('position_symbol', 'wCDS')}")
+    oracle = w3.eth.contract(address=rate_oracle, abi=ORACLE_ABI)
+    index_price = int(
+        oracle.functions.getIndexPrice(
+            checksum(cds["underlying_pool"]),
+            checksum(cds["underlying_token"]),
+        ).call()
+    ) / 1e18
+    if index_price <= 0:
+        fail("oracle index price is non-positive")
+
+    mint_amount = raw_usdc(args.mint_notional / index_price)
+    lp_plan = calculate_lp_amounts(
+        collateral=collateral,
+        position=position,
+        minted_position_raw=mint_amount,
+        semantic_price=index_price,
+        semantic_min=args.range_min,
+        semantic_max=args.range_max,
+        tick_spacing=tick_spacing,
+    )
+
+    required_collateral_wallet = (
+        lp_plan["amount0_raw"]
+        if lp_plan["token0"].lower() == collateral.lower()
+        else lp_plan["amount1_raw"]
+    )
+    if required_collateral_wallet > underwriter_fund_raw - underwriter_collateral_raw:
+        fail(
+            "LP collateral requirement exceeds wallet remainder after broker collateral deposit: "
+            f"required=${required_collateral_wallet/1e6:,.2f}, "
+            f"available=${(underwriter_fund_raw-underwriter_collateral_raw)/1e6:,.2f}"
+        )
+
+    info(
+        f"underwriter fund=${args.underwriter_fund:,.2f}, "
+        f"broker collateral=${args.underwriter_collateral:,.2f}, "
+        f"mint notional=${args.mint_notional:,.2f}"
+    )
+    info(f"index price=${index_price:.6f}, mint={mint_amount / 1e6:,.6f} {cds.get('position_symbol', 'wCDS')}")
+    info(
+        "LP plan: "
+        f"token0={lp_plan['token0']} amount0={lp_plan['amount0_raw']/1e6:,.6f}, "
+        f"token1={lp_plan['token1']} amount1={lp_plan['amount1_raw']/1e6:,.6f}, "
+        f"ticks=[{lp_plan['tick_lower']},{lp_plan['tick_upper']}], "
+        f"liquidity={lp_plan['liquidity']}"
+    )
 
     if args.dry_run:
         ok("dry run complete; no transactions sent")
@@ -298,70 +514,160 @@ def main() -> None:
     factory = w3.eth.contract(address=broker_factory_addr, abi=BROKER_FACTORY_ABI)
     broker_token = w3.eth.contract(address=position, abi=ERC20_ABI)
 
+    broker = None
+    broker_usdc = 0
     ensure_eth(w3, whale_key, underwriter, args.gas_eth)
-    ensure_eth(w3, whale_key, buyer, args.gas_eth)
-    ensure_usdc(w3, whale_key, usdc, underwriter, underwriter_capital_raw)
-    ensure_usdc(w3, whale_key, usdc, buyer, buyer_capital_raw)
+    if not args.lp_only:
+        ensure_eth(w3, whale_key, buyer, args.gas_eth)
+        ensure_usdc(w3, whale_key, usdc, underwriter, underwriter_fund_raw)
+        ensure_usdc(w3, whale_key, usdc, buyer, buyer_capital_raw)
 
-    salt = "0x" + secrets.token_hex(32)
-    create_data = factory.functions.createBroker(salt).build_transaction({"from": underwriter})["data"]
-    receipt = send_tx(
-        w3,
-        underwriter_key,
-        broker_factory_addr,
-        data=create_data,
-        gas=1_500_000,
-        label="create CDS underwriter broker",
-    )
-    broker = parse_broker_from_receipt(receipt)
-    ok(f"underwriter broker: {broker}")
+        salt = "0x" + secrets.token_hex(32)
+        create_data = factory.functions.createBroker(salt).build_transaction({"from": underwriter})["data"]
+        receipt = send_tx(
+            w3,
+            underwriter_key,
+            broker_factory_addr,
+            data=create_data,
+            gas=1_500_000,
+            label="create CDS underwriter broker",
+        )
+        broker = parse_broker_from_receipt(receipt)
+        ok(f"underwriter broker: {broker}")
 
-    transfer_data = usdc.functions.transfer(broker, underwriter_capital_raw).build_transaction({"from": underwriter})["data"]
-    send_tx(
-        w3,
-        underwriter_key,
-        collateral,
-        data=transfer_data,
-        gas=120_000,
-        label="deposit raw USDC to underwriter broker",
-    )
+        transfer_data = usdc.functions.transfer(broker, underwriter_collateral_raw).build_transaction({"from": underwriter})["data"]
+        send_tx(
+            w3,
+            underwriter_key,
+            collateral,
+            data=transfer_data,
+            gas=120_000,
+            label="deposit raw USDC to underwriter broker",
+        )
 
-    broker_contract = w3.eth.contract(address=broker, abi=BROKER_ABI)
-    mint_data = broker_contract.functions.modifyPosition(
-        market_id,
-        0,
-        mint_amount,
-    ).build_transaction({"from": underwriter})["data"]
-    send_tx(
-        w3,
-        underwriter_key,
-        broker,
-        data=mint_data,
-        gas=3_000_000,
-        label="mint bounded wCDSUSDC",
-    )
+        broker_contract = w3.eth.contract(address=broker, abi=BROKER_ABI)
+        mint_data = broker_contract.functions.modifyPosition(
+            market_id,
+            0,
+            mint_amount,
+        ).build_transaction({"from": underwriter})["data"]
+        send_tx(
+            w3,
+            underwriter_key,
+            broker,
+            data=mint_data,
+            gas=3_000_000,
+            label="mint bounded wCDSUSDC",
+        )
 
-    withdraw_data = broker_contract.functions.withdrawToken(
-        position,
-        underwriter,
-        mint_amount,
-    ).build_transaction({"from": underwriter})["data"]
-    send_tx(
-        w3,
-        underwriter_key,
-        broker,
-        data=withdraw_data,
-        gas=500_000,
-        label="withdraw minted wCDSUSDC",
-    )
+        withdraw_data = broker_contract.functions.withdrawToken(
+            position,
+            underwriter,
+            mint_amount,
+        ).build_transaction({"from": underwriter})["data"]
+        send_tx(
+            w3,
+            underwriter_key,
+            broker,
+            data=withdraw_data,
+            gas=500_000,
+            label="withdraw minted wCDSUSDC",
+        )
 
-    broker_usdc = int(usdc.functions.balanceOf(broker).call())
+    broker_usdc = int(usdc.functions.balanceOf(broker).call()) if broker else 0
+    if not args.lp_only and broker_usdc < underwriter_collateral_raw:
+        fail(f"broker USDC below expected: {broker_usdc} < {underwriter_collateral_raw}")
+
     underwriter_wcds = int(broker_token.functions.balanceOf(underwriter).call())
-    if broker_usdc < underwriter_capital_raw:
-        fail(f"broker USDC below expected: {broker_usdc} < {underwriter_capital_raw}")
+    underwriter_usdc = int(usdc.functions.balanceOf(underwriter).call())
     if underwriter_wcds < mint_amount:
         fail(f"underwriter wCDS below expected: {underwriter_wcds} < {mint_amount}")
+    if underwriter_usdc < required_collateral_wallet:
+        fail(f"underwriter USDC below LP requirement: {underwriter_usdc} < {required_collateral_wallet}")
 
+    permit2_addr = checksum(deploy["permit2"])
+    posm_addr = checksum(deploy["v4_position_manager"])
+    permit2 = w3.eth.contract(address=permit2_addr, abi=PERMIT2_ABI)
+    posm = w3.eth.contract(address=posm_addr, abi=POSM_ABI)
+
+    max_u256 = 2**256 - 1
+    max_u160 = 2**160 - 1
+    max_u48 = 2**48 - 1
+    deadline = 2**256 - 1
+
+    for token_addr in [lp_plan["token0"], lp_plan["token1"]]:
+        token = w3.eth.contract(address=token_addr, abi=ERC20_ABI)
+        approve_data = token.functions.approve(permit2_addr, max_u256).build_transaction({"from": underwriter})["data"]
+        send_tx(
+            w3,
+            underwriter_key,
+            token_addr,
+            data=approve_data,
+            gas=120_000,
+            label=f"approve Permit2 {token_addr}",
+        )
+        permit2_data = permit2.functions.approve(
+            token_addr,
+            posm_addr,
+            max_u160,
+            max_u48,
+        ).build_transaction({"from": underwriter})["data"]
+        send_tx(
+            w3,
+            underwriter_key,
+            permit2_addr,
+            data=permit2_data,
+            gas=120_000,
+            label=f"Permit2 approve POSM {token_addr}",
+        )
+
+    next_token_id = int(posm.functions.nextTokenId().call())
+    pool_key = (lp_plan["token0"], lp_plan["token1"], pool_fee, tick_spacing, ZERO_ADDRESS)
+    actions = bytes([0x0B, 0x0B, 0x05, 0x11])
+    params = [
+        abi_encode(["address", "uint256", "bool"], [lp_plan["token0"], lp_plan["amount0_raw"], True]),
+        abi_encode(["address", "uint256", "bool"], [lp_plan["token1"], lp_plan["amount1_raw"], True]),
+        abi_encode(
+            [
+                "(address,address,uint24,int24,address)",
+                "int24",
+                "int24",
+                "uint128",
+                "uint128",
+                "address",
+                "bytes",
+            ],
+            [
+                pool_key,
+                lp_plan["tick_lower"],
+                lp_plan["tick_upper"],
+                max(lp_plan["amount0_raw"] * 2, 1),
+                max(lp_plan["amount1_raw"] * 2, 1),
+                underwriter,
+                b"",
+            ],
+        ),
+        abi_encode(["address", "address", "address"], [lp_plan["token0"], lp_plan["token1"], underwriter]),
+    ]
+    unlock_data = abi_encode(["bytes", "bytes[]"], [actions, params])
+    modify_data = posm.functions.modifyLiquidities(
+        "0x" + unlock_data.hex(),
+        deadline,
+    ).build_transaction({"from": underwriter})["data"]
+    send_tx(
+        w3,
+        underwriter_key,
+        posm_addr,
+        data=modify_data,
+        gas=2_500_000,
+        label="mint CDS V4 LP position",
+    )
+    lp_owner = checksum(posm.functions.ownerOf(next_token_id).call())
+    if lp_owner.lower() != underwriter.lower():
+        fail(f"LP NFT owner mismatch: {lp_owner} != {underwriter}")
+
+    final_underwriter_wcds = int(broker_token.functions.balanceOf(underwriter).call())
+    final_underwriter_usdc = int(usdc.functions.balanceOf(underwriter).call())
     report = {
         "market_id": market_id,
         "underwriter": underwriter,
@@ -369,10 +675,24 @@ def main() -> None:
         "broker": broker,
         "collateral_token": collateral,
         "position_token": position,
+        "funded_underwriter_raw": str(underwriter_fund_raw),
         "locked_collateral_raw": str(broker_usdc),
         "minted_position_raw": str(mint_amount),
-        "underwriter_position_balance_raw": str(underwriter_wcds),
+        "underwriter_usdc_balance_raw": str(final_underwriter_usdc),
+        "underwriter_position_balance_raw": str(final_underwriter_wcds),
         "buyer_usdc_balance_raw": str(int(usdc.functions.balanceOf(buyer).call())),
+        "lp_token_id": str(next_token_id),
+        "lp_plan": {
+            "pool_id": pool_id,
+            "token0": lp_plan["token0"],
+            "token1": lp_plan["token1"],
+            "amount0_raw": str(lp_plan["amount0_raw"]),
+            "amount1_raw": str(lp_plan["amount1_raw"]),
+            "liquidity": str(lp_plan["liquidity"]),
+            "tick_lower": lp_plan["tick_lower"],
+            "tick_upper": lp_plan["tick_upper"],
+            "semantic_price": lp_plan["semantic_price"],
+        },
     }
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

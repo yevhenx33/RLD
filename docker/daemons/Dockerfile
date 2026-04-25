@@ -14,6 +14,7 @@ COPY backend/services/ services/
 COPY backend/tools/ tools/
 COPY backend/db/ db/
 COPY backend/api/ api/
+COPY backend/rates_client.py rates_client.py
 
 ENV PYTHONUNBUFFERED=1
 

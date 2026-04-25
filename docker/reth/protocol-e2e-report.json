@@ -1,20 +1,26 @@
 {
+  "mode": "runtime",
   "rpc_url": "http://localhost:8545",
   "indexer_url": "http://localhost:8080",
   "chain_id": 31337,
-  "block_number": 16,
+  "block_number": 1271,
   "market_id": "0xd2a7ab40e88ffdca504c85f47dfbbb9dfd4e12733ed8a10836dce59381a1fa01",
   "pool_id": "0x2108803f900dd07d80e52ab0a2034a764b75eaf3962f905996ace7c72fc044f3",
   "token0": "0x2b4fbB59Ff505B0f57DCdD26c8c7f7F1204d1190",
   "token1": "0xF20822cB6ca26C873F3d35949A518D12eFa832d3",
   "pool_fee": 500,
   "tick_spacing": 5,
-  "oracle_index_price_wad": "13999832474634790000",
-  "expected_pool_spot_wad": "13999832474634790000",
-  "router_spot_wad": "13999832473224999999",
-  "spot_delta": "1409790001",
-  "spot_tolerance": "13999832474",
+  "oracle_index_price_wad": "6706339955551649000",
+  "expected_pool_spot_wad": "6706339955551649000",
+  "router_spot_wad": "4049727977627937388",
+  "spot_delta": "2656611977923711612",
+  "spot_tolerance": "6706339955",
   "indexer_config_market_id": "0xd2a7ab40e88ffdca504c85f47dfbbb9dfd4e12733ed8a10836dce59381a1fa01",
   "indexer_market_info_market_id": "0xd2a7ab40e88ffdca504c85f47dfbbb9dfd4e12733ed8a10836dce59381a1fa01",
-  "indexer_market_info_ghost_router": "0xa18a0ba162620af2262EE0020734cC13b618D9B2"
+  "indexer_market_info_ghost_router": "0xa18a0ba162620af2262EE0020734cC13b618D9B2",
+  "runtime": {
+    "total_block_states": 2,
+    "total_events": 0,
+    "pool_value_check": 6.70633995146404
+  }
 }

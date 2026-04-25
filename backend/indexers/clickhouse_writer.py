@@ -8,6 +8,7 @@ raw events, latest block snapshots, and recent candles.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -66,12 +67,25 @@ class SimClickHouseMirrorWriter:
 
     def _get_client(self):
         if self._client is None:
+            settings = {}
+            if os.getenv("CLICKHOUSE_ASYNC_INSERT", "true").strip().lower() in {"1", "true", "yes"}:
+                settings["async_insert"] = 1
+                settings["wait_for_async_insert"] = (
+                    1 if os.getenv("CLICKHOUSE_WAIT_FOR_ASYNC_INSERT", "true").strip().lower() in {"1", "true", "yes"} else 0
+                )
             self._client = clickhouse_connect.get_client(
                 host=self.host,
                 port=self.port,
                 database=self.database,
+                settings=settings,
             )
         return self._client
+
+    def reset_client(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            log.debug("ClickHouse mirror client close failed during reset", exc_info=True)
 
     def ensure_schema(self) -> None:
         schema_sql = Path(self.schema_path).read_text(encoding="utf-8")
@@ -87,6 +101,13 @@ class SimClickHouseMirrorWriter:
             self._client = None
 
     def write_batch(self, payload: dict[str, Any]) -> None:
+        try:
+            self._write_batch(payload)
+        except Exception:
+            self.reset_client()
+            raise
+
+    def _write_batch(self, payload: dict[str, Any]) -> None:
         client = self._get_client()
         synced_at = _utc_now_naive()
 

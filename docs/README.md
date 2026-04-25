@@ -10,6 +10,7 @@ Operational docs are now aligned to a single Reth-only launch baseline.
 | Backend services + API contract | [`backend/README.md`](../backend/README.md) |
 | API surface contract map | [`docs/api-surface.md`](./api-surface.md) |
 | Runtime boundaries + ownership | [`docs/runtime-boundaries.md`](./runtime-boundaries.md) |
+| CDS agent operations | [`docs/cds-agent-guide.md`](./cds-agent-guide.md) |
 | Disaster recovery targets | [`docs/disaster-recovery.md`](./disaster-recovery.md) |
 | Frontend architecture + guardrails | [`docs/frontend-architecture.md`](./frontend-architecture.md) |
 | Contracts/tooling | [`contracts/README.md`](../contracts/README.md) |

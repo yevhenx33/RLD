@@ -97,6 +97,7 @@ async def enrich_tick_range(
     token_id: int,
     tick_lower: int,
     tick_upper: int,
+    liquidity_delta: int | None = None,
     pool_id: str | None = None,
 ) -> None:
     """
@@ -107,13 +108,19 @@ async def enrich_tick_range(
     Uses UPSERT because ModifyLiquidity often fires BEFORE LiquidityAdded
     in the same transaction (lower log_index), so the row may not exist yet.
     """
+    liquidity_value = str(abs(liquidity_delta)) if liquidity_delta else "0"
     await conn.execute("""
         INSERT INTO lp_positions (token_id, tick_lower, tick_upper, pool_id, owner, liquidity, mint_block)
-        VALUES ($1, $2, $3, $4, '', '0', 0)
+        VALUES ($1, $2, $3, $4, '', $5, 0)
         ON CONFLICT (token_id) DO UPDATE SET
           tick_lower = COALESCE($2, lp_positions.tick_lower),
           tick_upper = COALESCE($3, lp_positions.tick_upper),
-          pool_id = COALESCE($4, lp_positions.pool_id)
-    """, str(token_id), tick_lower, tick_upper, pool_id)
+          pool_id = COALESCE($4, lp_positions.pool_id),
+          liquidity = CASE
+            WHEN CAST(lp_positions.liquidity AS NUMERIC) = 0 AND CAST($5 AS NUMERIC) > 0
+            THEN $5
+            ELSE lp_positions.liquidity
+          END
+    """, str(token_id), tick_lower, tick_upper, pool_id, liquidity_value)
     log.debug("[lp] Enriched tick range tokenId=%d ticks=[%d,%d] pool=%s",
               token_id, tick_lower, tick_upper, pool_id)
