@@ -110,7 +110,7 @@ Where the base regime is defined as:
 
 Simulations evaluated 1,000 discrete paths spanning $T = 365$ days for a $100,000 principal targeting a 10% fixed yield. Crucially, the model strictly incorporates real-world frictions, charging a continuous floating funding spread, a 5 bps TWAMM execution swap fee, and generalized L1 gas overheads.
 
-![Monte Carlo Yield Consistency](assets/ou_yield_consistency.png)
+![Monte Carlo Yield Consistency](ou_yield_consistency.png)
 
 ### 4.2 Annualized Funding Tolerance Matrix
 
@@ -126,12 +126,12 @@ Because the upfront monetization loop naturally expands the user's collateral to
 | Chaotic Vol (σ=0.4) | 40% | 20.45% | 12.30% | **11.89%** | **1.23%** | **-17.51%** |
 
 **Scientific Observations:**
-*   **Variance Crush Profile:** The TWAMM-hedged architecture mathematically annihilates risk. By explicitly comparing the unhedged vs hedged variance, the strategy demonstrates a massive variance crush (e.g. from 12.30% down to a tightly bounded 1.23% in Chaotic regimes).
+*   **Variance Crush Profile:** The TWAMM-hedged architecture mathematically reduces volatility. By explicitly comparing the unhedged vs hedged variance, the strategy demonstrates a massive variance crush (e.g. from 12.30% down to a tightly bounded 1.23% in Chaotic regimes).
 *   **The Funding Tolerance Buffer Explained:** Because the Yield Monetization loop expands the user's collateral to ~$110k at origination, the strategy structurally over-performs the 10% target in a neutral market. This extra yield (e.g. 10.84% baseline) acts as a massive protective buffer. 
-*   **Margin of Safety Guarantee:** This buffer explicitly defines how much funding rate traders can tolerate without losing their promised 10% fixed yield. The data mathematically guarantees that traders can suffer a continuous, staggering **-16.38% annualized funding rate penalty** paid to the AMM, and the 110k collateral buffer will completely absorb it—allowing the trader to walk away with exactly their expected 10.0% fixed yield intact. Only if the annualized funding drag exceeds -16.38% will the promised fixed yield begin to decay.
+*   **Margin of Safety Guarantee:** This buffer explicitly defines how much funding rate traders can tolerate without losing their promised 10% fixed yield. The data mathematically guarantees that traders can handle a continuous annualized funding rate penalty of up to -16.38% and the 110k collateral buffer will completely absorb it — allowing the trader to walk away with exactly their expected 10.0% fixed yield intact. Only if the annualized funding drag exceeds -16.38% will the promised fixed yield begin to decay.
 
-![Yield Consistency Comparison](assets/ou_yield_comparison.png)
-![Monte Carlo LTV Stress Test](assets/ou_ltv_stress.png)
+![Yield Consistency Comparison](ou_yield_comparison.png)
+![Monte Carlo LTV Stress Test](ou_ltv_stress.png)
 
 ## 5. Adversarial Robustness and Edge Cases
 
