@@ -1343,9 +1343,6 @@
               <Card title="LIGHTHOUSE (CL)" badge={<Badge text={d.nodes?.lighthouse?.syncing ? "SYNCING" : "SYNCED"} type={d.nodes?.lighthouse?.syncing ? "a" : "g"} />} delay={6}>
                 <Metric value={d.nodes?.lighthouse?.distance || "0"} unit="slots" label="Distance from head" color={d.nodes?.lighthouse?.syncing ? "var(--a)" : "var(--g)"} />
               </Card>
-              <Card title="MORPHO DB (SQLITE)" badge={<Badge text={d.nodes?.morpho_db?.status === "available" ? "READY" : "MISSING"} type={d.nodes?.morpho_db?.status === "available" ? "g" : "r"} />} delay={6}>
-                <Metric value={d.nodes?.morpho_db?.size_mb || 0} unit="MB" label="/mnt/data/morpho_enriched_final.db" color={d.nodes?.morpho_db?.status === "available" ? "var(--g)" : "var(--r)"} />
-              </Card>
             </div>
 
             {/* ══ ROW 4: Containers ══ */}

@@ -3,6 +3,7 @@ import logging
 import clickhouse_connect
 from indexer.base import BaseSource
 from indexer.protocols import PROCESSOR_STATE_ALIASES
+from indexer.state import ensure_source_status_table, update_source_status
 
 log = logging.getLogger("processor")
 CLICKHOUSE_CONNECT_TIMEOUT = int(os.getenv("CLICKHOUSE_CONNECT_TIMEOUT", "5"))
@@ -51,6 +52,7 @@ class ProtocolProcessor:
         
         # Ensure state table exists
         ch = self._get_ch_client()
+        ensure_source_status_table(ch)
         ch.command("""
         CREATE TABLE IF NOT EXISTS processor_state (
             protocol String,
@@ -102,6 +104,13 @@ class ProtocolProcessor:
 
     def set_last_processed_block(self, ch, block_num: int):
         ch.insert('processor_state', [[self.source.name, int(block_num)]], column_names=['protocol', 'last_processed_block'])
+        update_source_status(
+            ch,
+            self.source.name,
+            "processor",
+            last_processed_block=int(block_num),
+            last_event_block=int(block_num),
+        )
 
     def run_processor_cycle(self):
         if not self.source.raw_table:
@@ -121,6 +130,13 @@ class ProtocolProcessor:
 
             if max_mempool_block <= last_processed:
                 log.info(f"[{self.source.name}-Processor] Up to date at block {last_processed}")
+                update_source_status(
+                    ch,
+                    self.source.name,
+                    "processor",
+                    last_processed_block=last_processed,
+                    last_event_block=max_mempool_block,
+                )
                 return
 
             log.info(f"[{self.source.name}-Processor] Decoding {last_processed} -> {max_mempool_block}")
@@ -172,6 +188,14 @@ class ProtocolProcessor:
 
                 # Advance cursor
                 self.set_last_processed_block(ch, current_end)
+                update_source_status(
+                    ch,
+                    self.source.name,
+                    "processor",
+                    last_processed_block=current_end,
+                    last_event_block=max_mempool_block,
+                    last_data_timestamp=max(block_ts_map.values()) if block_ts_map else None,
+                )
                 current_start = current_end + 1
                 
                 # Explicit reclaim

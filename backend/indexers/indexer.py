@@ -232,7 +232,7 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
     rows = await conn.fetch("""
         SELECT market_id, broker_factory, mock_oracle, twamm_hook,
                ghost_router, twap_engine, twap_engine_lens,
-               bond_factory, basis_trade_factory
+               bond_factory, basis_trade_factory, wausdc, wrlp
         FROM markets
     """)
     mapping = {}
@@ -254,12 +254,29 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
         _remember(r.get("twap_engine_lens"))
         _remember(r.get("bond_factory"))
         _remember(r.get("basis_trade_factory"))
+        _remember(r.get("wausdc"))
+        _remember(r.get("wrlp"))
 
     # Broker → market_id
     broker_rows = await conn.fetch("SELECT address, market_id FROM brokers")
     for b in broker_rows:
         mapping[b["address"].lower()] = b["market_id"]
 
+    return mapping
+
+
+async def build_token_market_map(conn: asyncpg.Connection) -> dict[str, dict[str, str]]:
+    """Map watched ERC20 token address to its market token context."""
+    rows = await conn.fetch("SELECT market_id, wausdc, wrlp FROM markets")
+    mapping: dict[str, dict[str, str]] = {}
+    for row in rows:
+        market_id = row["market_id"]
+        wausdc = (row["wausdc"] or "").lower()
+        wrlp = (row["wrlp"] or "").lower()
+        if wausdc:
+            mapping[wausdc] = {"market_id": market_id, "wausdc": wausdc, "wrlp": wrlp}
+        if wrlp:
+            mapping[wrlp] = {"market_id": market_id, "wausdc": wausdc, "wrlp": wrlp}
     return mapping
 
 
@@ -321,6 +338,11 @@ async def dispatch(
                 market_id = topic1_hex.lower()
         elif not market_id:
             market_id = topic1_hex.lower()
+
+    pool_id_topic = None
+    if event_name in TOPIC1_POOL_ID_TO_MARKET_EVENTS and len(topics) > 1:
+        topic1 = topics[1].hex() if isinstance(topics[1], bytes) else topics[1]
+        pool_id_topic = "0x" + topic1 if not topic1.startswith("0x") else topic1
 
     # ── Record raw event ─────────────────────────────────────────────────
     await conn.execute("""
@@ -397,22 +419,21 @@ async def dispatch(
 
     elif event_name == "Swap":
         # id is topics[1] — resolve market from pool_id
+        pool_id = pool_id_topic
         if not market_id:
             # Try resolving via pool_id from topics
-            pool_id_topic = topics[1].hex() if isinstance(topics[1], bytes) else topics[1]
             row = await conn.fetchrow(
-                "SELECT market_id FROM markets WHERE pool_id = $1", pool_id_topic
+                "SELECT market_id FROM markets WHERE pool_id = $1", pool_id
             )
             if row:
                 market_id = row["market_id"]
-        if not market_id:
+        if not market_id or not pool_id:
             return
 
         # Swap ABI: (bytes32 id, address sender, int128 amount0, int128 amount1,
         #            uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint24 fee)
         # Topics: [sig, id, sender]  Data: (amount0, amount1, sqrtPriceX96, liquidity, tick, fee)
         try:
-            pool_id = market_id  # In Swap, topic1 is the pool_id
             market_info = await conn.fetchrow(
                 "SELECT market_id, wausdc, wrlp FROM markets WHERE pool_id = $1", pool_id
             )
@@ -462,7 +483,9 @@ async def dispatch(
 
     elif event_name == "ModifyLiquidity" and market_id:
         try:
-            pool_id = market_id  # topics[1] = V4 pool_id
+            pool_id = pool_id_topic
+            if not pool_id:
+                return
 
             # Always decode tick data and enrich LP position first
             decoded = w3.eth.codec.decode(
@@ -702,14 +725,18 @@ async def dispatch(
             to_addr   = to_addr.lower()
             contract_lower = contract.lower()
 
-            # Use cached market config (Step 2: no per-event DB query)
             ctx = batch_ctx or {}
-            mkt_id = ctx.get("market_id")
-            wausdc = ctx.get("wausdc", "")
-            wrlp   = ctx.get("wrlp", "")
+            token_market_map = ctx.get("token_market_map", {})
+            token_ctx = token_market_map.get(contract_lower, {})
+            mkt_id = token_ctx.get("market_id") or market_id
+            wausdc = token_ctx.get("wausdc", "")
+            wrlp = token_ctx.get("wrlp", "")
             if not mkt_id:
-                # Fallback: query DB (should not happen if batch_ctx is set)
-                m = await conn.fetchrow("SELECT market_id, wausdc, wrlp FROM markets LIMIT 1")
+                # Fallback: resolve by token contract. Ambiguous shared tokens should be avoided.
+                m = await conn.fetchrow(
+                    "SELECT market_id, wausdc, wrlp FROM markets WHERE lower(wausdc)=lower($1) OR lower(wrlp)=lower($1) LIMIT 1",
+                    contract_lower,
+                )
                 if not m:
                     return
                 mkt_id = m["market_id"]
@@ -974,8 +1001,13 @@ async def run(
     global_cfg = {}
     while True:
         async with db.pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT market_id, deploy_block FROM markets LIMIT 1")
-            state = await conn.fetchrow("SELECT last_indexed_block FROM indexer_state LIMIT 1")
+            row = await conn.fetchrow("""
+                SELECT market_id, deploy_block
+                FROM markets
+                ORDER BY deploy_block ASC, market_id ASC
+                LIMIT 1
+            """)
+            state = await conn.fetchrow("SELECT MIN(last_indexed_block) AS last_indexed_block FROM indexer_state")
         if row:
             global_cfg["market_id"] = row["market_id"]
             global_cfg["session_start_block"] = row["deploy_block"] or 0
@@ -985,7 +1017,7 @@ async def run(
                 global_cfg.update(full_cfg)
             except (FileNotFoundError, ValueError):
                 pass
-            log.info("Market found: %s (deploy_block=%d)", row["market_id"], global_cfg["session_start_block"])
+            log.info("Market baseline found: %s (deploy_block=%d)", row["market_id"], global_cfg["session_start_block"])
             break
         await asyncio.sleep(5)
 
@@ -1008,10 +1040,7 @@ async def run(
             # reset() seeds indexer_state to session_start_block; if that value drops
             # below our in-memory cursor, rewind so replay starts again.
             async with db.pool.acquire() as conn:
-                db_cursor = await conn.fetchval(
-                    "SELECT last_indexed_block FROM indexer_state WHERE market_id = $1",
-                    global_cfg["market_id"],
-                )
+                db_cursor = await conn.fetchval("SELECT MIN(last_indexed_block) FROM indexer_state")
             if db_cursor is not None and int(db_cursor) < int(last_block):
                 log.info("Detected cursor rewind request: %d -> %d", last_block, int(db_cursor))
                 last_block = int(db_cursor)
@@ -1027,17 +1056,11 @@ async def run(
                 # Rebuild address→market map — zero RPC
                 addr_market_map = await build_address_market_map(conn)
 
-                # Step 2: Cache market config once per batch (not per-event)
-                _mkt = await conn.fetchrow("SELECT market_id, wausdc, wrlp FROM markets LIMIT 1")
-                batch_ctx = {}
-                if _mkt:
-                    batch_ctx = {
-                        "market_id": _mkt["market_id"],
-                        "wausdc": (_mkt["wausdc"] or "").lower(),
-                        "wrlp": (_mkt["wrlp"] or "").lower(),
-                        "pool_mgr": (global_cfg.get("v4_pool_manager") or "").lower(),
-                        "v4_posm": (global_cfg.get("v4_position_manager") or "").lower(),
-                    }
+                batch_ctx = {
+                    "token_market_map": await build_token_market_map(conn),
+                    "pool_mgr": (global_cfg.get("v4_pool_manager") or "").lower(),
+                    "v4_posm": (global_cfg.get("v4_position_manager") or "").lower(),
+                }
 
                 from_block = last_block + 1
 

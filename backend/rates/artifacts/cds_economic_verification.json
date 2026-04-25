@@ -1,0 +1,125 @@
+{
+  "market_params": {
+    "target_utilization": 0.9,
+    "reserve_factor": 0.1,
+    "r_min": 0.02,
+    "r_kink": 0.08,
+    "r_max": 0.75,
+    "kink_convexity": 2.0,
+    "scalar_k": 100.0
+  },
+  "simulation_config": {
+    "target_coverage": 1000000.0,
+    "horizon_days": 365,
+    "default_day": 240,
+    "dt_days": 1
+  },
+  "yield_invariant": {
+    "decay_rate": 2.302585092994046,
+    "max_valid_rmax": 2.5584278811044956,
+    "configured_rmax": 0.75,
+    "min_alpha": 0.06140226914650789,
+    "worst_case": {
+      "utilization": 0.0,
+      "borrow_rate": 0.02,
+      "y_cds": 0.06140226914650789,
+      "y_supply": 0.0
+    },
+    "negative_control_aggressive_rmax": 3.1980348513806196,
+    "negative_control_terminal_alpha": -0.5756462732485117
+  },
+  "coverage_summary": {
+    "initial_tokens": 13333.333333333334,
+    "final_tokens": 133333.33333333337,
+    "max_coverage_error": 2.328306436538696e-16,
+    "max_daily_premium_error_vs_continuous": 0.0031476038405166356,
+    "cumulative_premium_paid": 949318.4199860248,
+    "cumulative_continuous_premium": 952315.9332749313,
+    "cumulative_supply_yield_floor": 269050.4023534222,
+    "default_day": 240,
+    "default_nf": 0.22002182031514392,
+    "default_borrow_rate": 0.75,
+    "default_maintained_payout": 999999.9999999998,
+    "default_passive_payout": 220021.8203151439,
+    "default_mark_value": 1000000.0,
+    "final_maintained_max_coverage": 1000000.0000000001,
+    "final_passive_max_coverage": 99999.99999999997
+  },
+  "sample_states": [
+    {
+      "day": 0,
+      "utilization": 0.72,
+      "borrow_rate": 0.06799999999999999,
+      "nf": 1.0,
+      "target_tokens": 13333.333333333334,
+      "tokens_bought": 0.0,
+      "premium_paid": 0.0,
+      "maintained_max_coverage": 1000000.0,
+      "passive_max_coverage": 1000000.0,
+      "mark_value": 90666.66666666666,
+      "supply_yield": 0.04406399999999999,
+      "cds_yield": 0.2087677150981268,
+      "alpha": 0.1647037150981268
+    },
+    {
+      "day": 30,
+      "utilization": 0.7592503351152848,
+      "borrow_rate": 0.07061668900768565,
+      "nf": 0.8275766320702963,
+      "target_tokens": 16111.297512084377,
+      "tokens_bought": 101.31743788083077,
+      "premium_paid": 592.1064186187535,
+      "maintained_max_coverage": 999999.9999999999,
+      "passive_max_coverage": 827576.6320702963,
+      "mark_value": 94155.58534358087,
+      "supply_yield": 0.04825417031443547,
+      "cds_yield": 0.21680124723425798,
+      "alpha": 0.1685470769198225
+    },
+    {
+      "day": 90,
+      "utilization": 0.6865794380049872,
+      "borrow_rate": 0.06577196253366581,
+      "nf": 0.5667932343211247,
+      "target_tokens": 23524.15753392558,
+      "tokens_bought": 147.93391828651147,
+      "premium_paid": 551.4843832043289,
+      "maintained_max_coverage": 999999.9999999999,
+      "passive_max_coverage": 566793.2343211247,
+      "mark_value": 87695.95004488774,
+      "supply_yield": 0.04064190936556441,
+      "cds_yield": 0.20192738728930903,
+      "alpha": 0.16128547792374462
+    },
+    {
+      "day": 240,
+      "utilization": 1.0,
+      "borrow_rate": 0.75,
+      "nf": 0.22002182031514392,
+      "target_tokens": 60600.05009610226,
+      "tokens_bought": 381.0892205659911,
+      "premium_paid": 6288.595800855656,
+      "maintained_max_coverage": 999999.9999999998,
+      "passive_max_coverage": 220021.8203151439,
+      "mark_value": 1000000.0,
+      "supply_yield": 0.675,
+      "cds_yield": 2.302585092994046,
+      "alpha": 1.6275850929940459
+    },
+    {
+      "day": 365,
+      "utilization": 1.0,
+      "borrow_rate": 0.75,
+      "nf": 0.09999999999999998,
+      "target_tokens": 133333.33333333337,
+      "tokens_bought": 838.4794401140825,
+      "premium_paid": 6288.595800855617,
+      "maintained_max_coverage": 1000000.0000000001,
+      "passive_max_coverage": 99999.99999999997,
+      "mark_value": 1000000.0,
+      "supply_yield": 0.675,
+      "cds_yield": 2.302585092994046,
+      "alpha": 1.6275850929940459
+    }
+  ]
+}

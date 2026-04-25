@@ -142,7 +142,6 @@ class ShadowWatcher:
         RAW_TABLE_MAP = {
             "AAVE_MARKET": "aave_events",
             "FLUID_MARKET": "fluid_events",
-            "MORPHO_MARKET": "morpho_events",
             # Add other mappings as necessary
         }
         raw_table = RAW_TABLE_MAP.get(protocol)

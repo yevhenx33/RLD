@@ -32,7 +32,6 @@ For the current rates/indexer architecture and planned hardening roadmap, see:
 
 - `data-pipeline/docs/INDEXER_ARCHITECTURE.md`
 - `data-pipeline/docs/AAVE_INDEXER.md`
-- `data-pipeline/docs/MORPHO_INDEXER.md`
 
 ### Envio Health Contract
 

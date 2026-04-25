@@ -9,7 +9,6 @@ import { getTokenIcon } from "../../utils/tokenIcons";
 
 const PROTOCOL_MAP = {
   aave: "AAVE_MARKET",
-  morpho: "MORPHO_MARKET",
   euler: "EULER_MARKET",
   fluid: "FLUID_MARKET",
 };

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 def build_dummy_data(days: int = 100) -> pl.DataFrame:
     """
-    Creates dummy 1H data mimicking Aave, Morpho, and ETH prices.
+    Creates dummy 1H data mimicking Aave, another lending venue, and ETH prices.
     Injects a 'crisis regime' to test bounded payouts.
     """
     np.random.seed(42)
@@ -13,21 +13,21 @@ def build_dummy_data(days: int = 100) -> pl.DataFrame:
     timestamps = [base_time + timedelta(hours=i) for i in range(days * 24)]
     
     aave_rate = np.random.uniform(0.01, 0.05, size=len(timestamps))
-    morpho_rate = np.random.uniform(0.01, 0.06, size=len(timestamps))
+    secondary_rate = np.random.uniform(0.01, 0.06, size=len(timestamps))
     eth_price = 3000.0 + np.cumsum(np.random.normal(0, 5, size=len(timestamps)))
     
     # Inject crisis regime (r > 0.20) halfway through
     mid_idx = len(timestamps) // 2
     end_idx = mid_idx + 120 # 5 days of crisis
     aave_rate[mid_idx:end_idx] = np.random.uniform(0.20, 0.85, size=120)
-    morpho_rate[mid_idx:end_idx] = np.random.uniform(0.15, 0.95, size=120)
+    secondary_rate[mid_idx:end_idx] = np.random.uniform(0.15, 0.95, size=120)
     # ETH price tanks during the yield crisis
     eth_price[mid_idx:end_idx] = eth_price[mid_idx:end_idx] * 0.8 
 
     return pl.DataFrame({
         "timestamp": timestamps,
         "aave_rate": aave_rate,
-        "morpho_rate": morpho_rate,
+        "secondary_rate": secondary_rate,
         "eth_price": eth_price
     })
 
@@ -50,7 +50,7 @@ def deterministic_pnl_loop(df: pl.DataFrame, notional_usd: float = 10000.0) -> p
         .group_by("date_utc")
         .agg([
             pl.col("aave_rate").last().alias("aave_r"),
-            pl.col("morpho_rate").last().alias("morpho_r"),
+            pl.col("secondary_rate").last().alias("secondary_r"),
             pl.col("eth_price").last().alias("wsteth_px")
         ])
         .sort("date_utc")
@@ -59,7 +59,7 @@ def deterministic_pnl_loop(df: pl.DataFrame, notional_usd: float = 10000.0) -> p
     # 2. VECTORIZED DERIVATIVE PRICING (Apply Bounded Caps)
     daily_df = daily_df.with_columns([
         pl.col("aave_r").map_elements(calculate_derivative_price, return_dtype=pl.Float64).alias("aave_P"),
-        pl.col("morpho_r").map_elements(calculate_derivative_price, return_dtype=pl.Float64).alias("morpho_P")
+        pl.col("secondary_r").map_elements(calculate_derivative_price, return_dtype=pl.Float64).alias("secondary_P")
     ])
 
     # 3. YIELD SPREAD & LOSS CALCULATIONS
@@ -68,13 +68,13 @@ def deterministic_pnl_loop(df: pl.DataFrame, notional_usd: float = 10000.0) -> p
 
     daily_df = daily_df.with_columns([
         (pl.col("aave_P") - baseline_strike_P).clip(lower_bound=0).alias("aave_payout_pct"),
-        (pl.col("morpho_P") - baseline_strike_P).clip(lower_bound=0).alias("morpho_payout_pct"),
+        (pl.col("secondary_P") - baseline_strike_P).clip(lower_bound=0).alias("secondary_payout_pct"),
     ])
 
     # Underwriter pays out % of notional per market when crisis hits
     daily_df = daily_df.with_columns([
         (notional_usd * 0.5 * (pl.col("aave_payout_pct") / 100.0)).alias("aave_loss"),
-        (notional_usd * 0.5 * (pl.col("morpho_payout_pct") / 100.0)).alias("morpho_loss"),
+        (notional_usd * 0.5 * (pl.col("secondary_payout_pct") / 100.0)).alias("secondary_loss"),
     ])
 
     # 4. COLLATERAL (HEDGE) VALUE TRACKING
@@ -83,7 +83,7 @@ def deterministic_pnl_loop(df: pl.DataFrame, notional_usd: float = 10000.0) -> p
 
     daily_df = daily_df.with_columns([
         ((pl.col("wsteth_px") - pl.col("wsteth_px").shift(1).fill_null(pl.col("wsteth_px"))) * eth_amount).alias("hedge_pnl"),
-        (pl.lit(fixed_funding_premium) - pl.col("aave_loss") - pl.col("morpho_loss")).alias("cds_net_pnl")
+        (pl.lit(fixed_funding_premium) - pl.col("aave_loss") - pl.col("secondary_loss")).alias("cds_net_pnl")
     ]).with_columns([
         (pl.col("hedge_pnl") + pl.col("cds_net_pnl")).alias("total_strategy_pnl")
     ])

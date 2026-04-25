@@ -1,24 +1,51 @@
-version: '3.8'
-
 services:
-  graphql_api:
-    image: rld_indexer_node
-    container_name: rld_graphql_api
-    restart: unless-stopped
+  migrate_clickhouse:
+    image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+    container_name: rld_clickhouse_migrate
     env_file:
       - .env
     environment:
       - CLICKHOUSE_HOST=127.0.0.1
       - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
+      - CLICKHOUSE_USER=${CLICKHOUSE_MIGRATION_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_MIGRATION_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_MANAGE_USERS=${CLICKHOUSE_MANAGE_USERS:-false}
+      - CLICKHOUSE_API_USER=${CLICKHOUSE_API_USER:-api_readonly}
+      - CLICKHOUSE_API_PASSWORD=${CLICKHOUSE_API_PASSWORD:-}
+      - CLICKHOUSE_WORKER_USER=${CLICKHOUSE_WORKER_USER:-worker}
+      - CLICKHOUSE_WORKER_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-}
+      - CLICKHOUSE_MIGRATION_USER=${CLICKHOUSE_MIGRATION_USER:-migration_admin}
+      - CLICKHOUSE_MIGRATION_PASSWORD=${CLICKHOUSE_MIGRATION_PASSWORD:-}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+    command: ["python", "/app/scripts/rld_indexer.py", "migrate", "--backfill", "--rebuild-views"]
+    network_mode: "host"
+    restart: "no"
+
+  graphql_api:
+    image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+    container_name: rld_graphql_api
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=host.docker.internal
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_API_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_API_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
       - CLICKHOUSE_CONNECT_TIMEOUT=5
       - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
       - CLICKHOUSE_QUERY_RETRIES=1
       - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
       - ENVIO_CORS_ORIGINS=${ENVIO_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}
-      - INDEXER_READY_PROTOCOLS=AAVE_MARKET,MORPHO_MARKET,CHAINLINK_PRICES
-      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
+      - INDEXER_READY_PROTOCOLS=${INDEXER_READY_PROTOCOLS:-AAVE_MARKET,CHAINLINK_PRICES,SOFR_RATES}
+      - INDEXER_MAX_READY_LAG_BLOCKS=${INDEXER_MAX_READY_LAG_BLOCKS:-250000}
+      - INDEXER_MAX_READY_SOFR_BUSINESS_DAYS=${INDEXER_MAX_READY_SOFR_BUSINESS_DAYS:-3}
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
     command:
       [
         "uvicorn",
@@ -36,15 +63,13 @@ services:
         "5",
         "--limit-max-requests",
         "20000",
-        "--limit-max-requests-jitter",
-        "2000",
         "--limit-concurrency",
         "512"
       ]
-    volumes:
-      - ./indexer:/app/indexer
     ports:
       - "127.0.0.1:5000:5000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ulimits:
       nofile:
         soft: 65536
@@ -62,141 +87,79 @@ services:
       start_period: 20s
       retries: 5
 
-  aave_collector:
-    image: rld_indexer_node
-    container_name: rld_aave_collector
+  aave_worker:
+    image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+    container_name: rld_aave_worker
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
     environment:
       - CLICKHOUSE_HOST=127.0.0.1
       - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
-      - SEND_MESSAGES=true
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
       - CLICKHOUSE_CONNECT_TIMEOUT=5
       - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
       - CLICKHOUSE_QUERY_RETRIES=1
       - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
-      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "AAVE_MARKET", "--role", "collector"]
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+    command: ["python", "/app/scripts/rld_indexer.py", "worker", "--source", "AAVE_MARKET"]
     network_mode: "host"
 
-  aave_processor:
-    image: rld_indexer_node
-    container_name: rld_aave_processor
+  chainlink_worker:
+    image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+    container_name: rld_chainlink_worker
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
     environment:
       - CLICKHOUSE_HOST=127.0.0.1
       - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
-      - SEND_MESSAGES=true
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
       - CLICKHOUSE_CONNECT_TIMEOUT=5
       - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
       - CLICKHOUSE_QUERY_RETRIES=1
       - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
-      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "AAVE_MARKET", "--role", "processor"]
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+    command: ["python", "/app/scripts/rld_indexer.py", "worker", "--source", "CHAINLINK_PRICES"]
     network_mode: "host"
 
-  morpho_collector:
-    image: rld_indexer_node
-    container_name: rld_morpho_collector
+  sofr_worker:
+    image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+    container_name: rld_sofr_worker
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
     environment:
       - CLICKHOUSE_HOST=127.0.0.1
       - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
-      - SEND_MESSAGES=true
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
       - CLICKHOUSE_CONNECT_TIMEOUT=5
       - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
       - CLICKHOUSE_QUERY_RETRIES=1
       - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
-      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "MORPHO_MARKET", "--role", "collector"]
-    network_mode: "host"
-
-  morpho_processor:
-    image: rld_indexer_node
-    container_name: rld_morpho_processor
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - CLICKHOUSE_HOST=127.0.0.1
-      - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
-      - SEND_MESSAGES=true
-      - CLICKHOUSE_CONNECT_TIMEOUT=5
-      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
-      - CLICKHOUSE_QUERY_RETRIES=1
-      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
-      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "MORPHO_MARKET", "--role", "processor"]
-    network_mode: "host"
-
-  sofr_collector:
-    image: rld_indexer_node
-    container_name: rld_sofr_collector
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - CLICKHOUSE_HOST=127.0.0.1
-      - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
-      - CLICKHOUSE_CONNECT_TIMEOUT=5
-      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
-      - CLICKHOUSE_QUERY_RETRIES=1
-      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
-      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "SOFR_RATES", "--role", "collector"]
-    network_mode: "host"
-
-  chainlink_collector:
-    image: rld_indexer_node
-    container_name: rld_chainlink_collector
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - CLICKHOUSE_HOST=127.0.0.1
-      - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
-      - CLICKHOUSE_CONNECT_TIMEOUT=5
-      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
-      - CLICKHOUSE_QUERY_RETRIES=1
-      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
-      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "CHAINLINK_PRICES", "--role", "collector"]
-    network_mode: "host"
-
-  chainlink_processor:
-    image: rld_indexer_node
-    container_name: rld_chainlink_processor
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - CLICKHOUSE_HOST=127.0.0.1
-      - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
-      - CLICKHOUSE_CONNECT_TIMEOUT=5
-      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
-      - CLICKHOUSE_QUERY_RETRIES=1
-      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
-      - CLICKHOUSE_INSERT_BATCH_SIZE=20000
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "CHAINLINK_PRICES", "--role", "processor"]
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+    command: ["python", "/app/scripts/rld_indexer.py", "worker", "--source", "SOFR_RATES"]
     network_mode: "host"
 
 networks:

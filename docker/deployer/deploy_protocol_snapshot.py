@@ -725,6 +725,40 @@ def main() -> None:
     deploy_timestamp = int(latest_block["timestamp"])
 
     zero_for_one_long = _checksum(wausdc).lower() == _checksum(token0).lower()
+    perp_market = {
+        "type": "perp",
+        "market_id": market_id,
+        "pool_id": pool_id,
+        "collateral_token": _checksum(wausdc),
+        "collateral_symbol": "waUSDC",
+        "underlying_token": _checksum(USDC),
+        "underlying_pool": _checksum(AAVE_POOL),
+        "position_token": _checksum(position_token),
+        "position_name": "Wrapped RLP: aUSDC",
+        "position_symbol": "wRLP",
+        "broker_factory": _checksum(broker_factory),
+        "rate_oracle": _checksum(mock_oracle),
+        "spot_oracle": _checksum(mock_oracle),
+        "funding_model": _checksum(funding_model),
+        "settlement_module": _checksum(ZERO_ADDRESS),
+        "decay_rate_wad": "0",
+        "token0": _checksum(token0),
+        "token1": _checksum(token1),
+        "pool_fee": pool_fee,
+        "tick_spacing": tick_spacing,
+        "oracle_index_price_wad": str(oracle_index_price),
+        "pool_spot_price_wad": str(spot_price),
+        "pool_spot_expected_wad": str(expected_pool_price),
+        "zero_for_one_long": bool(zero_for_one_long),
+        "deploy_block": deploy_block,
+        "deploy_timestamp": deploy_timestamp,
+        "session_start_block": fork_block,
+        "min_col_ratio": "1200000000000000000",
+        "maintenance_margin": "1090000000000000000",
+        "liq_close_factor": "500000000000000000",
+        "funding_period_sec": funding_period,
+        "debt_cap": str(2**128 - 1),
+    }
 
     deployment = {
         "fork_block": fork_block,
@@ -777,6 +811,11 @@ def main() -> None:
         },
         # Indexer starts from the fork block while on Anvil.
         "session_start_block": fork_block,
+        # Structured multi-market view. Top-level keys above stay as legacy
+        # defaults for current single-market services.
+        "markets": {
+            "perp": perp_market,
+        },
     }
 
     DEPLOYMENT_PATH.parent.mkdir(parents=True, exist_ok=True)

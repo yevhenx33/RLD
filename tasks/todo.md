@@ -1,12 +1,5 @@
 # Frontend Visual Redesign
 
-## Review: Universal Morpho Market Indexer
-- [x] Implemented deterministic JSON-RPC decimal and symbol fetching with strict timeouts.
-- [x] Intercepted `CreateMarket` payload natively inside `morpho.py`.
-- [x] Executed Poka-Yoke verification successfully simulating a WETH lookup, USDC lookup, and an intentional HTTP timeout failure cleanly defaulting to 18 decimals and UNKNOWN symbol.
-- [ ] Needs Review: Check if any new obscure tokens should be statically mapped in `tokens.py` to avoid continuous cache misses, or if the pipeline is scaling effectively on its own.
-
-
 ## Phase 1: Standalone Landing Page Folder ✅
 
 - [x] Create `new-front/` at project root (sibling to `frontend/`)
@@ -40,7 +33,6 @@ new-front/
 ## Review: CDS Backtest Logic
 - [x] Implemented standalone Python script (`backend/rates/cds_backtest.py`)
 - [x] Verified Poka-Yoke metrics (Max payout bounds, Sharpe ratio)
-- [ ] Needs Review: Check if DuckDB ASOF join aligns exactly as expected on `morpho_enriched_final.db` in full N-Market extension.
 
 ## Review: Rolling Cointegration Analysis
 - [x] Implemented `backend/rates/rolling_cointegration.py` to sweep Engle-Granger regressions over 1-30 day lags on a 90-day window.
@@ -70,12 +62,6 @@ new-front/
 - [x] Executed `backend/rates/autoresearch/visualize_1h_step_pvalues.py` via Python multiprocessing, sweeping exactly 24,954 dense 1H intervals across the final SQLite `clean_rates.db`.
 - [x] Finalized the comprehensive `cointegration_analysis_report.md` artifact incorporating all methodologies, exact anomaly maps, and an embedded P-Value analytical series chart for Agent handoff.
 
-## Review: Morpho Market Cross-Correlation
-- [x] Built `backend/morpho/market_correlation.py` to extract high-fidelity Utilization and Borrow APY from `morpho_enriched_final.db`.
-- [x] Swapped linear Pearson correlation for Spearman Rank correlation to maintain mathematical validity against Morpho's non-linear kinked `AdaptiveCurveIRM`.
-- [x] Discovered massive Borrow APY correlation ($\rho = 0.958$) between `wstETH/USDC` and `WBTC/USDC`, proving cross-market liquidity contagion via MetaMorpho allocators.
-- [x] Executed systemic `backend/morpho/aave_cross_correlation.py` integrating the Aave 1H pipeline against the Morpho Capital-Weighted Bundle. Definitively proved the protocols exist as sovereign, decoupled yield environments ($\rho = 0.316$), shattering Basis Trading assumptions.
-
 ## Review: CDS Mathematical Simulation (Phase 2)
 - [x] Added `simulations/cds_equilibrium.py` for Monte Carlo verification of the Everlasting Option CDS tokenomics.
 - [x] Validated Fiduciary/Underwriter continuous minting and premium equilibrium matching equations natively on step-by-step resolution.
@@ -89,13 +75,6 @@ new-front/
 - [x] Verified exactly a 23 Day and 11 Hour separation between $t_{freeze}$ and $t_{settle}$, proving physical impossibility of adversarial mempool flights.
 - [ ] Needs Review: Inspect `simulations/cds_empirical_backtest.png` 2x2 publication artifact.
 
-## Review: Diversified Underwriter Portfolio Theory
-- [x] Queried top 30 USDC Morpho Blue markets from `morpho_enriched_final.db` (1.77M hourly snapshots).
-- [x] Executed `simulations/cds_portfolio_backtest.py` — full 30-market CDS vs. passive supply comparison.
-- [x] Verified Yield Invariant $Y_{CDS} \ge r_{supply}$ across all 30 markets without exception.
-- [x] Regime-separated analysis via `simulations/cds_portfolio_regime_separated.py` — 26 steady-state, 4 tail-risk.
-- [x] Portfolio Alpha: $426,776 extracted on $300k capital (142.3% alpha/capital).
-- [x] Compiled final academic report: `cds_academic_report.md`.
 ## Review: CDS Portfolio Risk Allocation & Optimization
 - [x] Defined programmatic `calculate_tier_weights` logic avoiding traditional DeFi TVL and Inverse-Yield Traps.
 - [x] Executed deterministic Tier 1 / 2 / 3 Blue Chip distribution simulation.
@@ -109,8 +88,6 @@ new-front/
 
 ## Review: ClickHouse Analytical Engine (OLAP)
 - [x] Bootstrapped local `clickhouse-server` container binding to `/mnt/data/clickhouse` for heavy analytical workloads.
-- [x] Executed Phase 1 Approval: Developed Python ETL script (`merge_aave_morpho.py`).
-- [x] Transferred >6,034,000 structural rows from Postgres Array (`rld_timescale`) and isolated SQLite volumes (`morpho_enriched_final.db`) into ClickHouse memory.
 - [x] Proven Poka-Yoke metrics (successful instantiation of Unified Long Form Timeseries Table).
 
 ## Review
@@ -123,7 +100,6 @@ new-front/
 - [x] Hardened code against zero-division payloads with deterministic Poka-Yoke error boundaries.
 - [x] Integrated `LidoRebaseSource` and `StaticPegsSource` in the unified `run_indexer.py` engine loops.
 - [x] Validated USR (Resolv Protocol) as an absolute static `$1.000` structure and mapped it deterministically into `StaticPegsSource`.
-- [x] Finalized error resolution for `syrupUSDT` and `ETH+` custom oracle feeds by overriding their structural bounds natively in `replay_morpho_full.py`.
 
 ## [Review] Data Pipeline Architecture Refactor
 - [ ] Review decoupled run_indexer.py argparse implementation
@@ -371,3 +347,16 @@ new-front/
 - [ ] Verify the empty state renders cleanly when no active contracts exist.
 
 
+## Review\n- [x] Verified commit c9061a29 is reverted.\n
+
+## Review: Homepage Component Determinism
+- [x] Ripped out non-deterministic `diagnose()` font network-polling effect that fired on every render.
+- [x] Stripped out 8 instances of redundant, non-responsive inline styling (`style={{ fontFamily: ... }}`).
+- [x] Centralized typography using deterministic Tailwind `font-jbm` class applications on Section containers.
+- [x] Executed Python Poka-Yoke verification (`tasks/verify_homepage.py`) proving the component is network-silent and structurally typed.
+
+## Review: Landing Page CDS Activation
+- [x] Ripped out disabled `cursor-not-allowed` container wrapping the Explore CDS text.
+- [x] Replaced the "Soon" badge with a deterministic React Router `<Link to="/markets/cds">`.
+- [x] Inherited the precise responsive styles and hover-inversion state from the adjacent "Explore Bonds" component.
+- [x] Executed Python Poka-Yoke verification (`tasks/verify_cds_button.py`) to mathematically prove routing structure.

@@ -208,13 +208,36 @@ def _format_usd_compact(value: float) -> str:
     return f"${value:.2f}"
 
 
-def _deployment_index_price_fallback() -> Optional[float]:
-    """Fallback index price from deployment.json oracle_index_price_wad."""
+def _deployment_market_entry(market_id: Optional[str] = None) -> dict[str, Any]:
     try:
         import bootstrap
 
         cfg = bootstrap.load_deployment_json()
-        raw = cfg.get("oracle_index_price_wad")
+    except Exception:
+        return {}
+
+    if market_id and isinstance(cfg.get("markets"), dict):
+        for entry in cfg["markets"].values():
+            if isinstance(entry, dict) and entry.get("market_id") == market_id:
+                return entry
+    return cfg
+
+
+def _deployment_index_price_fallback(market_id: Optional[str] = None) -> Optional[float]:
+    """Fallback index price from deployment.json oracle_index_price_wad."""
+    try:
+        raw = _deployment_market_entry(market_id).get("oracle_index_price_wad")
+        if raw in (None, "", "0", 0):
+            return None
+        return int(raw) / 1e18
+    except Exception:
+        return None
+
+
+def _deployment_mark_price_fallback(market_id: Optional[str] = None) -> Optional[float]:
+    """Fallback mark/spot price from deployment.json pool_spot_price_wad."""
+    try:
+        raw = _deployment_market_entry(market_id).get("pool_spot_price_wad")
         if raw in (None, "", "0", 0):
             return None
         return int(raw) / 1e18
@@ -274,18 +297,138 @@ def _hydrate_snapshot_prices(snapshot: Any, mark_price: Optional[float], index_p
             pool_obj["indexPrice"] = resolved_index
             pool_obj["index_price"] = resolved_index
 
+    market_obj = snapshot.get("market")
+    pool_obj = snapshot.get("pool")
+    derived = snapshot.get("derived")
+    if isinstance(market_obj, dict) and isinstance(pool_obj, dict) and isinstance(derived, dict):
+        mark = _as_price_or_none(pool_obj.get("markPrice", pool_obj.get("mark_price")))
+        index = _as_price_or_none(pool_obj.get("indexPrice", pool_obj.get("index_price")))
+        nf = _as_price_or_none(market_obj.get("normalizationFactor", market_obj.get("normalization_factor"))) or 1.0
+        if mark is not None and index is not None and index > 0:
+            normalized_mark = mark / nf if nf > 0 else mark
+            peg_dev = (normalized_mark - index) / index * 100
+            funding_rate = (normalized_mark - index) / index
+            funding_period = 2_592_000
+            try:
+                funding_period = int(snapshot.get("riskParams", {}).get("funding_period_sec") or funding_period)
+            except (TypeError, ValueError):
+                pass
+            derived["pegDeviationPct"] = round(peg_dev, 4)
+            derived["fundingRateAnnPct"] = round(funding_rate * ((365 * 86400) / funding_period) * 100, 4)
+
+
+def _record_get(row: asyncpg.Record, key: str, default: Any = None) -> Any:
+    try:
+        value = row[key]
+    except (KeyError, IndexError):
+        return default
+    return default if value is None else value
+
+
+MARKET_CONFIG_SELECT = """
+    SELECT market_id, broker_factory, mock_oracle, twamm_hook,
+           ghost_router, twap_engine, twap_engine_lens,
+           wausdc, wausdc_symbol, wrlp, wrlp_symbol,
+           pool_id, pool_fee, tick_spacing,
+           min_col_ratio, maintenance_margin, debt_cap,
+           swap_router, bond_factory, basis_trade_factory, broker_executor,
+           funding_period_sec, v4_quoter, broker_router,
+           v4_position_manager, v4_state_view, pool_manager
+    FROM markets
+"""
+
+
+def _deployment_market_id(deploy_cfg: dict[str, Any], market: str | None) -> str | None:
+    if not market:
+        return deploy_cfg.get("market_id")
+    if market.startswith("0x"):
+        return market
+    markets = deploy_cfg.get("markets")
+    if isinstance(markets, dict) and isinstance(markets.get(market), dict):
+        return markets[market].get("market_id")
+    return market
+
+
+async def _fetch_market_row(
+    conn: asyncpg.Connection,
+    market: str | None = None,
+) -> asyncpg.Record | None:
+    import bootstrap
+
+    deploy_cfg: dict[str, Any] = {}
+    try:
+        deploy_cfg = bootstrap.load_deployment_json()
+    except (FileNotFoundError, ValueError):
+        deploy_cfg = {}
+
+    requested_market_id = _deployment_market_id(deploy_cfg, market)
+    if requested_market_id:
+        row = await conn.fetchrow(
+            MARKET_CONFIG_SELECT + " WHERE market_id=$1",
+            requested_market_id,
+        )
+        if row:
+            return row
+
+    return await conn.fetchrow(
+        MARKET_CONFIG_SELECT + " ORDER BY deploy_timestamp DESC, market_id LIMIT 1"
+    )
+
+
+def _overlay_deployment_config(payload: Dict[str, Any]) -> Dict[str, Any]:
+    import bootstrap
+
+    try:
+        deploy_cfg = bootstrap.load_deployment_json()
+    except (FileNotFoundError, ValueError):
+        return payload
+
+    market_entry: dict[str, Any] = {}
+    markets = deploy_cfg.get("markets")
+    if isinstance(markets, dict):
+        for entry in markets.values():
+            if isinstance(entry, dict) and entry.get("market_id") == payload.get("market_id"):
+                market_entry = entry
+                break
+
+    for key in (
+        "token0", "token1", "zero_for_one_long", "funding_model",
+        "settlement_module", "decay_rate_wad", "collateral_symbol",
+        "position_symbol", "type",
+    ):
+        if key in market_entry and not payload.get(key):
+            payload[key] = market_entry[key]
+
+    for key in (
+        "rpc_url", "rld_core", "pool_manager",
+        "swap_router", "bond_factory", "basis_trade_factory",
+        "broker_executor", "broker_router", "v4_quoter", "v4_position_manager",
+        "ghost_router", "twap_engine", "twap_engine_lens",
+    ):
+        if key in deploy_cfg and not payload.get(key):
+            payload[key] = deploy_cfg[key]
+
+    if isinstance(markets, dict):
+        payload["markets"] = markets
+
+    return payload
+
 
 def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
+    collateral_symbol = _record_get(row, "wausdc_symbol", "waUSDC")
+    position_symbol = _record_get(row, "wrlp_symbol", "wRLP")
     payload = {
         "marketId": row["market_id"],
         "brokerFactory": row["broker_factory"],
         "mockOracle": row["mock_oracle"],
         "twammHook": row["twamm_hook"],
-        "ghostRouter": row.get("ghost_router") or "",
-        "twapEngine": row.get("twap_engine") or "",
-        "twapEngineLens": row.get("twap_engine_lens") or "",
+        "ghostRouter": _record_get(row, "ghost_router", ""),
+        "twapEngine": _record_get(row, "twap_engine", ""),
+        "twapEngineLens": _record_get(row, "twap_engine_lens", ""),
         "wausdc": row["wausdc"],
+        "wausdcSymbol": collateral_symbol,
         "wrlp": row["wrlp"],
+        "wrlpSymbol": position_symbol,
         "poolId": row["pool_id"],
         "poolFee": row["pool_fee"],
         "tickSpacing": row["tick_spacing"],
@@ -297,11 +440,11 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "basisTradeFactory": row["basis_trade_factory"],
         "brokerExecutor": row["broker_executor"],
         "fundingPeriodSec": row["funding_period_sec"],
-        "v4Quoter": row["v4_quoter"] or "",
-        "brokerRouter": row["broker_router"] or "",
-        "v4PositionManager": row["v4_position_manager"] or "",
-        "v4StateView": row["v4_state_view"] or "",
-        "poolManager": row["pool_manager"] or "",
+        "v4Quoter": _record_get(row, "v4_quoter", ""),
+        "brokerRouter": _record_get(row, "broker_router", ""),
+        "v4PositionManager": _record_get(row, "v4_position_manager", ""),
+        "v4StateView": _record_get(row, "v4_state_view", ""),
+        "poolManager": _record_get(row, "pool_manager", ""),
     }
 
     # Legacy field aliases used by older UI code paths.
@@ -331,8 +474,16 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "pool_manager": payload["poolManager"],
     })
 
-    payload["collateral"] = {"name": "waUSDC", "symbol": "waUSDC", "address": payload["wausdc"]}
-    payload["position_token"] = {"name": "wRLP", "symbol": "wRLP", "address": payload["wrlp"]}
+    payload["collateral"] = {
+        "name": collateral_symbol,
+        "symbol": collateral_symbol,
+        "address": payload["wausdc"],
+    }
+    payload["position_token"] = {
+        "name": position_symbol,
+        "symbol": position_symbol,
+        "address": payload["wrlp"],
+    }
     payload["infrastructure"] = {
         "brokerRouter": payload["brokerRouter"],
         "brokerExecutor": payload["brokerExecutor"],
@@ -625,22 +776,26 @@ class Query:
     # ── NEW: Precomputed data resolvers ─────────────────────────────
 
     @strawberry.field
-    async def snapshot(self) -> Optional[JSON]:
+    async def snapshot(self, market: Optional[str] = None) -> Optional[JSON]:
         """Returns the precomputed global snapshot JSON. Zero computation."""
         pool = await get_pool()
         async with pool.acquire() as conn:
-            val = await conn.fetchval("SELECT snapshot FROM markets LIMIT 1")
+            row = await _fetch_market_row(conn, market)
+            if not row:
+                return None
+            market_id = row["market_id"]
+            val = await conn.fetchval("SELECT snapshot FROM markets WHERE market_id=$1", market_id)
             latest_prices = await conn.fetchrow("""
                 SELECT
                     (SELECT mark_price FROM block_states
-                     WHERE mark_price IS NOT NULL
+                     WHERE market_id=$1 AND mark_price IS NOT NULL
                      ORDER BY block_number DESC
                      LIMIT 1) AS mark_price,
                     (SELECT index_price FROM block_states
-                     WHERE index_price IS NOT NULL
+                     WHERE market_id=$1 AND index_price IS NOT NULL
                      ORDER BY block_number DESC
                      LIMIT 1) AS index_price
-            """)
+            """, market_id)
         if not val:
             return None
         snap = json.loads(val) if isinstance(val, str) else val
@@ -648,20 +803,25 @@ class Query:
             return snap
 
         mark_price = _as_price_or_none(latest_prices["mark_price"]) if latest_prices else None
+        if mark_price is None:
+            mark_price = _deployment_mark_price_fallback(market_id)
         index_price = _as_price_or_none(latest_prices["index_price"]) if latest_prices else None
         if index_price is None:
-            index_price = _deployment_index_price_fallback()
+            index_price = _deployment_index_price_fallback(market_id)
 
         _hydrate_snapshot_prices(snap, mark_price, index_price)
 
         return snap
 
     @strawberry.field
-    async def liquidity_distribution(self) -> Optional[JSON]:
+    async def liquidity_distribution(self, market: Optional[str] = None) -> Optional[JSON]:
         """Returns pre-built liquidity bin distribution. Zero computation."""
         pool = await get_pool()
         async with pool.acquire() as conn:
-            val = await conn.fetchval("SELECT liquidity_bins FROM markets LIMIT 1")
+            row = await _fetch_market_row(conn, market)
+            if not row:
+                return None
+            val = await conn.fetchval("SELECT liquidity_bins FROM markets WHERE market_id=$1", row["market_id"])
         if not val:
             return None
         return json.loads(val) if isinstance(val, str) else val
@@ -827,20 +987,11 @@ class Query:
             }
 
     @strawberry.field
-    async def market_info(self) -> Optional[JSON]:
+    async def market_info(self, market: Optional[str] = None) -> Optional[JSON]:
         """Static market configuration. Fetched once, cached forever."""
         pool = await get_pool()
         async with pool.acquire() as conn:
-            row = await conn.fetchrow("""
-                SELECT market_id, broker_factory, mock_oracle, twamm_hook,
-                       ghost_router, twap_engine, twap_engine_lens,
-                       wausdc, wrlp, pool_id, pool_fee, tick_spacing,
-                       min_col_ratio, maintenance_margin, debt_cap,
-                       swap_router, bond_factory, basis_trade_factory, broker_executor,
-                       funding_period_sec, v4_quoter, broker_router,
-                       v4_position_manager, v4_state_view, pool_manager
-                FROM markets LIMIT 1
-            """)
+            row = await _fetch_market_row(conn, market)
         if not row:
             return None
         return _market_info_payload(row)
@@ -1002,8 +1153,14 @@ def create_app() -> FastAPI:
             await bootstrap.reset(pool)  # truncates + re-seeds from deployment.json
             cfg = bootstrap.load_deployment_json()
             market_id = cfg.get("market_id", "unknown")
-            log.info("Reset complete — market_id=%s", market_id)
-            return {"status": "ok", "market_id": market_id}
+            markets = cfg.get("markets") if isinstance(cfg.get("markets"), dict) else {}
+            market_ids = [
+                entry.get("market_id")
+                for entry in markets.values()
+                if isinstance(entry, dict) and entry.get("market_id")
+            ]
+            log.info("Reset complete — market_id=%s markets=%s", market_id, market_ids or [market_id])
+            return {"status": "ok", "market_id": market_id, "markets": market_ids or [market_id]}
         except Exception as e:
             log.error("Reset failed: %s", e, exc_info=True)
             return _error_response(
@@ -1014,38 +1171,19 @@ def create_app() -> FastAPI:
             )
 
     @app.get("/config")
-    async def get_config():
+    async def get_config(market: Optional[str] = FastAPIQuery(default=None)):
         """Daemons poll this to get deployment config. 503 until deployer has run."""
         try:
             pool = await get_pool()
             async with pool.acquire() as conn:
-                row = await conn.fetchrow("""
-                    SELECT market_id, broker_factory, mock_oracle, twamm_hook,
-                           ghost_router, twap_engine, twap_engine_lens,
-                           wausdc, wrlp, pool_id, pool_fee, tick_spacing,
-                           swap_router, bond_factory, basis_trade_factory, broker_executor
-                    FROM markets LIMIT 1
-                """)
+                row = await _fetch_market_row(conn, market)
             if not row:
                 return JSONResponse(
                     {"status": "waiting", "detail": "No market deployed yet"},
                     status_code=503
                 )
             cfg = dict(row)
-            # Overlay fields from deployment.json that are missing or null in DB
-            import bootstrap
-            try:
-                deploy_cfg = bootstrap.load_deployment_json()
-                for key in ("rpc_url", "rld_core", "pool_manager", "position_token",
-                            "swap_router", "bond_factory", "basis_trade_factory",
-                            "broker_executor", "broker_router", "token0", "token1",
-                            "zero_for_one_long", "v4_quoter", "v4_position_manager",
-                            "ghost_router", "twap_engine", "twap_engine_lens"):
-                    if key in deploy_cfg and not cfg.get(key):
-                        cfg[key] = deploy_cfg[key]
-            except (FileNotFoundError, ValueError):
-                pass
-            return cfg
+            return _overlay_deployment_config(cfg)
         except Exception as e:
             return _error_response(
                 503,
@@ -1056,20 +1194,11 @@ def create_app() -> FastAPI:
 
     # Compatibility routes retained for older UI paths.
     @app.get("/api/market-info")
-    async def api_market_info():
+    async def api_market_info(market: Optional[str] = FastAPIQuery(default=None)):
         try:
             pool = await get_pool()
             async with pool.acquire() as conn:
-                row = await conn.fetchrow("""
-                    SELECT market_id, broker_factory, mock_oracle, twamm_hook,
-                           ghost_router, twap_engine, twap_engine_lens,
-                           wausdc, wrlp, pool_id, pool_fee, tick_spacing,
-                           min_col_ratio, maintenance_margin, debt_cap,
-                           swap_router, bond_factory, basis_trade_factory, broker_executor,
-                           funding_period_sec, v4_quoter, broker_router,
-                           v4_position_manager, v4_state_view, pool_manager
-                    FROM markets LIMIT 1
-                """)
+                row = await _fetch_market_row(conn, market)
             if not row:
                 return JSONResponse(
                     {"status": "waiting", "detail": "No market deployed yet"},
@@ -1212,6 +1341,8 @@ def create_app() -> FastAPI:
             mark_price = None
             if latest_prices and latest_prices["mark_price"] is not None:
                 mark_price = float(latest_prices["mark_price"])
+            if mark_price is None:
+                mark_price = _deployment_mark_price_fallback()
 
             index_price = None
             if latest_prices and latest_prices["index_price"] is not None:

@@ -8,8 +8,8 @@ import { queryKeys } from "../api/queryKeys";
 const BROKER_LABELS = ["User A", "MM Daemon", "Chaos Trader"];
 
 // ── GraphQL fetchers ────────────────────────────────────────
-const fetchSimulationSnapshot = ([url]) =>
-  postGraphQL(url, { query: SIM_QUERY });
+const fetchSimulationSnapshot = ([url, , variables]) =>
+  postGraphQL(url, { query: SIM_QUERY, variables });
 
 const fetchSimulationAccount = ([url, , variables]) =>
   postGraphQL(url, { query: ACCOUNT_QUERY, variables });
@@ -19,10 +19,10 @@ const fetchSimulationCandles = ([url, , variables]) =>
 
 // ── Single GraphQL query — indexer returns JSON scalars ───────
 const SIM_QUERY = `
-  query SimSnapshot {
-    snapshot
+  query SimSnapshot($market: String) {
+    snapshot(market: $market)
     events(limit: 20) { blockNumber eventName data }
-    marketInfo
+    marketInfo(market: $market)
     indexerStatus { lastIndexedBlock lastIndexedAt totalEvents }
   }
 `;
@@ -110,6 +110,7 @@ export function useSimulation({
   chartStartTime = null,
   chartEndTime = null,
   account = null,        // wallet address for Tier 2 user query
+  marketKey = null,
 } = {}) {
   const [connected, setConnected] = useState(false);
   const prevBlock = useRef(null);
@@ -120,7 +121,7 @@ export function useSimulation({
     error: gqlError,
     isLoading: gqlLoading,
   } = useSWR(
-    queryKeys.simulationSnapshot(SIM_GRAPHQL_URL),
+    queryKeys.simulationSnapshot(SIM_GRAPHQL_URL, marketKey),
     fetchSimulationSnapshot,
     {
     refreshInterval: pollInterval,

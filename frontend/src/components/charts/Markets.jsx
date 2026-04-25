@@ -104,7 +104,6 @@ const PROTOCOL_TVL_HISTORY_QUERY = `
     protocolTvlHistory {
       date
       aave
-      morpho
       euler
       fluid
     }
@@ -340,12 +339,11 @@ function ProtocolBreakdown({ marketData, navigate }) {
   const tvlHistory = useMemo(() => {
     const raw = tvlHistoryData?.protocolTvlHistory || [];
     return raw.map((r) => {
-      const total = r.aave + r.morpho + r.euler + r.fluid;
+      const total = r.aave + r.euler + r.fluid;
       if (total === 0) {
         return {
           date: r.date,
           AAVE: 0,
-          MORPHO: 0,
           EULER: 0,
           FLUID: 0,
           _total: 0,
@@ -355,13 +353,11 @@ function ProtocolBreakdown({ marketData, navigate }) {
       return {
         date: r.date,
         AAVE: (r.aave / total) * 100,
-        MORPHO: (r.morpho / total) * 100,
         EULER: (r.euler / total) * 100,
         FLUID: (r.fluid / total) * 100,
         _total: total,
         _raw: {
           AAVE: r.aave,
-          MORPHO: r.morpho,
           EULER: r.euler,
           FLUID: r.fluid,
         },
@@ -399,7 +395,6 @@ function ProtocolBreakdown({ marketData, navigate }) {
 
   const PROTO_CONFIG = [
     { key: 'AAVE', color: '#6366f1', bg: 'bg-indigo-500', text: 'text-indigo-400', label: 'Aave V3' },
-    { key: 'MORPHO', color: '#06b6d4', bg: 'bg-cyan-500', text: 'text-cyan-400', label: 'Morpho' },
     { key: 'EULER', color: '#f59e0b', bg: 'bg-amber-500', text: 'text-amber-400', label: 'Euler' },
     { key: 'FLUID', color: '#8b5cf6', bg: 'bg-violet-500', text: 'text-violet-400', label: 'Fluid' },
   ];
@@ -679,7 +674,7 @@ export default function Markets() {
 
   // Filters
   const [selectedProtocols, setSelectedProtocols] = useState(
-    new Set(["AAVE", "MORPHO", "EULER", "FLUID"]),
+    new Set(["AAVE", "EULER", "FLUID"]),
   );
   const [selectedAssets, setSelectedAssets] = useState(
     new Set(["USDC", "DAI", "USDT"]),
@@ -1109,7 +1104,7 @@ export default function Markets() {
             {/* MERGED CONTROLS & FILTERS */}
             <div className="mt-4 mb-4 flex w-full flex-wrap gap-2 xl:gap-4 items-center">
               <div className="flex-1 min-w-[150px]">
-                <FilterDropdown label="Protocols" options={["AAVE", "MORPHO", "EULER", "FLUID"]} selected={selectedProtocols} onChange={setSelectedProtocols} />
+                <FilterDropdown label="Protocols" options={["AAVE", "EULER", "FLUID"]} selected={selectedProtocols} onChange={setSelectedProtocols} />
               </div>
               <div className="flex-1 min-w-[150px]">
                 <FilterDropdown label="Assets" options={["USDC", "DAI", "USDT"]} selected={selectedAssets} onChange={setSelectedAssets} />
@@ -1242,7 +1237,7 @@ export default function Markets() {
                           <div
                             className="flex items-center justify-center gap-3 cursor-pointer hover:text-cyan-400 transition-colors"
                             onClick={() => {
-                              const slug = m.protocol.includes('MORPHO') ? 'morpho' : 'aave';
+                              const slug = m.protocol.includes('FLUID') ? 'fluid' : m.protocol.includes('EULER') ? 'euler' : 'aave';
                               navigate(`/explore/${slug}`);
                             }}
                           >

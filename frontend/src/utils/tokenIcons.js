@@ -124,7 +124,6 @@ const TOKEN_NAMES = {
  */
 const PROTOCOL_NAMES = {
   AAVE: "Aave V3",
-  MORPHO: "Morpho",
   EULER: "Euler",
   FLUID: "Fluid",
 };

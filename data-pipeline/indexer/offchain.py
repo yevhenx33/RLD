@@ -3,6 +3,7 @@ import logging
 import clickhouse_connect
 from indexer.base import BaseSource
 from indexer.protocols import RAW_HEAD_QUERY_BY_PROTOCOL, SOFR_RATES
+from indexer.state import ensure_source_status_table, update_source_status
 
 log = logging.getLogger("offchain-collector")
 CLICKHOUSE_CONNECT_TIMEOUT = int(os.getenv("CLICKHOUSE_CONNECT_TIMEOUT", "5"))
@@ -69,6 +70,7 @@ class OffchainCollector:
         self._ch = None
 
     def _ensure_collector_health_table(self, ch):
+        ensure_source_status_table(ch)
         ch.command(
             """
             CREATE TABLE IF NOT EXISTS collector_state (
@@ -89,6 +91,16 @@ class OffchainCollector:
             "collector_state",
             [[protocol, head]],
             column_names=["protocol", "last_collected_block"],
+        )
+        max_ts = ch.command(f"SELECT max(timestamp) FROM {self.source.raw_table}")
+        update_source_status(
+            ch,
+            protocol,
+            "collector",
+            last_scanned_block=head,
+            last_event_block=head,
+            source_head_block=head,
+            last_data_timestamp=max_ts,
         )
 
     async def run_collector_cycle(self):

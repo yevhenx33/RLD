@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import threading
 import atexit
 import math
@@ -11,33 +10,33 @@ import clickhouse_connect
 import strawberry
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from strawberry.fastapi import GraphQLRouter
+from indexer.config import apply_env_from_config
+
+apply_env_from_config()
+
 from indexer.protocols import (
     AAVE_MARKET,
-    MORPHO_MARKET,
     FLUID_MARKET,
-    MORPHO_ALLOCATION,
-    MORPHO_VAULT,
+    SOFR_RATES,
     READY_PROTOCOLS_DEFAULT,
     RAW_TABLE_BY_PROTOCOL,
     RAW_HEAD_QUERY_BY_PROTOCOL,
     PROCESSOR_STATE_ALIASES,
 )
+from indexer.state import get_source_status
 from indexer.tokens import TOKENS, get_usd_price
 
 MAX_LIMIT = 10000
 MAX_READY_LAG_BLOCKS = int(os.getenv("INDEXER_MAX_READY_LAG_BLOCKS", "250000"))
+MAX_READY_SOFR_BUSINESS_DAYS = int(os.getenv("INDEXER_MAX_READY_SOFR_BUSINESS_DAYS", "3"))
 INDEXER_READY_PROTOCOLS = tuple(
     protocol.strip()
     for protocol in os.getenv(
         "INDEXER_READY_PROTOCOLS", ",".join(READY_PROTOCOLS_DEFAULT)
     ).split(",")
     if protocol.strip()
-)
-MORPHO_ALLOCATION_DB_PATH = os.getenv(
-    "MORPHO_ALLOCATION_DB_PATH",
-    "/app/morpho_data/morpho_enriched_final.db",
 )
 CLICKHOUSE_CONNECT_TIMEOUT = int(os.getenv("CLICKHOUSE_CONNECT_TIMEOUT", "5"))
 CLICKHOUSE_SEND_RECEIVE_TIMEOUT = int(os.getenv("CLICKHOUSE_SEND_RECEIVE_TIMEOUT", "30"))
@@ -56,6 +55,7 @@ CLICKHOUSE_WAIT_FOR_ASYNC_INSERT = (
     os.getenv("CLICKHOUSE_WAIT_FOR_ASYNC_INSERT", "true").strip().lower()
     in ("1", "true", "yes")
 )
+INDEXER_VERSION = os.getenv("INDEXER_VERSION", "dev")
 ENVIO_GRAPHQL_ALIAS_SUNSET = os.getenv(
     "ENVIO_GRAPHQL_ALIAS_SUNSET",
     "Wed, 31 Dec 2026 00:00:00 GMT",
@@ -63,12 +63,12 @@ ENVIO_GRAPHQL_ALIAS_SUNSET = os.getenv(
 
 _CLICKHOUSE_CLIENT = None
 _CLICKHOUSE_LOCK = threading.Lock()
-_TABLES_READY = False
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
 API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
 AAVE_FLOW_DAILY_AGG_TABLE = "api_aave_market_flow_daily_agg"
 API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE = "api_chainlink_price_weekly_agg"
-TVL_PROTOCOLS = ("AAVE", "MORPHO", "EULER", "FLUID")
+AAVE_SERIES_TABLE = "market_timeseries"
+TVL_PROTOCOLS = ("AAVE", "EULER", "FLUID")
 TVL_SYNTHETIC_ENTITY_IDS = {"AAVE_MARKET_SYNTHETIC"}
 AAVE_FLOW_EVENT_NAMES = (
     "Supply",
@@ -139,7 +139,6 @@ class MarketDetail:
 class ProtocolTvlPoint:
     date: str
     aave: float = 0.0
-    morpho: float = 0.0
     euler: float = 0.0
     fluid: float = 0.0
 
@@ -176,19 +175,6 @@ class MarketFlowPoint:
     cumulative_borrow_net_inflow_usd: float = strawberry.field(
         name="cumulativeBorrowNetInflowUsd", default=0.0
     )
-
-
-@strawberry.type
-class VaultAllocationDetail:
-    name: Optional[str]
-    vault_address: str = strawberry.field(name="vaultAddress")
-    shares: str
-
-
-@strawberry.type
-class VaultAllocationPoint:
-    timestamp: int
-    allocations: list[VaultAllocationDetail]
 
 
 def _new_clickhouse_client():
@@ -340,7 +326,7 @@ def _ensure_support_tables(ch) -> None:
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM unified_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
             GROUP BY day, clean_protocol, entity_id
         )
@@ -438,7 +424,7 @@ def _ensure_support_tables(ch) -> None:
                     entity_id,
                     argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
                 FROM unified_timeseries
-                WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+                WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
                   AND entity_id != 'AAVE_MARKET_SYNTHETIC'
                 GROUP BY day, clean_protocol, entity_id
             )
@@ -556,7 +542,6 @@ def get_clickhouse_client():
     with _CLICKHOUSE_LOCK:
         if _CLICKHOUSE_CLIENT is None:
             _CLICKHOUSE_CLIENT = _new_clickhouse_client()
-        _ensure_support_tables(_CLICKHOUSE_CLIENT)
         return _CLICKHOUSE_CLIENT
 
 
@@ -570,10 +555,32 @@ def _query_int(ch, sql: str) -> int:
     return int(value)
 
 
+def _business_days_since(value: datetime | date | None) -> int:
+    if value is None:
+        return 9999
+    if isinstance(value, datetime):
+        start = value.date()
+    else:
+        start = value
+    today = datetime.now(timezone.utc).date()
+    if start >= today:
+        return 0
+    days = 0
+    cursor = start + timedelta(days=1)
+    while cursor <= today:
+        if cursor.weekday() < 5:
+            days += 1
+        cursor += timedelta(days=1)
+    return days
+
+
 def _collect_processing_lag(ch, protocols: Optional[list[str]] = None) -> dict[str, int]:
     monitored = protocols or list(RAW_TABLE_BY_PROTOCOL.keys())
     lag_by_protocol: dict[str, int] = {}
     for protocol in monitored:
+        if protocol == SOFR_RATES:
+            lag_by_protocol[protocol] = -1
+            continue
         raw_table = RAW_TABLE_BY_PROTOCOL.get(protocol)
         state_protocols = PROCESSOR_STATE_ALIASES.get(protocol, (protocol,))
         if raw_table is None:
@@ -581,6 +588,12 @@ def _collect_processing_lag(ch, protocols: Optional[list[str]] = None) -> dict[s
             continue
         state_in = ", ".join(f"'{_escape_sql_string(p)}'" for p in state_protocols)
         try:
+            status = get_source_status(ch, protocol, "processor")
+            if status["last_event_block"] or status["last_processed_block"]:
+                raw_head = status["last_event_block"]
+                proc_head = status["last_processed_block"]
+                lag_by_protocol[protocol] = max(0, raw_head - proc_head)
+                continue
             raw_head = _query_int(ch, f"SELECT max(block_number) FROM {raw_table}")
             proc_head = _query_int(
                 ch,
@@ -596,11 +609,25 @@ def _collect_collector_lag(ch, protocols: Optional[list[str]] = None) -> dict[st
     monitored = protocols or list(RAW_TABLE_BY_PROTOCOL.keys())
     lag_by_protocol: dict[str, int] = {}
     for protocol in monitored:
+        if protocol == SOFR_RATES:
+            try:
+                status = get_source_status(ch, protocol, "collector")
+                lag_by_protocol[protocol] = _business_days_since(status["last_data_timestamp"])
+            except Exception:
+                lag_by_protocol[protocol] = 9999
+            continue
         raw_head_query = RAW_HEAD_QUERY_BY_PROTOCOL.get(protocol)
         if raw_head_query is None:
             lag_by_protocol[protocol] = -1
             continue
         try:
+            status = get_source_status(ch, protocol, "collector")
+            if status["source_head_block"] or status["last_scanned_block"]:
+                lag_by_protocol[protocol] = max(
+                    0,
+                    status["source_head_block"] - status["last_scanned_block"],
+                )
+                continue
             raw_head = _query_int(ch, raw_head_query)
             collected_head = _query_int(
                 ch,
@@ -610,6 +637,102 @@ def _collect_collector_lag(ch, protocols: Optional[list[str]] = None) -> dict[st
         except Exception:
             lag_by_protocol[protocol] = -1
     return lag_by_protocol
+
+
+def _source_status_snapshot(ch) -> list[dict[str, object]]:
+    rows = ch.query(
+        """
+        SELECT
+            source,
+            kind,
+            last_scanned_block,
+            last_event_block,
+            last_processed_block,
+            source_head_block,
+            last_data_timestamp,
+            last_success_at,
+            last_error
+        FROM source_status FINAL
+        ORDER BY source, kind
+        """
+    ).result_rows
+    return [
+        {
+            "source": str(row[0]),
+            "kind": str(row[1]),
+            "lastScannedBlock": int(row[2] or 0),
+            "lastEventBlock": int(row[3] or 0),
+            "lastProcessedBlock": int(row[4] or 0),
+            "sourceHeadBlock": int(row[5] or 0),
+            "lastDataTimestamp": row[6].isoformat() if isinstance(row[6], datetime) else str(row[6]),
+            "lastSuccessAt": row[7].isoformat() if isinstance(row[7], datetime) else str(row[7]),
+            "lastError": str(row[8] or ""),
+        }
+        for row in rows
+    ]
+
+
+def _prometheus_metrics(ch) -> str:
+    collector_lag = _collect_collector_lag(ch)
+    processing_lag = _collect_processing_lag(ch)
+    status_rows = _source_status_snapshot(ch)
+    lines = [
+        "# HELP rld_indexer_collector_lag Source collector lag. Blocks for EVM sources, business days for SOFR.",
+        "# TYPE rld_indexer_collector_lag gauge",
+    ]
+    for source, lag in collector_lag.items():
+        lines.append(f'rld_indexer_collector_lag{{source="{source}"}} {lag}')
+    lines.extend([
+        "# HELP rld_indexer_processing_lag Source processor lag in blocks.",
+        "# TYPE rld_indexer_processing_lag gauge",
+    ])
+    for source, lag in processing_lag.items():
+        lines.append(f'rld_indexer_processing_lag{{source="{source}"}} {lag}')
+    lines.extend([
+        "# HELP rld_indexer_last_success_age_seconds Seconds since source status last success.",
+        "# TYPE rld_indexer_last_success_age_seconds gauge",
+    ])
+    now_ts = datetime.now(timezone.utc).timestamp()
+    for row in status_rows:
+        source = row["source"]
+        kind = row["kind"]
+        try:
+            success_ts = datetime.fromisoformat(str(row["lastSuccessAt"])).replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            success_ts = 0
+        lines.append(
+            f'rld_indexer_last_success_age_seconds{{source="{source}",kind="{kind}"}} {max(0, now_ts - success_ts):.0f}'
+        )
+    part_rows = ch.query(
+        """
+        SELECT table, count() AS parts
+        FROM system.parts
+        WHERE active AND database = currentDatabase()
+        GROUP BY table
+        """
+    ).result_rows
+    lines.extend([
+        "# HELP rld_clickhouse_active_parts Active ClickHouse parts by table.",
+        "# TYPE rld_clickhouse_active_parts gauge",
+    ])
+    for table, parts in part_rows:
+        lines.append(f'rld_clickhouse_active_parts{{table="{table}"}} {int(parts)}')
+    disk_rows = ch.query(
+        """
+        SELECT name, free_space, total_space
+        FROM system.disks
+        """
+    ).result_rows
+    lines.extend([
+        "# HELP rld_clickhouse_disk_free_bytes Free ClickHouse disk bytes.",
+        "# TYPE rld_clickhouse_disk_free_bytes gauge",
+        "# HELP rld_clickhouse_disk_total_bytes Total ClickHouse disk bytes.",
+        "# TYPE rld_clickhouse_disk_total_bytes gauge",
+    ])
+    for name, free_space, total_space in disk_rows:
+        lines.append(f'rld_clickhouse_disk_free_bytes{{disk="{name}"}} {int(free_space)}')
+        lines.append(f'rld_clickhouse_disk_total_bytes{{disk="{name}"}} {int(total_space)}')
+    return "\n".join(lines) + "\n"
 
 
 def _safe_limit(limit: int) -> int:
@@ -837,7 +960,7 @@ def _query_aave_cumulative_baseline_usd(
             SELECT
                 {price_bucket_expr} AS bucket_ts,
                 avg(toFloat64(price_usd)) AS price_usd
-            FROM aave_timeseries
+            FROM {AAVE_SERIES_TABLE}
             WHERE protocol = 'AAVE_MARKET'
               AND entity_id LIKE %(eid_prefix)s
               AND timestamp < %(first_bucket_ts)s
@@ -883,7 +1006,7 @@ def _query_aave_preaggregated_flow_timeseries(
         SELECT
             toUnixTimestamp({ts_bucket_expr}) AS bucket_ts,
             avg(price_usd) AS price_usd
-        FROM aave_timeseries
+        FROM {AAVE_SERIES_TABLE}
         WHERE protocol = 'AAVE_MARKET'
           AND entity_id LIKE %(eid_prefix)s
           AND timestamp >= %(start_ts)s
@@ -999,7 +1122,7 @@ def _query_aave_event_flow_timeseries(ch, entity_id: str, resolution: str, limit
         SELECT
             toUnixTimestamp({ts_bucket_expr}) AS bucket_ts,
             avg(price_usd) AS price_usd
-        FROM aave_timeseries
+        FROM {AAVE_SERIES_TABLE}
         WHERE protocol = 'AAVE_MARKET'
           AND entity_id LIKE %(eid_prefix)s
           AND timestamp >= %(start_ts)s
@@ -1204,7 +1327,7 @@ def _query_historical_rates(ch, symbols: list[str], resolution: str, limit: int)
                 symbol,
                 avg(borrow_apy) AS apy,
                 avg(price_usd) AS price
-            FROM aave_timeseries
+            FROM {AAVE_SERIES_TABLE}
             WHERE protocol = 'AAVE_MARKET' AND symbol IN ({in_aave})
             GROUP BY ts, symbol
             """
@@ -1306,9 +1429,9 @@ def _query_latest_rates(ch) -> Optional[LatestRates]:
     latest = LatestRates(timestamp=0)
     max_ts = 0
 
-    aave_sql = """
+    aave_sql = f"""
     SELECT symbol, argMax(borrow_apy, timestamp) AS apy, toUnixTimestamp(max(timestamp)) AS ts
-    FROM aave_timeseries
+    FROM {AAVE_SERIES_TABLE}
     WHERE protocol = 'AAVE_MARKET' AND symbol IN ('USDC', 'DAI', 'USDT', 'sUSDe')
     GROUP BY symbol
     """
@@ -1355,9 +1478,6 @@ def _query_latest_rates(ch) -> Optional[LatestRates]:
 def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) -> list[MarketDetail]:
     allowed = {
         AAVE_MARKET,
-        MORPHO_MARKET,
-        MORPHO_VAULT,
-        MORPHO_ALLOCATION,
         "EULER_MARKET",
         FLUID_MARKET,
     }
@@ -1374,55 +1494,31 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
         else:
             entity_filter = f" AND entity_id = '{escaped_entity}'"
 
-    if protocol.startswith("MORPHO"):
-        query = f"""
-        SELECT t.entity_id, t.symbol, t.proto, t.supply_usd, t.borrow_usd,
-               t.supply_apy, t.borrow_apy, t.utilization,
-               COALESCE(p.collateral_symbol, '') AS collateral_symbol,
-               COALESCE(p.lltv, 0) AS lltv
-        FROM (
-            SELECT entity_id,
-                   symbol,
-                   '{escaped_protocol}' AS proto,
-                   supply_usd,
-                   borrow_usd,
-                   supply_apy,
-                   borrow_apy,
-                   utilization
-            FROM api_market_latest FINAL
-            WHERE protocol = '{escaped_protocol}'
-            {entity_filter}
-        ) AS t
-        LEFT JOIN morpho_market_params AS p ON t.entity_id = p.market_id
-        WHERE t.supply_usd >= 1000 OR t.borrow_usd >= 1000
-        ORDER BY t.supply_usd DESC
-        """
-    else:
-        value_filter = (
-            ""
-            if protocol == AAVE_MARKET
-            else "WHERE supply_usd >= 1000 OR borrow_usd >= 1000"
-        )
-        query = f"""
-        SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
-               supply_apy, borrow_apy, utilization,
-               '' AS collateral_symbol, 0 AS lltv
-        FROM (
-            SELECT entity_id,
-                   symbol,
-                   '{escaped_protocol}' AS proto,
-                   supply_usd,
-                   borrow_usd,
-                   supply_apy,
-                   borrow_apy,
-                   utilization
-            FROM api_market_latest FINAL
-            WHERE protocol = '{escaped_protocol}'
-            {entity_filter}
-        )
-        {value_filter}
-        ORDER BY supply_usd DESC
-        """
+    value_filter = (
+        ""
+        if protocol == AAVE_MARKET
+        else "WHERE supply_usd >= 1000 OR borrow_usd >= 1000"
+    )
+    query = f"""
+    SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
+           supply_apy, borrow_apy, utilization,
+           '' AS collateral_symbol, 0 AS lltv
+    FROM (
+        SELECT entity_id,
+               symbol,
+               '{escaped_protocol}' AS proto,
+               supply_usd,
+               borrow_usd,
+               supply_apy,
+               borrow_apy,
+               utilization
+        FROM api_market_latest FINAL
+        WHERE protocol = '{escaped_protocol}'
+        {entity_filter}
+    )
+    {value_filter}
+    ORDER BY supply_usd DESC
+    """
 
     res = ch.query(query)
     return [
@@ -1546,7 +1642,6 @@ def _forward_fill_protocol_tvl(rows) -> list[ProtocolTvlPoint]:
             ProtocolTvlPoint(
                 date=cursor.isoformat(),
                 aave=totals_by_protocol.get("AAVE", 0.0),
-                morpho=totals_by_protocol.get("MORPHO", 0.0),
                 euler=totals_by_protocol.get("EULER", 0.0),
                 fluid=totals_by_protocol.get("FLUID", 0.0),
             )
@@ -1561,7 +1656,7 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
         f"""
         SELECT day, protocol, entity_id, argMaxMerge(supply_usd_state) AS supply_usd
         FROM {API_PROTOCOL_TVL_AGG_TABLE}
-        WHERE protocol IN ('AAVE', 'MORPHO', 'EULER', 'FLUID')
+        WHERE protocol IN ('AAVE', 'EULER', 'FLUID')
           AND entity_id != 'AAVE_MARKET_SYNTHETIC'
         GROUP BY day, protocol, entity_id
         ORDER BY day ASC, protocol ASC, entity_id ASC
@@ -1608,7 +1703,6 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
                 ProtocolTvlPoint(
                     date=point.date,
                     aave=0.0,
-                    morpho=0.0,
                     euler=0.0,
                     fluid=0.0,
                 )
@@ -1619,7 +1713,6 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
             ProtocolTvlPoint(
                 date=point.date,
                 aave=float(point.aave / divisor),
-                morpho=float(point.morpho / divisor),
                 euler=float(point.euler / divisor),
                 fluid=float(point.fluid / divisor),
             )
@@ -1630,7 +1723,7 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
 def _query_protocol_apy_history(
     ch, protocol: str, resolution: str, limit: int
 ) -> list[ProtocolApyPoint]:
-    allowed = {AAVE_MARKET, MORPHO_MARKET, "EULER_MARKET", FLUID_MARKET}
+    allowed = {AAVE_MARKET, "EULER_MARKET", FLUID_MARKET}
     if protocol not in allowed:
         return []
 
@@ -1662,7 +1755,7 @@ def _query_protocol_apy_history(
                     avg(toFloat64(borrow_apy)) AS borrow_apy,
                     avg(toFloat64(supply_usd)) AS supply_usd,
                     avg(toFloat64(borrow_usd)) AS borrow_usd
-                FROM aave_timeseries
+                FROM {AAVE_SERIES_TABLE}
                 WHERE protocol = '{escaped_protocol}'
                   AND entity_id != 'AAVE_MARKET_SYNTHETIC'
                 GROUP BY entity_id, bucket_ts
@@ -1810,111 +1903,6 @@ def _query_market_flow_timeseries(ch, entity_id: str, resolution: str, limit: in
     return _query_market_flow_timeseries_from_balance_deltas(ch, entity_id, resolution, limit)
 
 
-def _query_market_vault_allocations(ch, entity_id: str, limit: int) -> list[VaultAllocationPoint]:
-    # Preferred path: ClickHouse table produced by Morpho processor.
-    try:
-        where_expr = f"market_id LIKE '{_escape_sql_string(entity_id)}%'" if len(entity_id) < 60 else f"market_id = '{_escape_sql_string(entity_id)}'"
-        rows = ch.query(
-            f"""
-            SELECT
-                toUInt64(intDiv(timestamp, 86400) * 86400) AS day_ts,
-                vault_address,
-                argMax(supply_shares, timestamp) AS shares
-            FROM morpho_vault_allocations
-            WHERE {where_expr}
-            GROUP BY day_ts, vault_address
-            ORDER BY day_ts DESC
-            LIMIT {_safe_limit(limit) * 128}
-            """
-        ).result_rows
-        meta_rows = ch.query(
-            "SELECT lower(vault_address), name FROM morpho_vault_meta"
-        ).result_rows
-        meta = {str(addr): str(name) for addr, name in meta_rows}
-    except Exception:
-        rows = []
-        meta = {}
-
-    if rows:
-        grouped: dict[int, list[VaultAllocationDetail]] = {}
-        for day_ts, vault_address, shares in rows:
-            day_ts_i = int(day_ts)
-            if day_ts_i not in grouped:
-                grouped[day_ts_i] = []
-            vault_str = str(vault_address)
-            grouped[day_ts_i].append(
-                VaultAllocationDetail(
-                    name=meta.get(vault_str.lower(), "Unknown Vault"),
-                    vault_address=vault_str,
-                    shares=str(float(shares or 0.0)),
-                )
-            )
-        for day_ts in grouped:
-            grouped[day_ts].sort(key=lambda item: float(item.shares), reverse=True)
-        selected_days = sorted(grouped.keys(), reverse=True)[: _safe_limit(limit)]
-        points = [
-            VaultAllocationPoint(timestamp=day_ts, allocations=grouped[day_ts])
-            for day_ts in selected_days
-        ]
-        points.reverse()
-        return points
-
-    # Legacy fallback to sqlite if historical table exists.
-    if not os.path.exists(MORPHO_ALLOCATION_DB_PATH):
-        return []
-    conn = sqlite3.connect(MORPHO_ALLOCATION_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    try:
-        db_entity_id = entity_id
-        where_clause = "market_id LIKE ?" if len(entity_id) < 60 else "market_id = ?"
-        if len(entity_id) < 60:
-            db_entity_id += "%"
-        cur.execute("SELECT lower(vault_address), name FROM vault_meta")
-        meta = {row[0]: row[1] for row in cur.fetchall()}
-        cur.execute(
-            f"""
-            SELECT timestamp, vault_address, supply_shares
-            FROM vault_allocations
-            WHERE {where_clause}
-            """,
-            (db_entity_id,),
-        )
-        rows = cur.fetchall()
-        daily_latest: dict[tuple[int, str], dict[str, int | float]] = {}
-        for row in rows:
-            ts = int(row["timestamp"])
-            vault_address = str(row["vault_address"])
-            shares = float(row["supply_shares"] or 0.0)
-            day_ts = (ts // 86400) * 86400
-            key = (day_ts, vault_address)
-            existing = daily_latest.get(key)
-            if existing is None or int(existing["ts"]) < ts:
-                daily_latest[key] = {"ts": ts, "shares": shares}
-        grouped: dict[int, list[VaultAllocationDetail]] = {}
-        for (day_ts, vault_address), data in daily_latest.items():
-            if day_ts not in grouped:
-                grouped[day_ts] = []
-            grouped[day_ts].append(
-                VaultAllocationDetail(
-                    name=meta.get(vault_address.lower(), "Unknown Vault"),
-                    vault_address=vault_address,
-                    shares=str(data["shares"]),
-                )
-            )
-        for day_ts in grouped:
-            grouped[day_ts].sort(key=lambda item: float(item.shares), reverse=True)
-        selected_days = sorted(grouped.keys(), reverse=True)[: _safe_limit(limit)]
-        points = [
-            VaultAllocationPoint(timestamp=day_ts, allocations=grouped[day_ts])
-            for day_ts in selected_days
-        ]
-        points.reverse()
-        return points
-    finally:
-        conn.close()
-
-
 @strawberry.type
 class Query:
     @strawberry.field(name="historicalRates")
@@ -1967,14 +1955,6 @@ class Query:
         ch = get_clickhouse_client()
         return _query_market_flow_timeseries(ch, entity_id, resolution, limit)
 
-    @strawberry.field(name="marketVaultAllocations")
-    def market_vault_allocations(
-        self, entity_id: str, limit: int = 365
-    ) -> list[VaultAllocationPoint]:
-        ch = get_clickhouse_client()
-        return _query_market_vault_allocations(ch, entity_id, limit)
-
-
 schema = strawberry.Schema(query=Query)
 graphql_app = GraphQLRouter(schema)
 app = FastAPI(title="RLD ClickHouse GraphQL")
@@ -2018,8 +1998,10 @@ def healthz():
         return {
             "status": "ok",
             "clickhouse": "ok",
+            "version": INDEXER_VERSION,
             "collectorLag": _collect_collector_lag(ch),
             "processingLag": _collect_processing_lag(ch),
+            "sourceStatus": _source_status_snapshot(ch),
         }
     except Exception as exc:
         close_clickhouse_client()
@@ -2032,7 +2014,39 @@ def healthz():
 @app.get("/livez")
 def livez():
     # Lightweight liveness check used by Docker healthcheck.
-    return {"status": "alive"}
+    return {"status": "alive", "version": INDEXER_VERSION}
+
+
+@app.get("/status")
+def status():
+    try:
+        ch = get_clickhouse_client()
+        ch.command("SELECT 1")
+        return {
+            "status": "ok",
+            "version": INDEXER_VERSION,
+            "readyProtocols": list(INDEXER_READY_PROTOCOLS),
+            "collectorLag": _collect_collector_lag(ch),
+            "processingLag": _collect_processing_lag(ch),
+            "sourceStatus": _source_status_snapshot(ch),
+        }
+    except Exception as exc:
+        close_clickhouse_client()
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "version": INDEXER_VERSION, "error": str(exc)},
+        )
+
+
+@app.get("/metrics")
+def metrics():
+    try:
+        ch = get_clickhouse_client()
+        ch.command("SELECT 1")
+        return Response(_prometheus_metrics(ch), media_type="text/plain; version=0.0.4")
+    except Exception as exc:
+        close_clickhouse_client()
+        return Response(f"# metrics unavailable: {exc}\n", status_code=503, media_type="text/plain")
 
 
 @app.get("/readyz")
@@ -2045,12 +2059,18 @@ def readyz():
         failing_processing = [
             protocol
             for protocol, lag in lag_by_protocol.items()
-            if lag >= 0 and lag > MAX_READY_LAG_BLOCKS
+            if protocol != SOFR_RATES and lag >= 0 and lag > MAX_READY_LAG_BLOCKS
         ]
         failing_collector = [
             protocol
             for protocol, lag in collector_lag_by_protocol.items()
-            if lag >= 0 and lag > MAX_READY_LAG_BLOCKS
+            if (
+                lag >= 0
+                and (
+                    (protocol == SOFR_RATES and lag > MAX_READY_SOFR_BUSINESS_DAYS)
+                    or (protocol != SOFR_RATES and lag > MAX_READY_LAG_BLOCKS)
+                )
+            )
         ]
         failing = sorted(set(failing_processing + failing_collector))
         if failing:
@@ -2059,7 +2079,9 @@ def readyz():
                 content={
                     "status": "not_ready",
                     "reason": "lag_exceeded",
+                    "version": INDEXER_VERSION,
                     "maxLagBlocks": MAX_READY_LAG_BLOCKS,
+                    "maxSofrBusinessDays": MAX_READY_SOFR_BUSINESS_DAYS,
                     "collectorLag": collector_lag_by_protocol,
                     "processingLag": lag_by_protocol,
                     "failingProtocols": failing,
@@ -2067,7 +2089,9 @@ def readyz():
             )
         return {
             "status": "ready",
+            "version": INDEXER_VERSION,
             "maxLagBlocks": MAX_READY_LAG_BLOCKS,
+            "maxSofrBusinessDays": MAX_READY_SOFR_BUSINESS_DAYS,
             "collectorLag": collector_lag_by_protocol,
             "processingLag": lag_by_protocol,
         }
@@ -2083,11 +2107,11 @@ def readyz():
 def get_usdc_borrow_apy():
     try:
         ch = get_clickhouse_client()
-        sql = """
+        sql = f"""
         SELECT
             argMax(borrow_apy, timestamp) AS apy,
             max(timestamp) AS updated_at
-        FROM aave_timeseries
+        FROM {AAVE_SERIES_TABLE}
         WHERE protocol = 'AAVE_MARKET' AND symbol = 'USDC'
         """
         res = ch.query(sql).result_rows

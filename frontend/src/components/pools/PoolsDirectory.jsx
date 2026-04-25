@@ -49,8 +49,15 @@ export default function PoolsDirectory() {
     const apr7d = tvl > 0 ? (fees24h * 365 / tvl) * 100 : 0;
     const apr30d = apr7d * 0.9; // Slight discount for 30d smoothing
 
-    // Pool address from deployment config (or use hook address)
-    const poolAddress = marketInfo?.infrastructure?.twamm_hook || "pool";
+    // Route by stable pool id. Hookless pools have a zero hook address, which
+    // must not become the route key.
+    const poolAddress =
+      marketInfo?.poolId ||
+      marketInfo?.pool_id ||
+      marketInfo?.infrastructure?.poolId ||
+      marketInfo?.infrastructure?.pool_id ||
+      marketInfo?.marketId ||
+      "pool";
 
     return [
       {

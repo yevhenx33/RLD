@@ -43,7 +43,7 @@ function HeroSection() {
       <Grain />
 
       {/* Hero body — flex-1 so it fills the remaining space and centers content */}
-      <div className="relative z-10 flex-1 flex items-center justify-center py-20 px-8 md:px-14 lg:ml-[120px] mb-[50px]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+      <div className="relative z-10 flex-1 flex items-center justify-center py-20 px-8 md:px-14 lg:ml-[120px] mb-[50px] font-jbm">
 
         <div className={`w-full max-w-[800px] transition-all duration-700 ${vis ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-5'}`}>
 
@@ -110,7 +110,7 @@ function HeroSection() {
       </div>
 
       {/* Status strip */}
-      <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-8 md:px-14 py-3 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+      <div className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-between px-8 md:px-14 py-3 border-t border-[#111] font-jbm">
         <span className="font-jbm text-[11px] tracking-[0.2em] uppercase text-[#666]">Testnet Live</span>
         <span className="font-jbm text-[11px] tracking-[0.2em] uppercase text-[#666]">V.01 / Experimental Beta</span>
       </div>
@@ -128,7 +128,7 @@ function UseCasesSection() {
   const [cardsRef, cardsInView] = useInView(0.05)
 
   return (
-    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111] font-jbm">
       <Grain />
       <div className="relative z-10 max-w-[1100px] mx-auto w-full">
 
@@ -304,7 +304,7 @@ function SolvencyInsuranceSection() {
   const [cardsRef, cardsInView] = useInView(0.05)
 
   return (
-    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111] font-jbm">
       <Grain />
       <div className="relative z-10 max-w-[1100px] mx-auto w-full">
 
@@ -336,10 +336,14 @@ function SolvencyInsuranceSection() {
               RLD Credit Default Swaps let you hedge it — parametric trigger,
               trustless execution, and 100% notional payout.
             </p>
-            <div className="inline-flex items-center gap-3 px-6 py-[11px] border border-[#1e1e1e] cursor-not-allowed">
-              <span className="font-jbm text-[10px] tracking-[0.22em] uppercase text-[#333]">Explore CDS</span>
-              <span className="font-jbm text-[9px] tracking-[0.2em] uppercase text-cyan-900 border border-cyan-900/40 px-1.5 py-px">Soon</span>
-            </div>
+            <Link
+              to="/markets/cds"
+              className="inline-flex items-center gap-2 px-6 py-[11px] border border-white
+                         font-jbm text-[10px] tracking-[0.22em] uppercase text-white
+                         hover:bg-white hover:text-black transition-all duration-200"
+            >
+              Explore CDS ↗
+            </Link>
           </div>
 
           <div className="flex flex-col justify-center">
@@ -456,7 +460,7 @@ function RatePerpsSection() {
   const [featRef, featInView] = useInView(0.05)
 
   return (
-    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111] font-jbm">
       <Grain />
       <div className="relative z-10 max-w-[1100px] mx-auto w-full">
 
@@ -555,7 +559,7 @@ function AgentNativeSection() {
   ]
 
   return (
-    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111] font-jbm">
       <Grain />
       <div className="relative z-10 max-w-[1100px] mx-auto w-full">
 
@@ -668,7 +672,7 @@ function BenefitsSection() {
   ]
 
   return (
-    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111]" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+    <section className="relative bg-[#050505]/95 min-h-screen flex flex-col justify-center px-8 md:px-14 py-20 border-t border-[#111] font-jbm">
       <Grain />
       <div className="relative z-10 max-w-[1100px] mx-auto w-full">
 
@@ -721,7 +725,7 @@ function CoreArchitectureSection() {
   const [ctaRef, ctaInView] = useInView(0.1)
 
   return (
-    <section className="relative bg-[#050505]/95 border-t border-[#111] px-8 md:px-14" style={{ fontFamily: "'JetBrains Mono', 'IBM Plex Mono', Courier New, monospace" }}>
+    <section className="relative bg-[#050505]/95 border-t border-[#111] px-8 md:px-14 font-jbm">
       <Grain />
 
       <div
@@ -762,9 +766,9 @@ function CoreArchitectureSection() {
           </div>
           <div className="flex items-center gap-6">
             {[
-              { label: 'Twitter', href: 'https://x.com/lumisfi_' },
+              { label: 'X/Twitter', href: 'https://x.com/rld_fi' },
               { label: 'GitHub', href: 'https://github.com/leooos33/RLD' },
-              { label: 'Docs', href: 'https://docs.rld.fi/introduction/rate-level-derivatives.html' },
+              { label: 'Docs', href: 'https://docs.rld.fi' },
             ].map((link) => (
               <a
                 key={link.label}
@@ -788,43 +792,6 @@ function CoreArchitectureSection() {
 ════════════════════════════════════════════════════ */
 
 export default function Homepage() {
-  useEffect(() => {
-    async function diagnose() {
-      console.group('[Homepage] Font diagnosis')
-
-      // 1. Check what /fonts.css actually contains
-      try {
-        const r = await fetch('/fonts.css', { cache: 'no-store' })
-        const text = await r.text()
-        const hasJBM = text.includes('JetBrains Mono')
-        const hasSG = text.includes('Space Grotesk')
-        console.log(`/fonts.css → ${r.status} ${r.statusText} | JBM: ${hasJBM ? '✅' : '❌'} | SpaceGrotesk: ${hasSG ? '✅' : '❌'} | ${text.length} bytes`)
-        if (!hasJBM) console.warn('fonts.css content (first 300 chars):\n' + text.slice(0, 300))
-      } catch (e) { console.error('/fonts.css fetch failed:', e) }
-
-      // 2. Check /fonts/JetBrainsMono-latin.woff2 serves correctly
-      try {
-        const r = await fetch('/fonts/JetBrainsMono-latin.woff2', { cache: 'no-store', method: 'HEAD' })
-        console.log(`/fonts/JetBrainsMono-latin.woff2 → ${r.status} | size: ${r.headers.get('content-length')} bytes | type: ${r.headers.get('content-type')}`)
-      } catch (e) { console.error('/fonts/JetBrainsMono-latin.woff2 fetch failed:', e) }
-
-      // 3. Force-load via FontFace API to bypass CSS pipeline
-      try {
-        const face = new FontFace('JBM-Debug', "url('/fonts/JetBrainsMono-latin.woff2')")
-        await face.load()
-        console.log(`FontFace force-load: ${face.status} — ${face.family}`)
-      } catch (e) { console.error('FontFace force-load failed:', e.message) }
-
-      // 4. List all known faces
-      await document.fonts.ready
-      console.log('Faces in FontFaceSet:')
-      document.fonts.forEach(f => console.log(`  ${f.family} w${f.weight} → ${f.status}`))
-
-      console.groupEnd()
-    }
-    diagnose()
-  }, [])
-
   return (
     <div className="bg-[#080808] font-mono" >
       <HeroSection />

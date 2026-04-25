@@ -22,6 +22,7 @@ from ..base import (
     BaseSource,
     forward_fill_hourly,
     insert_df_batched,
+    upsert_market_timeseries,
     upsert_api_market_latest,
     refresh_api_protocol_tvl_weekly,
     rewrite_protocol_window_if_enabled,
@@ -324,6 +325,7 @@ class AaveV3Source(BaseSource):
                 max_ts,
             )
             insert_df_batched(ch, self.output_table, final)
+            upsert_market_timeseries(ch, final)
             upsert_api_market_latest(ch, final)
             refresh_api_protocol_tvl_weekly(ch, min_ts_dt, max_ts_dt)
             

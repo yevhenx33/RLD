@@ -1,6 +1,5 @@
 import urllib.request
 import json
-import os
 
 def check_reth_mainnet():
     try:
@@ -27,18 +26,10 @@ def check_lighthouse():
     except Exception as e:
         return {"healthy": False, "error": str(e)}
 
-def check_morpho_db():
-    db_path = "/home/ubuntu/RLD/backend/morpho/data/morpho_enriched_final.db"
-    if os.path.exists(db_path):
-        size_mb = round(os.path.getsize(db_path) / (1024*1024), 2)
-        return {"size_mb": size_mb, "status": "available"}
-    return {"status": "missing"}
-
 if __name__ == "__main__":
     result = {
         "reth_mainnet": check_reth_mainnet(),
         "lighthouse": check_lighthouse(),
-        "morpho_db": check_morpho_db()
     }
     print(json.dumps(result))
     

@@ -84,7 +84,6 @@ class ProtocolTvlPoint:
     """Weekly TVL data point per protocol."""
     date: str
     aave: float = 0.0
-    morpho: float = 0.0
     euler: float = 0.0
     fluid: float = 0.0
 
@@ -98,19 +97,6 @@ class MarketTimeseriesPoint:
     utilization: Optional[float] = None
     supply_usd: Optional[float] = None
     borrow_usd: Optional[float] = None
-
-
-@strawberry.type
-class VaultAllocationDetail:
-    vault_address: str
-    name: Optional[str]
-    symbol: Optional[str]
-    shares: str
-
-@strawberry.type
-class VaultAllocationPoint:
-    timestamp: int
-    allocations: list[VaultAllocationDetail]
 
 
 # ─── Resolvers ──────────────────────────────────────────────
@@ -354,56 +340,31 @@ def _query_protocol_markets(protocol: str) -> list[MarketDetail]:
 
     try:
         # Whitelist protocol values to prevent injection
-        allowed = {"AAVE_MARKET", "MORPHO_MARKET", "MORPHO_VAULT", "MORPHO_ALLOCATION", "EULER_MARKET", "FLUID_MARKET"}
+        allowed = {"AAVE_MARKET", "EULER_MARKET", "FLUID_MARKET"}
         if protocol not in allowed:
             return []
         client = clickhouse_connect.get_client(host='rld_clickhouse', port=8123)
 
-        is_morpho = protocol.startswith('MORPHO')
-        if is_morpho:
-            query = f"""
-            SELECT t.entity_id, t.symbol, t.proto, t.supply_usd, t.borrow_usd,
-                   t.supply_apy, t.borrow_apy, t.utilization,
-                   COALESCE(p.collateral_symbol, '') AS collateral_symbol,
-                   COALESCE(p.lltv, 0) AS lltv
-            FROM (
-                SELECT entity_id,
-                       argMax(symbol, timestamp) AS symbol,
-                       '{protocol}' AS proto,
-                       argMax(supply_usd, timestamp) AS supply_usd,
-                       argMax(borrow_usd, timestamp) AS borrow_usd,
-                       argMax(supply_apy, timestamp) AS supply_apy,
-                       argMax(borrow_apy, timestamp) AS borrow_apy,
-                       argMax(utilization, timestamp) AS utilization
-                FROM unified_timeseries
-                WHERE protocol = '{protocol}'
-                GROUP BY entity_id
-            ) AS t
-            LEFT JOIN morpho_market_params AS p ON t.entity_id = p.market_id
-            WHERE t.supply_usd >= 1000 OR t.borrow_usd >= 1000
-            ORDER BY t.supply_usd DESC
-            """
-        else:
-            query = f"""
-            SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
-                   supply_apy, borrow_apy, utilization,
-                   '' AS collateral_symbol, 0 AS lltv
-            FROM (
-                SELECT entity_id,
-                       argMax(symbol, timestamp) AS symbol,
-                       '{protocol}' AS proto,
-                       argMax(supply_usd, timestamp) AS supply_usd,
-                       argMax(borrow_usd, timestamp) AS borrow_usd,
-                       argMax(supply_apy, timestamp) AS supply_apy,
-                       argMax(borrow_apy, timestamp) AS borrow_apy,
-                       argMax(utilization, timestamp) AS utilization
-                FROM unified_timeseries
-                WHERE protocol = '{protocol}'
-                GROUP BY entity_id
-            )
-            WHERE supply_usd >= 1000 OR borrow_usd >= 1000
-            ORDER BY supply_usd DESC
-            """
+        query = f"""
+        SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
+               supply_apy, borrow_apy, utilization,
+               '' AS collateral_symbol, 0 AS lltv
+        FROM (
+            SELECT entity_id,
+                   argMax(symbol, timestamp) AS symbol,
+                   '{protocol}' AS proto,
+                   argMax(supply_usd, timestamp) AS supply_usd,
+                   argMax(borrow_usd, timestamp) AS borrow_usd,
+                   argMax(supply_apy, timestamp) AS supply_apy,
+                   argMax(borrow_apy, timestamp) AS borrow_apy,
+                   argMax(utilization, timestamp) AS utilization
+            FROM unified_timeseries
+            WHERE protocol = '{protocol}'
+            GROUP BY entity_id
+        )
+        WHERE supply_usd >= 1000 OR borrow_usd >= 1000
+        ORDER BY supply_usd DESC
+        """
 
         res = client.query(query)
         results = []
@@ -465,7 +426,6 @@ def _query_protocol_tvl_history() -> list[ProtocolTvlPoint]:
             results.append(ProtocolTvlPoint(
                 date=d,
                 aave=vals.get('AAVE', 0.0),
-                morpho=vals.get('MORPHO', 0.0),
                 euler=vals.get('EULER', 0.0),
                 fluid=vals.get('FLUID', 0.0),
             ))
@@ -523,91 +483,6 @@ def _query_market_timeseries(
         logger.error(f"GraphQL market_timeseries error: {e}")
         return []
 
-def _query_market_vault_allocations(entity_id: str, limit: int = 365) -> list[VaultAllocationPoint]:
-    cache_key = f"gql:market_vault_allocations:{entity_id}:{limit}"
-    cached = get_from_cache(cache_key)
-    if cached is not None:
-        return cached
-
-    try:
-        import sqlite3
-        conn = sqlite3.connect('/app/morpho_data/morpho_enriched_final.db')
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        
-        db_eid = entity_id
-        where_clause = "market_id LIKE ?" if len(entity_id) < 60 else "market_id = ?"
-        if len(entity_id) < 60:
-            db_eid += "%"
-            
-        # 1. Fetch Meta (Tiny table, < 5ms)
-        cur.execute('SELECT lower(vault_address), name, symbol FROM vault_meta')
-        meta = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
-
-        # 2. Fetch raw vault allocations dynamically using strict index
-        cur.execute(f'''
-            SELECT 
-                timestamp,
-                vault_address,
-                supply_shares
-            FROM vault_allocations
-            WHERE {where_clause}
-        ''', (db_eid,))
-        
-        rows = cur.fetchall()
-        
-        # 3. Pure Python memory aggregation (O(n) time, <100ms)
-        daily_max = {}
-        for r in rows:
-            ts = r[0]
-            val_addr = r[1]
-            shares = r[2]
-            day_ts = (ts // 86400) * 86400
-            
-            key = (day_ts, val_addr)
-            # Find the max timestamp per day per vault
-            if key not in daily_max or daily_max[key]["ts"] < ts:
-                daily_max[key] = {
-                    "ts": ts,
-                    "shares": shares
-                }
-
-        grouped = {}
-        for (day_ts, val_addr), data in daily_max.items():
-            if day_ts not in grouped:
-                grouped[day_ts] = []
-                
-            v_meta = meta.get(val_addr.lower(), (None, None))
-            grouped[day_ts].append(VaultAllocationDetail(
-                vault_address=val_addr,
-                name=v_meta[0] or 'Unknown Vault',
-                symbol=v_meta[1] or 'UNKNOWN',
-                shares=str(data["shares"])
-            ))
-            
-        # Sort grouped allocations by share size
-        for day_ts in grouped:
-            grouped[day_ts].sort(key=lambda x: float(x.shares), reverse=True)
-        
-        # Sort and limit
-        sorted_ts = sorted(list(grouped.keys()), reverse=True)[:limit]
-        results = [
-            VaultAllocationPoint(
-                timestamp=ts,
-                allocations=grouped[ts]
-            ) for ts in sorted_ts
-        ]
-        results.reverse() # Return chronological order
-        
-        conn.close()
-        set_cache(cache_key, results)
-        return results
-    except Exception as e:
-        logger.error(f"GraphQL vault_allocations error: {e}")
-        return []
-
-
-
 # ─── Schema ─────────────────────────────────────────────────
 
 @strawberry.type
@@ -658,16 +533,6 @@ class Query:
         limit: int = 2000,
     ) -> list[MarketTimeseriesPoint]:
         return _query_market_timeseries(entity_id, resolution, limit)
-
-    @strawberry.field(description="Historical vault allocations for a morpho market")
-    def market_vault_allocations(
-        self,
-        entity_id: str,
-        limit: int = 365,
-    ) -> list[VaultAllocationPoint]:
-        return _query_market_vault_allocations(entity_id, limit)
-
-
 
 schema = strawberry.Schema(query=Query)
 graphql_router = GraphQLRouter(schema, path="/graphql")

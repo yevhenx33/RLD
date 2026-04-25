@@ -23,7 +23,6 @@ const LENDING_DATA_QUERY = `
     protocolTvlHistory(displayIn: $displayIn) {
       date
       aave
-      morpho
       euler
       fluid
     }

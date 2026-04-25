@@ -101,7 +101,7 @@ FROM (
     entity_id,
     argMaxState(toFloat64(supply_usd), timestamp) AS supply_usd_state
   FROM unified_timeseries
-  WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+  WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
     AND entity_id != 'AAVE_MARKET_SYNTHETIC'
   GROUP BY day, clean_protocol, entity_id
 )

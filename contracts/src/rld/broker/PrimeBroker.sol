@@ -1179,7 +1179,9 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         uint256 amount
     ) external onlyAuthorized nonReentrant whenNotFrozen {
         if (_isGlobalSettlementActive()) revert GlobalSettlementActive();
-        if (_requiresWithdrawalQueue()) revert WithdrawalQueueRequired();
+        if (token == collateralToken && _requiresWithdrawalQueue()) {
+            revert WithdrawalQueueRequired();
+        }
         if (
             token == collateralToken &&
             _availableCollateralForWithdrawal() < amount

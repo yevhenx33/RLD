@@ -23,9 +23,6 @@ log = logging.getLogger("indexer")
 # The Merge-engine 'unified_timeseries' view combines them for reads.
 PROTOCOL_TABLES = {
     "AAVE_MARKET": "aave_timeseries",
-    "MORPHO_MARKET": "morpho_timeseries",
-    "MORPHO_ALLOCATION": "morpho_timeseries",
-    "MORPHO_VAULT": "morpho_timeseries",
 }
 
 DEFAULT_INSERT_BATCH_SIZE = int(os.getenv("CLICKHOUSE_INSERT_BATCH_SIZE", "20000"))
@@ -37,6 +34,7 @@ CLICKHOUSE_MUTATION_REWRITE_ENABLED = (
 _API_TABLES_READY = False
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
 API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
+MARKET_TIMESERIES_TABLE = "market_timeseries"
 
 
 def insert_rows_batched(ch, table: str, rows: list[list], column_names: list[str], batch_size: int = DEFAULT_INSERT_BATCH_SIZE) -> int:
@@ -88,6 +86,27 @@ def ensure_api_preagg_tables(ch) -> None:
     )
     ch.command(
         """
+        CREATE TABLE IF NOT EXISTS market_timeseries (
+            timestamp DateTime,
+            protocol LowCardinality(String),
+            symbol LowCardinality(String),
+            entity_id String,
+            target_id String,
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (protocol, entity_id, timestamp)
+        TTL timestamp + INTERVAL 18 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
         CREATE TABLE IF NOT EXISTS api_market_timeseries_hourly_agg (
             protocol LowCardinality(String),
             entity_id String,
@@ -99,7 +118,7 @@ def ensure_api_preagg_tables(ch) -> None:
             borrow_usd_state AggregateFunction(avg, Float64)
         ) ENGINE = AggregatingMergeTree()
         PARTITION BY toStartOfMonth(ts)
-        ORDER BY (entity_id, ts, protocol)
+        ORDER BY (protocol, entity_id, ts)
         TTL ts + INTERVAL 18 MONTH DELETE
         """
     )
@@ -112,7 +131,7 @@ def ensure_api_preagg_tables(ch) -> None:
             supply_usd_state AggregateFunction(argMax, Float64, DateTime)
         ) ENGINE = AggregatingMergeTree()
         PARTITION BY toStartOfMonth(day)
-        ORDER BY (day, protocol, entity_id)
+        ORDER BY (protocol, day, entity_id)
         TTL day + INTERVAL 36 MONTH DELETE
         """
     )
@@ -130,7 +149,7 @@ def ensure_api_preagg_tables(ch) -> None:
             avgState(toFloat64(utilization)) AS utilization_state,
             avgState(toFloat64(supply_usd)) AS supply_usd_state,
             avgState(toFloat64(borrow_usd)) AS borrow_usd_state
-        FROM unified_timeseries
+        FROM market_timeseries
         GROUP BY protocol, entity_id, ts
         """
     )
@@ -146,8 +165,8 @@ def ensure_api_preagg_tables(ch) -> None:
                 splitByChar('_', protocol)[1] AS clean_protocol,
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
-            FROM unified_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            FROM market_timeseries
+            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
             GROUP BY day, clean_protocol, entity_id
         )
@@ -170,7 +189,7 @@ def ensure_api_preagg_tables(ch) -> None:
                 avgState(toFloat64(utilization)) AS utilization_state,
                 avgState(toFloat64(supply_usd)) AS supply_usd_state,
                 avgState(toFloat64(borrow_usd)) AS borrow_usd_state
-            FROM unified_timeseries
+            FROM market_timeseries
             GROUP BY protocol, entity_id, ts
             """
         )
@@ -189,8 +208,8 @@ def ensure_api_preagg_tables(ch) -> None:
                     splitByChar('_', protocol)[1] AS clean_protocol,
                     entity_id,
                     argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
-                FROM unified_timeseries
-                WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+                FROM market_timeseries
+                WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
                   AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
                 GROUP BY day, clean_protocol, entity_id
             )
@@ -275,6 +294,47 @@ def upsert_api_market_latest(ch, df) -> int:
     )
 
 
+def upsert_market_timeseries(ch, df) -> int:
+    """Mirror normalized source rows into the canonical serving table."""
+    if df is None or len(df) == 0:
+        return 0
+    ensure_api_preagg_tables(ch)
+    required = {
+        "timestamp",
+        "protocol",
+        "symbol",
+        "entity_id",
+        "target_id",
+        "supply_usd",
+        "borrow_usd",
+        "supply_apy",
+        "borrow_apy",
+        "utilization",
+        "price_usd",
+    }
+    if not required.issubset(set(df.columns)):
+        return 0
+    return insert_df_batched(
+        ch,
+        MARKET_TIMESERIES_TABLE,
+        df[
+            [
+                "timestamp",
+                "protocol",
+                "symbol",
+                "entity_id",
+                "target_id",
+                "supply_usd",
+                "borrow_usd",
+                "supply_apy",
+                "borrow_apy",
+                "utilization",
+                "price_usd",
+            ]
+        ],
+    )
+
+
 def upsert_api_market_timeseries_hourly(ch, df) -> int:
     ensure_api_preagg_tables(ch)
     return 0
@@ -309,7 +369,7 @@ def refresh_api_protocol_tvl_weekly(ch, min_ts, max_ts) -> int:
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM unified_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'MORPHO_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
               AND timestamp >= '{window_start}'
               AND timestamp <= '{window_end}'
@@ -452,11 +512,8 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
 
             # Since `supply_usd` is ffilled, it holds the absolute flat anchor.
             # Multiplying it by the cumulative factor synthesizes gap compounding.
-            # Morpho tracks physical accrual events natively, so it should not be
-            # synthetically compounded.
-            if protocol != "MORPHO_MARKET":
-                merged['supply_usd'] = merged['supply_usd'] * merged['sup_multiplier']
-                merged['borrow_usd'] = merged['borrow_usd'] * merged['bor_multiplier']
+            merged['supply_usd'] = merged['supply_usd'] * merged['sup_multiplier']
+            merged['borrow_usd'] = merged['borrow_usd'] * merged['bor_multiplier']
 
         # Strip computational degrees of freedom
         if compound:

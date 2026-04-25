@@ -2,11 +2,11 @@
 Shared token metadata — single source of truth for all protocol sources.
 
 Token address mappings, asset classification, and price helpers used
-by Aave, Morpho, Fluid, and Chainlink sources.
+by Aave, Fluid, and Chainlink sources.
 """
 
 # ── Token address → (symbol, decimals) ─────────────────────
-# Used by Fluid (ADDR_MAP), Morpho (KNOWN_TOKENS), Aave (RESERVE_MAP)
+# Used by Fluid (ADDR_MAP), Aave (RESERVE_MAP), and shared price helpers.
 # Addresses are LOWERCASE, WITHOUT 0x prefix.
 TOKENS = {
     # Stablecoins
@@ -32,7 +32,7 @@ TOKENS = {
     "80ac24aa929eaf5013f6436cda2a7ba190f5cc0b": ("syrupUSDC", 6),
     "356b8d89c1e1239cbbb9de4815c39a1474d5ba7d": ("syrupUSDT", 6),
     "6c3ea9036406852006290770bedfcaba0e23a0e8": ("PYUSD", 6),
-    # Additional Morpho-listed stablecoins
+    # Additional listed stablecoins
     "e42f72e1c12f56e34a5e4ee3820af94b4e1ad533": ("RLUSD", 18),
     "8292bb45bf1ee4d140127049757c2e0ff06317ed": ("RLUSD", 18),
     "c76a3cba4d77223d53e3a7aa5b3b2e13ff33ee0e": ("EURCV", 18),
@@ -133,7 +133,7 @@ STABLES = {
     "csUSDL", "wstUSR", "syrupUSDC", "syrupUSDT", "PYUSD", "sDAI", "sFRAX",
     "LUSD", "FRAX", "crvUSD", "wUSDM", "Paxos",
     "sUSDe",
-    # Additional Morpho stablecoins (uppercase from morpho_market_params)
+    # Additional stablecoins
     "RLUSD", "USDTB", "MSUSD", "RUSD", "FRXUSD", "LVLUSD",
     "USDE", "APXUSD", "AUSD", "EUSD", "MUSD", "PMUSD", "USDCV", "USDF",
     "USDG", "EUSDE",
@@ -167,7 +167,7 @@ SYM_DECIMALS: dict[str, int] = {}
 for _addr, (_sym, _dec) in TOKENS.items():
     SYM_DECIMALS[_sym] = _dec
     SYM_DECIMALS[_sym.upper()] = _dec  # uppercase alias
-# Explicit overrides for tokens not in TOKENS but in Morpho markets
+# Explicit overrides for tokens not in TOKENS.
 SYM_DECIMALS.setdefault("RLUSD", 18)
 SYM_DECIMALS.setdefault("EURCV", 18)
 SYM_DECIMALS.setdefault("USDTB", 18)

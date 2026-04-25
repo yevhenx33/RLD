@@ -207,18 +207,18 @@ export function usePoolData() {
   }, [refreshAll]);
 
   // ── Readiness gate ────────────────────────────────────────────────
-  // Don't render until the critical data sources have loaded at least once
+  // Render once the core pool snapshot is available. Chart candles and
+  // liquidity bins are derived views and may legitimately be empty after an
+  // indexer reset or before the first LP event replay completes.
   const ready = useMemo(() => {
     return (
       connected &&
       market !== null &&
       pool !== null &&
       marketInfo !== null &&
-      chartData.length > 0 &&
-      positionsLoaded &&
-      binsLoaded
+      positionsLoaded
     );
-  }, [connected, market, pool, marketInfo, chartData.length, positionsLoaded, binsLoaded]);
+  }, [connected, market, pool, marketInfo, positionsLoaded]);
 
   return {
     // Gate

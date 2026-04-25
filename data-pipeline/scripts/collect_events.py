@@ -2,15 +2,14 @@
 """
 HyperSync Event Collector — Download raw events to Parquet.
 
-Downloads all historical events for Aave V3 and Morpho Blue via HyperSync
-and saves them as Parquet files for offline analysis.
+Downloads all historical events for Aave V3 via HyperSync and saves them as
+Parquet files for offline analysis.
 
 Usage:
     python3 scripts/collect_events.py
 
 Output:
     /mnt/data/hypersync_events/aave_v3_events.parquet
-    /mnt/data/hypersync_events/morpho_blue_events.parquet
 """
 
 import os, sys, time, asyncio
@@ -47,19 +46,6 @@ PROTOCOLS = {
             "Repay": AAVE_TOPIC_REPAY,
             "LiquidationCall": AAVE_TOPIC_LIQUIDATION_CALL,
             "FlashLoan": AAVE_TOPIC_FLASH_LOAN,
-        },
-    },
-    "morpho_blue": {
-        "contract": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
-        "start_block": 18_883_124,
-        "events": {
-            "Supply":             "0xedf8870433c83823eb071d3df1caa8d008f12f6440918c20d75a3602cda30fe0",
-            "Borrow":             "0x570954540bed6b1304a87dfe815a5eda4a648f7097a16240dcd85c9b5fd42a43",
-            "Repay":              "0x52acb05cebbd3cd39715469f22afbf5a17496295ef3bc9bb5944056c63ccaa09",
-            "Liquidate":          "0xa4946ede45d0c6f06a0f5ce92c9ad3b4751e2b26571a85b4b10571077571493f",
-            "SupplyCollateral":   "0xa3b9472a1399e17e123f3c2e6586c23e36dadeb77fcfbeaaa7c91af3543f15d3",
-            "WithdrawCollateral": "0xe80ebd7cc9223d7382aab2e0d1d6155c65651f83d53c8b9b06571e7480a87c62",
-            "CreateMarket":       "0xac4b2400f169220b0c0afdde7a0b32e775ba727ea1cb30b35f935cdaab8683ac",
         },
     },
 }

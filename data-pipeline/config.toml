@@ -1,0 +1,40 @@
+[api]
+port = 5000
+bind = "0.0.0.0"
+ready_protocols = ["AAVE_MARKET", "CHAINLINK_PRICES", "SOFR_RATES"]
+max_ready_lag_blocks = 250000
+max_ready_sofr_business_days = 3
+cors_origins = ["http://localhost:3000", "http://localhost:5173", "https://rld.fi", "https://www.rld.fi"]
+
+[clickhouse]
+host = "127.0.0.1"
+port = 8123
+user = "default"
+password_env = "CLICKHOUSE_PASSWORD"
+async_insert = true
+wait_for_async_insert = true
+insert_batch_size = 20000
+manage_users = false
+
+[clickhouse.roles]
+api_user = "api_readonly"
+api_password_env = "CLICKHOUSE_API_PASSWORD"
+worker_user = "worker"
+worker_password_env = "CLICKHOUSE_WORKER_PASSWORD"
+migration_user = "migration_admin"
+migration_password_env = "CLICKHOUSE_MIGRATION_PASSWORD"
+
+[sources.AAVE_MARKET]
+enabled = true
+poll_interval_sec = 30
+batch_blocks = 100000
+
+[sources.CHAINLINK_PRICES]
+enabled = true
+poll_interval_sec = 30
+batch_blocks = 100000
+
+[sources.SOFR_RATES]
+enabled = true
+poll_interval_sec = 300
+max_business_day_lag = 3

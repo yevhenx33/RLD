@@ -1,7 +1,7 @@
 import React from "react";
 import { Terminal, Shield } from "lucide-react";
 import { useWallet } from "../../context/WalletContext";
-import { useSim } from "../../context/SimulationContext";
+import { useSimulation } from "../../hooks/useSimulation";
 import { useTradeLogic } from "../../hooks/useTradeLogic";
 import { useWealthProjection } from "../../hooks/useWealthProjection";
 import MetricsGrid from "../pools/MetricsGrid";
@@ -11,14 +11,15 @@ import CdsDataModule from "./CdsDataModule";
 
 export default function CdsMarketPage() {
   const { account, connectWallet } = useWallet();
-  const sim = useSim();
-  const { poolTVL, protocolStats, pool, oracleChange24h } = sim;
+  const sim = useSimulation({ marketKey: "cds" });
+  const { poolTVL, protocolStats, pool, market, marketInfo, oracleChange24h } = sim;
   const isLoading = sim.loading;
   const error = !sim.connected && !sim.loading ? "disconnected" : null;
 
-  const latest = { apy: pool?.markPrice || 0 };
+  const latest = { apy: market?.indexPrice || pool?.markPrice || 0 };
   const dailyChange = oracleChange24h?.pctChange || 0;
   const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
+  const collateralSymbol = marketInfo?.collateral?.symbol || "USDC";
 
   const tradeLogic = useTradeLogic(latest.apy);
   const { activeTab, notional, maturityHours, maturityDays } = tradeLogic.state;
@@ -62,8 +63,8 @@ export default function CdsMarketPage() {
                   liquidity={poolTVL || 0}
                   paramLabel="PAYOUT_TRIGGER"
                   paramItems={[
-                    { label: "UTILIZATION", value: ">99% over 3D" },
-                    { label: "COLLATERAL PRICE", value: "-75% over 3D" }]}
+                    { label: "UTILIZATION", value: ">99% over 7D" },
+                    { label: "TRACKS", value: "2 of 3" }]}
                 />
               </div>
 
@@ -101,7 +102,7 @@ export default function CdsMarketPage() {
                   label="Coverage_Amount"
                   value={notional}
                   onChange={(v) => setNotional(Number(v))}
-                  suffix="USDC"
+                  suffix={collateralSymbol}
                 />
 
                 <div className="space-y-3">

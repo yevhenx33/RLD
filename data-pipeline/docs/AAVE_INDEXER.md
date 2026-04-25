@@ -89,5 +89,5 @@ This native data allows frictionless extensions without altering backend archite
 ## 5. Protocol Database Isolation (Poka-Yoke)
 Historically, the `unified_timeseries` table was a shared namespace risking cross-protocol contamination during purges. The architecture now enforces **strict physical isolation**:
 1. **Isolated Storage:** `aave_v3.py` writes exclusively to `aave_timeseries`.
-2. **Merge Engine Read:** The GraphQL API and downstream materialized views read from `unified_timeseries`, which is now a ClickHouse `Merge` engine virtual table pointing to `^(aave|morpho)_timeseries$`.
+2. **Merge Engine Read:** The GraphQL API and downstream materialized views read from `unified_timeseries`, a ClickHouse `Merge` engine virtual table over protocol-specific timeseries tables.
 3. **Software Guard:** `processor.py` explicitly asserts the target table name via the `PROTOCOL_TABLES` mapping, making cross-table writes impossible.

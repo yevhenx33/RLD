@@ -40,13 +40,6 @@ PROTOCOLS = {
             "USDT": {"address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", "decimals": 6},
         },
     },
-    "morpho": {
-        "name": "Morpho",
-        "enabled": False,
-        "adapter": "morpho",
-        "pool_address": None,  # Set when implementing
-        "assets": {},
-    },
     "fluid": {
         "name": "Fluid",
         "enabled": False,

@@ -8,7 +8,7 @@ def verify_aave_filter(filepath):
         
     # Poka-Yoke Constraints: Ensure pipeline filters are active
     assert "m.protocolKey === \"AAVE\"" in content, "Failure Mode: Aave market filter missing."
-    assert "tvl: row.aave || 0" in content, "Failure Mode: Chart TVL still mapping morpho/fluid/euler data."
+    assert "tvl: row.aave || 0" in content, "Failure Mode: Chart TVL still mapping non-Aave data."
     
     print("Aave Isolation Verified. Data pipeline mathematically restricted to Aave V3 only.")
 

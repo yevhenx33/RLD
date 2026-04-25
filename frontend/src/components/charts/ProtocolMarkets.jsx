@@ -8,7 +8,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ArrowLeft,
-  Zap,
 } from "lucide-react";
 import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
@@ -18,7 +17,6 @@ const PAGE_SIZE = 25;
 
 const PROTOCOL_MAP = {
   aave: "AAVE_MARKET",
-  morpho: "MORPHO_MARKET",
   euler: "EULER_MARKET",
   fluid: "FLUID_MARKET",
 };
@@ -58,7 +56,6 @@ export default function ProtocolMarkets() {
   const navigate = useNavigate();
   const protocolKey = PROTOCOL_MAP[protocolSlug] || "AAVE_MARKET";
   const protocolName = getProtocolDisplayName(protocolKey);
-  const isMorpho = protocolKey.startsWith("MORPHO");
 
   const [currentPage, setCurrentPage] = useState(1);
   const [sortKey, setSortKey] = useState("supplyUsd");
@@ -142,23 +139,13 @@ export default function ProtocolMarkets() {
     return { totalSupply, totalBorrow, avgUtil, avgSupplyApy, avgBorrowApy, count: markets.length };
   }, [markets]);
 
-  // --- Dynamic column config depending on protocol ---
-  const COLUMNS = isMorpho
-    ? [
-        { key: "lltv", label: "LLTV" },
-        { key: "supplyUsd", label: "Total Market Size" },
-        { key: "borrowUsd", label: "Total Borrow" },
-        { key: "supplyApy", label: "Supply APY" },
-        { key: "borrowApy", label: "Borrow APY" },
-        { key: "utilization", label: "Utilization" },
-      ]
-    : [
-        { key: "supplyUsd", label: "Supply USD" },
-        { key: "borrowUsd", label: "Borrow USD" },
-        { key: "supplyApy", label: "Supply APY" },
-        { key: "borrowApy", label: "Borrow APY" },
-        { key: "utilization", label: "Utilization" },
-      ];
+  const COLUMNS = [
+    { key: "supplyUsd", label: "Supply USD" },
+    { key: "borrowUsd", label: "Borrow USD" },
+    { key: "supplyApy", label: "Supply APY" },
+    { key: "borrowApy", label: "Borrow APY" },
+    { key: "utilization", label: "Utilization" },
+  ];
 
   return (
     <div className="min-h-screen bg-[#050505] text-gray-300 font-mono selection:bg-pink-500/30">
@@ -177,7 +164,7 @@ export default function ProtocolMarkets() {
               {protocolName} Markets
             </h1>
             <p className="text-sm text-gray-500 uppercase tracking-widest">
-              {stats.count} individual {isMorpho ? "markets" : "reserves"} · Ethereum Mainnet
+              {stats.count} individual reserves · Ethereum Mainnet
             </p>
           </div>
         </div>
@@ -230,7 +217,7 @@ export default function ProtocolMarkets() {
               <thead>
                 <tr className="border-b border-white/10 bg-white/[0.02]">
                   <th className="p-5 text-sm uppercase tracking-widest text-gray-500 font-bold text-left min-w-[240px]">
-                    {isMorpho ? "Collateral / Loan" : "Asset"}
+                    Asset
                   </th>
                   {COLUMNS.map((col) => (
                     <th
@@ -264,78 +251,24 @@ export default function ProtocolMarkets() {
                       }
                     >
                       <td className="p-5">
-                        {isMorpho ? (
-                          /* ── Morpho: Collateral / Loan pair ── */
-                          <div className="flex items-center gap-3">
-                            <div className="relative flex items-center">
-                              {/* Collateral icon */}
-                              <div className="w-9 h-9 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-1.5 z-10 group-hover:border-white/30 transition-colors">
-                                <img
-                                  src={m.collateralIcon || `https://ui-avatars.com/api/?name=${m.collateralSymbol || "?"}&background=1a1a2e&color=fff&size=64&bold=true&font-size=0.4`}
-                                  alt={m.collateralSymbol || "?"}
-                                  className="w-full h-full object-contain rounded-full"
-                                  loading="lazy"
-                                  onError={(e) => {
-                                    e.target.src = `https://ui-avatars.com/api/?name=${m.collateralSymbol || "?"}&background=1a1a2e&color=fff&size=64&bold=true&font-size=0.4`;
-                                  }}
-                                />
-                              </div>
-                              {/* Loan icon (overlapping) */}
-                              <div className="w-9 h-9 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-1.5 -ml-3 group-hover:border-white/30 transition-colors">
-                                <img
-                                  src={m.loanIcon}
-                                  alt={m.symbol}
-                                  className="w-full h-full object-contain rounded-full"
-                                  loading="lazy"
-                                  onError={(e) => {
-                                    e.target.src = `https://ui-avatars.com/api/?name=${m.symbol}&background=1a1a2e&color=fff&size=64&bold=true&font-size=0.4`;
-                                  }}
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <div className="text-base font-bold text-white tracking-tight">
-                                {m.collateralSymbol || "Unknown"} <span className="text-gray-600 font-normal">/</span> {m.symbol}
-                              </div>
-                              <div className="text-xs text-gray-600 uppercase tracking-widest font-bold">
-                                {m.loanName}
-                                {isTrapped && <span className="text-red-500/70 ml-2">● TRAPPED</span>}
-                              </div>
-                            </div>
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-2 group-hover:border-white/30 transition-colors">
+                            <img
+                              src={m.loanIcon}
+                              alt={m.symbol}
+                              className="w-full h-full object-contain rounded-full"
+                              loading="lazy"
+                              onError={(e) => {
+                                e.target.src = `https://ui-avatars.com/api/?name=${m.symbol}&background=1a1a2e&color=fff&size=64&bold=true&font-size=0.4`;
+                              }}
+                            />
                           </div>
-                        ) : (
-                          /* ── Aave: Single asset ── */
-                          <div className="flex items-center gap-4">
-                            <div className="relative">
-                              <div className="w-10 h-10 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-2 group-hover:border-white/30 transition-colors">
-                                <img
-                                  src={m.loanIcon}
-                                  alt={m.symbol}
-                                  className="w-full h-full object-contain rounded-full"
-                                  loading="lazy"
-                                  onError={(e) => {
-                                    e.target.src = `https://ui-avatars.com/api/?name=${m.symbol}&background=1a1a2e&color=fff&size=64&bold=true&font-size=0.4`;
-                                  }}
-                                />
-                              </div>
-                              <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-[#0a0a0a] rounded-full flex items-center justify-center border border-white/10">
-                                <Zap size={8} className="text-yellow-500" fill="currentColor" />
-                              </div>
-                            </div>
-                            <div>
-                              <div className="text-base font-bold text-white tracking-tight">{m.symbol}</div>
-                              <div className="text-sm text-gray-600 uppercase tracking-widest font-bold">{m.loanName}</div>
-                            </div>
+                          <div>
+                            <div className="text-base font-bold text-white tracking-tight">{m.symbol}</div>
+                            <div className="text-sm text-gray-600 uppercase tracking-widest font-bold">{m.loanName}</div>
                           </div>
-                        )}
+                        </div>
                       </td>
-                      {isMorpho && (
-                        <td className="p-5 text-center">
-                          <div className="text-sm font-mono font-bold tracking-widest text-gray-400">
-                            {(m.lltv * 100).toFixed(0)}%
-                          </div>
-                        </td>
-                      )}
                       <td className="p-5 text-center">
                         <div className="text-sm font-mono font-bold tracking-widest text-white">
                           {formatCurrency(m.supplyUsd)}

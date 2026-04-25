@@ -1,5 +1,5 @@
 export const queryKeys = {
-  simulationSnapshot: (url) => [url, "simulation.snapshot.v1", null],
+  simulationSnapshot: (url, market = null) => [url, "simulation.snapshot.v2", { market }],
   simulationAccount: (url, owner) =>
     owner ? [url, "simulation.account.v1", { owner: owner.toLowerCase(), status: "all" }] : null,
   simulationCandles: (url, variables) =>

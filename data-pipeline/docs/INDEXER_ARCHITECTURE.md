@@ -14,7 +14,6 @@ It covers:
 
 Protocol-specific deep dives remain in:
 - `data-pipeline/docs/AAVE_INDEXER.md`
-- `data-pipeline/docs/MORPHO_INDEXER.md`
 
 ## 2) Runtime Topology (Current)
 
@@ -25,7 +24,6 @@ Protocol-specific deep dives remain in:
   - Uses shared ClickHouse client lifecycle with reconnect/reset behavior.
 - Protocol workers (from `data-pipeline/docker-compose.yml`)
   - `aave_collector`, `aave_processor`
-  - `morpho_collector`, `morpho_processor`
   - `chainlink_collector`, `chainlink_processor`
   - `sofr_collector` (offchain source; no processor role)
 
@@ -48,12 +46,9 @@ Protocol-specific deep dives remain in:
 
 Canonical IDs are centralized in `indexer/protocols.py`:
 - `AAVE_MARKET`
-- `MORPHO_MARKET`
 - `FLUID_MARKET`
 - `CHAINLINK_PRICES`
 - `SOFR_RATES`
-- `MORPHO_ALLOCATION`
-- `MORPHO_VAULT`
 
 Compatibility alias retained:
 - `CHAINLINK` -> `CHAINLINK_PRICES` for `processor_state` back-compat.
@@ -65,22 +60,20 @@ Cursor/state tables:
 ## 4) End-to-End Data Flow (Current)
 
 1. **Collectors ingest raw data**
-   - EVM protocols: HyperSync -> raw tables (`aave_events`, `morpho_events`, `chainlink_events`, etc.).
+   - EVM protocols: HyperSync -> raw tables (`aave_events`, `chainlink_events`, etc.).
    - Offchain protocol (SOFR): NY Fed API -> `raw_sofr_rates`.
    - Collectors write/update `collector_state`.
 
 2. **Processors decode and merge**
    - Read raw event ranges by block window.
    - Decode protocol-specific payloads.
-   - Merge normalized rows into protocol output tables (`aave_timeseries`, `morpho_timeseries`, etc.).
+   - Merge normalized rows into protocol output tables (`aave_timeseries`, etc.).
    - Update `processor_state`.
 
 3. **API pre-aggregation write-through**
    - Processors upsert latest market snapshots into `api_market_latest` (ReplacingMergeTree).
    - Incremental MVs populate `api_market_timeseries_hourly_agg` from `unified_timeseries`.
    - Incremental MVs populate `api_protocol_tvl_entity_weekly_agg` from `unified_timeseries`.
-   - Morpho processor writes `morpho_vault_allocations` snapshot rows for allocation API usage.
-
 4. **GraphQL serving**
    - Canonical prefix: `/graphql` served by `indexer/api/graphql.py`.
    - Compatibility alias: `/envio-graphql` (deprecated).
@@ -92,7 +85,6 @@ Cursor/state tables:
 ### Core serving tables
 
 - `aave_timeseries` (ReplacingMergeTree)
-- `morpho_timeseries` (ReplacingMergeTree)
 - `unified_timeseries` (Merge engine union used for reads)
 - `chainlink_prices` (MergeTree)
 - `raw_sofr_rates` (ReplacingMergeTree)
@@ -104,9 +96,6 @@ Cursor/state tables:
 - `api_market_latest` (ReplacingMergeTree)
 - `api_market_timeseries_hourly_agg` (AggregatingMergeTree, month partition, TTL)
 - `api_protocol_tvl_entity_weekly_agg` (AggregatingMergeTree, month partition, TTL)
-- `morpho_vault_allocations` (ReplacingMergeTree)
-- `morpho_vault_meta` (ReplacingMergeTree)
-- `morpho_market_params` (dimension metadata)
 
 ### Important current behavior
 
@@ -123,7 +112,7 @@ API endpoints:
 - `GET /readyz` -> returns `503` when configured protocol lag exceeds threshold.
 
 Config knobs:
-- `INDEXER_READY_PROTOCOLS` (default launch-critical set: Aave/Morpho/Chainlink)
+- `INDEXER_READY_PROTOCOLS` (default launch-critical set: Aave/Chainlink)
 - `INDEXER_MAX_READY_LAG_BLOCKS`
 - ClickHouse client tuning:
   - `CLICKHOUSE_CONNECT_TIMEOUT`
@@ -142,9 +131,7 @@ Config knobs:
 4. **Async insert mode not enabled**
    - Batching is implemented, but small-burst ingestion can still create part pressure.
 5. **Legacy runtime overlap still possible**
-   - Older ad-hoc containers (for example duplicate morpho workers) can coexist and confuse ops unless cleaned.
-6. **Transition fallback still present for vault allocations**
-   - GraphQL still keeps sqlite fallback path for legacy data migration safety.
+   - Older ad-hoc containers can coexist and confuse ops unless cleaned.
 
 ## 8) Future Steps (Prioritized)
 

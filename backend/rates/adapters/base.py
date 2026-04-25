@@ -1,7 +1,7 @@
 """
 Abstract base class for protocol adapters.
 
-Each lending protocol (Aave V3, Morpho, Fluid, Euler) implements this
+Each lending protocol (Aave V3, Fluid, Euler) implements this
 interface to define how to:
   1. Build eth_call payloads for a given block
   2. Decode RPC responses into (symbol, apy) records

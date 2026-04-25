@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, ChevronUp, ArrowUpDown, Loader2 } from "lucide-react";
-import { useSim } from "../../context/SimulationContext";
+import { useSimulation } from "../../hooks/useSimulation";
 import CdsBrandingPanel from "./CdsBrandingPanel";
 
 // ── Token icon URLs ───────────────────────────────────────────
@@ -50,13 +50,13 @@ export default function CdsDirectory() {
     protocolStats,
     marketInfo,
     chartData,
-  } = useSim();
+  } = useSimulation({ marketKey: "cds" });
 
   const cdsMarkets = useMemo(() => {
     if (!market || !marketInfo) return [];
 
-    const colSymbol = marketInfo.collateral?.symbol || "waUSDC";
-    const colName = marketInfo.collateral?.name || "Wrapped Aave USDC";
+    const colSymbol = marketInfo.collateral?.symbol || "USDC";
+    const colName = marketInfo.position_token?.symbol || "wCDSUSDC";
     const icon = TOKEN_ICONS[colSymbol] || TOKEN_ICONS.default;
 
     const oi = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
@@ -74,7 +74,7 @@ export default function CdsDirectory() {
 
     return [
       {
-        id: colSymbol,
+        id: marketInfo.marketId || colSymbol,
         asset: colSymbol,
         name: colName,
         icon,

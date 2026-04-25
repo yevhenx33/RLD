@@ -1,5 +1,5 @@
 """
-Backfill AnswerUpdated events from all Morpho-referenced Chainlink feeds.
+Backfill AnswerUpdated events from configured Chainlink feeds.
 Resumable: reads max(block_number) from chainlink_prices to continue.
 
 Usage: python scripts/backfill_chainlink_v2.py
@@ -12,7 +12,7 @@ log = logging.getLogger()
 
 ANSWER_UPDATED = "0x0559884fd3a460db3073b7fc896cc77986f16e378210ded43186175bf646fc5f"
 CHUNK = 50_000
-MORPHO_GENESIS = 18_900_000
+CHAINLINK_START_BLOCK = 18_900_000
 
 
 def load_metadata():
@@ -117,7 +117,7 @@ def main():
     # Resume from last block
     r = ch.query("SELECT max(block_number) FROM chainlink_prices")
     last = r.result_rows[0][0] if r.result_rows and r.result_rows[0][0] else 0
-    from_block = max(last + 1, MORPHO_GENESIS)
+    from_block = max(last + 1, CHAINLINK_START_BLOCK)
     log.info(f"Resuming from block {from_block:,}")
 
     asyncio.run(backfill(addresses, meta, from_block, ch))

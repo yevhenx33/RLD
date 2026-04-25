@@ -10,8 +10,6 @@ def test_protocols_dict():
     """Verify PROTOCOLS registry has expected structure."""
     assert "aave_v3" in config.PROTOCOLS
     assert config.PROTOCOLS["aave_v3"]["enabled"] is True
-    assert "morpho" in config.PROTOCOLS
-    assert config.PROTOCOLS["morpho"]["enabled"] is False
     assert "fluid" in config.PROTOCOLS
     assert config.PROTOCOLS["fluid"]["enabled"] is False
     assert "euler" in config.PROTOCOLS

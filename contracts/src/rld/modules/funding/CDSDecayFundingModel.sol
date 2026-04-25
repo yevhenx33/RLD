@@ -23,7 +23,10 @@ contract CDSDecayFundingModel is IFundingModel {
 
     /// @notice Thrown when the F parameter is physically unsupported
     error InvalidDecayParameter();
-    
+
+    /// @notice Thrown when the current normalization factor is already invalid
+    error InvalidNormalizationFactor();
+
     /// @notice Thrown when expWad returns a non-positive value
     error InvalidExponentialResult();
 
@@ -51,6 +54,8 @@ contract CDSDecayFundingModel is IFundingModel {
         if (dt == 0) {
             return (currentNormalizationFactor, 0);
         }
+
+        if (currentNormalizationFactor == 0) revert InvalidNormalizationFactor();
         
         // 1. Fetch market configuration
         IRLDCore.MarketConfig memory config = IRLDCore(core).getMarketConfig(MarketId.wrap(marketId));
@@ -68,7 +73,7 @@ contract CDSDecayFundingModel is IFundingModel {
         int256 multiplier = FixedPointMathLib.expWad(exponent);
         
         // 3. Safety checks (Mathematical collapse prevention)
-        if (multiplier < 0) {
+        if (multiplier <= 0) {
             revert InvalidExponentialResult();
         }
         
@@ -76,6 +81,7 @@ contract CDSDecayFundingModel is IFundingModel {
             currentNormalizationFactor, 
             uint256(multiplier)
         );
+        if (newNormalizationFactor == 0) revert InvalidExponentialResult();
         
         // We technically return F as the "funding rate" for upstream protocol accounting
         fundingRate = int256(F);

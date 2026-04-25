@@ -5,6 +5,7 @@ import hypersync
 import clickhouse_connect
 from indexer.base import BaseSource
 from indexer.protocols import CHAINLINK_PRICES, RAW_HEAD_QUERY_BY_PROTOCOL
+from indexer.state import get_source_status, update_source_status, ensure_source_status_table
 
 log = logging.getLogger("collector")
 
@@ -126,6 +127,7 @@ class ProtocolCollector:
     def _ensure_collector_health_table(self, ch):
         if self._health_table_ready:
             return
+        ensure_source_status_table(ch)
         ch.command(
             """
             CREATE TABLE IF NOT EXISTS collector_state (
@@ -138,12 +140,27 @@ class ProtocolCollector:
         )
         self._health_table_ready = True
 
-    def _set_last_collected_block(self, ch, block_num: int):
+    def _set_last_collected_block(
+        self,
+        ch,
+        block_num: int,
+        *,
+        source_head_block: int | None = None,
+        last_event_block: int | None = None,
+    ):
         protocol = CHAINLINK_PRICES if self.source.name == CHAINLINK_PRICES else self.source.name
         ch.insert(
             "collector_state",
             [[protocol, int(block_num)]],
             column_names=["protocol", "last_collected_block"],
+        )
+        update_source_status(
+            ch,
+            protocol,
+            "collector",
+            last_scanned_block=int(block_num),
+            last_event_block=int(last_event_block if last_event_block is not None else block_num),
+            source_head_block=int(source_head_block if source_head_block is not None else block_num),
         )
 
     def _raw_head(self, ch) -> int:
@@ -164,8 +181,10 @@ class ProtocolCollector:
         ch = self._get_ch_client()
         self._ensure_collector_health_table(ch)
 
-        # Step 1: Query local DB strictly for this protocol's schema
-        cursor = self.source.get_cursor(ch)
+        # Initialize source-specific tables/caches, then prefer the scanned cursor.
+        raw_cursor = self.source.get_cursor(ch)
+        status = get_source_status(ch, self.source.name, "collector")
+        cursor = status["last_scanned_block"] or raw_cursor
         is_offchain = bool(getattr(self.source, "is_offchain", False))
         from_block = (cursor + 1) if (cursor > 0 and not is_offchain) else self.source.genesis_block
         try:
@@ -176,7 +195,12 @@ class ProtocolCollector:
 
         if head_block < from_block:
             log.info(f"[{self.source.name}-Collector] No new blocks. Cursor at {from_block}")
-            self._set_last_collected_block(ch, max(0, from_block - 1))
+            self._set_last_collected_block(
+                ch,
+                max(0, from_block - 1),
+                source_head_block=head_block,
+                last_event_block=self._raw_head(ch),
+            )
             return
 
         log.info(f"[{self.source.name}-Collector] Syncing {from_block} -> {head_block}")
@@ -218,7 +242,12 @@ class ProtocolCollector:
                 raise
 
             if not mempool_logs:
-                self._set_last_collected_block(ch, current_end)
+                self._set_last_collected_block(
+                    ch,
+                    current_end,
+                    source_head_block=head_block,
+                    last_event_block=self._raw_head(ch),
+                )
                 current_start = current_end + 1
                 continue
 
@@ -234,7 +263,12 @@ class ProtocolCollector:
                 log.info(f"[{self.source.name}-Collector] DUMPED {n_raw} raw events to {self.source.raw_table}")
             else:
                 log.info(f"[{self.source.name}-Collector] 0 matched events in blocks {current_start}->{current_end}")
-            self._set_last_collected_block(ch, self._raw_head(ch))
+            self._set_last_collected_block(
+                ch,
+                current_end,
+                source_head_block=head_block,
+                last_event_block=self._raw_head(ch),
+            )
 
             # Strict memory clearing
             mempool_logs.clear()

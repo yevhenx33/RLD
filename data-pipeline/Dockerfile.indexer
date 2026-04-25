@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the actual code
 COPY indexer /app/indexer
 COPY scripts /app/scripts
-# tokens dir doesn't exist, we imported from `indexer.tokens` in watcher but actually it was removed, wait, I removed it. The only module needed is indexer and scripts.
+COPY config.toml /app/config.toml
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
