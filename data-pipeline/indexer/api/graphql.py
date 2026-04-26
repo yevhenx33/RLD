@@ -16,7 +16,8 @@ from indexer.config import apply_env_from_config
 
 apply_env_from_config()
 
-from indexer.protocols import (
+# Imports must follow apply_env_from_config() so env-backed defaults load correctly.
+from indexer.protocols import (  # noqa: E402
     AAVE_MARKET,
     FLUID_MARKET,
     SOFR_RATES,
@@ -25,8 +26,8 @@ from indexer.protocols import (
     RAW_HEAD_QUERY_BY_PROTOCOL,
     PROCESSOR_STATE_ALIASES,
 )
-from indexer.state import get_source_status
-from indexer.tokens import TOKENS, get_usd_price
+from indexer.state import get_source_status  # noqa: E402
+from indexer.tokens import TOKENS, get_usd_price  # noqa: E402
 
 MAX_LIMIT = 10000
 MAX_READY_LAG_BLOCKS = int(os.getenv("INDEXER_MAX_READY_LAG_BLOCKS", "250000"))
