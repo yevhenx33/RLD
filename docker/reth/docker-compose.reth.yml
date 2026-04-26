@@ -38,7 +38,7 @@ services:
       - --http.api
       - "eth,net,web3,txpool"
       - --http.corsdomain
-      - "${RETH_HTTP_CORS_DOMAIN:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}"
+      - "${RETH_HTTP_CORS_DOMAIN:-*}"
       - --gpo.maxprice
       - "1000000"
       - --log.stdout.filter
