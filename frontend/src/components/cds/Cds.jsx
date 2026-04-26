@@ -488,7 +488,7 @@ export default function CdsMarketPage() {
                           : "border-white/5 bg-white/[0.02] hover:border-white/20"
                       }`}
                     >
-                      <SummaryRow label="Coverage" value={formatCurrency(pos.coverage, 0)} valueColor="text-cyan-400" />
+                      <SummaryRow label="Coverage" value={formatCurrency(pos.coverage, 0)} />
                       <SummaryRow label="Premium_Stream" value={formatCurrency(pos.premium, 2)} />
                       <SummaryRow label="Status" value={pos.status} valueColor="text-green-400" />
                     </button>
@@ -542,7 +542,7 @@ export default function CdsMarketPage() {
                         #{String(pos.id).slice(2, 8)}
                       </div>
                       <div className="hidden md:block flex-1" />
-                      <div className="md:w-32 text-cyan-400 text-left md:text-center">{formatCurrency(pos.coverage, 0)}</div>
+                      <div className="md:w-32 text-white text-left md:text-center">{formatCurrency(pos.coverage, 0)}</div>
                       <div className="md:w-24 text-white text-left md:text-center">{formatCurrency(pos.premium, 0)}</div>
                       <div className="md:w-32 text-gray-400 text-left md:text-center">{pos.duration}</div>
                       <div className="md:w-24 text-green-400 uppercase text-left md:text-center">{pos.status}</div>
@@ -599,18 +599,18 @@ export default function CdsMarketPage() {
         executing={isExecuting}
         executionStep={currentStep}
         executionError={executionError}
-        expectedReceive={
-          selectedPosition?.collateralReturned ||
-          selectedPosition?.expectedReceive ||
-          selectedPosition?.initialCost ||
-          ((selectedPosition?.premium || 0) + (selectedPosition?.initialCost || 0))
-        }
       />
       <CloseCdsCoverageModal
         isOpen={showCloseModal}
         onClose={() => { if (!isExecuting) setShowCloseModal(false); }}
         onConfirm={handleConfirmCloseProtection}
         position={selectedPosition}
+        expectedReceive={
+          selectedPosition?.collateralReturned ||
+          selectedPosition?.expectedReceive ||
+          selectedPosition?.initialCost ||
+          ((selectedPosition?.premium || 0) + (selectedPosition?.initialCost || 0))
+        }
         executing={isExecuting}
         executionStep={currentStep}
         executionError={executionError}

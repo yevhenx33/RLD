@@ -53,7 +53,7 @@ export default function CloseCdsCoverageModal({
 
         <div className="p-5 space-y-5">
           <div className="space-y-3 border border-white/5 bg-white/[0.02] p-4">
-            <Row label="Coverage" value={formatCurrency(position.coverage, 0)} valueClassName="text-cyan-400" />
+            <Row label="Coverage" value={formatCurrency(position.coverage, 0)} />
             <Row label="Premium" value={formatCurrency(position.premium, 2)} />
             <Row label="Est. Receive" value={formatCurrency(expectedReceive, 2)} valueClassName="text-cyan-400" />
             <Row label="Duration" value={position.duration || "—"} />
