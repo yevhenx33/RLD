@@ -6,6 +6,8 @@ export const queryKeys = {
     variables?.marketId ? [url, "simulation.candles.v1", variables] : null,
   bondPositions: (url, owner) =>
     owner ? [url, "simulation.bonds.v1", { owner: owner.toLowerCase() }] : null,
+  coveragePositions: (url, owner, market = null) =>
+    owner ? [url, "simulation.coverage-positions.v1", { owner: owner.toLowerCase(), market }] : null,
   brokerData: (url, owner, marketId) =>
     owner && marketId ? [url, "simulation.broker-data.v1", { owner, marketId }] : null,
 

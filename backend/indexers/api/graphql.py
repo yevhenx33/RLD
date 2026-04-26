@@ -198,6 +198,41 @@ def _decode_event_data(raw_data: Any) -> Any:
     return raw_data
 
 
+def _event_topic_address(event_data: Any, topic_index: int) -> str:
+    decoded = _decode_event_data(event_data)
+    if not isinstance(decoded, dict):
+        return ""
+    topics = decoded.get("topics") or []
+    if len(topics) <= topic_index:
+        return ""
+    raw = str(topics[topic_index])
+    if raw.startswith("0x"):
+        raw = raw[2:]
+    if len(raw) < 40:
+        return ""
+    return f"0x{raw[-40:]}".lower()
+
+
+def _event_uints(event_data: Any) -> list[int]:
+    decoded = _decode_event_data(event_data)
+    if not isinstance(decoded, dict):
+        return []
+    raw = str(decoded.get("raw") or "")
+    if raw.startswith("0x"):
+        raw = raw[2:]
+    if not raw:
+        return []
+    values = []
+    for idx in range(0, len(raw), 64):
+        chunk = raw[idx:idx + 64]
+        if len(chunk) == 64:
+            try:
+                values.append(int(chunk, 16))
+            except ValueError:
+                values.append(0)
+    return values
+
+
 def _format_usd_compact(value: float) -> str:
     if value >= 1_000_000_000:
         return f"${value / 1_000_000_000:.2f}B"
@@ -394,7 +429,7 @@ def _overlay_deployment_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     for key in (
         "token0", "token1", "zero_for_one_long", "funding_model",
         "settlement_module", "decay_rate_wad", "collateral_symbol",
-        "position_symbol", "type",
+        "position_symbol", "type", "cds_coverage_factory",
     ):
         if key in market_entry and not payload.get(key):
             payload[key] = market_entry[key]
@@ -403,7 +438,7 @@ def _overlay_deployment_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "rpc_url", "rld_core", "pool_manager",
         "swap_router", "bond_factory", "basis_trade_factory",
         "broker_executor", "broker_router", "v4_quoter", "v4_position_manager",
-        "ghost_router", "twap_engine", "twap_engine_lens",
+        "ghost_router", "twap_engine", "twap_engine_lens", "cds_coverage_factory",
     ):
         if key in deploy_cfg and not payload.get(key):
             payload[key] = deploy_cfg[key]
@@ -474,6 +509,8 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "pool_manager": payload["poolManager"],
     })
 
+    payload = _overlay_deployment_config(payload)
+
     payload["collateral"] = {
         "name": collateral_symbol,
         "symbol": collateral_symbol,
@@ -503,6 +540,8 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "v4Quoter": payload["v4Quoter"],
         "v4PositionManager": payload["v4PositionManager"],
         "v4StateView": payload["v4StateView"],
+        "cdsCoverageFactory": payload.get("cds_coverage_factory", ""),
+        "cds_coverage_factory": payload.get("cds_coverage_factory", ""),
     }
     payload["risk_params"] = {
         "min_col_ratio": payload["minColRatio"],
@@ -849,6 +888,68 @@ class Query:
                     d[k] = float(d[k])
             result.append(d)
         return result
+
+    @strawberry.field
+    async def coverage_positions(self, owner: str, market: Optional[str] = None) -> Optional[JSON]:
+        """Returns CDS fixed-coverage positions opened through CDSCoverageFactory."""
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            market_row = await _fetch_market_row(conn, market)
+            market_id = market_row["market_id"] if market_row else None
+            args: list[Any] = []
+            where = "event_name IN ('CoverageOpened', 'CoverageClosed')"
+            if market_id:
+                args.append(market_id)
+                where += f" AND market_id=${len(args)}"
+            rows = await conn.fetch(
+                f"""
+                SELECT market_id, event_name, block_number, block_timestamp,
+                       tx_hash, contract_address, data
+                FROM events
+                WHERE {where}
+                ORDER BY block_number ASC, log_index ASC
+                """,
+                *args,
+            )
+
+        owner_lc = owner.lower()
+        positions: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            user_addr = _event_topic_address(row["data"], 1)
+            broker_addr = _event_topic_address(row["data"], 2)
+            if user_addr != owner_lc or not broker_addr:
+                continue
+
+            values = _event_uints(row["data"])
+            if row["event_name"] == "CoverageOpened":
+                coverage = values[0] if len(values) > 0 else 0
+                initial_cost = values[1] if len(values) > 1 else 0
+                premium_budget = values[2] if len(values) > 2 else 0
+                initial_tokens = values[3] if len(values) > 3 else 0
+                duration = values[4] if len(values) > 4 else 0
+                positions[broker_addr] = {
+                    "brokerAddress": broker_addr,
+                    "marketId": row["market_id"],
+                    "owner": user_addr,
+                    "coverage": coverage / 1e6,
+                    "initialCost": initial_cost / 1e6,
+                    "premiumBudget": premium_budget / 1e6,
+                    "initialPositionTokens": initial_tokens / 1e6,
+                    "duration": int(duration),
+                    "openedBlock": row["block_number"],
+                    "openedAt": row["block_timestamp"],
+                    "openedTx": row["tx_hash"],
+                    "status": "active",
+                }
+            elif row["event_name"] == "CoverageClosed" and broker_addr in positions:
+                positions[broker_addr]["status"] = "closed"
+                positions[broker_addr]["closedBlock"] = row["block_number"]
+                positions[broker_addr]["closedAt"] = row["block_timestamp"]
+                positions[broker_addr]["closedTx"] = row["tx_hash"]
+                positions[broker_addr]["collateralReturned"] = (values[0] if len(values) > 0 else 0) / 1e6
+                positions[broker_addr]["positionReturned"] = (values[1] if len(values) > 1 else 0) / 1e6
+
+        return list(reversed(list(positions.values())))
 
     @strawberry.field
     async def broker_profile(self, owner: str) -> Optional[JSON]:

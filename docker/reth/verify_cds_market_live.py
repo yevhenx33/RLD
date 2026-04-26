@@ -12,6 +12,7 @@ Default behavior is read-only. It verifies:
     and CDS settlement proxy
   - Funding model projects non-increasing, non-zero NF
   - Settlement proxy is wired to the same Core
+  - Optional CDSCoverageFactory exists when configured
   - Ghost/V4 pool id and spot price match oracle initialization
   - Optional indexer endpoints surface `?market=cds`
 
@@ -294,6 +295,8 @@ def main() -> None:
         "CDS collateral": cds["collateral_token"],
         "CDS rate oracle": cds["rate_oracle"],
     }
+    if cds.get("cds_coverage_factory"):
+        required_contracts["CDS coverage factory"] = cds["cds_coverage_factory"]
     for label, addr in required_contracts.items():
         if not has_code(w3, addr):
             die(f"{label} has no code at {addr}")
@@ -419,6 +422,7 @@ def main() -> None:
         "core": core_addr,
         "funding_model": checksum(cds["funding_model"]),
         "settlement_module": checksum(cds["settlement_module"]),
+        "cds_coverage_factory": checksum(cds["cds_coverage_factory"]) if cds.get("cds_coverage_factory") else "",
         "collateral_token": checksum(cds["collateral_token"]),
         "position_token": checksum(cds["position_token"]),
         "pool_id": pool_id,
