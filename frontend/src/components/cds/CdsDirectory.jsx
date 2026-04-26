@@ -149,7 +149,7 @@ export default function CdsDirectory() {
                   Protocol <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="protocol" sortKey={sortKey} sortDir={sortDir} /></span>
                 </button>
                 <button onClick={() => toggleSort("indexPrice")} className="relative text-center hover:text-white transition-colors">
-                  Premium Est. <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="indexPrice" sortKey={sortKey} sortDir={sortDir} /></span>
+                  Index Price <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="indexPrice" sortKey={sortKey} sortDir={sortDir} /></span>
                 </button>
                 <button onClick={() => toggleSort("openInterest")} className="relative text-center hover:text-white transition-colors">
                   Open Interest <span className="absolute ml-1 top-1/2 -translate-y-1/2"><SortIcon col="openInterest" sortKey={sortKey} sortDir={sortDir} /></span>
@@ -212,10 +212,10 @@ export default function CdsDirectory() {
                   <div className="grid grid-cols-2 gap-4 md:contents mt-2 md:mt-0">
                     <div className="md:text-center flex flex-col md:block">
                       <span className="md:hidden text-[9px] text-gray-600 uppercase tracking-widest mb-1.5">
-                        Premium Est.
+                        Index Price
                       </span>
                       <div className="text-base md:text-sm font-mono text-cyan-400">
-                        {formatPrice((m.indexPrice / 100) * 1.5)}%
+                        {formatPrice(m.indexPrice)}
                       </div>
                     </div>
 

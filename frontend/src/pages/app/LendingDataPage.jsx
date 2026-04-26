@@ -200,7 +200,10 @@ export default function LendingDataPage() {
         averageBorrowApy: point.averageBorrowApy,
       });
     }
-    const chart = [...chartByTimestamp.values()].sort((a, b) => a.timestamp - b.timestamp);
+    const APRIL_2023_TS = 1680307200; // April 1, 2023
+    const chart = [...chartByTimestamp.values()]
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .filter((p) => p.timestamp >= APRIL_2023_TS);
 
     // 4) Markets table rows
     const tableData = [...aaveMarkets]

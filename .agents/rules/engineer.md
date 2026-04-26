@@ -1,5 +1,5 @@
 ---
-trigger: manual
+trigger: always_on
 ---
 
 # ROLE: Lead Engineering Agent (Maxwell's Demon)

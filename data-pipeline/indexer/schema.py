@@ -91,7 +91,7 @@ def ensure_schema(ch) -> None:
         ) ENGINE = ReplacingMergeTree(inserted_at)
         PARTITION BY toStartOfMonth(timestamp)
         ORDER BY (protocol, entity_id, timestamp)
-        TTL timestamp + INTERVAL 18 MONTH DELETE
+        TTL timestamp + INTERVAL 36 MONTH DELETE
         """
     )
     ch.command(
@@ -127,7 +127,7 @@ def ensure_schema(ch) -> None:
         ) ENGINE = AggregatingMergeTree()
         PARTITION BY toStartOfMonth(ts)
         ORDER BY (protocol, entity_id, ts)
-        TTL ts + INTERVAL 18 MONTH DELETE
+        TTL ts + INTERVAL 36 MONTH DELETE
         """
     )
     ch.command(
