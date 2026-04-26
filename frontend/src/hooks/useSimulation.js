@@ -56,6 +56,8 @@ function _remapMarketInfo(mi) {
       v4_state_view: mi.infrastructure?.v4StateView || mi.v4StateView || "",
       universal_router: mi.infrastructure?.universalRouter || mi.universalRouter || "",
       permit2: mi.infrastructure?.permit2 || mi.permit2 || "",
+      cds_coverage_factory: mi.infrastructure?.cdsCoverageFactory || mi.infrastructure?.cds_coverage_factory || mi.cdsCoverageFactory || mi.cds_coverage_factory || "",
+      cdsCoverageFactory: mi.infrastructure?.cdsCoverageFactory || mi.infrastructure?.cds_coverage_factory || mi.cdsCoverageFactory || mi.cds_coverage_factory || "",
     },
     risk_params: mi.riskParams || {
       min_col_ratio: mi.minColRatio || 0,

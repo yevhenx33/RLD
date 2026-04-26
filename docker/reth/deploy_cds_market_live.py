@@ -11,8 +11,9 @@ reuses the live RLDCore/RLDMarketFactory/GhostRouter/TwapEngine deployment, then
   1. Deploys CDSDecayFundingModel.
   2. Deploys CDSSettlementProxy.
   3. Creates a second RLD market with raw USDC collateral.
-  4. Verifies Core, Factory, and GhostRouter wiring.
-  5. Adds a `markets.cds` entry to docker/deployment.json while preserving the
+  4. Deploys CDSCoverageFactory for fixed-coverage buyer wrappers.
+  5. Verifies Core, Factory, and GhostRouter wiring.
+  6. Adds a `markets.cds` entry to docker/deployment.json while preserving the
      existing top-level perp-market keys.
 """
 
@@ -48,6 +49,7 @@ USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
 # F = -ln(1 - 0.90), WAD scaled.
 DEFAULT_DECAY_RATE_WAD = 2_302_585_092_994_045_684
+DEFAULT_R_MAX_WAD = 750_000_000_000_000_000
 
 
 FACTORY_ABI: list[dict[str, Any]] = [
@@ -402,6 +404,7 @@ def main() -> None:
     parser.add_argument("--position-name", default="Wrapped CDS RLP: USDC")
     parser.add_argument("--position-symbol", default="wCDSUSDC")
     parser.add_argument("--decay-rate-wad", type=int, default=DEFAULT_DECAY_RATE_WAD)
+    parser.add_argument("--r-max-wad", type=int, default=DEFAULT_R_MAX_WAD)
     parser.add_argument("--pool-fee", type=int, default=500)
     parser.add_argument("--tick-spacing", type=int, default=5)
     parser.add_argument("--oracle-period", type=int, default=3600)
@@ -569,6 +572,25 @@ def main() -> None:
     ok(f"CDS pool id: {pool_id}")
     ok(f"Ghost spot verified: spot={spot_price}, expected={expected_pool_price}, delta={delta}")
 
+    step("Deploy CDS coverage factory")
+    coverage_factory = deploy_contract_with_forge(
+        "src/periphery/CDSCoverageFactory.sol:CDSCoverageFactory",
+        private_key,
+        args.rpc_url,
+        [
+            checksum(preview_broker_factory),
+            core_addr,
+            checksum(deploy["twap_engine"]),
+            collateral_token,
+            checksum(deploy.get("pool_manager") or deploy.get("v4_pool_manager")),
+            checksum(deploy["v4_quoter"]),
+            args.r_max_wad,
+        ],
+    )
+    if not has_code(w3, coverage_factory):
+        die(f"CDSCoverageFactory has no code: {coverage_factory}")
+    ok(f"CDSCoverageFactory deployed: {coverage_factory}")
+
     step("Update deployment config")
     cds_entry = {
         "type": "cds",
@@ -586,7 +608,9 @@ def main() -> None:
         "spot_oracle": spot_oracle,
         "funding_model": funding_model,
         "settlement_module": settlement_proxy,
+        "cds_coverage_factory": coverage_factory,
         "decay_rate_wad": str(args.decay_rate_wad),
+        "r_max_wad": str(args.r_max_wad),
         "target_utilization": "0.90",
         "token0": checksum(token0),
         "token1": checksum(token1),
@@ -616,6 +640,7 @@ def main() -> None:
     deploy["cds_broker_factory"] = checksum(preview_broker_factory)
     deploy["cds_funding_model"] = funding_model
     deploy["cds_settlement_module"] = settlement_proxy
+    deploy["cds_coverage_factory"] = coverage_factory
 
     if args.skip_write:
         info("--skip-write set; deployment.json not modified")

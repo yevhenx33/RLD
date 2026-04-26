@@ -103,6 +103,11 @@ CUSTOM_TOPICS = {
         "BondMinted",
     Web3.keccak(text="BondClosed(address,address,uint256,uint256)").hex():
         "BondClosed",
+    # CDSCoverageFactory
+    Web3.keccak(text="CoverageOpened(address,address,uint256,uint256,uint256,uint256,uint256)").hex():
+        "CoverageOpened",
+    Web3.keccak(text="CoverageClosed(address,address,uint256,uint256)").hex():
+        "CoverageClosed",
     # BasisTradeFactory
     Web3.keccak(text="BasisTradeOpened(address,address,uint256,uint256,uint256)").hex():
         "BasisTradeOpened",
@@ -236,7 +241,8 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
     rows = await conn.fetch("""
         SELECT market_id, broker_factory, mock_oracle, twamm_hook,
                ghost_router, twap_engine, twap_engine_lens,
-               bond_factory, basis_trade_factory, wausdc, wrlp
+               bond_factory, basis_trade_factory, wausdc, wrlp,
+               product_metadata
         FROM markets
     """)
     mapping = {}
@@ -260,6 +266,14 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
         _remember(r.get("basis_trade_factory"))
         _remember(r.get("wausdc"))
         _remember(r.get("wrlp"))
+        metadata = r.get("product_metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        if isinstance(metadata, dict):
+            _remember(metadata.get("cds_coverage_factory"))
 
     # Broker → market_id
     broker_rows = await conn.fetch("SELECT address, market_id FROM brokers")

@@ -1,18 +1,20 @@
-import React, { useCallback, useMemo, useRef } from "react";
-import { Terminal, Shield } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Info, Terminal, Shield } from "lucide-react";
 import { useParams } from "react-router-dom";
+import { ethers } from "ethers";
 import { useWallet } from "../../context/WalletContext";
 import { useSimulation } from "../../hooks/useSimulation";
 import { useTradeLogic } from "../../hooks/useTradeLogic";
 import { useWealthProjection } from "../../hooks/useWealthProjection";
-import { useBrokerAccount } from "../../hooks/useBrokerAccount";
-import { useBrokerData } from "../../hooks/useBrokerData";
-import { useSwapExecution } from "../../hooks/useSwapExecution";
-import { useSwapQuote } from "../../hooks/useSwapQuote";
+import { useCdsCoverageExecution } from "../../hooks/useCdsCoverageExecution";
+import { useCdsCoveragePositions } from "../../hooks/useCdsCoveragePositions";
 import { useToast } from "../../hooks/useToast";
+import { rpcProvider } from "../../utils/provider";
 import MetricsGrid from "../pools/MetricsGrid";
 import TradingTerminal, { InputGroup, SummaryRow } from "../trading/TradingTerminal";
 import { ToastContainer } from "../common/Toast";
+import CreateCdsCoverageModal from "../modals/CreateCdsCoverageModal";
+import CloseCdsCoverageModal from "../modals/CloseCdsCoverageModal";
 import CdsBrandingPanel from "./CdsBrandingPanel";
 import CdsDataModule from "./CdsDataModule";
 
@@ -25,17 +27,24 @@ const formatCurrency = (value, decimals = 2) => {
   })}`;
 };
 
-const formatToken = (value, decimals = 4) => {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return "—";
-  return num.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: decimals,
-  });
-};
+const CDS_R_MAX = 0.75;
 
-const shortAddress = (address) =>
-  address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "—";
+function InfoTooltip({ text }) {
+  return (
+    <span className="relative inline-flex items-center group">
+      <button
+        type="button"
+        className="inline-flex items-center justify-center text-cyan-500 hover:text-cyan-300 focus:text-cyan-300 focus:outline-none"
+        aria-label={text}
+      >
+        <Info size={12} />
+      </button>
+      <span className="pointer-events-none absolute left-1/2 bottom-full z-50 mb-2 w-64 -translate-x-1/2 border border-cyan-500/30 bg-[#050505] px-3 py-2 text-left text-[10px] leading-relaxed tracking-widest text-gray-300 opacity-0 shadow-2xl shadow-cyan-500/10 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        {text}
+      </span>
+    </span>
+  );
+}
 
 export default function CdsMarketPage() {
   const { address } = useParams();
@@ -44,6 +53,11 @@ export default function CdsMarketPage() {
   const { account, connectWallet } = useWallet();
   const txPauseRef = useRef(false);
   const { toasts, addToast, removeToast } = useToast();
+  const [optimisticPositions, setOptimisticPositions] = useState([]);
+  const [selectedPosition, setSelectedPosition] = useState(null);
+  const [showOpenModal, setShowOpenModal] = useState(false);
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [actionDropdown, setActionDropdown] = useState(null);
   const sim = useSimulation({ marketKey, account });
   const { poolTVL, protocolStats, pool, market, marketInfo, oracleChange24h, chartData } = sim;
   const isLoading = sim.loading;
@@ -53,6 +67,7 @@ export default function CdsMarketPage() {
   const dailyChange = oracleChange24h?.pctChange || 0;
   const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
   const collateralSymbol = marketInfo?.collateral?.symbol || "USDC";
+  const [walletCollateralBalance, setWalletCollateralBalance] = useState(null);
 
   const tradeLogic = useTradeLogic(latest.apy);
   const { activeTab, notional, maturityHours, maturityDays } = tradeLogic.state;
@@ -62,90 +77,97 @@ export default function CdsMarketPage() {
   const projectionData = useWealthProjection(notionalAmount, latest.apy, maturityDays);
   const collateralAddress = marketInfo?.collateral?.address;
   const positionAddress = marketInfo?.position_token?.address;
-  const positionSymbol =
-    marketInfo?.collateral?.symbol === "USDC"
-      ? "wCDS"
-      : marketInfo?.position_token?.symbol || "wCDS";
+
+  const refreshWalletBalance = useCallback(async (force = false) => {
+    if (!account || !collateralAddress) return;
+    if (!force && txPauseRef.current) return;
+    try {
+      const token = new ethers.Contract(
+        collateralAddress,
+        ["function balanceOf(address owner) view returns (uint256)"],
+        rpcProvider,
+      );
+      const raw = await token.balanceOf(account);
+      if (!force && txPauseRef.current) return;
+      setWalletCollateralBalance(Number(ethers.formatUnits(raw, 6)));
+    } catch (e) {
+      console.warn("[CDS] failed to fetch wallet collateral balance:", e);
+    }
+  }, [account, collateralAddress]);
+
+  useEffect(() => {
+    if (!account || !collateralAddress) return;
+    refreshWalletBalance();
+    const id = setInterval(() => refreshWalletBalance(), 10000);
+    return () => clearInterval(id);
+  }, [account, collateralAddress, refreshWalletBalance]);
 
   const {
-    hasBroker,
-    brokerAddress,
-    brokerBalance,
-    creating,
-    depositing,
-    error: brokerError,
-    step: brokerStep,
-    createBroker,
-    depositFunds,
-    checkBroker,
-    fetchBrokerBalance,
-  } = useBrokerAccount(
+    openCoverage,
+    closeCoverage,
+    coverageFactory,
+    executing: coverageExecuting,
+    error: coverageError,
+    step: coverageStep,
+  } = useCdsCoverageExecution(
     account,
-    marketInfo?.broker_factory,
-    collateralAddress,
-  );
-
-  const {
-    data: brokerData,
-    refresh: refreshBrokerData,
-  } = useBrokerData(
-    account,
-    marketInfo,
-    sim.blockNumber,
-    market?.blockTimestamp,
-    txPauseRef,
-  );
-
-  const { quote: protectionQuote, loading: quoteLoading } = useSwapQuote(
     marketInfo?.infrastructure,
     collateralAddress,
     positionAddress,
-    notionalAmount,
-    "BUY",
+    { pauseRef: txPauseRef },
   );
 
-  const {
-    executeLong,
-    executing: swapExecuting,
-    error: swapError,
-    step: swapStep,
-  } = useSwapExecution(
-    account,
-    brokerAddress,
-    marketInfo?.infrastructure,
-    collateralAddress,
-    positionAddress,
-    { onRefreshComplete: [refreshBrokerData, fetchBrokerBalance] },
-  );
-
-  const currentStep = swapStep || brokerStep;
-  const executionError = swapError || brokerError;
-  const isExecuting = creating || depositing || swapExecuting;
+  const currentStep = coverageStep;
+  const executionError = coverageError;
+  const isExecuting = coverageExecuting;
   const marketReady =
-    Boolean(marketInfo?.broker_factory) &&
-    Boolean(marketInfo?.infrastructure?.broker_router) &&
+    Boolean(coverageFactory) &&
     Boolean(collateralAddress) &&
     Boolean(positionAddress);
 
-  const estimatedCoverage = protectionQuote?.amountOut || 0;
-  const estimatedEntry = protectionQuote?.entryRate || pool?.markPrice || latest.apy || 0;
-  const brokerCollateral = Number(brokerData?.brokerBalance ?? brokerBalance ?? 0) || 0;
-  const brokerPositionBalance = Number(brokerData?.wrlpTokenBalance || 0) || 0;
+  const currentBorrowRate = (market?.indexPrice || 0) / 100;
+  const termYears = maturityHours / 8760;
+  const initialBuyCost = CDS_R_MAX > 0
+    ? notionalAmount * (currentBorrowRate / CDS_R_MAX)
+    : 0;
+  const premiumStream = notionalAmount * currentBorrowRate * termYears;
+  const totalToPost = initialBuyCost + premiumStream;
+  const expectedReclaim = initialBuyCost;
+  const reclaimNotice =
+    "Not collateral and cannot be liquidated. These funds are used to maintain constant coverage through expiration and are refundable after expiration.";
 
-  const userCdsPositions = useMemo(() => {
-    if (!brokerAddress || brokerPositionBalance <= 0) return [];
-    const mark = pool?.markPrice || latest.apy || 0;
-    return [{
-      id: 1,
-      brokerAddress,
-      coverage: brokerPositionBalance,
-      premium: brokerPositionBalance * mark,
-      duration: "Perpetual",
-      status: "Active",
-    }];
-  }, [brokerAddress, brokerPositionBalance, pool?.markPrice, latest.apy]);
+  const {
+    positions: indexedPositions,
+    refresh: refreshCoveragePositions,
+  } = useCdsCoveragePositions(account, marketKey, isExecuting);
 
-  const handleOpenProtection = useCallback(async () => {
+  const allCdsPositions = useMemo(() => {
+    const mapped = indexedPositions.map((pos) => ({
+      id: pos.brokerAddress || pos.openedTx,
+      brokerAddress: pos.brokerAddress,
+      coverage: Number(pos.coverage || 0),
+      premium: Number(pos.premiumBudget || 0),
+      initialCost: Number(pos.initialCost || 0),
+      expectedReceive: Number(pos.collateralReturned || pos.initialCost || 0),
+      collateralReturned: Number(pos.collateralReturned || 0),
+      positionReturned: Number(pos.positionReturned || 0),
+      duration: pos.duration
+        ? `${Math.round(Number(pos.duration) / 86400)}D`
+        : "—",
+      status: pos.status || "active",
+      openedTx: pos.openedTx,
+    }));
+    const indexedIds = new Set(mapped.map((pos) => pos.id));
+    return [
+      ...optimisticPositions.filter((pos) => !indexedIds.has(pos.id)),
+      ...mapped,
+    ];
+  }, [indexedPositions, optimisticPositions]);
+  const userCdsPositions = useMemo(
+    () => allCdsPositions.filter((pos) => pos.status === "active"),
+    [allCdsPositions],
+  );
+  const handleReviewCoverage = useCallback(() => {
     if (!account) {
       connectWallet();
       return;
@@ -158,85 +180,114 @@ export default function CdsMarketPage() {
       });
       return;
     }
-    if (hasBroker === false) {
-      const createdBroker = await createBroker();
-      if (createdBroker) {
-        addToast({
-          type: "success",
-          title: "CDS Account Created",
-          message: `Broker ${shortAddress(createdBroker)} is ready.`,
-        });
-        await checkBroker();
-      }
-      return;
-    }
-    if (!brokerAddress) {
-      addToast({
-        type: "info",
-        title: "Broker Syncing",
-        message: "Wait for your CDS account to finish indexing.",
-      });
-      await checkBroker();
-      return;
-    }
     if (!Number.isFinite(notionalAmount) || notionalAmount <= 0) {
       addToast({
         type: "error",
-        title: "Invalid Premium",
-        message: "Enter a positive USDC premium amount.",
+        title: "Invalid Coverage",
+        message: "Enter a positive coverage amount.",
       });
       return;
     }
+    setShowOpenModal(true);
+  }, [account, addToast, connectWallet, marketReady, notionalAmount]);
 
+  const handleConfirmOpenProtection = useCallback(async () => {
     txPauseRef.current = true;
     try {
-      const depositReceipt = await depositFunds(notionalAmount);
-      if (!depositReceipt) {
-        return;
-      }
-      await executeLong(notionalAmount, (receipt) => {
+      await openCoverage(notionalAmount, maturityHours, (receipt) => {
+        const position = {
+          id: receipt.brokerAddress || receipt.hash,
+          brokerAddress: receipt.brokerAddress,
+          coverage: notionalAmount,
+          premium: premiumStream,
+          initialCost: expectedReclaim,
+          expectedReceive: expectedReclaim,
+          duration: maturityHours < 24
+            ? `${maturityHours}H`
+            : `${Math.round(maturityHours / 24)}D`,
+          status: "Active",
+        };
+        setOptimisticPositions((prev) => [position, ...prev]);
         addToast({
           type: "success",
           title: "CDS Opened",
-          message: `${formatCurrency(notionalAmount, 2)} premium swapped into ${positionSymbol} — tx ${receipt.hash.slice(0, 10)}…`,
+          message: `${formatCurrency(notionalAmount, 0)} fixed coverage — tx ${receipt.hash.slice(0, 10)}…`,
         });
+        setShowOpenModal(false);
         setActiveTab("CLOSE");
+        refreshCoveragePositions?.();
+        refreshWalletBalance(true);
       });
     } finally {
       txPauseRef.current = false;
-      await refreshBrokerData();
-      await fetchBrokerBalance();
     }
   }, [
-    account,
     addToast,
-    brokerAddress,
-    checkBroker,
-    connectWallet,
-    createBroker,
-    depositFunds,
-    executeLong,
-    fetchBrokerBalance,
-    hasBroker,
-    marketReady,
+    expectedReclaim,
+    maturityHours,
     notionalAmount,
-    positionSymbol,
-    refreshBrokerData,
+    openCoverage,
+    premiumStream,
+    refreshCoveragePositions,
+    refreshWalletBalance,
     setActiveTab,
   ]);
+
+  const openCloseModal = useCallback((positionOverride = null) => {
+    const targetPosition = positionOverride || selectedPosition;
+    if (!account) {
+      connectWallet();
+      return;
+    }
+    if (!targetPosition?.brokerAddress) {
+      addToast({
+        type: "error",
+        title: "No Position Selected",
+        message: "Select an active CDS position to close.",
+      });
+      return;
+    }
+    setSelectedPosition(targetPosition);
+    setActionDropdown(null);
+    setShowCloseModal(true);
+  }, [account, addToast, connectWallet, selectedPosition]);
+
+  const handleConfirmCloseProtection = useCallback(async () => {
+    if (!selectedPosition?.brokerAddress) return;
+    txPauseRef.current = true;
+    try {
+      await closeCoverage(selectedPosition.brokerAddress, (receipt) => {
+        setOptimisticPositions((prev) => prev.filter((pos) => pos.id !== selectedPosition.id));
+        setSelectedPosition(null);
+        setActionDropdown(null);
+        setShowCloseModal(false);
+        addToast({
+          type: "success",
+          title: "CDS Closed",
+          message: `Coverage closed — tx ${receipt.hash.slice(0, 10)}…`,
+        });
+        refreshCoveragePositions?.();
+        refreshWalletBalance(true);
+      });
+    } finally {
+      txPauseRef.current = false;
+    }
+  }, [addToast, closeCoverage, refreshCoveragePositions, refreshWalletBalance, selectedPosition]);
 
   const actionLabel = !account
     ? "Connect Wallet"
     : isExecuting
-      ? currentStep || "Opening..."
-      : hasBroker === false
-        ? "Create CDS Account"
-        : hasBroker === null
-          ? "Checking CDS Account..."
-          : "Open CDS Position";
+      ? currentStep || (activeTab === "CLOSE" ? "Closing..." : "Opening...")
+      : !coverageFactory
+        ? "Coverage Factory Not Deployed"
+        : activeTab === "CLOSE"
+          ? selectedPosition
+            ? "Close Selected CDS"
+            : "Select CDS Position"
+          : "Open Coverage";
   const actionDisabled =
     Boolean(account) &&
-    (isExecuting || !marketReady || hasBroker === null || notionalAmount <= 0);
+    (isExecuting || !marketReady || (activeTab === "CLOSE" ? !selectedPosition : notionalAmount <= 0));
 
   if (error)
     return (
@@ -312,7 +363,7 @@ export default function CdsMarketPage() {
             ]}
             actionButton={{
               label: actionLabel,
-              onClick: handleOpenProtection,
+              onClick: activeTab === "CLOSE" ? () => openCloseModal() : handleReviewCoverage,
               disabled: actionDisabled,
               variant: "cyan",
             }}
@@ -320,8 +371,12 @@ export default function CdsMarketPage() {
             {activeTab === "OPEN" && (
               <>
                 <InputGroup
-                  label="Premium_Budget"
-                  subLabel={quoteLoading ? "Quoting..." : "USDC → wCDS"}
+                  label="Coverage"
+                  subLabel={`BAL: ${
+                    walletCollateralBalance == null
+                      ? "—"
+                      : walletCollateralBalance.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                  } ${collateralSymbol}`}
                   value={notional}
                   onChange={(v) => setNotional(Number(v))}
                   suffix={collateralSymbol}
@@ -330,7 +385,7 @@ export default function CdsMarketPage() {
                 <div className="space-y-3">
                   <div className="flex justify-between items-end">
                     <span className="text-sm text-gray-500 uppercase tracking-widest font-bold">
-                      Coverage Duration
+                      Duration
                     </span>
                     <span className="text-sm font-mono font-bold text-cyan-400">
                       {maturityHours < 24
@@ -363,6 +418,7 @@ export default function CdsMarketPage() {
                       { label: "7D", hours: 7 * 24 },
                       { label: "1M", hours: 30 * 24 },
                       { label: "3M", hours: 90 * 24 },
+                      { label: "1Y", hours: 365 * 24 },
                     ].map((preset) => {
                       const isActive = maturityHours === preset.hours;
                       return (
@@ -383,31 +439,27 @@ export default function CdsMarketPage() {
 
                 <div className="space-y-2 pt-2 border-t border-white/5">
                   <SummaryRow
-                    label="Est_Coverage"
-                    value={`${formatToken(estimatedCoverage)} ${positionSymbol}`}
+                    label="Premium"
+                    value={formatCurrency(premiumStream, 2)}
+                  />
+                  <SummaryRow
+                    label={(
+                      <span className="inline-flex items-center gap-1.5">
+                        Reclaim after expiration
+                        <InfoTooltip text={reclaimNotice} />
+                      </span>
+                    )}
+                    value={formatCurrency(expectedReclaim, 2)}
                     valueColor="text-cyan-400"
                   />
                   <SummaryRow
-                    label="Entry_Mark"
-                    value={formatCurrency(estimatedEntry, 4)}
-                  />
-                  <SummaryRow
-                    label="Broker"
-                    value={
-                      hasBroker === false
-                        ? "Create required"
-                        : brokerAddress
-                          ? shortAddress(brokerAddress)
-                          : "Syncing"
-                    }
-                  />
-                  <SummaryRow
-                    label="Broker_USDC"
-                    value={`${formatToken(brokerCollateral, 2)} ${collateralSymbol}`}
+                    label="Total"
+                    value={formatCurrency(totalToPost, 2)}
+                    valueColor="text-white"
                   />
                   <div className="text-[10px] text-gray-600 leading-relaxed uppercase tracking-widest pt-1">
-                    CDS positions are perpetual. The horizon above is a planning
-                    input; on-chain coverage decays through the market NF.
+                    Premium is the insurance cost. Reclaim amount is used to
+                    maintain constant coverage and returns after expiration.
                   </div>
                   {executionError && (
                     <div className="text-xs font-mono text-red-400 border border-red-500/20 bg-red-500/5 p-2">
@@ -426,11 +478,20 @@ export default function CdsMarketPage() {
                   </div>
                 ) : (
                   userCdsPositions.map((pos) => (
-                    <div key={pos.id} className="space-y-2 text-sm font-mono border border-white/5 bg-white/[0.02] p-4">
-                      <SummaryRow label="Coverage" value={`${formatToken(pos.coverage)} ${positionSymbol}`} valueColor="text-cyan-400" />
-                      <SummaryRow label="Market_Value" value={formatCurrency(pos.premium, 2)} />
+                    <button
+                      key={pos.id}
+                      type="button"
+                      onClick={() => setSelectedPosition(pos)}
+                      className={`w-full space-y-2 text-left text-sm font-mono border p-4 transition-colors ${
+                        selectedPosition?.id === pos.id
+                          ? "border-cyan-500/50 bg-cyan-500/10"
+                          : "border-white/5 bg-white/[0.02] hover:border-white/20"
+                      }`}
+                    >
+                      <SummaryRow label="Coverage" value={formatCurrency(pos.coverage, 0)} valueColor="text-cyan-400" />
+                      <SummaryRow label="Premium_Stream" value={formatCurrency(pos.premium, 2)} />
                       <SummaryRow label="Status" value={pos.status} valueColor="text-green-400" />
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -476,14 +537,39 @@ export default function CdsMarketPage() {
                   </div>
                 ) : (
                   userCdsPositions.map((pos) => (
-                    <div key={pos.id} className="flex items-center px-6 py-4 hover:bg-white/[0.02] transition-colors border-b border-white/5 last:border-b-0 text-sm font-mono">
-                      <div className="w-16 shrink-0 text-gray-500">#{String(pos.id).padStart(4, "0")}</div>
-                      <div className="flex-1 text-gray-500">{shortAddress(pos.brokerAddress)}</div>
-                      <div className="w-32 text-center text-cyan-400">{formatToken(pos.coverage)} {positionSymbol}</div>
-                      <div className="w-24 text-center text-white">{formatCurrency(pos.premium, 0)}</div>
-                      <div className="w-32 text-center text-gray-400">{pos.duration}</div>
-                      <div className="w-24 text-center text-green-400 uppercase">{pos.status}</div>
-                      <div className="w-24 text-center text-gray-600">—</div>
+                    <div key={pos.id} className="flex flex-col md:flex-row md:items-center gap-3 md:gap-0 px-6 py-4 transition-colors border-b border-white/5 last:border-b-0 text-sm font-mono hover:bg-white/[0.02]">
+                      <div className="w-16 shrink-0 text-gray-500 truncate text-left">
+                        #{String(pos.id).slice(2, 8)}
+                      </div>
+                      <div className="hidden md:block flex-1" />
+                      <div className="md:w-32 text-cyan-400 text-left md:text-center">{formatCurrency(pos.coverage, 0)}</div>
+                      <div className="md:w-24 text-white text-left md:text-center">{formatCurrency(pos.premium, 0)}</div>
+                      <div className="md:w-32 text-gray-400 text-left md:text-center">{pos.duration}</div>
+                      <div className="md:w-24 text-green-400 uppercase text-left md:text-center">{pos.status}</div>
+                      <div className="md:w-24 relative flex justify-start md:justify-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActionDropdown(actionDropdown === pos.id ? null : pos.id);
+                          }}
+                          className="p-1.5 text-gray-600 hover:text-white hover:bg-white/5 transition-colors"
+                        >
+                          <ChevronDown size={16} className={`transition-transform ${actionDropdown === pos.id ? "rotate-180" : ""}`} />
+                        </button>
+                        {actionDropdown === pos.id && (
+                          <div className="absolute right-0 top-full mt-1 z-50 border border-white/10 bg-[#0a0a0a] backdrop-blur-sm min-w-[150px]">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openCloseModal(pos);
+                              }}
+                              className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5 transition-colors font-mono"
+                            >
+                              Close CDS
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))
                 )}
@@ -493,6 +579,42 @@ export default function CdsMarketPage() {
         </div>
 
       </div>
+      <CreateCdsCoverageModal
+        isOpen={showOpenModal}
+        onClose={() => { if (!isExecuting) setShowOpenModal(false); }}
+        onConfirm={handleConfirmOpenProtection}
+        coverage={notionalAmount}
+        durationLabel={
+          maturityHours < 24
+            ? `${maturityHours}H`
+            : maturityHours % 24 === 0
+              ? `${Math.floor(maturityHours / 24)}D`
+              : `${Math.floor(maturityHours / 24)}D ${maturityHours % 24}H`
+        }
+        borrowRatePct={currentBorrowRate * 100}
+        premium={premiumStream}
+        reclaim={expectedReclaim}
+        total={totalToPost}
+        rMaxPct={CDS_R_MAX * 100}
+        executing={isExecuting}
+        executionStep={currentStep}
+        executionError={executionError}
+        expectedReceive={
+          selectedPosition?.collateralReturned ||
+          selectedPosition?.expectedReceive ||
+          selectedPosition?.initialCost ||
+          ((selectedPosition?.premium || 0) + (selectedPosition?.initialCost || 0))
+        }
+      />
+      <CloseCdsCoverageModal
+        isOpen={showCloseModal}
+        onClose={() => { if (!isExecuting) setShowCloseModal(false); }}
+        onConfirm={handleConfirmCloseProtection}
+        position={selectedPosition}
+        executing={isExecuting}
+        executionStep={currentStep}
+        executionError={executionError}
+      />
       <ToastContainer toasts={toasts} removeToast={removeToast} />
     </div>
   );
