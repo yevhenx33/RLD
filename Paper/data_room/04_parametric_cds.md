@@ -638,7 +638,6 @@ $\rho_{ij} \approx 0$. Systemic events - such as a stablecoin depeg or coordinat
 
 **Liquidity Bootstrapping.** The TWAMM-JIT CoW internalization assumes sufficient bilateral flow between fiduciary buyers and JIT underwriter sellers. In nascent or thin markets, demand-supply imbalance routes residual flow through the passive AMM curve, reintroducing LVR. The mechanism reaches full efficiency only after a critical mass of bilateral flow is established.
 
-**Rate-Cap Operational Constraint.** The prior target-utilization parameterization required a separate mathematical bound on $r_{max}$. The canonical borrow-rate calibration removes that constraint from the yield invariant, because $Y_{CDS}=r_t$ weakly dominates $U_t r_t(1-R)$. However, very high $r_{max}$ still matters operationally: it increases the speed of NF decay and therefore increases the volume of token inventory that fiduciaries and vaults must recycle to maintain fixed coverage. Market eligibility should therefore be governed by execution feasibility, liquidity depth, and settlement correlation rather than by a mathematical supply-yield violation.
 
 **Smart Contract Risk.** The mechanism's adversarial robustness analysis addresses economic attack vectors but is orthogonal to implementation risk. Smart contract bugs in the Normalization Factor computation, the Bivariate Temporal Trap evaluation, or the ERC-4626 JIT Vault logic represent the primary practical attack surface.
 
@@ -648,19 +647,19 @@ $\rho_{ij} \approx 0$. Systemic events - such as a stablecoin depeg or coordinat
 
 ## Portfolio Cohort Backtest Methodology (2025-2026)
 
-The revised calibration requires re-running historical portfolio simulations under $F_i=r_{max,i}$ for each insured market. The empirical question is no longer whether a large target-utilization decay coefficient can amortize losses quickly enough; it is whether borrow-rate-indexed premium income, tiered exposure limits, and collateral orthogonality are sufficient to compensate underwriters for realized terminal settlements.
+We subjected the physical mechanisms to a historical performance evaluation over April 2025 - April 2026 across 12 high-liquidity Morpho USDC lending markets with more than $100k deposits.
 
-The backtest protocol is therefore:
+**Simulation Parameters:**
 
 1. Select lending markets with continuous historical utilization, borrow rate, collateral price, and bad-debt observability.
-2. Define terminal settlement using the same 2-of-3 track system used by the live protocol.
+2. Define terminal settlement using the 2-of-3 track system.
 3. For each market $i$, set $F_i=r_{max,i}$ and $P_{max,i}=100r_{max,i}$.
 4. Accrue underwriter premium as $\int C_i r_{t,i}dt$.
 5. Mark fixed-coverage buyers by initial token value, realized premium stream, terminal reclaim value, and settlement proceeds.
 6. Mark underwriters by premium income, collateral yield, terminal settlement loss, and LVR/execution cost.
 7. Compare equal-weight, risk-budgeted, and HLP-style pooled strategies against passive supply exposure.
 
-This methodology preserves the central empirical hypothesis of the original cohort study: algorithmic borrow rates rise during liquidity stress before or during terminal default, and therefore form a continuous premium stream for underwriters. It removes the prior dependence on an aggressive exogenous decay coefficient and forces the strategy to stand on the borrow-rate signal itself.
+**Table 1: Initial Market Allocation and Tiering**
 
 **Yield-Stacking via Orthogonal Collateral**
 

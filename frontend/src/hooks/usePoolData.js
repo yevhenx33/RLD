@@ -103,7 +103,6 @@ export function usePoolData() {
   // ── 6. Liquidity distribution bins (depends on pool data) ───────
   const [liquidityBins, setLiquidityBins] = useState([]);
   const [liqDistPrice, setLiqDistPrice] = useState(null);
-  const [binsLoaded, setBinsLoaded] = useState(false);
 
   const buildLocalBins = useCallback((positions, price) => {
     if (!positions?.length || !price) return [];
@@ -167,7 +166,6 @@ export function usePoolData() {
             setLiquidityBins(bins);
             const priceFromMid = bins[Math.floor(bins.length / 2)]?.price;
             if (priceFromMid) setLiqDistPrice(parseFloat(priceFromMid));
-            setBinsLoaded(true);
             return;
           }
         } catch (err) {
@@ -183,7 +181,6 @@ export function usePoolData() {
         const price = pool?.markPrice || 1;
         setLiquidityBins(buildLocalBins(allPositions, price));
       }
-      setBinsLoaded(true);
     }
     fetchDistribution();
     return () => { cancelled = true; };
