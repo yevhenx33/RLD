@@ -307,7 +307,7 @@ export default function PoolLP() {
       LIQUIDITY: {
         label: "Liquidity",
         areas: [
-          { key: "liquidity", name: "Active Liq", color: "#a855f7" },
+          { key: "liquidity", name: "Active Liq" },
         ],
       },
       VOLUME: {
@@ -527,11 +527,10 @@ export default function PoolLP() {
                     <button
                       key={key}
                       onClick={() => setChartView(key)}
-                      className={`px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
-                        chartView === key
+                      className={`px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${chartView === key
                           ? "text-white bg-white/10"
                           : "text-gray-600 hover:text-gray-400"
-                      }`}
+                        }`}
                     >
                       {view.label}
                     </button>
@@ -555,11 +554,10 @@ export default function PoolLP() {
                           <button
                             key={res}
                             onClick={() => { chartControls.setResolution(res); setChartDropdown(null); }}
-                            className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
-                              resolution === res
+                            className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${resolution === res
                                 ? "text-white bg-white/10"
                                 : "text-gray-600 hover:text-gray-400"
-                            }`}
+                              }`}
                           >
                             {res}
                           </button>
@@ -592,11 +590,10 @@ export default function PoolLP() {
                           <button
                             key={btn.l}
                             onClick={() => { chartControls.handleQuickRange(btn.d, btn.l); setChartDropdown(null); }}
-                            className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
-                              chartControls.activeRange === btn.l
+                            className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${chartControls.activeRange === btn.l
                                 ? "text-white bg-white/10"
                                 : "text-gray-600 hover:text-gray-400"
-                            }`}
+                              }`}
                           >
                             {btn.l}
                           </button>
@@ -632,11 +629,10 @@ export default function PoolLP() {
                   <button
                     key={key}
                     onClick={() => setChartView(key)}
-                    className={`flex-1 px-2 py-1.5 text-xs font-semibold uppercase tracking-widest text-center transition-colors ${
-                      chartView === key
+                    className={`flex-1 px-2 py-1.5 text-xs font-semibold uppercase tracking-widest text-center transition-colors ${chartView === key
                         ? "text-white bg-white/10"
                         : "text-gray-600 hover:text-gray-400"
-                    }`}
+                      }`}
                   >
                     {view.label}
                   </button>
@@ -720,11 +716,10 @@ export default function PoolLP() {
                           <button
                             key={res}
                             onClick={() => { chartControls.setResolution(res); setChartDropdown(null); }}
-                            className={`block w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors ${
-                              resolution === res
+                            className={`block w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors ${resolution === res
                                 ? "text-white bg-white/10"
                                 : "text-gray-600 hover:text-gray-400"
-                            }`}
+                              }`}
                           >
                             {res}
                           </button>
@@ -757,11 +752,10 @@ export default function PoolLP() {
                           <button
                             key={btn.l}
                             onClick={() => { chartControls.handleQuickRange(btn.d, btn.l); setChartDropdown(null); }}
-                            className={`block w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors ${
-                              chartControls.activeRange === btn.l
+                            className={`block w-full text-left px-3 py-1.5 text-xs font-semibold uppercase tracking-widest transition-colors ${chartControls.activeRange === btn.l
                                 ? "text-white bg-white/10"
                                 : "text-gray-600 hover:text-gray-400"
-                            }`}
+                              }`}
                           >
                             {btn.l}
                           </button>
@@ -797,9 +791,8 @@ export default function PoolLP() {
                       {/* Wallet option */}
                       <button
                         onClick={() => { setSelectedAccount("wallet"); setAccountDropdownOpen(false); }}
-                        className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-white/5 transition-colors border-b border-white/5 flex items-center justify-between ${
-                          selectedAccount === "wallet" ? "text-cyan-400" : "text-gray-400"
-                        }`}
+                        className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-white/5 transition-colors border-b border-white/5 flex items-center justify-between ${selectedAccount === "wallet" ? "text-cyan-400" : "text-gray-400"
+                          }`}
                       >
                         <span>Wallet</span>
                         <span className="text-xs text-gray-600">{`0x...${account.slice(-4)}`}</span>
@@ -808,9 +801,8 @@ export default function PoolLP() {
                       {hasBroker && brokerAddress && (
                         <button
                           onClick={() => { setSelectedAccount("broker"); setAccountDropdownOpen(false); }}
-                          className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-white/5 transition-colors border-b border-white/5 flex items-center justify-between ${
-                            selectedAccount === "broker" ? "text-cyan-400" : "text-gray-400"
-                          }`}
+                          className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-white/5 transition-colors border-b border-white/5 flex items-center justify-between ${selectedAccount === "broker" ? "text-cyan-400" : "text-gray-400"
+                            }`}
                         >
                           <span>Broker #1</span>
                           <span className="text-xs text-gray-600">{`0x...${brokerAddress.slice(-4)}`}</span>
@@ -1009,17 +1001,15 @@ export default function PoolLP() {
                       onClick={() => _setSelectedPosition(
                         selectedPosition?.id === pos.id ? null : pos
                       )}
-                      className={`w-full text-left border p-3 transition-all ${
-                        selectedPosition?.id === pos.id
+                      className={`w-full text-left border p-3 transition-all ${selectedPosition?.id === pos.id
                           ? "border-pink-500/50 bg-pink-500/[0.06]"
                           : "border-white/10 bg-[#080808] hover:border-white/20"
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
-                          <span className={`text-sm font-mono ${
-                            selectedPosition?.id === pos.id ? "text-pink-400" : "text-white"
-                          }`}>
+                          <span className={`text-sm font-mono ${selectedPosition?.id === pos.id ? "text-pink-400" : "text-white"
+                            }`}>
                             #{pos.id}
                           </span>
                           {pos.isActive && (
@@ -1028,11 +1018,10 @@ export default function PoolLP() {
                             </span>
                           )}
                         </div>
-                        <span className={`text-[10px] px-1.5 py-0.5 uppercase tracking-widest ${
-                          pos.inRange
+                        <span className={`text-[10px] px-1.5 py-0.5 uppercase tracking-widest ${pos.inRange
                             ? "bg-green-500/20 text-green-400 border border-green-500/30"
                             : "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30"
-                        }`}>
+                          }`}>
                           {pos.inRange ? "In Range" : "Out of Range"}
                         </span>
                       </div>
@@ -1109,11 +1098,10 @@ export default function PoolLP() {
                           <button
                             key={pct}
                             onClick={() => setRemovePercent(pct)}
-                            className={`py-1.5 text-sm font-bold uppercase tracking-widest border transition-colors ${
-                              removePercent === pct
+                            className={`py-1.5 text-sm font-bold uppercase tracking-widest border transition-colors ${removePercent === pct
                                 ? "border-pink-500/50 text-pink-400 bg-pink-500/10"
                                 : "border-white/10 text-gray-500 hover:text-white hover:border-white/20"
-                            }`}
+                              }`}
                           >
                             {pct}%
                           </button>
@@ -1164,141 +1152,140 @@ export default function PoolLP() {
         {/* 3. POSITIONS TABLE */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           <div className="xl:col-span-9 border border-white/10">
-              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-sm font-bold uppercase tracking-widest">
-                    Your Positions
-                  </h3>
-                </div>
-                <div className="text-sm text-gray-500 uppercase tracking-widest flex items-center gap-2">
-                  <Activity size={12} />
-                  {userPositions.length > 0 ? "UNISWAP V4" : "NONE"}
-                </div>
+            <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-bold uppercase tracking-widest">
+                  Your Positions
+                </h3>
               </div>
+              <div className="text-sm text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                <Activity size={12} />
+                {userPositions.length > 0 ? "UNISWAP V4" : "NONE"}
+              </div>
+            </div>
 
-              {/* Empty state — context aware */}
-              {userPositions.length === 0 && (
-                <div className="px-6 py-12 text-center">
-                  <Layers size={32} className="mx-auto text-gray-700 mb-4" />
-                  {!account ? (
-                    <>
-                      <div className="text-sm text-gray-500 uppercase tracking-widest mb-2">
-                        Wallet Not Connected
-                      </div>
-                      <div className="text-sm text-gray-700 max-w-sm mx-auto">
-                        Connect your wallet to view your LP positions
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="text-sm text-gray-500 uppercase tracking-widest mb-2">
-                        No LP Positions
-                      </div>
-                      <div className="text-sm text-gray-700 max-w-sm mx-auto">
-                        You don&apos;t have any active positions yet. Use the panel above to add liquidity.
-                      </div>
-                    </>
-                  )}
+            {/* Empty state — context aware */}
+            {userPositions.length === 0 && (
+              <div className="px-6 py-12 text-center">
+                <Layers size={32} className="mx-auto text-gray-700 mb-4" />
+                {!account ? (
+                  <>
+                    <div className="text-sm text-gray-500 uppercase tracking-widest mb-2">
+                      Wallet Not Connected
+                    </div>
+                    <div className="text-sm text-gray-700 max-w-sm mx-auto">
+                      Connect your wallet to view your LP positions
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-sm text-gray-500 uppercase tracking-widest mb-2">
+                      No LP Positions
+                    </div>
+                    <div className="text-sm text-gray-700 max-w-sm mx-auto">
+                      You don&apos;t have any active positions yet. Use the panel above to add liquidity.
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Table Header — shown when positions exist */}
+            {userPositions.length > 0 && (
+              <>
+                <div className="hidden md:grid grid-cols-14 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 text-center" style={{ gridTemplateColumns: '3fr 2fr 2fr 2fr 3fr 3fr 2fr 1fr' }}>
+                  <div className="text-left">#</div>
+                  <div>Range</div>
+                  <div>Entry Price</div>
+                  <div>Value</div>
+                  <div>Token 0</div>
+                  <div>Token 1</div>
+                  <div>Status</div>
+                  <div>Action</div>
                 </div>
-              )}
 
-              {/* Table Header — shown when positions exist */}
-              {userPositions.length > 0 && (
-                <>
-                  <div className="hidden md:grid grid-cols-14 gap-4 px-6 py-3 text-sm text-gray-500 uppercase tracking-widest border-b border-white/5 text-center" style={{ gridTemplateColumns: '3fr 2fr 2fr 2fr 3fr 3fr 2fr 1fr' }}>
-                    <div className="text-left">#</div>
-                    <div>Range</div>
-                    <div>Entry Price</div>
-                    <div>Value</div>
-                    <div>Token 0</div>
-                    <div>Token 1</div>
-                    <div>Status</div>
-                    <div>Action</div>
-                  </div>
-
-                  {userPositions.map((pos) => (
-                    <div key={pos.id}>
-                      <div
-                        className={`grid gap-4 px-6 py-4 transition-colors border-b border-white/5 last:border-b-0 items-center text-center ${
-                          pos.isActive
-                            ? "bg-cyan-500/[0.06] hover:bg-cyan-500/[0.1] border-l-2 border-l-cyan-500"
-                            : "hover:bg-white/[0.02]"
+                {userPositions.map((pos) => (
+                  <div key={pos.id}>
+                    <div
+                      className={`grid gap-4 px-6 py-4 transition-colors border-b border-white/5 last:border-b-0 items-center text-center ${pos.isActive
+                          ? "bg-cyan-500/[0.06] hover:bg-cyan-500/[0.1] border-l-2 border-l-cyan-500"
+                          : "hover:bg-white/[0.02]"
                         }`}
-                        style={{ gridTemplateColumns: '3fr 2fr 2fr 2fr 3fr 3fr 2fr 1fr' }}
-                      >
-                        <div className={`text-sm font-mono text-left ${pos.isActive ? "text-cyan-400" : "text-gray-500"}`}>
-                          {pos.id}
+                      style={{ gridTemplateColumns: '3fr 2fr 2fr 2fr 3fr 3fr 2fr 1fr' }}
+                    >
+                      <div className={`text-sm font-mono text-left ${pos.isActive ? "text-cyan-400" : "text-gray-500"}`}>
+                        {pos.id}
+                      </div>
+                      <div>
+                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
+                          {pos.priceLower?.toFixed(2)} – {pos.priceUpper?.toFixed(2)}
                         </div>
-                        <div>
-                          <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
-                            {pos.priceLower?.toFixed(2)} – {pos.priceUpper?.toFixed(2)}
+                      </div>
+                      <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
+                        {pos.entryPrice?.toFixed(2)}
+                      </div>
+                      <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
+                        ${pos.value?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </div>
+                      <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
+                        {pos.token0Amount}{" "}
+                        <span className={pos.isActive ? "text-cyan-500/60 text-sm" : "text-gray-500 text-sm"}>
+                          {poolData.token0.symbol}
+                        </span>
+                      </div>
+                      <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
+                        {pos.token1Amount}{" "}
+                        <span className={pos.isActive ? "text-cyan-500/60 text-sm" : "text-gray-500 text-sm"}>
+                          {poolData.token1.symbol}
+                        </span>
+                      </div>
+                      <div className="text-sm font-mono">
+                        {pos.isActive ? (
+                          <span className="text-[10px] px-2 py-0.5 bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 uppercase tracking-widest">
+                            Collateral
+                          </span>
+                        ) : (
+                          <span className="text-gray-600">—</span>
+                        )}
+                      </div>
+                      <div className="relative flex justify-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActionDropdown(actionDropdown === pos.id ? null : pos.id);
+                          }}
+                          className={`p-1.5 hover:bg-white/5 transition-colors ${pos.isActive ? "text-cyan-500 hover:text-cyan-300" : "text-gray-600 hover:text-white"}`}
+                        >
+                          <ChevronDown size={16} className={`transition-transform ${actionDropdown === pos.id ? 'rotate-180' : ''}`} />
+                        </button>
+                        {actionDropdown === pos.id && (
+                          <div className="absolute right-0 top-full mt-1 z-50 border border-white/10 bg-[#0a0a0a] backdrop-blur-sm min-w-[150px]">
+                            <button
+                              onClick={() => {
+                                setActionDropdown(null);
+                                setClaimPosition(pos);
+                              }}
+                              className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5 transition-colors font-mono"
+                            >
+                              Claim Fees
+                            </button>
+                            <button
+                              onClick={() => {
+                                setActionDropdown(null);
+                                setWithdrawPosition(pos);
+                              }}
+                              className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5 transition-colors border-t border-white/5 font-mono"
+                            >
+                              Withdraw
+                            </button>
                           </div>
-                        </div>
-                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
-                          {pos.entryPrice?.toFixed(2)}
-                        </div>
-                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
-                          ${pos.value?.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                        </div>
-                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
-                          {pos.token0Amount}{" "}
-                          <span className={pos.isActive ? "text-cyan-500/60 text-sm" : "text-gray-500 text-sm"}>
-                            {poolData.token0.symbol}
-                          </span>
-                        </div>
-                        <div className={`text-sm font-mono ${pos.isActive ? "text-cyan-300" : "text-white"}`}>
-                          {pos.token1Amount}{" "}
-                          <span className={pos.isActive ? "text-cyan-500/60 text-sm" : "text-gray-500 text-sm"}>
-                            {poolData.token1.symbol}
-                          </span>
-                        </div>
-                        <div className="text-sm font-mono">
-                          {pos.isActive ? (
-                            <span className="text-[10px] px-2 py-0.5 bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 uppercase tracking-widest">
-                              Collateral
-                            </span>
-                          ) : (
-                            <span className="text-gray-600">—</span>
-                          )}
-                        </div>
-                        <div className="relative flex justify-center">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActionDropdown(actionDropdown === pos.id ? null : pos.id);
-                            }}
-                            className={`p-1.5 hover:bg-white/5 transition-colors ${pos.isActive ? "text-cyan-500 hover:text-cyan-300" : "text-gray-600 hover:text-white"}`}
-                          >
-                            <ChevronDown size={16} className={`transition-transform ${actionDropdown === pos.id ? 'rotate-180' : ''}`} />
-                          </button>
-                          {actionDropdown === pos.id && (
-                            <div className="absolute right-0 top-full mt-1 z-50 border border-white/10 bg-[#0a0a0a] backdrop-blur-sm min-w-[150px]">
-                              <button
-                                onClick={() => {
-                                  setActionDropdown(null);
-                                  setClaimPosition(pos);
-                                }}
-                                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5 transition-colors font-mono"
-                              >
-                                Claim Fees
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setActionDropdown(null);
-                                  setWithdrawPosition(pos);
-                                }}
-                                className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5 transition-colors border-t border-white/5 font-mono"
-                              >
-                                Withdraw
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                        )}
                       </div>
                     </div>
-                  ))}
-                </>
-              )}
+                  </div>
+                ))}
+              </>
+            )}
           </div>{/* close col-span-9 */}
         </div>{/* close grid */}
       </div>{/* close max-w container */}

@@ -60,9 +60,8 @@ import ActionForm from "./ActionForm";
 function SimMetricBox({ label, value, sub, Icon = Activity, dimmed }) {
   return (
     <div
-      className={`p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px] ${
-        dimmed ? "opacity-30" : ""
-      }`}
+      className={`p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px] ${dimmed ? "opacity-30" : ""
+        }`}
     >
       <div className="text-sm text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
         {label} <Icon size={15} className="opacity-90" />
@@ -393,7 +392,7 @@ export default function SimulationTerminal() {
   // SELL paths: close long (wRLP -> waUSDC), open short (mint wRLP -> sell for waUSDC)
   const quoteDirection =
     (tradeAction === "CLOSE" && tradeSide === "LONG") ||
-    (tradeAction === "OPEN" && tradeSide === "SHORT")
+      (tradeAction === "OPEN" && tradeSide === "SHORT")
       ? "SELL"
       : "BUY";
   const quoteAmountIn =
@@ -432,11 +431,11 @@ export default function SimulationTerminal() {
   const hasShortOpenQuote = shortOpenQuotedOut > 0;
   const shortOpenMinOut = hasShortOpenQuote
     ? Number(
-        (
-          (shortOpenQuotedOut * (10_000 - shortOpenSlippageBps)) /
-          10_000
-        ).toFixed(6),
-      )
+      (
+        (shortOpenQuotedOut * (10_000 - shortOpenSlippageBps)) /
+        10_000
+      ).toFixed(6),
+    )
     : 0;
 
   // Swap execution (MetaMask-signed)
@@ -555,7 +554,7 @@ export default function SimulationTerminal() {
       LIQUIDITY: {
         label: "Liquidity",
         areas: [
-          { key: "liquidity", name: "Active Liq", color: "#a855f7" },
+          { key: "liquidity", name: "Active Liq" },
         ],
       },
       VOLUME: {
@@ -876,11 +875,10 @@ export default function SimulationTerminal() {
                       <button
                         key={key}
                         onClick={() => { setChartView(key); setHiddenSeries([]); }}
-                        className={`px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
-                          chartView === key
+                        className={`px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${chartView === key
                             ? "text-white bg-white/10"
                             : "text-gray-600 hover:text-gray-400"
-                        }`}
+                          }`}
                       >
                         {view.label}
                       </button>
@@ -903,11 +901,10 @@ export default function SimulationTerminal() {
                             <button
                               key={res}
                               onClick={() => { controls.setResolution(res); setChartDropdown(null); }}
-                              className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
-                                resolution === res
+                              className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${resolution === res
                                   ? "text-white bg-white/10"
                                   : "text-gray-600 hover:text-gray-400"
-                              }`}
+                                }`}
                             >
                               {res}
                             </button>
@@ -940,11 +937,10 @@ export default function SimulationTerminal() {
                             <button
                               key={btn.l}
                               onClick={() => { controls.handleQuickRange(btn.d, btn.l); setChartDropdown(null); }}
-                              className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${
-                                controls.activeRange === btn.l
+                              className={`block w-full text-left px-3 py-1 text-sm font-semibold uppercase tracking-widest transition-colors ${controls.activeRange === btn.l
                                   ? "text-white bg-white/10"
                                   : "text-gray-600 hover:text-gray-400"
-                              }`}
+                                }`}
                             >
                               {btn.l}
                             </button>
@@ -970,11 +966,10 @@ export default function SimulationTerminal() {
                     {activeChartConfig.areas.map((s) => (
                       <div
                         key={s.key}
-                        className={`flex items-center gap-2 cursor-pointer transition-all ${
-                          hiddenSeries.includes(s.key)
+                        className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes(s.key)
                             ? "opacity-40 line-through"
                             : "opacity-100 hover:opacity-80"
-                        }`}
+                          }`}
                         onClick={() => toggleSeries(s.key)}
                       >
                         <div className="w-2 h-2" style={{ backgroundColor: s.color }} />
@@ -991,11 +986,10 @@ export default function SimulationTerminal() {
                     <button
                       key={key}
                       onClick={() => { setChartView(key); setHiddenSeries([]); }}
-                      className={`flex-1 px-2 py-1.5 text-xs font-semibold uppercase tracking-widest text-center transition-colors ${
-                        chartView === key
+                      className={`flex-1 px-2 py-1.5 text-xs font-semibold uppercase tracking-widest text-center transition-colors ${chartView === key
                           ? "text-white bg-white/10"
                           : "text-gray-600 hover:text-gray-400"
-                      }`}
+                        }`}
                     >
                       {view.label}
                     </button>
@@ -1008,11 +1002,10 @@ export default function SimulationTerminal() {
                       <button
                         key={res}
                         onClick={() => controls.setResolution(res)}
-                        className={`px-2 py-1 text-xs font-semibold uppercase tracking-widest transition-colors ${
-                          resolution === res
+                        className={`px-2 py-1 text-xs font-semibold uppercase tracking-widest transition-colors ${resolution === res
                             ? "text-white bg-white/10"
                             : "text-gray-600 hover:text-gray-400"
-                        }`}
+                          }`}
                       >
                         {res}
                       </button>
@@ -1028,11 +1021,10 @@ export default function SimulationTerminal() {
                       <button
                         key={btn.l}
                         onClick={() => controls.handleQuickRange(btn.d, btn.l)}
-                        className={`px-2 py-1 text-xs font-semibold uppercase tracking-widest transition-colors ${
-                          controls.activeRange === btn.l
+                        className={`px-2 py-1 text-xs font-semibold uppercase tracking-widest transition-colors ${controls.activeRange === btn.l
                             ? "text-white bg-white/10"
                             : "text-gray-600 hover:text-gray-400"
-                        }`}
+                          }`}
                       >
                         {btn.l}
                       </button>
@@ -1044,9 +1036,8 @@ export default function SimulationTerminal() {
                   {activeChartConfig.areas.map((s) => (
                     <div
                       key={s.key}
-                      className={`flex items-center gap-2 cursor-pointer transition-all ${
-                        hiddenSeries.includes(s.key) ? "opacity-40 line-through" : "opacity-100"
-                      }`}
+                      className={`flex items-center gap-2 cursor-pointer transition-all ${hiddenSeries.includes(s.key) ? "opacity-40 line-through" : "opacity-100"
+                        }`}
                       onClick={() => toggleSeries(s.key)}
                     >
                       <div className="w-2 h-2" style={{ backgroundColor: s.color }} />
@@ -1174,25 +1165,25 @@ export default function SimulationTerminal() {
                   !account || !hasBroker
                     ? false
                     : swapExecuting ||
-                  (tradeSide === "LONG" &&
-                    tradeAction === "OPEN" &&
-                    (!collateral || quoteLoading)) ||
-                  (tradeSide === "LONG" &&
-                    tradeAction === "CLOSE" &&
-                    (!hasCloseAmount || quoteLoading || closeLongExceedsBalance)) ||
-                  (tradeSide === "SHORT" &&
-                    tradeAction === "OPEN" &&
-                    (!collateral ||
-                      shortAmount <= 0 ||
-                      quoteLoading ||
-                      !hasShortOpenQuote)) ||
-                  (tradeSide === "SHORT" &&
-                    tradeAction === "CLOSE" &&
-                    (closeShortRepayMode === "wRLP"
-                      ? (!hasCloseShortDebt ||
-                        closeShortDebtExceedsOutstanding ||
-                        closeShortDebtExceedsBrokerWrlp)
-                      : (!hasCloseShortAmount || quoteLoading))),
+                    (tradeSide === "LONG" &&
+                      tradeAction === "OPEN" &&
+                      (!collateral || quoteLoading)) ||
+                    (tradeSide === "LONG" &&
+                      tradeAction === "CLOSE" &&
+                      (!hasCloseAmount || quoteLoading || closeLongExceedsBalance)) ||
+                    (tradeSide === "SHORT" &&
+                      tradeAction === "OPEN" &&
+                      (!collateral ||
+                        shortAmount <= 0 ||
+                        quoteLoading ||
+                        !hasShortOpenQuote)) ||
+                    (tradeSide === "SHORT" &&
+                      tradeAction === "CLOSE" &&
+                      (closeShortRepayMode === "wRLP"
+                        ? (!hasCloseShortDebt ||
+                          closeShortDebtExceedsOutstanding ||
+                          closeShortDebtExceedsBrokerWrlp)
+                        : (!hasCloseShortAmount || quoteLoading))),
                 variant:
                   tradeAction === "CLOSE"
                     ? "pink"
@@ -1209,13 +1200,12 @@ export default function SimulationTerminal() {
                     <button
                       key={action}
                       onClick={() => setTradeAction(action)}
-                      className={`flex-1 py-2 text-sm font-bold tracking-[0.2em] uppercase transition-colors ${
-                        tradeAction === action
+                      className={`flex-1 py-2 text-sm font-bold tracking-[0.2em] uppercase transition-colors ${tradeAction === action
                           ? action === "CLOSE"
                             ? "bg-pink-500/10 text-pink-400 border-b-2 border-pink-500"
                             : "bg-cyan-500/10 text-cyan-400 border-b-2 border-cyan-500"
                           : "text-gray-600 hover:text-gray-400"
-                      }`}
+                        }`}
                     >
                       {action}
                     </button>
@@ -1254,7 +1244,7 @@ export default function SimulationTerminal() {
                           ? parseFloat(swapQuote.amountOut.toFixed(4))
                           : ""
                       }
-                      onChange={() => {}}
+                      onChange={() => { }}
                       suffix={positionSymbol}
                       readOnly
                     />
@@ -1297,7 +1287,7 @@ export default function SimulationTerminal() {
                         ? parseFloat(swapQuote.amountOut.toFixed(2))
                         : ""
                     }
-                    onChange={() => {}}
+                    onChange={() => { }}
                     suffix={collateralSymbol}
                     readOnly
                   />
@@ -1347,10 +1337,9 @@ export default function SimulationTerminal() {
                                 }}
                                 className={`
                                   w-full flex items-center px-3 py-2 text-sm text-left uppercase tracking-widest transition-colors
-                                  ${
-                                    isSelected
-                                      ? "bg-cyan-500/10 text-cyan-400"
-                                      : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
+                                  ${isSelected
+                                    ? "bg-cyan-500/10 text-cyan-400"
+                                    : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
                                   }
                                 `}
                               >
@@ -1476,7 +1465,7 @@ export default function SimulationTerminal() {
                     value={
                       shortAmount > 0 ? parseFloat(shortAmount.toFixed(6)) : ""
                     }
-                    onChange={() => {}}
+                    onChange={() => { }}
                     suffix={positionSymbol}
                     readOnly
                   />
@@ -1549,248 +1538,370 @@ export default function SimulationTerminal() {
           <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
             {/* Left: Position + Actions (col-span-9) */}
             <div className="xl:col-span-9 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-            {/* Your Position (2/3 width) */}
-            <div className="lg:col-span-2 border border-white/10 flex flex-col">
-              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[53px]">
-                <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                  <Wallet size={14} className="text-gray-500" />
-                  Your Position
-                </h3>
-                {account && (
-                  <div className="relative">
-                    <button
-                      onClick={() => setAccountDropdown(!accountDropdown)}
-                      className="flex items-center gap-1.5 text-sm font-mono text-gray-400 hover:text-white transition-colors"
-                    >
-                      Select Account
-                      <ChevronDown size={12} className={`transition-transform ${accountDropdown ? "rotate-180" : ""}`} />
-                    </button>
-                    {accountDropdown && (
-                      <div className="absolute right-0 top-full mt-2 z-50 border border-white/10 bg-[#0a0a0a] min-w-[200px]">
-                        {[
-                          { label: "Broker #1", addr: "0x1a2b...3c4d", active: true },
-                          { label: "Broker #2", addr: "0x5e6f...7a8b", active: false },
-                        ].map((b) => (
-                          <button
-                            key={b.addr}
-                            onClick={() => setAccountDropdown(false)}
-                            className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-white/5 transition-colors border-b border-white/5 flex items-center justify-between ${
-                              b.active ? "text-cyan-400" : "text-gray-400"
-                            }`}
-                          >
-                            <span>{b.label}</span>
-                            <span className="text-xs text-gray-600">{b.addr}</span>
-                          </button>
-                        ))}
-                        <button
-                          onClick={() => setAccountDropdown(false)}
-                          className="w-full text-left px-4 py-2.5 text-sm font-mono text-white hover:bg-white/5 transition-colors"
-                        >
-                          + Create New
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="flex-1">
-                {!account ? (
-                  <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-12">
-                    Connect wallet to view
-                  </div>
-                ) : (
-                  <>
-                    {/* Top metrics row */}
-                    {(() => {
-                      // totalAssets = all tracked and untracked assets in the broker
-                      const totalAssets = brokerState ? brokerState.nav : null;
-
-                      // NAV = true net value = totalAssets - debt
-                      const netWorth = totalAssets !== null ? totalAssets - (brokerState.debtValue || 0) : null;
-
-                      // Col. ratio uses totalAssets / debtValue
-                      const totalColRatio = brokerState && brokerState.debtValue > 0
-                        ? brokerState.colRatio
-                        : Infinity;
-
-                      return (
-                        <div className="grid grid-cols-4 divide-x divide-white/10 border-b border-white/10">
+              {/* Your Position (2/3 width) */}
+              <div className="lg:col-span-2 border border-white/10 flex flex-col">
+                <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[53px]">
+                  <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
+                    <Wallet size={14} className="text-gray-500" />
+                    Your Position
+                  </h3>
+                  {account && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setAccountDropdown(!accountDropdown)}
+                        className="flex items-center gap-1.5 text-sm font-mono text-gray-400 hover:text-white transition-colors"
+                      >
+                        Select Account
+                        <ChevronDown size={12} className={`transition-transform ${accountDropdown ? "rotate-180" : ""}`} />
+                      </button>
+                      {accountDropdown && (
+                        <div className="absolute right-0 top-full mt-2 z-50 border border-white/10 bg-[#0a0a0a] min-w-[200px]">
                           {[
-                            { label: "NAV", value: netWorth !== null ? `$${netWorth.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
-                            { label: "Assets", value: totalAssets !== null ? `$${totalAssets.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
-                            { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "$0", color: "text-red-400" },
-                            { label: "Col. Ratio", value: totalColRatio === Infinity ? "∞" : `${totalColRatio.toFixed(0)}%`, color: totalColRatio < 150 ? "text-red-400" : totalColRatio < 200 ? "text-yellow-400" : "text-green-400" },
-                          ].map((m) => (
-                            <div key={m.label} className="p-4 text-center">
-                              <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">{m.label}</div>
-                              <div className={`text-lg font-light font-mono tracking-tight ${m.color}`}>{m.value}</div>
-                            </div>
+                            { label: "Broker #1", addr: "0x1a2b...3c4d", active: true },
+                            { label: "Broker #2", addr: "0x5e6f...7a8b", active: false },
+                          ].map((b) => (
+                            <button
+                              key={b.addr}
+                              onClick={() => setAccountDropdown(false)}
+                              className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-white/5 transition-colors border-b border-white/5 flex items-center justify-between ${b.active ? "text-cyan-400" : "text-gray-400"
+                                }`}
+                            >
+                              <span>{b.label}</span>
+                              <span className="text-xs text-gray-600">{b.addr}</span>
+                            </button>
                           ))}
+                          <button
+                            onClick={() => setAccountDropdown(false)}
+                            className="w-full text-left px-4 py-2.5 text-sm font-mono text-white hover:bg-white/5 transition-colors"
+                          >
+                            + Create New
+                          </button>
                         </div>
-                      );
-                    })()}
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1">
+                  {!account ? (
+                    <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-12">
+                      Connect wallet to view
+                    </div>
+                  ) : (
+                    <>
+                      {/* Top metrics row */}
+                      {(() => {
+                        // totalAssets = all tracked and untracked assets in the broker
+                        const totalAssets = brokerState ? brokerState.nav : null;
 
-                    {/* Two-column: Assets | Debt */}
-                    <div className="grid grid-cols-2 divide-x divide-white/10">
-                      {/* Left: Assets */}
-                      <div className="py-6 space-y-5">
-                        {/* Column heading */}
-                        <div className="flex items-center justify-between px-6">
-                          <span className="text-sm text-gray-500 uppercase tracking-widest">Collateral</span>
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
-                              <span className="text-xs text-gray-600">Tracked</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-gray-600" />
-                              <span className="text-xs text-gray-600">Untracked</span>
-                            </div>
-                          </div>
-                        </div>
+                        // NAV = true net value = totalAssets - debt
+                        const netWorth = totalAssets !== null ? totalAssets - (brokerState.debtValue || 0) : null;
 
-                        {/* Tokens */}
-                        <div>
-                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">Tokens</div>
-                          <div className="space-y-1">
+                        // Col. ratio uses totalAssets / debtValue
+                        const totalColRatio = brokerState && brokerState.debtValue > 0
+                          ? brokerState.colRatio
+                          : Infinity;
+
+                        return (
+                          <div className="grid grid-cols-4 divide-x divide-white/10 border-b border-white/10">
                             {[
-                              { name: collateralSymbol, value: brokerState ? `$${brokerState.collateralBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
-                              { name: positionSymbol, value: brokerState ? `${(brokerState.wrlpTokenBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
-                            ].map((t) => (
-                              <div key={t.name} className="relative">
-                                <button
-                                  onClick={() => setPositionDropdown(positionDropdown === `tk-${t.name}` ? null : `tk-${t.name}`)}
-                                  className="w-full flex items-center justify-between py-1.5 hover:bg-white/5 px-6 transition-colors group"
-                                >
-                                  <div className="flex items-center gap-2">
-                                    <span className={`w-1.5 h-1.5 rounded-full ${t.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
-                                    <span className="text-sm font-mono text-white">{t.name}</span>
-                                  </div>
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-sm font-mono text-gray-400">{t.value}</span>
-                                    <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `tk-${t.name}` ? "rotate-180" : ""}`} />
-                                  </div>
-                                </button>
-                                {positionDropdown === `tk-${t.name}` && (
-                                  <div className="border border-white/10 bg-[#0a0a0a] mb-1">
-                                    <button
-                                      onClick={() => {
-                                        setPositionDropdown(null);
-                                        setDepositToken(t.name);
-                                      }}
-                                      className="w-full text-left px-4 py-2 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors"
-                                    >
-                                      Deposit
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        setPositionDropdown(null);
-                                        setWithdrawToken(t.name);
-                                      }}
-                                      className="w-full text-left px-4 py-2 text-sm font-mono text-orange-400 hover:bg-orange-500/5 transition-colors border-t border-white/5"
-                                    >
-                                      Withdraw
-                                    </button>
-                                  </div>
-                                )}
+                              { label: "NAV", value: netWorth !== null ? `$${netWorth.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
+                              { label: "Assets", value: totalAssets !== null ? `$${totalAssets.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—", color: "text-white" },
+                              { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "$0", color: "text-red-400" },
+                              { label: "Col. Ratio", value: totalColRatio === Infinity ? "∞" : `${totalColRatio.toFixed(0)}%`, color: totalColRatio < 150 ? "text-red-400" : totalColRatio < 200 ? "text-yellow-400" : "text-green-400" },
+                            ].map((m) => (
+                              <div key={m.label} className="p-4 text-center">
+                                <div className="text-sm text-gray-500 uppercase tracking-widest mb-1">{m.label}</div>
+                                <div className={`text-lg font-light font-mono tracking-tight ${m.color}`}>{m.value}</div>
                               </div>
                             ))}
                           </div>
-                        </div>
+                        );
+                      })()}
 
-                        {/* LP Positions */}
-                        <div>
-                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">LP Positions</div>
-                          <div className="space-y-1">
-                            {(brokerState?.lpPositions?.length > 0) ? brokerState.lpPositions.map((lp) => {
-                              const lpKey = `lp-${lp.tokenId}`;
-                              return (
-                                <div key={lpKey} className="relative">
+                      {/* Two-column: Assets | Debt */}
+                      <div className="grid grid-cols-2 divide-x divide-white/10">
+                        {/* Left: Assets */}
+                        <div className="py-6 space-y-5">
+                          {/* Column heading */}
+                          <div className="flex items-center justify-between px-6">
+                            <span className="text-sm text-gray-500 uppercase tracking-widest">Collateral</span>
+                            <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
+                                <span className="text-xs text-gray-600">Tracked</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                                <span className="text-xs text-gray-600">Untracked</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Tokens */}
+                          <div>
+                            <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">Tokens</div>
+                            <div className="space-y-1">
+                              {[
+                                { name: collateralSymbol, value: brokerState ? `$${brokerState.collateralBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
+                                { name: positionSymbol, value: brokerState ? `${(brokerState.wrlpTokenBalance ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—", tracked: true },
+                              ].map((t) => (
+                                <div key={t.name} className="relative">
                                   <button
-                                    onClick={() => setPositionDropdown(positionDropdown === lpKey ? null : lpKey)}
+                                    onClick={() => setPositionDropdown(positionDropdown === `tk-${t.name}` ? null : `tk-${t.name}`)}
                                     className="w-full flex items-center justify-between py-1.5 hover:bg-white/5 px-6 transition-colors group"
                                   >
                                     <div className="flex items-center gap-2">
-                                      <span className={`w-1.5 h-1.5 rounded-full ${lp.isActive ? "bg-cyan-500" : "bg-gray-600"}`} />
-                                      {lp.priceLower && (
-                                        <span className="text-sm text-gray-600 font-mono">{lp.priceLower} — {lp.priceUpper}</span>
-                                      )}
-                                      {lp.inRange !== undefined && (
-                                        <span className={`text-xs px-1.5 py-0.5 font-mono ${lp.inRange ? "text-green-400 bg-green-500/10" : "text-orange-400 bg-orange-500/10"}`}>
-                                          {lp.inRange ? "IN RANGE" : "OUT"}
-                                        </span>
-                                      )}
+                                      <span className={`w-1.5 h-1.5 rounded-full ${t.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
+                                      <span className="text-sm font-mono text-white">{t.name}</span>
                                     </div>
                                     <div className="flex items-center gap-1">
-                                      <span className="text-sm font-mono text-gray-400">${(lp.valueUsd || lp.value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-                                      <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === lpKey ? "rotate-180" : ""}`} />
+                                      <span className="text-sm font-mono text-gray-400">{t.value}</span>
+                                      <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `tk-${t.name}` ? "rotate-180" : ""}`} />
                                     </div>
                                   </button>
-                                  {positionDropdown === lpKey && (
+                                  {positionDropdown === `tk-${t.name}` && (
                                     <div className="border border-white/10 bg-[#0a0a0a] mb-1">
-                                      <div className="px-4 py-2 text-xs text-gray-600 font-mono space-y-1">
-                                        {lp.priceLower && (
-                                          <>
-                                            <div className="flex justify-between"><span>Range</span><span>{lp.priceLower} — {lp.priceUpper}</span></div>
-                                            <div className="flex justify-between"><span>Current Price</span><span>{lp.currentPrice}</span></div>
-                                          </>
-                                        )}
-                                        {lp.amount0 !== undefined && (
-                                          <>
-                                            <div className="flex justify-between"><span>Token0 ({positionSymbol})</span><span>{lp.amount0.toFixed(2)}</span></div>
-                                            <div className="flex justify-between"><span>Token1 ({collateralSymbol})</span><span>{lp.amount1.toFixed(2)}</span></div>
-                                          </>
-                                        )}
-                                        {lp.entryPrice && (
-                                          <div className="flex justify-between"><span>Entry Price</span><span>{lp.entryPrice}</span></div>
-                                        )}
-                                        <div className="flex justify-between"><span>Value</span><span className="text-cyan-400">${(lp.valueUsd || 0).toFixed(2)}</span></div>
-                                        {lp.isActive && (
-                                          <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Status</span><span className="text-cyan-400">ACTIVE (tracked)</span></div>
-                                        )}
-                                      </div>
-                                      {/* Claim Fees */}
                                       <button
                                         onClick={() => {
                                           setPositionDropdown(null);
-                                          setClaimFeesLp({
-                                            id: lp.tokenId?.toString(),
-                                            tokenId: lp.tokenId,
-                                            priceLower: parseFloat(lp.priceLower),
-                                            priceUpper: parseFloat(lp.priceUpper),
-                                            feesEarned0: "0.00",
-                                            feesEarned1: "0.00",
-                                          });
+                                          setDepositToken(t.name);
                                         }}
-                                        className="w-full text-left px-4 py-2 text-sm font-mono text-green-400 hover:bg-green-500/5 transition-colors border-t border-white/5"
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors"
                                       >
-                                        Claim Fees
+                                        Deposit
                                       </button>
+                                      <button
+                                        onClick={() => {
+                                          setPositionDropdown(null);
+                                          setWithdrawToken(t.name);
+                                        }}
+                                        className="w-full text-left px-4 py-2 text-sm font-mono text-orange-400 hover:bg-orange-500/5 transition-colors border-t border-white/5"
+                                      >
+                                        Withdraw
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* LP Positions */}
+                          <div>
+                            <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">LP Positions</div>
+                            <div className="space-y-1">
+                              {(brokerState?.lpPositions?.length > 0) ? brokerState.lpPositions.map((lp) => {
+                                const lpKey = `lp-${lp.tokenId}`;
+                                return (
+                                  <div key={lpKey} className="relative">
+                                    <button
+                                      onClick={() => setPositionDropdown(positionDropdown === lpKey ? null : lpKey)}
+                                      className="w-full flex items-center justify-between py-1.5 hover:bg-white/5 px-6 transition-colors group"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <span className={`w-1.5 h-1.5 rounded-full ${lp.isActive ? "bg-cyan-500" : "bg-gray-600"}`} />
+                                        {lp.priceLower && (
+                                          <span className="text-sm text-gray-600 font-mono">{lp.priceLower} — {lp.priceUpper}</span>
+                                        )}
+                                        {lp.inRange !== undefined && (
+                                          <span className={`text-xs px-1.5 py-0.5 font-mono ${lp.inRange ? "text-green-400 bg-green-500/10" : "text-orange-400 bg-orange-500/10"}`}>
+                                            {lp.inRange ? "IN RANGE" : "OUT"}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-sm font-mono text-gray-400">${(lp.valueUsd || lp.value || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                                        <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === lpKey ? "rotate-180" : ""}`} />
+                                      </div>
+                                    </button>
+                                    {positionDropdown === lpKey && (
+                                      <div className="border border-white/10 bg-[#0a0a0a] mb-1">
+                                        <div className="px-4 py-2 text-xs text-gray-600 font-mono space-y-1">
+                                          {lp.priceLower && (
+                                            <>
+                                              <div className="flex justify-between"><span>Range</span><span>{lp.priceLower} — {lp.priceUpper}</span></div>
+                                              <div className="flex justify-between"><span>Current Price</span><span>{lp.currentPrice}</span></div>
+                                            </>
+                                          )}
+                                          {lp.amount0 !== undefined && (
+                                            <>
+                                              <div className="flex justify-between"><span>Token0 ({positionSymbol})</span><span>{lp.amount0.toFixed(2)}</span></div>
+                                              <div className="flex justify-between"><span>Token1 ({collateralSymbol})</span><span>{lp.amount1.toFixed(2)}</span></div>
+                                            </>
+                                          )}
+                                          {lp.entryPrice && (
+                                            <div className="flex justify-between"><span>Entry Price</span><span>{lp.entryPrice}</span></div>
+                                          )}
+                                          <div className="flex justify-between"><span>Value</span><span className="text-cyan-400">${(lp.valueUsd || 0).toFixed(2)}</span></div>
+                                          {lp.isActive && (
+                                            <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Status</span><span className="text-cyan-400">ACTIVE (tracked)</span></div>
+                                          )}
+                                        </div>
+                                        {/* Claim Fees */}
+                                        <button
+                                          onClick={() => {
+                                            setPositionDropdown(null);
+                                            setClaimFeesLp({
+                                              id: lp.tokenId?.toString(),
+                                              tokenId: lp.tokenId,
+                                              priceLower: parseFloat(lp.priceLower),
+                                              priceUpper: parseFloat(lp.priceUpper),
+                                              feesEarned0: "0.00",
+                                              feesEarned1: "0.00",
+                                            });
+                                          }}
+                                          className="w-full text-left px-4 py-2 text-sm font-mono text-green-400 hover:bg-green-500/5 transition-colors border-t border-white/5"
+                                        >
+                                          Claim Fees
+                                        </button>
+                                        {/* Track / Untrack as collateral */}
+                                        {!lp.isActive ? (
+                                          <button
+                                            onClick={() => {
+                                              setPositionDropdown(null);
+                                              setCollateralConfirm({
+                                                type: 'track-lp',
+                                                label: `Track LP #${lp.tokenId?.toString()} as collateral?`,
+                                                sub: `Range: ${lp.priceLower || '?'} — ${lp.priceUpper || '?'}  •  Value: $${(lp.valueUsd || 0).toFixed(0)}`,
+                                                data: lp,
+                                              });
+                                            }}
+                                            className="w-full text-left px-4 py-2 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors border-t border-white/5"
+                                          >
+                                            Track as Collateral
+                                          </button>
+                                        ) : (
+                                          <button
+                                            onClick={() => {
+                                              setPositionDropdown(null);
+                                              setCollateralConfirm({
+                                                type: 'untrack-lp',
+                                                label: `Untrack LP #${lp.tokenId?.toString()} from collateral?`,
+                                                sub: 'This LP position will no longer count toward your collateral ratio.',
+                                                data: lp,
+                                              });
+                                            }}
+                                            className="w-full text-left px-4 py-2 text-sm font-mono text-orange-400 hover:bg-orange-500/5 transition-colors border-t border-white/5"
+                                          >
+                                            Untrack from Collateral
+                                          </button>
+                                        )}
+                                        {/* Withdraw (Remove Liquidity) */}
+                                        <button
+                                          onClick={() => {
+                                            setPositionDropdown(null);
+                                            setWithdrawLp({
+                                              id: lp.tokenId?.toString(),
+                                              tokenId: lp.tokenId,
+                                              priceLower: parseFloat(lp.priceLower),
+                                              priceUpper: parseFloat(lp.priceUpper),
+                                              token0Amount: lp.amount0?.toFixed(2) || "0",
+                                              token1Amount: lp.amount1?.toFixed(2) || "0",
+                                              feesEarned0: "0.00",
+                                              feesEarned1: "0.00",
+                                              value: lp.valueUsd || 0,
+                                            });
+                                          }}
+                                          className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-red-500/5 transition-colors border-t border-white/5"
+                                        >
+                                          Withdraw Liquidity
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }) : (
+                                <div className="text-sm text-gray-600 font-mono px-6 py-2">No LP positions</div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* TWAMM Orders */}
+                          <div>
+                            <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">TWAMM Orders</div>
+                            <div className="space-y-1">
+                              {twammOrders.length === 0 ? (
+                                <div className="text-sm text-gray-600 font-mono px-6 py-4">No active orders</div>
+                              ) : twammOrders.map((tw, i) => (
+                                <div key={tw.orderId || i} className="relative">
+                                  <button
+                                    onClick={() => setPositionDropdown(positionDropdown === `tw-${i}` ? null : `tw-${i}`)}
+                                    className="w-full hover:bg-white/5 py-1.5 px-6 transition-colors group"
+                                  >
+                                    <div className="flex items-center justify-between mb-1">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`w-1.5 h-1.5 rounded-full ${tw.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
+                                        <span className="text-sm font-mono text-white">{tw.direction}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-sm font-mono text-gray-400">${tw.valueUsd.toFixed(0)}</span>
+                                        <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `tw-${i}` ? "rotate-180" : ""}`} />
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                      <div className="flex-1 h-1 bg-white/5 overflow-hidden">
+                                        <div
+                                          className={`h-full ${tw.tracked ? "bg-cyan-500/40" : "bg-white/10"}`}
+                                          style={{ width: `${tw.progress}%` }}
+                                        />
+                                      </div>
+                                      <span className="text-sm text-gray-600 font-mono whitespace-nowrap">
+                                        {tw.progress}% · {tw.timeLeft}
+                                      </span>
+                                    </div>
+                                  </button>
+                                  {positionDropdown === `tw-${i}` && (
+                                    <div className="border border-white/10 bg-[#0a0a0a] mb-1">
+                                      <div className="px-4 py-2 text-xs text-gray-600 font-mono space-y-1 border-b border-white/5">
+                                        <div className="flex justify-between"><span>Deposit</span><span className="text-gray-400">{tw.amountIn.toFixed(2)} {tw.sellToken}</span></div>
+                                        <div className="flex justify-between"><span>Converted</span><span>{tw.tokensSpent > 0 ? <><span className="text-gray-400">{tw.tokensSpent.toFixed(2)} {tw.sellToken}</span><span className="text-gray-600"> → </span><span className="text-green-400">{tw.convertedBuyEstimate.toFixed(4)} {tw.buyToken}</span></> : <span className="text-gray-600">—</span>}</span></div>
+                                        {tw.sellRefund > 0 && (
+                                          <div className="flex justify-between"><span>Unsold</span><span className="text-gray-400">{tw.sellRefund.toFixed(2)} {tw.sellToken}</span></div>
+                                        )}
+                                        <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Order Value</span><span className="text-white">${tw.valueUsd.toFixed(2)}</span></div>
+                                      </div>
+                                      {!tw.isDone && (
+                                        <button
+                                          onClick={() => {
+                                            setPositionDropdown(null);
+                                            cancelTwammOrder(() => {
+                                              refresh();
+                                              addToast({ type: "success", title: "Order Cancelled" });
+                                              refresh();
+                                            });
+                                          }}
+                                          disabled={cancellingTwamm}
+                                          className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-white/5 transition-colors"
+                                        >
+                                          {cancellingTwamm ? "Cancelling..." : "Cancel Order"}
+                                        </button>
+                                      )}
                                       {/* Track / Untrack as collateral */}
-                                      {!lp.isActive ? (
+                                      {!tw.isDone && !tw.tracked && (
                                         <button
                                           onClick={() => {
                                             setPositionDropdown(null);
                                             setCollateralConfirm({
-                                              type: 'track-lp',
-                                              label: `Track LP #${lp.tokenId?.toString()} as collateral?`,
-                                              sub: `Range: ${lp.priceLower || '?'} — ${lp.priceUpper || '?'}  •  Value: $${(lp.valueUsd || 0).toFixed(0)}`,
-                                              data: lp,
+                                              type: 'track-twamm',
+                                              label: `Track this TWAMM order as collateral?`,
+                                              sub: `${tw.direction}  •  $${tw.valueUsd.toFixed(0)}  •  ${tw.progress}% complete`,
+                                              data: tw,
                                             });
                                           }}
                                           className="w-full text-left px-4 py-2 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors border-t border-white/5"
                                         >
                                           Track as Collateral
                                         </button>
-                                      ) : (
+                                      )}
+                                      {tw.tracked && (
                                         <button
                                           onClick={() => {
                                             setPositionDropdown(null);
                                             setCollateralConfirm({
-                                              type: 'untrack-lp',
-                                              label: `Untrack LP #${lp.tokenId?.toString()} from collateral?`,
-                                              sub: 'This LP position will no longer count toward your collateral ratio.',
-                                              data: lp,
+                                              type: 'untrack-twamm',
+                                              label: `Untrack this TWAMM order from collateral?`,
+                                              sub: 'This order will no longer count toward your collateral ratio.',
+                                              data: tw,
                                             });
                                           }}
                                           className="w-full text-left px-4 py-2 text-sm font-mono text-orange-400 hover:bg-orange-500/5 transition-colors border-t border-white/5"
@@ -1798,192 +1909,69 @@ export default function SimulationTerminal() {
                                           Untrack from Collateral
                                         </button>
                                       )}
-                                      {/* Withdraw (Remove Liquidity) */}
-                                      <button
-                                        onClick={() => {
-                                          setPositionDropdown(null);
-                                          setWithdrawLp({
-                                            id: lp.tokenId?.toString(),
-                                            tokenId: lp.tokenId,
-                                            priceLower: parseFloat(lp.priceLower),
-                                            priceUpper: parseFloat(lp.priceUpper),
-                                            token0Amount: lp.amount0?.toFixed(2) || "0",
-                                            token1Amount: lp.amount1?.toFixed(2) || "0",
-                                            feesEarned0: "0.00",
-                                            feesEarned1: "0.00",
-                                            value: lp.valueUsd || 0,
-                                          });
-                                        }}
-                                        className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-red-500/5 transition-colors border-t border-white/5"
-                                      >
-                                        Withdraw Liquidity
-                                      </button>
+                                      {tw.isDone && (
+                                        <button
+                                          onClick={() => {
+                                            setPositionDropdown(null);
+                                            setClaimConfirm(tw);
+                                          }}
+                                          className="w-full text-left px-4 py-2 text-sm font-mono text-green-400 hover:bg-white/5 transition-colors"
+                                        >
+                                          Claim Tokens
+                                        </button>
+                                      )}
                                     </div>
                                   )}
                                 </div>
-                              );
-                            }) : (
-                              <div className="text-sm text-gray-600 font-mono px-6 py-2">No LP positions</div>
-                            )}
+                              ))}
+                            </div>
                           </div>
+
                         </div>
 
-                        {/* TWAMM Orders */}
-                        <div>
-                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-3 px-6">TWAMM Orders</div>
-                          <div className="space-y-1">
-                            {twammOrders.length === 0 ? (
-                              <div className="text-sm text-gray-600 font-mono px-6 py-4">No active orders</div>
-                            ) : twammOrders.map((tw, i) => (
-                              <div key={tw.orderId || i} className="relative">
-                                <button
-                                  onClick={() => setPositionDropdown(positionDropdown === `tw-${i}` ? null : `tw-${i}`)}
-                                  className="w-full hover:bg-white/5 py-1.5 px-6 transition-colors group"
-                                >
-                                  <div className="flex items-center justify-between mb-1">
-                                    <div className="flex items-center gap-2">
-                                      <span className={`w-1.5 h-1.5 rounded-full ${tw.tracked ? "bg-cyan-500" : "bg-gray-600"}`} />
-                                      <span className="text-sm font-mono text-white">{tw.direction}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                      <span className="text-sm font-mono text-gray-400">${tw.valueUsd.toFixed(0)}</span>
-                                      <ChevronDown size={12} className={`text-gray-600 group-hover:text-gray-400 transition-all ${positionDropdown === `tw-${i}` ? "rotate-180" : ""}`} />
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-3">
-                                    <div className="flex-1 h-1 bg-white/5 overflow-hidden">
-                                      <div
-                                        className={`h-full ${tw.tracked ? "bg-cyan-500/40" : "bg-white/10"}`}
-                                        style={{ width: `${tw.progress}%` }}
-                                      />
-                                    </div>
-                                    <span className="text-sm text-gray-600 font-mono whitespace-nowrap">
-                                      {tw.progress}% · {tw.timeLeft}
-                                    </span>
-                                  </div>
-                                </button>
-                                {positionDropdown === `tw-${i}` && (
-                                  <div className="border border-white/10 bg-[#0a0a0a] mb-1">
-                                    <div className="px-4 py-2 text-xs text-gray-600 font-mono space-y-1 border-b border-white/5">
-                                      <div className="flex justify-between"><span>Deposit</span><span className="text-gray-400">{tw.amountIn.toFixed(2)} {tw.sellToken}</span></div>
-                                      <div className="flex justify-between"><span>Converted</span><span>{tw.tokensSpent > 0 ? <><span className="text-gray-400">{tw.tokensSpent.toFixed(2)} {tw.sellToken}</span><span className="text-gray-600"> → </span><span className="text-green-400">{tw.convertedBuyEstimate.toFixed(4)} {tw.buyToken}</span></> : <span className="text-gray-600">—</span>}</span></div>
-                                      {tw.sellRefund > 0 && (
-                                        <div className="flex justify-between"><span>Unsold</span><span className="text-gray-400">{tw.sellRefund.toFixed(2)} {tw.sellToken}</span></div>
-                                      )}
-                                      <div className="flex justify-between border-t border-white/5 pt-1 mt-1"><span>Order Value</span><span className="text-white">${tw.valueUsd.toFixed(2)}</span></div>
-                                    </div>
-                                    {!tw.isDone && (
-                                      <button
-                                        onClick={() => {
-                                          setPositionDropdown(null);
-                                          cancelTwammOrder(() => {
-                                            refresh();
-                                            addToast({ type: "success", title: "Order Cancelled" });
-                                            refresh();
-                                          });
-                                        }}
-                                        disabled={cancellingTwamm}
-                                        className="w-full text-left px-4 py-2 text-sm font-mono text-red-400 hover:bg-white/5 transition-colors"
-                                      >
-                                        {cancellingTwamm ? "Cancelling..." : "Cancel Order"}
-                                      </button>
-                                    )}
-                                    {/* Track / Untrack as collateral */}
-                                    {!tw.isDone && !tw.tracked && (
-                                      <button
-                                        onClick={() => {
-                                          setPositionDropdown(null);
-                                          setCollateralConfirm({
-                                            type: 'track-twamm',
-                                            label: `Track this TWAMM order as collateral?`,
-                                            sub: `${tw.direction}  •  $${tw.valueUsd.toFixed(0)}  •  ${tw.progress}% complete`,
-                                            data: tw,
-                                          });
-                                        }}
-                                        className="w-full text-left px-4 py-2 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors border-t border-white/5"
-                                      >
-                                        Track as Collateral
-                                      </button>
-                                    )}
-                                    {tw.tracked && (
-                                      <button
-                                        onClick={() => {
-                                          setPositionDropdown(null);
-                                          setCollateralConfirm({
-                                            type: 'untrack-twamm',
-                                            label: `Untrack this TWAMM order from collateral?`,
-                                            sub: 'This order will no longer count toward your collateral ratio.',
-                                            data: tw,
-                                          });
-                                        }}
-                                        className="w-full text-left px-4 py-2 text-sm font-mono text-orange-400 hover:bg-orange-500/5 transition-colors border-t border-white/5"
-                                      >
-                                        Untrack from Collateral
-                                      </button>
-                                    )}
-                                    {tw.isDone && (
-                                      <button
-                                        onClick={() => {
-                                          setPositionDropdown(null);
-                                          setClaimConfirm(tw);
-                                        }}
-                                        className="w-full text-left px-4 py-2 text-sm font-mono text-green-400 hover:bg-white/5 transition-colors"
-                                      >
-                                        Claim Tokens
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
+                        {/* Right: Debt */}
+                        <div className="p-6 space-y-4">
+                          <div className="text-sm text-gray-500 uppercase tracking-widest mb-3">Debt</div>
+                          {[
+                            { label: "Principal", value: brokerState ? `${brokerState.debtPrincipal.toFixed(2)} ${positionSymbol}` : "—", color: "text-white" },
+                            { label: "True Debt", value: brokerState ? `${brokerState.trueDebt.toFixed(2)} ${positionSymbol}` : "—", color: "text-white" },
+                            { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toFixed(2)}` : "$0.00", color: "text-red-400" },
+                          ].map((d) => (
+                            <div key={d.label} className="flex justify-between items-center">
+                              <span className="text-sm text-gray-500 uppercase tracking-widest">{d.label}</span>
+                              <span className={`text-sm font-mono font-bold ${d.color}`}>{d.value}</span>
+                            </div>
+                          ))}
+
+                          {/* Risk gauge */}
+                          <div className="pt-4 mt-4 border-t border-white/5 space-y-3">
+                            <div className="text-sm text-gray-500 uppercase tracking-widest">Risk</div>
+                            <div>
+                              <div className="flex justify-between mb-1">
+                                <span className="text-sm text-gray-600">Min Col. Ratio</span>
+                                <span className="text-sm font-mono text-gray-400">{marketInfo?.risk_params?.min_col_ratio_pct || "—"}</span>
                               </div>
-                            ))}
-                          </div>
-                        </div>
-
-                      </div>
-
-                      {/* Right: Debt */}
-                      <div className="p-6 space-y-4">
-                        <div className="text-sm text-gray-500 uppercase tracking-widest mb-3">Debt</div>
-                        {[
-                          { label: "Principal", value: brokerState ? `${brokerState.debtPrincipal.toFixed(2)} ${positionSymbol}` : "—", color: "text-white" },
-                          { label: "True Debt", value: brokerState ? `${brokerState.trueDebt.toFixed(2)} ${positionSymbol}` : "—", color: "text-white" },
-                          { label: "Debt Value", value: brokerState && brokerState.debtValue > 0 ? `$${brokerState.debtValue.toFixed(2)}` : "$0.00", color: "text-red-400" },
-                        ].map((d) => (
-                          <div key={d.label} className="flex justify-between items-center">
-                            <span className="text-sm text-gray-500 uppercase tracking-widest">{d.label}</span>
-                            <span className={`text-sm font-mono font-bold ${d.color}`}>{d.value}</span>
-                          </div>
-                        ))}
-
-                        {/* Risk gauge */}
-                        <div className="pt-4 mt-4 border-t border-white/5 space-y-3">
-                          <div className="text-sm text-gray-500 uppercase tracking-widest">Risk</div>
-                          <div>
-                            <div className="flex justify-between mb-1">
-                              <span className="text-sm text-gray-600">Min Col. Ratio</span>
-                              <span className="text-sm font-mono text-gray-400">{marketInfo?.risk_params?.min_col_ratio_pct || "—"}</span>
-                            </div>
-                            <div className="flex justify-between mb-1">
-                              <span className="text-sm text-gray-600">Maintenance</span>
-                              <span className="text-sm font-mono text-gray-400">{marketInfo?.risk_params?.maintenance_margin_pct || "—"}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">Your Ratio</span>
-                              <span className={`text-sm font-mono font-bold ${brokerState && brokerState.colRatio < 150 ? "text-red-400" : brokerState && brokerState.colRatio < 200 ? "text-yellow-400" : "text-green-400"}`}>
-                                {brokerState ? (brokerState.colRatio === Infinity ? "∞" : `${brokerState.colRatio.toFixed(0)}%`) : "—"}
-                              </span>
+                              <div className="flex justify-between mb-1">
+                                <span className="text-sm text-gray-600">Maintenance</span>
+                                <span className="text-sm font-mono text-gray-400">{marketInfo?.risk_params?.maintenance_margin_pct || "—"}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-sm text-gray-600">Your Ratio</span>
+                                <span className={`text-sm font-mono font-bold ${brokerState && brokerState.colRatio < 150 ? "text-red-400" : brokerState && brokerState.colRatio < 200 ? "text-yellow-400" : "text-green-400"}`}>
+                                  {brokerState ? (brokerState.colRatio === Infinity ? "∞" : `${brokerState.colRatio.toFixed(0)}%`) : "—"}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                  </>
-                )}
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Actions panel (1/3 of col-span-9) */}
-            <div ref={actionsRef} className="border border-white/10 flex flex-col">
+              {/* Actions panel (1/3 of col-span-9) */}
+              <div ref={actionsRef} className="border border-white/10 flex flex-col">
                 <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[53px]">
                   <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
                     <Layers size={14} className="text-gray-500" />
@@ -2000,103 +1988,100 @@ export default function SimulationTerminal() {
                     { id: "batch", label: "Batch", desc: "Multi-action bundle", soon: true },
                   ].map((action) => (
                     <React.Fragment key={action.id}>
-                    <button
-                      onClick={() => !action.soon && setActiveAction(activeAction === action.id ? null : action.id)}
-                      className={`w-full flex items-center justify-between px-4 py-3 transition-all text-left group ${
-                        action.soon ? "opacity-40 cursor-default" :
-                        activeAction === action.id ? "bg-white/5 hover:bg-white/5" : "hover:bg-white/5"
-                      }`}
-                    >
-                      <div>
-                        <div className={`text-sm font-bold uppercase tracking-widest transition-colors flex items-center gap-2 ${
-                          action.soon ? "text-gray-500" :
-                          activeAction === action.id ? "text-cyan-400" : "text-white group-hover:text-cyan-400"
-                        }`}>
-                          {action.label}
-                          {action.soon && (
-                            <span className="text-[9px] px-1.5 py-0.5 bg-white/5 border border-white/10 text-gray-500 tracking-[0.15em] font-medium">
-                              SOON
-                            </span>
-                          )}
+                      <button
+                        onClick={() => !action.soon && setActiveAction(activeAction === action.id ? null : action.id)}
+                        className={`w-full flex items-center justify-between px-4 py-3 transition-all text-left group ${action.soon ? "opacity-40 cursor-default" :
+                            activeAction === action.id ? "bg-white/5 hover:bg-white/5" : "hover:bg-white/5"
+                          }`}
+                      >
+                        <div>
+                          <div className={`text-sm font-bold uppercase tracking-widest transition-colors flex items-center gap-2 ${action.soon ? "text-gray-500" :
+                              activeAction === action.id ? "text-cyan-400" : "text-white group-hover:text-cyan-400"
+                            }`}>
+                            {action.label}
+                            {action.soon && (
+                              <span className="text-[9px] px-1.5 py-0.5 bg-white/5 border border-white/10 text-gray-500 tracking-[0.15em] font-medium">
+                                SOON
+                              </span>
+                            )}
+                          </div>
+                          <div className={`text-sm font-mono mt-0.5 ${action.soon ? "text-gray-700" : "text-gray-600"}`}>
+                            {action.desc}
+                          </div>
                         </div>
-                        <div className={`text-sm font-mono mt-0.5 ${action.soon ? "text-gray-700" : "text-gray-600"}`}>
-                          {action.desc}
-                        </div>
-                      </div>
-                      {!action.soon && (
-                        <ChevronDown size={14} className={`transition-all ${
-                          activeAction === action.id
-                            ? "text-cyan-400 rotate-0"
-                            : "text-gray-600 group-hover:text-cyan-400 -rotate-90"
-                        }`} />
+                        {!action.soon && (
+                          <ChevronDown size={14} className={`transition-all ${activeAction === action.id
+                              ? "text-cyan-400 rotate-0"
+                              : "text-gray-600 group-hover:text-cyan-400 -rotate-90"
+                            }`} />
+                        )}
+                      </button>
+                      {activeAction === action.id && !action.soon && (
+                        <ActionForm
+                          type={action.id}
+                          onClose={() => setActiveAction(null)}
+                          brokerBalance={brokerBalance}
+                          brokerWrlpBalance={brokerWrlpBalance}
+                          currentRate={currentRate}
+                          brokerAddress={brokerAddress}
+                          marketId={market?.marketId}
+                          account={account}
+                          addToast={addToast}
+                          marketInfo={marketInfo}
+                          onStateChange={refresh}
+                          txPauseRef={txPauseRef}
+                          onTwammRefresh={refresh}
+                        />
                       )}
-                    </button>
-                    {activeAction === action.id && !action.soon && (
-                      <ActionForm
-                        type={action.id}
-                        onClose={() => setActiveAction(null)}
-                        brokerBalance={brokerBalance}
-                        brokerWrlpBalance={brokerWrlpBalance}
-                        currentRate={currentRate}
-                        brokerAddress={brokerAddress}
-                        marketId={market?.marketId}
-                        account={account}
-                        addToast={addToast}
-                        marketInfo={marketInfo}
-                        onStateChange={refresh}
-                        txPauseRef={txPauseRef}
-                        onTwammRefresh={refresh}
-                      />
-                    )}
                     </React.Fragment>
                   ))}
                 </div>
-            </div>
+              </div>
             </div>
 
             {/* Right: Operations panel (col-span-3) */}
             <div className="xl:col-span-3">
               <div className="border border-white/10 flex flex-col" style={actionsHeight && !activeAction ? { maxHeight: actionsHeight, overflow: 'hidden' } : undefined}>
-              <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[53px]">
-                <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
-                  <Activity size={14} className="text-gray-500" />
-                  Operations
-                </h3>
-                {operations.length > 0 && (
-                  <button
-                    onClick={() => {
-                      const header = "Date,Type,Amount_In,Amount_Out,Tx_Hash";
-                      const rows = operations.map((op) => {
-                        const date = new Date(
-                          op.timestamp * 1000,
-                        ).toISOString();
-                        const amtIn = (Number(op.args[1]) / 1e6).toFixed(2);
-                        const amtOut = (Number(op.args[2]) / 1e6).toFixed(2);
-                        return `${date},${op.label},${amtIn},${amtOut},${op.txHash}`;
-                      });
-                      const csv = [header, ...rows].join("\n");
-                      const blob = new Blob([csv], { type: "text/csv" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "rld_operations.csv";
-                      a.click();
-                      URL.revokeObjectURL(url);
-                    }}
-                    className="text-sm font-mono font-bold tracking-widest uppercase px-2 py-1 border border-white/10 text-gray-500 hover:text-white hover:border-white/30 transition-all flex items-center gap-1.5"
-                  >
-                    <Download size={10} />
-                    CSV
-                  </button>
-                )}
-              </div>
-              <div className="p-6 flex-1 overflow-y-auto">
-                <OperationsFeed
-                  operations={operations}
-                  loading={false}
-                  connected={!!account}
-                />
-              </div>
+                <div className="px-6 py-4 border-b border-white/10 bg-[#0a0a0a] flex justify-between items-center h-[53px]">
+                  <h3 className="text-sm font-bold tracking-widest text-white uppercase flex items-center gap-2">
+                    <Activity size={14} className="text-gray-500" />
+                    Operations
+                  </h3>
+                  {operations.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const header = "Date,Type,Amount_In,Amount_Out,Tx_Hash";
+                        const rows = operations.map((op) => {
+                          const date = new Date(
+                            op.timestamp * 1000,
+                          ).toISOString();
+                          const amtIn = (Number(op.args[1]) / 1e6).toFixed(2);
+                          const amtOut = (Number(op.args[2]) / 1e6).toFixed(2);
+                          return `${date},${op.label},${amtIn},${amtOut},${op.txHash}`;
+                        });
+                        const csv = [header, ...rows].join("\n");
+                        const blob = new Blob([csv], { type: "text/csv" });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = "rld_operations.csv";
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="text-sm font-mono font-bold tracking-widest uppercase px-2 py-1 border border-white/10 text-gray-500 hover:text-white hover:border-white/30 transition-all flex items-center gap-1.5"
+                    >
+                      <Download size={10} />
+                      CSV
+                    </button>
+                  )}
+                </div>
+                <div className="p-6 flex-1 overflow-y-auto">
+                  <OperationsFeed
+                    operations={operations}
+                    loading={false}
+                    connected={!!account}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -2113,7 +2098,7 @@ export default function SimulationTerminal() {
           checkBroker();
           // Refresh broker state & show toast
           if (addr) {
-                        refresh();
+            refresh();
             addToast({
               type: "success",
               title: "Account Created",
@@ -2142,7 +2127,7 @@ export default function SimulationTerminal() {
             // Close Long flow
             executeCloseLong(parseFloat(closeAmount), () => {
               setShowSwapConfirm(false);
-                            refresh();
+              refresh();
               addToast({
                 type: "success",
                 title: "Long Closed",
@@ -2157,7 +2142,7 @@ export default function SimulationTerminal() {
               // Direct repay: burn wRLP to reduce debt
               executeRepayDebt(parseFloat(closeShortDebt), () => {
                 setShowSwapConfirm(false);
-                                refresh();
+                refresh();
                 addToast({
                   type: "success",
                   title: "Debt Repaid",
@@ -2171,7 +2156,7 @@ export default function SimulationTerminal() {
               // waUSDC mode: spend waUSDC to buy wRLP and repay debt
               executeCloseShort(parseFloat(closeShortAmount), () => {
                 setShowSwapConfirm(false);
-                                refresh();
+                refresh();
                 addToast({
                   type: "success",
                   title: "Short Closed",
@@ -2185,7 +2170,7 @@ export default function SimulationTerminal() {
             // Open Short flow — shortAmount is already in wRLP
             executeShort(collateral, shortAmount, shortOpenMinOut, () => {
               setShowSwapConfirm(false);
-                            refresh();
+              refresh();
               addToast({
                 type: "success",
                 title: "Short Opened",
@@ -2197,7 +2182,7 @@ export default function SimulationTerminal() {
             // Open Long flow
             executeLong(collateral, () => {
               setShowSwapConfirm(false);
-                            refresh();
+              refresh();
               addToast({
                 type: "success",
                 title: "Long Opened",

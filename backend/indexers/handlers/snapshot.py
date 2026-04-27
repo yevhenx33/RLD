@@ -98,16 +98,22 @@ async def materialize_snapshot(
     swap_count_24h = int(vol_row["cnt"]) if vol_row else 0
 
     # ── 24H price changes ──
-    old_row = await conn.fetchrow("""
-        SELECT mark_price, index_price FROM block_states
-        WHERE market_id = $1 AND block_timestamp <= $2
-              AND mark_price IS NOT NULL
-        ORDER BY block_number DESC LIMIT 1
-    """, market_id, cutoff)
-    old_mark = float(old_row["mark_price"]) if old_row and old_row["mark_price"] else mark_price
-    old_index = float(old_row["index_price"]) if old_row and old_row["index_price"] else index_price
-    mark_24h = ((mark_price - old_mark) / old_mark * 100) if old_mark > 0 else 0
-    index_24h = ((index_price - old_index) / old_index * 100) if old_index > 0 else 0
+    # If there were no swaps in the observed window, keep the displayed 24h
+    # change flat so inactive markets do not look like they traded.
+    if swap_count_24h > 0:
+        old_row = await conn.fetchrow("""
+            SELECT mark_price, index_price FROM block_states
+            WHERE market_id = $1 AND block_timestamp <= $2
+                  AND mark_price IS NOT NULL
+            ORDER BY block_number DESC LIMIT 1
+        """, market_id, cutoff)
+        old_mark = float(old_row["mark_price"]) if old_row and old_row["mark_price"] else mark_price
+        old_index = float(old_row["index_price"]) if old_row and old_row["index_price"] else index_price
+        mark_24h = ((mark_price - old_mark) / old_mark * 100) if old_mark > 0 else 0
+        index_24h = ((index_price - old_index) / old_index * 100) if old_index > 0 else 0
+    else:
+        mark_24h = 0
+        index_24h = 0
 
     # ── Derived metrics ──
     normalized_mark = mark_price / nf if nf > 0 else mark_price

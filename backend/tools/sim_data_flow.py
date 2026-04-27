@@ -306,13 +306,18 @@ def materialize_snapshot(db: SimDB, market_id: str):
         if bs.market_id == market_id and bs.block_timestamp > cutoff
     )
 
-    # 24H price changes
-    block_24h_ago = None
-    for bs in db.block_states:
-        if bs.market_id == market_id and bs.block_timestamp <= cutoff:
-            block_24h_ago = bs  # keep last one before cutoff
-    mark_24h_change = ((latest.mark_price - block_24h_ago.mark_price) / block_24h_ago.mark_price * 100) if block_24h_ago and block_24h_ago.mark_price > 0 else 0
-    index_24h_change = ((latest.index_price - block_24h_ago.index_price) / block_24h_ago.index_price * 100) if block_24h_ago and block_24h_ago.index_price > 0 else 0
+    # 24H price changes. Inactive windows stay flat so markets without swaps
+    # do not appear to have traded during the observed period.
+    if swap_count_24h > 0:
+        block_24h_ago = None
+        for bs in db.block_states:
+            if bs.market_id == market_id and bs.block_timestamp <= cutoff:
+                block_24h_ago = bs  # keep last one before cutoff
+        mark_24h_change = ((latest.mark_price - block_24h_ago.mark_price) / block_24h_ago.mark_price * 100) if block_24h_ago and block_24h_ago.mark_price > 0 else 0
+        index_24h_change = ((latest.index_price - block_24h_ago.index_price) / block_24h_ago.index_price * 100) if block_24h_ago and block_24h_ago.index_price > 0 else 0
+    else:
+        mark_24h_change = 0
+        index_24h_change = 0
 
     # Derived metrics
     nf = latest.normalization_factor

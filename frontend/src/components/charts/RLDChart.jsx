@@ -203,7 +203,8 @@ const RLDPerformanceChart = ({
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setYDomain(["auto", "auto"]);
     } else {
-      const padding = (max - min) * 0.05;
+      const range = max - min;
+      const padding = range > 0 ? range * 0.05 : Math.max(Math.abs(max) * 0.01, 0.01);
       const newMin = min >= 0 ? Math.max(0, min - padding) : min - padding;
        
       setYDomain([newMin, max + padding]);
