@@ -11,8 +11,10 @@ import {
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {LiquidityAmounts} from "../../../shared/libraries/LiquidityAmounts.sol";
+import {Position} from "v4-core/src/libraries/Position.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {
     PositionInfo,
@@ -49,6 +51,15 @@ contract UniswapV4BrokerModule is IValuationModule {
         address underlyingToken; // Underlying asset (USDC)
     }
 
+    struct FeeParams {
+        IPoolManager pm;
+        PoolId poolId;
+        address positionManager;
+        int24 tickLower;
+        int24 tickUpper;
+        bytes32 tokenId;
+    }
+
     /// @notice Returns the value of an LP Position in collateral token terms.
     /// @param data ABI-encoded VerifyParams struct
     /// @return Total value of the position in valuationToken terms
@@ -57,52 +68,8 @@ contract UniswapV4BrokerModule is IValuationModule {
     ) external view override returns (uint256) {
         VerifyParams memory params = abi.decode(data, (VerifyParams));
 
-        // 1. Get Position Liquidity
-        uint128 liquidity = IPositionManager(params.positionManager)
-            .getPositionLiquidity(params.tokenId);
-        if (liquidity == 0) return 0;
-
-        // 2. Get Pool Key & Ticks
-        (PoolKey memory poolKey, PositionInfo info) = IPositionManager(
-            params.positionManager
-        ).getPoolAndPositionInfo(params.tokenId);
-        int24 tickLower = info.tickLower();
-        int24 tickUpper = info.tickUpper();
-
-        // 3. Get Current Tick
-        IPoolManager pm = IPositionManager(params.positionManager)
-            .poolManager();
-        (, int24 currentTick, , ) = pm.getSlot0(poolKey.toId());
-
-        // 4. Calculate Token Amounts (principal)
-        (uint256 amount0, uint256 amount1) = LiquidityAmounts
-            .getAmountsForLiquidity(
-                TickMath.getSqrtPriceAtTick(currentTick),
-                TickMath.getSqrtPriceAtTick(tickLower),
-                TickMath.getSqrtPriceAtTick(tickUpper),
-                liquidity
-            );
-
-        // 4b. Add uncollected fees to amounts (LP fee NAV fix)
-        {
-            (uint256 feeGrowthInside0, uint256 feeGrowthInside1) = pm
-                .getFeeGrowthInside(poolKey.toId(), tickLower, tickUpper);
-            bytes32 positionId = keccak256(
-                abi.encodePacked(params.positionManager, tickLower, tickUpper, bytes32(params.tokenId))
-            );
-            (uint128 posLiquidity, uint256 feeGrowthInside0Last, uint256 feeGrowthInside1Last) = pm
-                .getPositionInfo(poolKey.toId(), positionId);
-            if (posLiquidity > 0) {
-                uint256 fees0 = uint256(posLiquidity) * (feeGrowthInside0 - feeGrowthInside0Last) / (1 << 128);
-                uint256 fees1 = uint256(posLiquidity) * (feeGrowthInside1 - feeGrowthInside1Last) / (1 << 128);
-                amount0 += fees0;
-                amount1 += fees1;
-            }
-        }
-
-        // 5. Price each token
-        address currency0 = Currency.unwrap(poolKey.currency0);
-        address currency1 = Currency.unwrap(poolKey.currency1);
+        (uint256 amount0, uint256 amount1, address currency0, address currency1) =
+            _positionAmounts(params.positionManager, params.tokenId);
 
         uint256 value = 0;
 
@@ -117,6 +84,70 @@ contract UniswapV4BrokerModule is IValuationModule {
         }
 
         return value;
+    }
+
+    function _positionAmounts(address positionManager, uint256 tokenId)
+        internal
+        view
+        returns (uint256 amount0, uint256 amount1, address currency0, address currency1)
+    {
+        uint128 liquidity = IPositionManager(positionManager).getPositionLiquidity(tokenId);
+        if (liquidity == 0) return (0, 0, address(0), address(0));
+
+        (PoolKey memory poolKey, PositionInfo info) = IPositionManager(positionManager).getPoolAndPositionInfo(tokenId);
+        int24 tickLower = info.tickLower();
+        int24 tickUpper = info.tickUpper();
+
+        IPoolManager pm = IPositionManager(positionManager).poolManager();
+        PoolId poolId = poolKey.toId();
+
+        {
+            (, int24 currentTick, , ) = pm.getSlot0(poolId);
+            (amount0, amount1) = LiquidityAmounts.getAmountsForLiquidity(
+                TickMath.getSqrtPriceAtTick(currentTick),
+                TickMath.getSqrtPriceAtTick(tickLower),
+                TickMath.getSqrtPriceAtTick(tickUpper),
+                liquidity
+            );
+        }
+
+        FeeParams memory feeParams = FeeParams({
+            pm: pm,
+            poolId: poolId,
+            positionManager: positionManager,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            tokenId: bytes32(tokenId)
+        });
+        (uint256 fees0, uint256 fees1) = _uncollectedFees(feeParams);
+        amount0 += fees0;
+        amount1 += fees1;
+
+        currency0 = Currency.unwrap(poolKey.currency0);
+        currency1 = Currency.unwrap(poolKey.currency1);
+    }
+
+    function _positionId(
+        address positionManager,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 tokenId
+    ) internal pure returns (bytes32) {
+        return Position.calculatePositionKey(positionManager, tickLower, tickUpper, bytes32(tokenId));
+    }
+
+    function _uncollectedFees(FeeParams memory params) internal view returns (uint256 fees0, uint256 fees1) {
+        (uint256 feeGrowthInside0, uint256 feeGrowthInside1) =
+            params.pm.getFeeGrowthInside(params.poolId, params.tickLower, params.tickUpper);
+        bytes32 positionId =
+            Position.calculatePositionKey(params.positionManager, params.tickLower, params.tickUpper, params.tokenId);
+        (uint128 posLiquidity, uint256 feeGrowthInside0Last, uint256 feeGrowthInside1Last) =
+            params.pm.getPositionInfo(params.poolId, positionId);
+
+        if (posLiquidity > 0) {
+            fees0 = uint256(posLiquidity) * (feeGrowthInside0 - feeGrowthInside0Last) / (1 << 128);
+            fees1 = uint256(posLiquidity) * (feeGrowthInside1 - feeGrowthInside1Last) / (1 << 128);
+        }
     }
 
     /// @dev Prices a token amount in valuation token terms

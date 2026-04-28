@@ -108,10 +108,8 @@ contract StandardFundingModel is IFundingModel {
         // 7. Apply exponential using Solady
         int256 multiplier = FixedPointMathLib.expWad(exponent);
         
-        // 8. Safety check: expWad should never return negative
-        // Note: expWad CAN return 0 for extreme negative exponents (underflow saturation)
-        // This is mathematically correct (e^(-inf) -> 0) and acceptable behavior
-        if (multiplier < 0) {
+        // 8. Safety check: do not allow debt normalization to collapse to zero.
+        if (multiplier <= 0) {
             revert InvalidExponentialResult();
         }
         

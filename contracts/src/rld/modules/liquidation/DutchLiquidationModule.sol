@@ -40,9 +40,12 @@ contract DutchLiquidationModule is ILiquidationModule {
         uint256 healthScore = 0;
         if (userDebt > 0) {
             uint256 debtVal = userDebt.mulWad(priceData.normalizationFactor).mulWad(priceData.indexPrice);
-            healthScore = userCollateral.mulWad(priceData.spotPrice).divWad(
-                debtVal.mulWad(uint256(config.maintenanceMargin))
-            );
+            uint256 marginRequirement = uint256(config.maintenanceMargin) - 1e18;
+            if (marginRequirement == 0) {
+                healthScore = userCollateral > 0 ? 1e18 : 0;
+            } else {
+                healthScore = userCollateral.divWad(debtVal.mulWad(marginRequirement));
+            }
         }
 
         bonus = baseDiscount;

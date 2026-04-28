@@ -14,8 +14,9 @@ interface IAavePoolSimple {
 }
 
 /// @title AaveAdapter
-/// @notice Implements ILendingAdapter for Aave V3.
-/// @dev Stateless adapter.
+/// @notice Implements ILendingAdapter for Aave V3 using normal calls, not delegatecall.
+/// @dev Users/vaults must approve this adapter for supplied, repaid, or withdrawn tokens.
+///      Borrowing requires Aave credit delegation from the borrower to this adapter.
 contract AaveAdapter is ILendingAdapter {
     address public immutable POOL; // Aave Pool Address
 
@@ -24,15 +25,15 @@ contract AaveAdapter is ILendingAdapter {
     }
 
     function supply(address asset, uint256 amount) external override returns (address collateralToken, uint256 collateralAmount) {
-        // 1. Transfer Asset from User to Adapter (if not already here)
-        // Note: Adapter usually called via delegatecall or user approves adapter?
-        // Architecture: Vault calls Adapter. Vault approves Adapter.
-        IERC20(asset).transferFrom(msg.sender, address(this), amount);
+        require(amount > 0, "amount=0");
+
+        // 1. Transfer asset from caller to adapter.
+        require(IERC20(asset).transferFrom(msg.sender, address(this), amount), "transferFrom failed");
         
         // 2. Approve Pool
-        IERC20(asset).approve(POOL, amount);
+        require(IERC20(asset).approve(POOL, amount), "approve failed");
         
-        // 3. Supply
+        // 3. Supply on behalf of caller so the caller receives aTokens.
         IAavePoolSimple(POOL).supply(asset, amount, msg.sender, 0);
         
         // 4. Return Output Info
@@ -43,50 +44,35 @@ contract AaveAdapter is ILendingAdapter {
     }
 
     function withdraw(address asset, uint256 amount) external override returns (uint256 receivedAmount) {
-        // Vault holds aToken. Vault needs to approve Pool to burn aToken?
-        // Actually `withdraw` pulls aToken from msg.sender (Vault) and sends Asset to to.
-        // Vault must approve Aave Pool to spend aToken? No, Aave V3 withdraw burns from msg.sender.
-        // Wait, if Adapter is a separate contract, msg.sender for Aave is Adapter.
-        // Vault should pull aToken to Adapter?
-        // Efficient way: Vault delegatecalls Adapter? 
-        // If Adapter is standard contract:
-        // Vault transfers aToken to Adapter. Adapter withdraws. Adapter sends asset back.
-        
-        // Let's assume standard call.
+        require(amount > 0, "amount=0");
+
         // 1. Determine aToken
         (,,,,,,,, address aToken, , ) = IAavePoolSimple(POOL).getReserveData(asset);
         
-        // 2. Transfer aToken from Vault
-        IERC20(aToken).transferFrom(msg.sender, address(this), amount);
+        // 2. Transfer aToken from caller to adapter.
+        require(IERC20(aToken).transferFrom(msg.sender, address(this), amount), "transferFrom failed");
+        require(IERC20(aToken).approve(POOL, amount), "approve failed");
         
-        // 3. Withdraw
+        // 3. Withdraw underlying to caller.
         receivedAmount = IAavePoolSimple(POOL).withdraw(asset, amount, msg.sender);
     }
     
     function borrow(address asset, uint256 amount) external override {
-        // Vault calls this. Vault must be credit solvent on Aave.
-        // But Vault is msg.sender. Adapter is intermediary.
-        // Aave Borrow: `onBehalfOf`.
-        // Adapter calls borrow(asset, amount, ..., onBehalfOf=msg.sender).
-        // Requires User (Vault) to approve Credit Delegation to Adapter?
-        // Or simpler: Adapter is ONLY used if Vault Delegatecalls it?
-        // If delegatecall, then address(this) is Vault. POOL is immutable in logic contract.
-        
-        // DECISION: Adapters should be Libraries or Delegatecalled?
-        // If standard contract, `borrow` requires credit delegation.
-        // "Credit Delegation" is complex features.
-        // Simpler: Vault interacts with Aave directly?
-        // But we want "Protocol Agnostic".
-        // Solution: Vault DELEGATECALLS the Adapter logic.
-        
-        // If delegatecall:
-        IERC20(asset).approve(POOL, amount); // Optional if needed for repay?
-        IAavePoolSimple(POOL).borrow(asset, amount, 2, 0, address(this));
+        require(amount > 0, "amount=0");
+        uint256 beforeBalance = IERC20(asset).balanceOf(address(this));
+        IAavePoolSimple(POOL).borrow(asset, amount, 2, 0, msg.sender);
+        uint256 borrowed = IERC20(asset).balanceOf(address(this)) - beforeBalance;
+        require(IERC20(asset).transfer(msg.sender, borrowed), "transfer failed");
     }
 
     function repay(address asset, uint256 amount) external override {
-        IERC20(asset).approve(POOL, amount);
-        IAavePoolSimple(POOL).repay(asset, amount, 2, address(this));
+        require(amount > 0, "amount=0");
+        require(IERC20(asset).transferFrom(msg.sender, address(this), amount), "transferFrom failed");
+        require(IERC20(asset).approve(POOL, amount), "approve failed");
+        uint256 repaid = IAavePoolSimple(POOL).repay(asset, amount, 2, msg.sender);
+        if (repaid < amount) {
+            require(IERC20(asset).transfer(msg.sender, amount - repaid), "refund failed");
+        }
     }
 
     function getDebt(address asset, address user) external view override returns (uint256) {

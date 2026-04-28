@@ -31,6 +31,9 @@ contract WrappedAToken is ERC20 {
     /// @notice Decimals of the underlying aToken
     uint8 private immutable _decimals;
 
+    /// @notice Shares permanently locked on first wrap to make donation attacks uneconomic.
+    uint256 public immutable minimumLiquidity;
+
     /*//////////////////////////////////////////////////////////////
                               CONSTRUCTOR
     //////////////////////////////////////////////////////////////*/
@@ -46,8 +49,11 @@ contract WrappedAToken is ERC20 {
         string memory _name,
         string memory _symbol
     ) ERC20(_name, _symbol, ERC20(_aToken).decimals()) {
+        require(_aToken != address(0), "Invalid aToken");
         aToken = ERC20(_aToken);
         _decimals = ERC20(_aToken).decimals();
+        uint256 scale = 10 ** _decimals;
+        minimumLiquidity = scale > 1000 ? scale / 1000 : 1;
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -62,11 +68,16 @@ contract WrappedAToken is ERC20 {
     function wrap(uint256 aTokenAmount) external returns (uint256 shares) {
         require(aTokenAmount > 0, "Cannot wrap 0");
         
+        bool firstWrap = totalSupply == 0;
         shares = getSharesByAToken(aTokenAmount);
         require(shares > 0, "Shares cannot be 0");
         
         // Transfer aTokens from sender
         aToken.safeTransferFrom(msg.sender, address(this), aTokenAmount);
+
+        if (firstWrap) {
+            _mint(address(0), minimumLiquidity);
+        }
         
         // Mint shares to sender
         _mint(msg.sender, shares);
@@ -113,7 +124,8 @@ contract WrappedAToken is ERC20 {
         
         if (_totalSupply == 0 || _totalAssets == 0) {
             // First deposit: 1:1 ratio
-            return aTokenAmount;
+            if (aTokenAmount <= minimumLiquidity) return 0;
+            return aTokenAmount - minimumLiquidity;
         }
         
         // shares = aTokenAmount * totalShares / totalATokens

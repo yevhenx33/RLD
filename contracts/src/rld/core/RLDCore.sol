@@ -521,6 +521,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         uint256 indexPrice;
         uint256 totalAssets;
         uint256 normFactor;
+        uint256 debtValue;
         uint256 principalToCover;
         uint256 seizeAmount;
     }
@@ -667,6 +668,9 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
         }
         // 3. Snapshot principal BEFORE optimistic reduction
         uint256 principalSnapshot = uint256(positions[id][user].debtPrincipal);
+        ctx.debtValue = principalSnapshot.mulWad(
+            marketStates[id].normalizationFactor
+        ).mulWad(ctx.indexPrice);
 
         // 4. Debt Calculations & Updates (optimistic reduction)
         (ctx.principalToCover, ctx.normFactor) = _updateLiquidationDebt(
@@ -790,7 +794,7 @@ contract RLDCore is IRLDCore, RLDStorage, ReentrancyGuard {
 
         (, seizeAmount) = ILiquidationModule(module).calculateSeizeAmount(
             debtToCover,
-            ctx.totalAssets,
+            ctx.totalAssets > ctx.debtValue ? ctx.totalAssets - ctx.debtValue : 0,
             principalSnapshot, // H-2 FIX: Pre-reduction principal
             priceData,
             config,

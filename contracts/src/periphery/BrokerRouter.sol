@@ -197,6 +197,7 @@ contract BrokerRouter is ReentrancyGuard {
     error NotPoolManager();
     error PoolKeyMismatch();
     error SlippageExceeded();
+    error UnexpectedHook();
 
     /* ============================================================================================ */
     /*                                          MODIFIERS                                           */
@@ -814,6 +815,7 @@ contract BrokerRouter is ReentrancyGuard {
         address collateral,
         address position
     ) internal pure {
+        if (address(poolKey.hooks) != address(0)) revert UnexpectedHook();
         address c0 = Currency.unwrap(poolKey.currency0);
         address c1 = Currency.unwrap(poolKey.currency1);
         bool valid = (c0 == collateral && c1 == position) ||
