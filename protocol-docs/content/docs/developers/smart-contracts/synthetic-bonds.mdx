@@ -1,0 +1,32 @@
+---
+title: Synthetic Bonds
+description: BondFactory lifecycle for fully hedged yield monetization
+---
+
+# Synthetic Bond Lifecycle (BondFactory)
+
+The `BondFactory` provides an advanced wrapper for executing a fully hedged synthetic bond in a single transaction sequence. It abstracts away the complex Yield Monetization loop.
+
+```solidity
+function mintBond(
+    uint256 notional,
+    uint256 debtAmount,
+    uint256 duration,
+    PoolKey calldata poolKey,
+    bool useUnderlying
+) external returns (address broker);
+
+function closeBond(
+    address broker,
+    PoolKey calldata poolKey,
+    bool useUnderlying
+) external;
+```
+
+**`mintBond` Workflow:**
+1. Creates a new isolated `PrimeBroker`.
+2. Deposits the `notional` collateral.
+3. Mints `wRLP` (`debtAmount`).
+4. Swaps the minted `wRLP` for upfront collateral proceeds.
+5. Submits a `TWAMM` order to slowly buy back the `wRLP` over the `duration`.
+6. Freezes the broker to guarantee the maturity structure.

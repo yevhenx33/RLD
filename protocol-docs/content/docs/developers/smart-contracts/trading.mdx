@@ -1,0 +1,187 @@
+---
+title: Trading & Execution
+description: Long and short execution flows via the BrokerRouter
+---
+
+# Trading & Execution (Long / Short)
+
+The `BrokerRouter` is a permanent operator on every `PrimeBroker` — set once during `PrimeBroker.initialize()`, not per-transaction. It abstracts the full Uniswap V4 swap lifecycle (pool unlock, swap execution, token settlement) and enforces caller authorization via `onlyBrokerAuthorized`: only the NFT owner or a registered operator of the broker can invoke these functions.
+
+> **Security Property:** The router never holds user funds between transactions. All tokens are swept back to the broker before the function returns. The router itself has zero token custody risk.
+
+## Deposit Wrapping
+
+Before trading, the deposit path handles the full collateral wrapping pipeline. When a user calls `deposit()`, the router:
+
+```text
+USDC (user EOA)
+  │
+  ├─ 1. Pull via Permit2 (or transferFrom for depositWithApproval)
+  │
+  ├─ 2. supply() to Aave V3 Pool → receive aUSDC
+  │
+  ├─ 3. deposit() to ERC-4626 wrapper → receive waUSDC
+  │
+  └─ 4. waUSDC sent directly to PrimeBroker
+```
+
+The wrapping path is configured per-collateral via `DepositRoute` structs registered by the protocol admin. Each route maps `collateralToken → (underlying, aToken, wrapped, aavePool)`.
+
+## Execute Long
+
+Buy position tokens (`wRLP`) using collateral (`waUSDC`):
+
+```solidity
+function executeLong(
+    address broker,
+    uint256 amountIn,
+    PoolKey calldata poolKey
+) external returns (uint256 amountOut);
+```
+
+**Internal flow:**
+
+```text
+┌── executeLong(broker, amountIn, poolKey) ────────────────────────────┐
+│                                                                      │
+│  1. Validate poolKey currencies match broker's token pair            │
+│     → Reverts PoolKeyMismatch() if currencies don't match            │
+│                                                                      │
+│  2. pb.withdrawToken(collateralToken, router, amountIn)              │
+│     → Withdraw waUSDC from broker to router                          │
+│                                                                      │
+│  3. IERC20(collateral).approve(poolManager, amountIn)                │
+│                                                                      │
+│  4. Determine direction: zeroForOne = (collateral < position)        │
+│                                                                      │
+│  5. poolManager.unlock(SwapCallback{...})                            │
+│     └─ unlockCallback():                                             │
+│        ├─ poolManager.swap(key, params, "")                          │
+│        ├─ Settle input: currency.settle(poolManager, router, ...)    │
+│        └─ Take output: currency.take(poolManager, router, ...)       │
+│                                                                      │
+│  6. amountOut = positive delta from BalanceDelta                     │
+│                                                                      │
+│  7. Transfer ALL wRLP balance back to broker                         │
+│     → Router ends with zero token balance                            │
+│                                                                      │
+│  8. Emit LongExecuted(broker, amountIn, amountOut)                   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+- `amountIn`: Exact amount of `waUSDC` to spend (exact-input swap via negative `amountSpecified` in V4 convention).
+- `poolKey`: The Uniswap V4 `PoolKey` identifying the `wRLP/waUSDC` pool. Must match the broker's actual token pair.
+- Price limits default to `MIN_SQRT_PRICE + 1` / `MAX_SQRT_PRICE - 1` (no explicit price protection — the full range is allowed).
+
+## Execute Short (Leveraged)
+
+Mint wRLP debt and sell it for collateral in a single atomic operation:
+
+```solidity
+function executeShort(
+    address broker,
+    uint256 initialCollateral,
+    uint256 targetDebtAmount,
+    PoolKey calldata poolKey
+) external returns (uint256 proceeds);
+
+// With slippage protection:
+function executeShortWithMinOut(
+    address broker,
+    uint256 initialCollateral,
+    uint256 targetDebtAmount,
+    PoolKey calldata poolKey,
+    uint256 minProceeds
+) external returns (uint256 proceeds);
+```
+
+**Internal flow:**
+
+```text
+┌── executeShort(broker, initialCollateral, targetDebtAmount, poolKey) ─┐
+│                                                                       │
+│  1. Validate poolKey                                                  │
+│                                                                       │
+│  2. pb.modifyPosition(marketId, initialCollateral, targetDebtAmount)  │
+│     └─ Calls RLDCore.lock():                                          │
+│        ├─ Mints targetDebtAmount of wRLP (PositionToken) to broker    │
+│        └─ Solvency check deferred to lock release                     │
+│                                                                       │
+│  3. pb.withdrawToken(positionToken, router, targetDebtAmount)         │
+│     → Move newly minted wRLP from broker to router                    │
+│                                                                       │
+│  4. Swap wRLP → waUSDC via V4                                         │
+│     └─ Same unlock/callback pattern as executeLong                    │
+│                                                                       │
+│  5. proceeds = collateral received from swap                          │
+│     → if proceeds < minProceeds: revert SlippageExceeded()            │
+│                                                                       │
+│  6. Transfer proceeds (waUSDC) back to broker                         │
+│                                                                       │
+│  7. pb.modifyPosition(marketId, proceeds, 0)                          │
+│     └─ Deposit swap proceeds as additional collateral                 │
+│     └─ RLDCore.lock() re-checks solvency with new collateral          │
+│        ├─ Final NAV = initialCollateral + proceeds                    |
+│        └─ Debt = targetDebtAmount × NF × indexPrice                   |
+│        → Must satisfy: NAV ≥ Debt × minColRatio                       |
+│                                                                       │
+│  8. Emit ShortExecuted(broker, targetDebtAmount, proceeds)            |
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+- `initialCollateral`: The starting margin that must already be inside the broker. This value plus the swap proceeds must jointly satisfy the `minColRatio` against the minted debt.
+- `targetDebtAmount`: Exactly how many `wRLP` tokens to mint and sell. This defines the short exposure.
+- The short loop is **self-reinforcing**: selling wRLP generates collateral proceeds, which are then deposited back into the broker, increasing the NAV and allowing the solvency check to pass.
+
+## Close Long
+
+Sell wRLP back for collateral:
+
+```solidity
+function closeLong(
+    address broker,
+    uint256 amountIn,
+    PoolKey calldata poolKey
+) external returns (uint256 amountOut);
+```
+
+**Flow:** Withdraw `wRLP` from broker → swap via V4 for `waUSDC` → transfer proceeds back to broker. The broker's NAV shifts from position token exposure to collateral exposure.
+
+## Close Short
+
+Buy back wRLP to repay debt:
+
+```solidity
+function closeShort(
+    address broker,
+    uint256 collateralToSpend,
+    PoolKey calldata poolKey
+) external returns (uint256 debtRepaid);
+```
+
+**Internal flow:**
+
+```text
+┌── closeShort(broker, collateralToSpend, poolKey)       ────────────────┐
+│                                                                        │
+│  1. Withdraw waUSDC from broker → swap for wRLP via V4                 │
+│                                                                        │
+│  2. Transfer purchased wRLP back to broker                             │
+│                                                                        │
+│  3. Cap repayment at actual outstanding debtPrincipal:                 │
+│     currentDebt = IRLDCore.getPosition(marketId, broker).debtPrincipal |
+│     if (debtRepaid > currentDebt) debtRepaid = currentDebt             │
+│     → Prevents arithmetic underflow on full repay                      │
+│                                                                        │
+│  4. pb.modifyPosition(marketId, 0, -debtRepaid)                        │
+│     └─ RLDCore burns debtRepaid wRLP from broker                       │
+│     └─ Reduces debtPrincipal by corresponding amount                   │
+│                                                                        │
+│  5. Return any leftover tokens to broker (dust protection)             |
+│                                                                        │
+│  6. Emit ShortClosed(broker, debtRepaid, collateralToSpend)            |
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+- `collateralToSpend`: Exact amount of `waUSDC` to sell for wRLP. The resulting wRLP amount depends on pool price at execution time.
+- **Debt capping** is critical: if the swap returns more wRLP than the broker's outstanding `debtPrincipal`, the repayment is capped to prevent underflow. Excess wRLP remains in the broker as a long position.

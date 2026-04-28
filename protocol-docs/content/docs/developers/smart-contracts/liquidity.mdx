@@ -1,0 +1,74 @@
+---
+title: Liquidity Provisioning
+description: V4 LP position management and collateral tracking
+---
+
+# Liquidity Provisioning & Broker Management
+
+## V4 LP Position Management
+
+Brokers can provide concentrated liquidity to the wRLP/collateral V4 pool through the `PrimeBroker`'s built-in LP management functions. The LP position NFT is minted directly to the broker, and its value is included in the broker's NAV for solvency calculations.
+
+**Adding Liquidity:**
+
+```solidity
+function addPoolLiquidity(
+    address twammHook,
+    int24 tickLower,
+    int24 tickUpper,
+    uint128 liquidity,
+    uint128 amount0Max,
+    uint128 amount1Max
+) external returns (uint256 tokenId);
+```
+
+- `twammHook`: The GhostRouter hook address, used internally to construct the `PoolKey` with `fee: 500` and `tickSpacing: 5`.
+- `tickLower` / `tickUpper`: Concentrated liquidity bounds (must be aligned to tick spacing of 5).
+- `liquidity`: Amount of liquidity units to mint.
+- `amount0Max` / `amount1Max`: Slippage protection caps for each currency.
+
+The function mints a new V4 position NFT to the broker. If no position is currently tracked for solvency, the new position is automatically set as `activeTokenId`. Token approvals are handled via Permit2, which is pre-approved during broker initialization.
+
+**Removing Liquidity:**
+
+```solidity
+function removePoolLiquidity(
+    uint256 tokenId,
+    uint128 liquidity
+) external returns (uint256 amount0, uint256 amount1);
+```
+
+If `liquidity >= currentLiquidity`, the position is fully removed and the NFT is burned. If the removed position was the tracked `activeTokenId`, tracking is automatically cleared. A solvency check runs after removal to ensure the broker remains healthy.
+
+**Fee Collection:**
+
+```solidity
+function collectV4Fees() external;
+```
+
+Collects accumulated trading fees from the tracked V4 LP position without removing any liquidity. Internally this calls `DECREASE_LIQUIDITY` with 0 liquidity delta plus `TAKE_PAIR` to sweep accrued fees back to the broker. Fees become part of the broker's collateral balance and are immediately reflected in NAV.
+
+## LP Position Tracking as Collateral
+
+The broker tracks **one** V4 LP position and **one** TWAMM order for solvency valuation (V1 limitation). The tracked position's value is included in `getNetAccountValue()`:
+
+```text
+getNetAccountValue() =
+    + collateralToken.balanceOf(broker)                ← cash
+    + positionToken.balanceOf(broker) × indexPrice     ← wRLP holdings
+    + TWAMM_MODULE.getValue(activeTwammOrder)          ← stream order value
+    + V4_MODULE.getValue(activeTokenId)                ← LP position value
+```
+
+**Ownership Validation:** Before counting an LP position's value, the broker verifies `POSM.ownerOf(activeTokenId) == address(this)`. If the NFT has been transferred out (e.g., by a malicious `execute()` call), the position value is treated as zero. This prevents NAV inflation attacks.
+
+**Manually Setting the Active Position:**
+
+```solidity
+function setActiveV4Position(uint256 newTokenId) external;
+function clearActiveV4Position() external;
+```
+
+If a broker holds multiple LP positions, only the tracked one counts toward solvency. Users should track their largest position to maximize borrowing capacity. Switching from a large tracked position to a smaller one triggers a solvency check — the transaction reverts if the reduced NAV makes the broker insolvent.
+
+> **Warning:** Untracked positions are invisible to solvency checks. A broker with 100k in untracked LP and only 1k in cash may appear insolvent despite having sufficient assets.

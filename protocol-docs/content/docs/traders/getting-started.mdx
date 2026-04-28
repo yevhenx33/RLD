@@ -1,0 +1,64 @@
+---
+title: Getting Started
+description: Connect, deposit, and open your first position on RLD
+---
+
+# Getting Started
+
+RLD is a derivatives protocol for trading interest rates on Ethereum. You can go long or short on DeFi lending rates, lock in fixed yields for any maturity via synthetic bonds, or buy insurance against protocol defaults.
+
+---
+
+## 1. Connect Your Wallet
+
+RLD supports any EVM-compatible wallet (MetaMask, Rabby, WalletConnect, Coinbase Wallet, etc.). Click **Connect** in the header to get started.
+
+RLD uses **Permit2** for token approvals — this means you sign a gasless message instead of sending an on-chain approval transaction. You only need to approve Permit2 once per token, ever.
+
+## 2. Open a Margin Account
+
+Every position on RLD lives inside a **Margin Account** (called a "Broker"). Think of it as a personal trading vault that holds your collateral and tracks your positions.
+
+**To create one:**
+1. Navigate to the **Portfolio** page.
+2. Click **Create Account**.
+3. Confirm the transaction — this deploys your margin account and mints an NFT representing ownership.
+
+Your margin account is an NFT. You can transfer it, delegate trading access to bots via the operator system, or freeze it to create a synthetic bond.
+
+## 3. Deposit Collateral
+
+Before trading, you need to fund your margin account with USDC:
+
+1. Enter the amount of USDC you want to deposit.
+2. Sign the Permit2 message (gasless).
+3. Confirm the deposit transaction.
+
+Your USDC is automatically wrapped into waUSDC (Aave V3 yield-bearing USDC) — meaning your idle collateral earns Aave supply yield while it sits in your account.
+
+## 4. Place Your First Trade
+
+Navigate to any market and choose your direction:
+
+| Action | What It Does | When To Use |
+| --- | --- | --- |
+| **Long** | Buy wRLP tokens — profit if rates go up | You think rates will spike |
+| **Short** | Mint & sell wRLP — profit if rates go down | You want to hedge or bet on rate declines |
+| **Bond** | Lock in a fixed yield for a set duration | You want predictable, stable returns |
+| **CDS** | Buy insurance against a lending protocol default | You want tail-risk protection |
+
+**Example — Going Long on Rates:**
+1. Select the Rate Perps market.
+2. Enter the amount of collateral to spend.
+3. Click **Long** — the protocol swaps your waUSDC for wRLP tokens.
+4. If rates rise, your wRLP becomes more valuable. Close the position anytime to realize profit.
+
+## 5. Monitor Your Position
+
+The **Portfolio** page shows:
+- Your margin account balance (collateral + position value).
+- Active positions with real-time P&L.
+- Health factor — how close you are to liquidation.
+- Any active TWAMM streaming orders or LP positions.
+
+> **Tip:** Keep your health factor above 1.5× to maintain a comfortable buffer against rate spikes.

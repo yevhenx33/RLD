@@ -1,0 +1,164 @@
+---
+title: TWAMM & Streaming
+description: Time-Weighted Average Market Maker streaming order system
+---
+
+# TWAMM & Streaming Execution
+
+The protocol includes a Time-Weighted Average Market Maker (TWAMM) system that enables continuous execution of swap orders over configurable time horizons. Instead of executing a swap instantly at a single price point, TWAMM distributes the order linearly over a specified `duration`, achieving a time-weighted average execution price that smooths out short-term volatility and minimizes market impact.
+
+The TWAMM system is implemented via the Hub/Spoke architecture: the `GhostRouter` (Hub) custodies all funds and routes swaps, while the `TwapEngine` (Spoke) maintains the streaming order state and O(1) accounting.
+
+## Submitting a Stream Order
+
+Stream orders are submitted through the `PrimeBroker` via the `PrimeBrokerOpsModule`:
+
+```solidity
+function submitTwammOrder(
+    address _twapEngine,
+    bytes32 _marketId,
+    bool zeroForOne,
+    uint256 duration,
+    uint256 amountIn
+) external returns (bytes32 orderId);
+```
+
+**Parameters:**
+- `_twapEngine`: Address of the deployed `TwapEngine` spoke contract.
+- `_marketId`: The GhostRouter market ID (derived from the V4 pool ID).
+- `zeroForOne`: Swap direction — `true` sells token0 (buys token1), `false` sells token1 (buys token0).
+- `duration`: Total time in seconds over which the order executes. Must be aligned to the engine's `expirationInterval` (e.g., 1 hour, 4 hours). The order starts at the *next* epoch boundary, not at submission time.
+- `amountIn`: Total amount of sell tokens to distribute across the duration.
+
+**What happens internally:**
+
+1. The broker approves the `GhostRouter` to pull `amountIn` of the sell token.
+2. `TwapEngine.submitStream()` is called, which:
+   - Pulls the sell tokens from the broker into the GhostRouter vault.
+   - Accrues the market state to the current timestamp (`_accrueInternal`).
+   - Computes the **scaled sell rate**: `scaledSellRate = amountIn × 1e18 / duration`.
+   - Schedules the rate to activate at `nextEpoch = ceil(now / interval) × interval` and deactivate at `expiration = nextEpoch + duration`.
+   - Registers both epochs in the **epoch event bitmap** — a two-level bitmap index that allows the accrual engine to jump directly to event boundaries instead of iterating every interval.
+   - Stores the `StreamOrder` with the order's sell rate, earnings factor baseline, start/expiration epochs, and direction.
+3. The broker stores the order as its `activeTwammOrder` and runs a solvency check.
+
+The `orderId` is deterministic: `keccak256(abi.encode(sender, nextEpoch, zeroForOne, nonce))`.
+
+> **Constraint:** Only one active TWAMM order per broker is tracked for NAV valuation. If you need multiple concurrent streams, use separate brokers.
+
+## Ghost Accumulation & Accrual
+
+Between epochs, the sell-side tokens accumulate as **ghost balances** — tokens that have been committed by stream sellers but not yet matched with a buyer. Ghost accrues continuously based on the active sell rate:
+
+```text
+ghostAccrual = sellRateCurrent × deltaSeconds / 1e18
+```
+
+The `_accrueInternal()` function processes time passage efficiently using the epoch bitmap:
+- Instead of iterating every interval, it uses `_findNextEventEpoch()` to bitmap-jump to the next epoch that has a start or expiry event.
+- At each event epoch, `_crossEpoch()` activates starting rates and removes expiring rates, then snapshots the current `earningsFactorCurrent` for later order settlement.
+- Between event epochs, ghost simply accumulates proportionally to elapsed time.
+
+This bitmap approach makes accrual cost O(events) rather than O(intervals), which is critical for long-duration orders spanning many intervals.
+
+## Settlement Paths (How Ghost Gets Consumed)
+
+Ghost inventory is consumed through four settlement mechanisms, each converting the accumulated sell-side tokens into buy-side earnings for the stream sellers:
+
+### Taker Swap Netting (Layer 1 — automatic)
+
+When a taker calls `GhostRouter.swap()`, the router first aggregates ghost from all registered engines. Opposing ghost balances (token0 ghost vs token1 ghost) are **netted** against each other at the oracle spot price. This is free internal matching — no AMM fees, no slippage. The engine's `applyNettingResult()` deducts consumed ghost and credits the corresponding earnings to the stream pool.
+
+### Taker Intercept (Layer 2 — automatic)
+
+After netting, any remaining directional ghost is offered to the taker. If the taker is buying token1 and there is token1 ghost available, the taker receives ghost inventory at spot price instead of routing through the V4 pool. The engine's `takeGhost()` handles this, rounding `inputConsumed` up (ceiling division) to prevent free dust extraction.
+
+### Clear Auction (solver path — permissionless)
+
+Third-party solvers can call `TwapEngine.clearAuction()` to purchase accumulated ghost at a time-decay discount:
+
+```solidity
+function clearAuction(
+    bytes32 marketId,
+    bool zeroForOne,
+    uint256 maxAmount,
+    uint256 minDiscountBps
+) external;
+```
+
+The discount grows linearly with time since the last clear:
+
+```text
+discountBps = elapsedSinceClear × discountRateScaled / 1e12
+discountBps = min(discountBps, maxDiscountBps)
+
+fullPayment = clearAmount × spotPrice  (direction-adjusted)
+discountedPayment = fullPayment × (1 - discountBps / 10000)
+```
+
+The solver pays `discountedPayment` in the buy-side token and receives `clearAmount` of the ghost token. If `discountedPayment` equals zero (e.g., due to dust amounts), the transaction reverts. The payment is pulled from the solver *before* ghost tokens are dispatched (pull-first safety pattern).
+
+Configuration parameters set at `TwapEngine` deployment:
+- `expirationInterval`: Epoch boundary spacing (e.g., 3600 = 1 hour).
+- `maxDiscountBps`: Maximum auction discount cap (e.g., 500 = 5%).
+- `discountRateScaled`: Discount growth rate per second (scaled by 1e12).
+
+### Force Settle (emergency — router-only)
+
+During liquidation or emergency flows, the `GhostRouter` can call `forceSettle()` to crystallize all ghost for a direction by settling it through the V4 AMM at the current market price. This ensures ghost value is not stranded when a stream must be terminated.
+
+## Earnings Accumulator
+
+Stream sellers earn proceeds through a global cumulative **earnings factor** per direction:
+
+```text
+earningsFactor += earnings × (Q96 × 1e18) / sellRateCurrent
+```
+
+Individual order earnings are calculated as:
+
+```text
+orderEarnings = sellRate × (effectiveEF - effectiveEFL) / (Q96 × 1e18)
+```
+
+Where `effectiveEF` is the current (or expiry-capped) earnings factor, and `effectiveEFL` is the order's baseline (or start-epoch-floored) factor. This design allows O(1) per-order settlement regardless of how many epochs have passed.
+
+**Earnings capping rules:**
+- After expiration: earnings factor is capped at the expiry epoch snapshot (no post-expiry earnings).
+- Before start: earnings factor baseline equals the current factor (no pre-start earnings).
+
+## Claiming Earnings
+
+```solidity
+function claimExpiredTwammOrder() external returns (uint256 claimedBuyToken);
+```
+
+Calling `claimExpiredTwammOrder()` on the broker:
+1. Triggers `_accrueInternal()` on the engine.
+2. Computes the settlement preview based on the order's sell rate and the earnings factor delta since last claim.
+3. Pushes the earned buy-side tokens from the GhostRouter vault to the order owner.
+4. Updates the order's `earningsFactorLast` to prevent double-claiming.
+5. Clears the broker's `activeTwammOrder`.
+
+For claiming without clearing the active order (e.g., mid-stream partial claims), use `claimExpiredTwammOrderWithId()` with explicit engine/market/order parameters.
+
+## Cancelling an Order
+
+```solidity
+function cancelTwammOrder() external returns (uint256 buyTokensOut, uint256 sellTokensRefund);
+```
+
+Cancellation handles three order states:
+
+- **Not yet started** (before start epoch): Full refund of `amountIn`. Both the start and end epoch rate schedules are removed from the bitmap.
+- **Active** (between start and expiration): Partial refund of the remaining unsold principal (`sellRate × remainingSeconds / 1e18`), plus any accrued but unclaimed earnings. The current sell rate and the end-epoch rate schedule are removed.
+- **Expired** (after expiration): Zero refund, only pending earnings are claimed. The order is deleted.
+
+Before cancellation, if the order is active, the engine calls `_settleGhostForDirection()` to crystallize any accrued ghost through the AMM. This ensures the cancelled order receives its pro-rata share of proceeds earned while it was still participating — a critical fairness property.
+
+## Broker NAV Integration
+
+The broker's `getNetAccountValue()` includes the value of any active TWAMM order. The `TwapEngineLens` provides two valuation views:
+
+- `getCancelOrderState(marketId, orderId)` — Returns `(buyTokensOwed, sellTokensRefund)` based on committed engine state (`lastUpdateTime`).
+- `getCancelOrderStateExact(marketId, orderId)` — Same calculation but simulated at `block.timestamp` without mutating state, providing a more accurate real-time valuation.

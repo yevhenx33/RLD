@@ -1,0 +1,17 @@
+---
+title: Broker Creation
+description: How to deploy and manage PrimeBroker margin accounts
+---
+
+# Broker Creation
+
+Users do not interact with the protocol using their raw EOA. Every user must mint a `PrimeBroker` proxy. The broker acts as an isolated margin account and custody layer.
+
+```solidity
+function createBroker(bytes32 salt) external returns (address broker);
+```
+
+**Workflow:**
+1. Call `PrimeBrokerFactory.createBroker(salt)`.
+2. The factory deploys a deterministic minimal proxy linked to the specific market.
+3. The factory mints an ERC-721 token representing ownership to the caller. The token ID strictly equals `uint256(uint160(broker))`.

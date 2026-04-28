@@ -1,0 +1,96 @@
+---
+title: Data & APIs
+description: Real-time and historical GraphQL APIs for the RLD Protocol
+---
+
+# Data & APIs
+
+RLD provides open market data infrastructure to ensure all integrators, market makers, and analytical engines have unrestricted, high-fidelity access to the protocol's state.
+
+There are no API keys and no vendor lock-in. The data stack is composed of two primary API planes:
+
+- **[Protocol Indexer](/docs/developers/data-apis/protocol-indexer)** — Real-time protocol state including positions, brokers, pool data, candles, LP positions, TWAMM orders, bonds, and CDS coverage. This is the primary API for building frontends, liquidation bots, and trading systems.
+
+- **[Rates & Analytics](/docs/developers/data-apis/rates-indexer)** — Historical lending rate data and cross-protocol market analytics. Provides timeseries for Aave V3, Euler, Fluid, and off-chain benchmarks (SOFR, sUSDe). Used for yield research, backtesting, and dashboard visualizations.
+
+---
+
+## Public Endpoints
+
+```text
+                        [ Public / External Client ]
+                                     |
+           +-------------------------+-------------------------+
+           |                         |                         |
+           v                         v                         v
++---------------------+   +---------------------+   +---------------------+
+| Protocol Indexer    |   | Rates & Analytics   |   |   RLD RPC Node      |
+|  (api.rld.fi)       |   | (api.rld.fi)        |   |   (api.rld.fi/rpc)  |
++---------------------+   +---------------------+   +---------------------+
+|                     |   |                     |   |                     |
+| GraphQL:            |   | GraphQL:            |   | JSON-RPC 2.0:       |
+|  /graphql           |   |  /analytics/graphql |   |  /rpc               |
+|                     |   |                     |   |                     |
+| REST:               |   | REST:               |   | Standard eth_*      |
+|  /api/market-info   |   |  /rates             |   | namespace           |
+|  /api/status        |   |  /eth-prices        |   |                     |
+|  /api/events        |   |                     |   |                     |
+|  /api/volume        |   | WebSocket:          |   |                     |
+|  /api/latest        |   |  /ws/rates          |   |                     |
+|  /api/price-history |   |                     |   |                     |
+|  /config            |   |                     |   |                     |
++---------------------+   +---------------------+   +---------------------+
+```
+
+| Path | API Plane | Purpose |
+| --- | --- | --- |
+| `/graphql` | Protocol Indexer | Real-time protocol state — positions, brokers, pools, candles, LP positions, TWAMM orders, bonds, CDS |
+| `/api/market-info` | Protocol Indexer | Static market configuration — contract addresses, risk parameters, token metadata |
+| `/api/status` | Protocol Indexer | Indexer health — last indexed block, total events, current mark/index prices |
+| `/api/events` | Protocol Indexer | Recent decoded events from RLDCore, BrokerRouter, PrimeBrokerFactory |
+| `/api/volume` | Protocol Indexer | 24H trading volume aggregated from hourly candle buckets |
+| `/api/latest` | Protocol Indexer | Pre-computed global snapshot — market state, pool state, all broker summaries |
+| `/api/price-history` | Protocol Indexer | Block-level mark/index price timeseries for charting |
+| `/config` | Protocol Indexer | Full deployment configuration consumed by daemons and bots |
+| `/analytics/graphql` | Rates & Analytics | Historical lending rates, market snapshots, protocol TVL, individual market timeseries |
+| `/rates` | Rates & Analytics | Aggregated lending rate timeseries with configurable resolution |
+| `/eth-prices` | Rates & Analytics | ETH/USD price history with configurable resolution |
+| `/ws/rates` | Rates & Analytics | Live rate/price push updates via WebSocket |
+| `/rpc` | RLD RPC Node | Standard Ethereum JSON-RPC proxy for direct on-chain reads and transaction submission |
+
+---
+
+## Integration Recipes
+
+### Liquidation Bot
+
+```text
+1. GET  /api/market-info                      → cache market config
+2. POST /graphql  { brokers(marketId: ...) }   → scan all broker balances
+3. For each broker:
+     compute debt = debtPrincipal × normalizationFactor / 1e18
+     compute NAV  = wausdcBalance + (wrlpBalance × indexPrice)
+     if NAV < debt × maintenanceMargin → candidate for liquidation
+4. POST /rpc  { eth_call: Core.isSolvent() }   → confirm on-chain
+5. POST /rpc  { eth_sendTransaction: Core.liquidate() }
+```
+
+### Dashboard Initialization
+
+```text
+1. GET  /api/market-info      → contract addresses, risk params
+2. POST /graphql { snapshot }  → pre-computed market/pool/broker state
+3. POST /graphql { candles }   → OHLCV chart data
+4. WS   /ws/rates              → live rate ticker
+```
+
+### Yield Analytics Bot
+
+```text
+1. POST /analytics/graphql { rates(symbol: "USDC", resolution: "1H", limit: 8760) }
+     → 1 year of hourly Aave USDC borrow rates
+2. Compute: rolling mean, volatility, mean-reversion signals
+3. POST /analytics/graphql { marketTimeseries(entityId: "aave_usdc_v3") }
+     → utilization history for regime detection
+4. Execute strategy via BrokerRouter when entry conditions met
+```

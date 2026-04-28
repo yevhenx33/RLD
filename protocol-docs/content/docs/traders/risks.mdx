@@ -1,0 +1,119 @@
+---
+title: Risks
+description: Understand the risks of trading on RLD
+---
+
+# Risks
+
+RLD is a derivatives protocol. Like all derivatives, positions carry risk. This page covers the key risks you should understand before trading.
+
+---
+
+## Liquidation
+
+If your margin account's health factor drops below the maintenance margin (~109%), your account becomes eligible for liquidation.
+
+**How liquidation works on RLD:**
+
+RLD uses a **Dutch auction** — not instant liquidation. When your account becomes underwater:
+
+1. A time-decay auction begins automatically.
+2. The liquidation discount starts at 0% and increases over time.
+3. Liquidators wait until the discount covers their costs, then step in.
+4. The liquidator repays some or all of your debt and receives your collateral at a discount.
+
+**Why Dutch auctions?** Instant liquidations in traditional DeFi cause cascading slippage — one big liquidation crashes the price, triggering more liquidations. The Dutch auction spreads liquidation over time, giving the market time to absorb the selling pressure.
+
+**How to avoid liquidation:**
+- Maintain a health factor well above 1.5×.
+- Monitor your positions during volatile periods.
+- Add collateral if your health factor drops.
+- Don't over-leverage — the protocol allows high leverage, but that doesn't mean you should use it.
+
+---
+
+## Funding Decay
+
+The normalization factor continuously adjusts based on the premium or discount between mark and index:
+
+- **If you're long in a premium market** (mark > index): Your wRLP tokens slowly lose value relative to a static position. This is the cost of carry.
+- **If you're short in a discount market** (mark < index): Your debt grows faster than the rate alone would imply.
+
+Funding is not a fee — it's a value transfer between longs and shorts. But if you're on the wrong side for an extended period, it can significantly erode your position.
+
+> **Tip:** Check the current funding rate before opening a position. A large premium or discount means you're paying for the privilege of holding your position.
+
+---
+
+## Smart Contract Risk
+
+RLD is built on Ethereum with Uniswap V4 as the underlying pool. While the protocol undergoes rigorous auditing, all smart contracts carry inherent risk:
+- Bugs in the core contracts could result in loss of funds.
+- Bugs in the Uniswap V4 PoolManager or periphery contracts could affect pool operations.
+- Oracle failures could lead to incorrect index prices and unexpected liquidations.
+
+**Mitigation:** RLD's CDS product exists precisely to hedge this risk for other lending protocols. However, there is no CDS product for RLD itself.
+
+---
+
+## Collateral Risk
+
+Your collateral is automatically wrapped into waUSDC (Aave V3 wrapped aUSDC). This means you have exposure to:
+- **Aave V3 solvency** — if Aave accrues bad debt, waUSDC could depeg.
+- **USDC stability** — if USDC depegs, your collateral value drops.
+- **ERC-4626 wrapper risk** — the waUSDC wrapper is an additional smart contract layer.
+
+---
+
+## TWAMM Execution Risk
+
+TWAMM streaming orders execute gradually over time. During the execution window:
+- **Price can move against you** — your average execution price depends on market conditions throughout the entire duration.
+- **Ghost settlement dependency** — your order's fill quality depends on taker flow, netting, and solver auctions. In low-activity periods, ghost inventory may accumulate without settlement.
+- **Single-order limit** — Only one TWAMM order per margin account is tracked for NAV. If your streaming order loses value, your health factor drops.
+
+---
+
+## Limit Order Risk
+
+Limit orders on RLD are **not tracked as collateral**. When you submit a limit order:
+- The funds leave your margin account's NAV calculation.
+- Your health factor drops immediately.
+- If the order isn't filled, you can cancel to recover the funds.
+
+This means aggressive limit order placement can inadvertently push your account toward liquidation, even if the order hasn't triggered yet.
+
+---
+
+## LP-Specific Risks
+
+If you're providing liquidity:
+- **Out-of-range risk:** Rates can stay outside your tick range longer than expected. While mean-reversion is structurally guaranteed, the timing is not.
+- **Impermanent loss:** Temporary, but can be significant during extended rate dislocations.
+- **Single-position tracking:** Only one LP position counts as collateral per margin account. Untracked positions are invisible to the solvency engine.
+
+---
+
+## Bond-Specific Risks
+
+Synthetic bonds are **not risk-free fixed income.** Key risks:
+
+- **Liquidation during extreme spikes:** If rates spike far beyond the initial hedge ratio, the margin account may become undercollateralized and get liquidated before the bond matures.
+- **Basis risk:** The hedge is calibrated to the *expected* mean rate. Extreme, sustained deviations from the mean create tracking error between the short hedge and the floating yield.
+- **TWAMM execution quality:** The buy-back order's average price depends on market conditions over the entire duration. Low liquidity periods may result in worse execution.
+- **Freeze limitation:** While frozen, you cannot adjust positions. If the market moves dramatically, you're locked in until you unfreeze (which forfeits the fixed-rate guarantee).
+
+---
+
+## Summary
+
+| Risk | Severity | Mitigation |
+| --- | --- | --- |
+| **Liquidation** | High | Maintain >1.5× health factor, don't over-leverage |
+| **Funding decay** | Medium | Monitor premium/discount, avoid extended carry |
+| **Smart contract** | Low (audited) | Diversify, don't deposit more than you can lose |
+| **Collateral (Aave/USDC)** | Low | Systemic — limited mitigation |
+| **TWAMM execution** | Medium | Use appropriate durations, monitor ghost settlement |
+| **Limit order NAV gap** | Medium | Size limit orders carefully relative to margin |
+| **LP out-of-range** | Medium | Use wider ranges, monitor rate movements |
+| **Bond liquidation** | Low-Medium | Conservative sizing, monitor extreme rate scenarios |

@@ -1,0 +1,490 @@
+---
+title: Architecture
+description: Comprehensive technical architecture of the RLD Protocol
+---
+
+# Architecture Overview
+
+RLD is a singleton market factory, margin-account, and execution stack for rate-level derivative markets. The protocol is organized into four source directories — `rld/` (core protocol), `dex/` (execution engines), `periphery/` (user-facing routers and factories), and `shared/` (interfaces, libraries, utilities) — each encapsulating a distinct layer of the system.
+
+
+## System Topology
+
+```text
+┌────────────────────────────────────────────────────────────────────────┐
+│                          PERIPHERY LAYER                               │
+│                                                                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
+│  │ BrokerRouter │  │ BondFactory  │  │CDSCoverage   │  │BasisTrade  │  │
+│  │              │  │              │  │Factory       │  │Factory     │  │
+│  │ deposit()    │  │ mintBond()   │  │              │  │            │  │
+│  │ executeLong()│  │ closeBond()  │  │ buyCoverage()│  │ openBasis()│  │
+│  │ executeShort │  │              │  │              │  │            │  │
+│  │ closeLong()  │  │              │  │              │  │            │  │
+│  │ closeShort() │  │              │  │              │  │            │  │
+│  └──────┬───────┘  └──────────────┘  └──────────────┘  └────────────┘  │
+└─────────┼──────────────────┼─────────────────┼───────────────┼─────────┘
+          │                  │                 │               │
+          v                  v                 v               v
+┌────────────────────────────────────────────────────────────────────────┐
+│                       BROKER ACCOUNT LAYER                             │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                   PrimeBroker (Minimal Proxy)                    │  │
+│  │                                                                  │  │
+│  │  • ERC-721 bound (tokenId = uint160(brokerAddress))              │  │
+│  │  • Holds: collateral tokens, wRLP, V4 LP positions, TWAMM orders │  │
+│  │  • Implements lockAcquired() callback for RLDCore.lock()         │  │
+│  │  • Reports getNetAccountValue() for solvency checks              │  │
+│  │  • Operator delegation (owner + approved operators)              │  │
+│  │  • Delayed withdrawal queue (CDS markets)                        │  │
+│  │  • Freeze/unfreeze (Bond mode)                                   │  │
+│  └──────────────┬───────────────────────────────────┬───────────────┘  │
+│                 │                                   │                  │
+│  ┌──────────────┴────────────┐  ┌───────────────────┴──────────────┐   │
+│  │ UniswapV4BrokerModule     │  │ TwapEngineBrokerModule           │   │
+│  │ (V4 LP position tracking) │  │ (TWAMM order tracking)           │   │
+│  └───────────────────────────┘  └──────────────────────────────────┘   │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │               PrimeBrokerFactory (per market)                    │  │
+│  │  • Deploys deterministic minimal proxies via Clones              │  │
+│  │  • Mints ERC-721 to caller on createBroker()                     │  │
+│  │  • Pre-approves BrokerRouter as default operator                 │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+          │                                   │
+          v                                   v
+┌────────────────────────────────────────────────────────────────────────┐
+│                         CORE LAYER (Singleton)                         │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                           RLDCore                                │  │
+│  │                                                                  │  │
+│  │  Market Registry ─── MarketAddresses + MarketConfig + MarketState│  │
+│  │  Position Ledger ─── positions[marketId][broker] = debtPrincipal │  │
+│  │  Flash Accounting ── lock() → lockAcquired() → solvency check    │  │
+│  │  Debt Tokenization ─ PositionToken mint/burn synced to principal │  │
+│  │  Funding Engine ──── _applyFunding() via IFundingModel           │  │
+│  │  Liquidation ─────── liquidate() via ILiquidationModule          │  │
+│  │  Bad Debt ───────── Socialized via NF bleeding over badDebtPeriod│  │
+│  │  Global Settlement ─ enterGlobalSettlement() (CDS termination)   │  │
+│  │  Risk Governance ─── proposeRiskUpdate() with 7-day timelock     │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                      RLDMarketFactory                            │  │
+│  │                                                                  │  │
+│  │  7-Phase Atomic Market Deployment:                               │  │
+│  │  1. Validate params  2. Precompute MarketId  3. Deploy infra     │  │
+│  │  4. Clone PositionToken  5. Initialize V4 pool  6. Register Core │  │
+│  │  7. Post-condition MarketId assertion                            │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                        RLDStorage                                │  │
+│  │  • Transient storage keys (EIP-1153) for flash accounting        │  │
+│  │  • LOCK_HOLDER, TOUCHED_COUNT, ACTION_SALT                       │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+          │                                   │
+          v                                   v
+┌────────────────────────────────────────────────────────────────────────┐
+│                      MODULES LAYER (Pluggable)                         │
+│                                                                        │
+│  ┌─────────────────┐ ┌──────────────────┐ ┌─────────────────────────┐  │
+│  │  Rate Oracles   │ │  Funding Models  │ │  Liquidation Modules    │  │
+│  │                 │ │                  │ │                         │  │
+│  │  RLDAaveOracle  │ │ StandardFunding  │ │ DutchLiquidationModule  │  │
+│  │  (live Aave V3  │ │ Model            │ │ (health-based auction   │  │
+│  │   borrow rates) │ │ (mark-index      │ │  with packed params:    │  │
+│  │                 │ │  divergence via  │ │  baseDiscount,          │  │
+│  │  GhostSingleton │ │  exponential NF  │ │  maxDiscount, slope)    │  │
+│  │  Oracle         │ │  decay)          │ │                         │  │
+│  │  (V4 TWAP spot) │ │                  │ │                         │  │
+│  │                 │ │ CDSDecayFunding  │ │                         │  │
+│  │  ChainlinkSpot  │ │ Model            │ │                         │  │
+│  │  Oracle         │ │ (exponential     │ │                         │  │
+│  │                 │ │  token decay)    │ │                         │  │
+│  └─────────────────┘ └──────────────────┘ └─────────────────────────┘  │
+│                                                                        │
+│  ┌─────────────────┐ ┌──────────────────┐ ┌─────────────────────────┐  │
+│  │  Settlement     │ │  Verifier        │ │  Adapters               │  │
+│  │                 │ │                  │ │                         │  │
+│  │ CDSSettlement   │ │ BrokerVerifier   │ │  AaveAdapter            │  │
+│  │ Proxy           │ │ (validates broker│ │  (wrap/unwrap aTokens)  │  │
+│  │ (oracle-attested│ │  factory origin) │ │                         │  │
+│  │  default events)│ │                  │ │                         │  │
+│  └─────────────────┘ └──────────────────┘ └─────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+          │
+          v
+┌────────────────────────────────────────────────────────────────────────┐
+│                       DEX / EXECUTION LAYER                            │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                   GhostRouter (Hub)                              │  │
+│  │                                                                  │  │
+│  │  • Custodies all market funds (vault)                            │  │
+│  │  • Three-layer swap routing:                                     │  │
+│  │    L1: Cross-engine ghost netting                                │  │
+│  │    L2: Taker intercept against directional ghost                 │  │
+│  │    L3: Uniswap V4 pool fallback                                  │  │
+│  │  • Oracle modes: External or UniswapV4Spot (slot0 sqrtPriceX96)  │  │
+│  │  • Engine registry (register/deregister spoke engines)           │  │
+│  └──────────┬───────────────────────────────────┬───────────────────┘  │
+│             │                                   │                      │
+│  ┌──────────┴──────────────┐     ┌──────────────┴──────────────────┐   │
+│  │   TwapEngine (Spoke)    │     │    LimitEngine (Spoke)          │   │
+│  │                         │     │                                 │   │
+│  │  • TWAMM streaming      │     │  • Dormant limit-order buckets  │   │
+│  │    orders               │     │  • Activation-only global merge │   │
+│  │  • O(1) epoch-bitmap    │     │  • Pro-rata earnings via        │   │
+│  │    accrual              │     │    accumulator deltas           │   │
+│  │  • Clear auction        │     │                                 │   │
+│  │    (solver path)        │     │                                 │   │
+│  └─────────────────────────┘     └─────────────────────────────────┘   │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │              Uniswap V4 PoolManager (External)                   │  │
+│  │  • Concentrated liquidity pools for wRLP/collateral              │  │
+│  │  • One isolated pool per market (initialized by RLDMarketFactory)│  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## RLDCore: The Singleton Clearinghouse
+
+`RLDCore` is the central hyperstructure. There is exactly one instance managing all markets. It is responsible for five critical functions:
+
+1. **Market Registry** — Stores `MarketAddresses`, `MarketConfig`, and `MarketState` per `MarketId`.
+2. **Flash Accounting** — Uniswap V4-style `lock()` pattern using EIP-1153 transient storage.
+3. **Position Management** — Tracks debt principal only (collateral is delegated to `PrimeBroker`).
+4. **Solvency Enforcement** — Post-operation health checks on all touched positions.
+5. **Liquidation** — Permissionless liquidation of undercollateralized brokers.
+
+### Flash Accounting Pattern
+
+All state-changing interactions flow through the `lock()` entry point:
+
+```text
+User/Broker ──── lock(data) ────────────────────────────> RLDCore
+                                                             │
+                 1. Check no active lock (reentrancy)        │
+                 2. Store msg.sender as LOCK_HOLDER          │
+                    (EIP-1153 transient storage)             │
+                 3. Reset TOUCHED_COUNT                      │
+                                                             │
+RLDCore ─────── lockAcquired(data) ──────────────────>   User/Broker
+                                                             │
+                 User performs N operations:                 │
+                   modifyPosition(id, deltaCol, deltaDebt)   │
+                   Each call adds (marketId, user) to        │
+                   TOUCHED_LIST                              │
+                                                             │
+User/Broker ─── returns ─────────────────────────────>    RLDCore
+                                                             │
+                 4. _checkSolvencyOfTouched()                │
+                    For each touched position:               │
+                      if deltaDebt > 0: check minColRatio    │
+                      else: check maintenanceMargin          │
+                    Reverts if any position is insolvent     │
+                                                             │
+                 5. Clear transient storage                  │
+                                                             v
+                                                           DONE
+```
+
+### Collateral Architecture
+
+Unlike traditional lending protocols, `RLDCore` does **not** hold collateral directly. Instead:
+
+- **Core tracks:** Debt principal only (`positions[marketId][broker].debtPrincipal`)
+- **Broker tracks:** All assets (collateral tokens, wRLP, V4 LP positions, TWAMM proceeds)
+- **Solvency check:** `broker.getNetAccountValue()` vs `debtPrincipal × normalizationFactor × indexPrice`
+
+### Solvency Equation
+
+```text
+netWorth = totalAssets - debtValue
+marginRequirement = minRatio - 1e18
+
+SOLVENT iff netWorth >= debtValue × marginRequirement
+
+Where:
+  debtValue = debtPrincipal × normalizationFactor × indexPrice
+  totalAssets = IPrimeBroker(broker).getNetAccountValue()
+```
+
+Two ratios are enforced depending on the action type:
+- **Type 2 (minting new debt):** Uses `minColRatio` (stricter, e.g., 150%)
+- **Type 1 (maintenance):** Uses `maintenanceMargin` (more lenient, e.g., 110%)
+
+### MarketId Generation
+
+Market IDs are deterministic and collision-proof:
+
+```text
+MarketId = keccak256(abi.encode(collateralToken, underlyingToken, underlyingPool))
+```
+
+This ensures:
+- Same tokens with different pools = different markets
+- No duplicate markets possible
+- Predictable IDs for off-chain systems
+
+---
+
+## RLDMarketFactory: Atomic Market Deployment
+
+The factory orchestrates a 7-phase atomic deployment sequence:
+
+```text
+createMarket(DeployParams)
+│
+├─ 1. _validateParams()
+│     • Non-zero addresses, minColRatio > maintenanceMargin > 100%
+│     • tickSpacing > 0, oraclePeriod >= 60s
+│
+├─ 2. _precomputeId()
+│     • Deterministic MarketId from (collateral, underlying, pool)
+│     • Duplicate check against canonicalMarkets mapping
+│
+├─ 3. _deployInfrastructure()
+│     • new PrimeBrokerFactory(impl, marketId, name, symbol, ..., operators[])
+│     • new BrokerVerifier(factory)
+│     • BrokerRouter pre-approved as default operator on all future brokers
+│
+├─ 4. _deployPositionToken()
+│     • new PositionToken(name, symbol, decimals, backingAsset)
+│     • Decimals match collateral token (e.g., 6 for USDC)
+│
+├─ 5. _initializePool()
+│     • Order currencies (V4 requires token0 < token1)
+│     • Fetch indexPrice from rateOracle, validate [0.0001, 100] bounds
+│     • Compute sqrtPriceX96 = sqrt(price) × 2^96
+│     • PoolManager.initialize(key, sqrtPriceX96)
+│     • GhostRouter.initializeMarketWithUniswapOracle(key)
+│     • GhostSingletonOracle.registerPool(positionToken, key, ...)
+│
+├─ 6. _registerMarket()
+│     • Build MarketAddresses and MarketConfig structs
+│     • RLDCore.createMarket(addresses, config)
+│     • PositionToken.setMarketId(id)
+│     • PositionToken.transferOwnership(CORE)  ← Core controls mint/burn
+│
+└─ 7. Post-Condition Assertion
+      • Verify computed MarketId matches Core's returned MarketId
+      • Revert with IDMismatch() if violated
+```
+
+---
+
+## PrimeBroker: Smart Margin Accounts
+
+Each `PrimeBroker` is an ERC-721-bound minimal proxy deployed per-user, per-market.
+
+### Net Account Value Composition
+
+The broker reports its total value across four asset classes:
+
+```text
+getNetAccountValue() =
+    + cash (collateral token balance)
+    + wRLP tokens (position token balance × markPrice)
+    + tracked TWAMM order (accrued + remaining value from TwapEngine)
+    + tracked V4 LP position (liquidity value from PoolManager)
+```
+
+### Liquidation Seize Priority
+
+During `seize()`, the broker surrenders assets in strict priority order:
+
+```text
+1. wRLP tokens   → extracted for 1:1 debt cancellation (burned by Core)
+2. Cash          → collateral tokens transferred to liquidator
+3. TWAMM order   → force-settled and proceeds extracted
+4. V4 LP         → position closed and proceeds extracted
+```
+
+### Delayed Withdrawal Queue (CDS Markets)
+
+CDS markets enforce delayed withdrawals to prevent front-running settlement events:
+
+```text
+requestWithdrawal(amount, recipient)
+    → WithdrawalRequest { amount, recipient, unlockAt, queueEpoch }
+
+executeWithdrawal(id)
+    → Only after block.timestamp >= unlockAt AND queueEpoch == current
+
+invalidateWithdrawalQueue()  [called by Core during settlement]
+    → Bumps epoch, invalidating all pending requests
+```
+This restriction does not exist in Perp Markets.
+
+---
+
+## Funding Engine
+
+Funding is applied lazily on the first interaction per block via `_applyFunding()`.
+
+### StandardFundingModel (Perp Markets)
+
+```text
+FundingRate = (NormalizedMark - Index) / Index
+    where NormalizedMark = MarkPrice / NormalizationFactor
+
+NewNF = OldNF × exp(-FundingRate × dt / fundingPeriod)
+
+Mark > Index → NF decreases → shorts earn (debt shrinks)
+Mark < Index → NF increases → longs earn (debt grows)
+```
+
+### CDSDecayFundingModel (CDS Markets)
+
+Applies continuous exponential token decay:
+
+```text
+NewNF = OldNF × exp(decayRateWad × dt / SECONDS_PER_YEAR)
+```
+
+The decay continuously erodes token value, implementing the CDS premium extraction mechanism described in the Parametric CDS research.
+
+### Bad Debt Socialization
+
+If liquidation leaves unbacked debt:
+
+```text
+chunk = (badDebt × timeDelta) / badDebtPeriod
+NF += chunk × 1e18 / totalSupply
+badDebt -= chunk
+```
+
+Bad debt is gradually absorbed by all position holders via NF inflation over the configurable `badDebtPeriod` (default: 7 days).
+
+---
+
+## Dutch Liquidation Module
+
+The `DutchLiquidationModule` implements a health-based auction with three packed parameters:
+
+```text
+liquidationParams (bytes32):
+    bits [0..15]   = baseDiscount (bps)
+    bits [16..31]  = maxDiscount (bps)
+    bits [32..47]  = slope (scaled by 100)
+
+healthScore = collateralValue / (debtValue × (maintenanceMargin - 1))
+
+bonus = baseDiscount + (1 - healthScore) × slope
+bonus = min(bonus, maxDiscount)
+
+seizeAmount = (debtToCover × NF × indexPrice × (1 + bonus)) / spotPrice
+```
+
+The deeper underwater the position, the higher the `bonus`, incentivizing faster liquidation of riskier accounts.
+
+---
+
+## DEX Layer: GhostRouter Hub/Spoke Architecture
+
+The execution layer uses a novel Hub/Spoke architecture where the `GhostRouter` acts as a central vault and routing hub, while `TwapEngine` and `LimitEngine` are pluggable spoke engines.
+
+### Three-Layer Swap Routing
+
+```text
+swap(marketId, zeroForOne, amountIn, minOut)
+│
+├─ 1. Pull taker input into vault
+├─ 2. Get spot price
+│
+├─ LAYER 1: Global Ghost Netting
+│    • Aggregate ghost inventory from ALL engines
+│    • Pro-rata net opposing sides (token0 ghost vs token1 ghost)
+│    • Reduces both sides, no external settlement needed
+│
+├─ LAYER 2: Taker Intercept
+│    • Match taker against remaining directional ghost
+│    • Taker gets ghost inventory at spot price
+│    • Ghost sellers earn pro-rata taker payment
+│
+├─ LAYER 3: V4 Fallback
+│    • Remaining amount swapped through Uniswap V4 pool
+│    • Standard concentrated liquidity execution
+│
+└─ Enforce slippage, deliver output
+```
+
+### TwapEngine (TWAMM Spoke)
+
+The `TwapEngine` implements time-weighted streaming orders with O(1) epoch-bitmap accrual:
+
+```text
+submitStream(marketId, zeroForOne, duration, amountIn)
+│
+├─ Compute scaledSellRate = amountIn × 1e18 / duration
+├─ Schedule start at nextEpoch, end at nextEpoch + duration
+├─ Register in epoch bitmap for efficient accrual
+│
+│  During accrual (_accrueInternal):
+│    • Bitmap-indexed jump to next event epoch
+│    • Ghost accumulates: sellRateCurrent × deltaSeconds / 1e18
+│    • On epoch crossing: activate/expire rates, snapshot earnings
+│
+│  Settlement paths:
+│    • clearAuction() — solver buys ghost at time-decay discount
+│    • Taker intercept — ghost consumed during swap routing
+│    • forceSettle() — emergency AMM settlement
+│
+└─ claimTokens() / cancelOrder() — user settlement via earnings accumulator
+```
+
+### LimitEngine (Limit Order Spoke)
+
+```text
+submitLimitOrder(marketId, zeroForOne, triggerPrice, amountIn)
+│
+├─ Stored as dormant bucket keyed by triggerPrice
+│
+│  Activation (demand-triggered, one-way):
+│    • zeroForOne=true activates when spot >= triggerPrice
+│    • zeroForOne=false activates when spot <= triggerPrice
+│
+│  Post-activation:
+│    • Inventory merges into global active pool per direction
+│    • Consumed via netting/takeGhost (same as TWAMM ghost)
+│    • Pro-rata earnings via accumulator deltas
+│
+└─ claimTokens() / cancelOrder() — standard settlement
+```
+
+---
+
+## Periphery Contracts
+
+### BrokerRouter
+
+The primary user-facing entry point. Pre-approved as an operator on every broker during factory deployment. Validates broker ownership, handles Permit2 deposits, and orchestrates V4 pool interactions through `PoolManager.unlock()`.
+
+### BondFactory
+
+Wraps the full synthetic bond Yield Monetization loop into atomic `mintBond()` / `closeBond()` transactions. Creates an isolated broker, deposits collateral, mints wRLP, swaps for upfront proceeds, submits a TWAMM buy-back order, and freezes the broker.
+
+### CDSCoverageFactory
+
+Provides the user-facing CDS coverage purchase flow. Wraps broker creation, collateral deposit, and position initialization for CDS market participants.
+
+### BasisTradeFactory
+
+Enables structured basis trade positions combining multiple protocol components in a single transaction.
+
+### PrimeBrokerLens
+
+A read-only helper contract that aggregates broker state across multiple markets for frontend consumption without requiring individual cross-contract queries.
+
+### TwapEngineLens
+
+Provides computed read views of TWAMM state including pending accrual simulation, cancel previews, and stream pool snapshots.

@@ -1,0 +1,57 @@
+---
+title: Broker Access Control
+description: Operator delegation, freeze/unfreeze, and NFT transfer safety
+---
+
+# Broker Access Control
+
+## Operator System
+
+The `PrimeBroker` supports up to **8 concurrent operators** per broker. Operators can perform all actions an owner can — trading, LP management, TWAMM orders, withdrawals — except managing the operator set itself.
+
+**Adding/Removing Operators:**
+
+```solidity
+// Owner-only: grant or revoke any operator
+function setOperator(address operator, bool active) external;
+
+// Signature-based: enables atomic set+execute+revoke in one tx
+function setOperatorWithSignature(
+    address operator,
+    bool active,
+    bytes calldata signature,
+    uint256 nonce,
+    bytes32 commitment
+) external;
+```
+
+**Key properties:**
+- Only the NFT owner can add operators. Operators cannot add other operators.
+- Operators **can** revoke themselves (enables the atomic executor pattern where a contract sets itself as operator, executes, then self-revokes).
+- The `BrokerRouter` is pre-approved as a default operator during `PrimeBroker.initialize()`.
+- The operator list is bounded to `MAX_OPERATORS = 8` to keep `freeze()` gas costs predictable (max 8 SSTOREs for mass revocation).
+- Nonce-based signatures prevent replay attacks in `setOperatorWithSignature`.
+
+**NFT Transfer Safety:**
+
+When a broker's NFT is transferred to a new owner, the `PrimeBrokerFactory` automatically calls `revokeAllOperators()` on the broker. This atomically revokes all existing operators, preventing the previous owner's bots or contracts from retaining access to the account.
+
+## Freeze / Unfreeze (Bond Mode)
+
+The freeze system enables the synthetic bond lifecycle. When a broker is frozen, **all state-changing operations are blocked** except `seize()` (liquidation must always work) and `unfreeze()`.
+
+```solidity
+function freeze() external;   // onlyOwner — freezes and revokes all operators
+function unfreeze() external;  // onlyOwner — re-enables operations
+```
+
+**Bond Lifecycle:**
+1. Owner deposits collateral and opens a position (debt + TWAMM buy-back order).
+2. Owner calls `freeze()` → all operators are revoked, the broker is locked.
+3. Owner transfers the broker NFT to the bond buyer on a secondary market.
+4. The TWAMM order continues executing at the engine level (not affected by freeze — it runs independently in the `TwapEngine`).
+5. At maturity, the new owner calls `unfreeze()`, claims the expired TWAMM order proceeds, and withdraws.
+
+**What freeze blocks:** `execute()`, `modifyPosition()`, `withdrawToken()`, `addPoolLiquidity()`, `removePoolLiquidity()`, `submitTwammOrder()`, `cancelTwammOrder()`, `setOperator()`, all withdrawal queue operations.
+
+**What freeze does NOT block:** `seize()` (Core-only liquidation), `getNetAccountValue()` (view), `unfreeze()` (owner-only).

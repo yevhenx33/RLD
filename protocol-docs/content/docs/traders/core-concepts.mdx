@@ -1,0 +1,160 @@
+---
+title: Core Concepts
+description: Understand interest rate derivatives, margin accounts, and the funding mechanism
+---
+
+# Core Concepts
+
+Before trading on RLD, it helps to understand a few key ideas that make the protocol work. This page covers the essentials — no code, no formulas, just how things fit together.
+
+---
+
+## What Are Interest Rate Derivatives?
+
+In traditional finance, interest rates are traded as standalone instruments — bond futures, interest rate swaps, swaptions. Trillion-dollar markets exist for managing rate exposure. In DeFi, this market has been almost entirely missing.
+
+RLD brings interest rate trading on-chain. Instead of trading the *price* of an asset (like ETH or BTC), you trade the *borrowing rate* of a lending pool (like Aave USDC or Morpho USDT).
+
+**Why would you trade rates?**
+- **Hedging:** If you're borrowing on Aave at a floating rate, a rate spike could blow up your P&L. Going long on RLD protects you.
+- **Speculation:** DeFi rates are extremely volatile — they can 10× during leverage spikes. This creates outsized profit opportunities.
+- **Fixed income:** Convert unpredictable floating yields into locked, predictable fixed returns.
+
+---
+
+## The Index Price
+
+Every RLD market tracks a specific lending pool's borrowing rate and converts it into a dollar-denominated price:
+
+```text
+Index Price = 100 × Borrow Rate
+```
+
+| Borrow Rate | Index Price |
+| --- | --- |
+| 3% (0.03) | $3.00 |
+| 5% (0.05) | $5.00 |
+| 12% (0.12) | $12.00 |
+| 50% (0.50) | $50.00 |
+
+If Aave USDC borrow rate doubles from 5% to 10%, the index price doubles from \$5 to \$10. Your position's value moves proportionally.
+
+---
+
+## The Mark Price
+
+The **mark price** is the actual trading price of the wRLP token on the Uniswap V4 pool. In a healthy market, the mark price tracks the index price closely. When they diverge, the funding mechanism pushes them back together.
+
+```text
+Mark Price  = what wRLP is trading at on the pool
+Index Price = what the underlying rate says it should be worth
+```
+
+---
+
+## Funding Rate (How Mark Tracks Index)
+
+RLD uses a continuous funding mechanism — not discrete funding payments like traditional perp DEXs. Instead of periodic cash transfers between longs and shorts, RLD adjusts a global **Normalization Factor** that continuously shifts value:
+
+- **When mark > index (premium):** Long holders slowly decay, short holders benefit. This incentivizes selling to push the mark price down.
+- **When mark < index (discount):** Short holders' debt grows, long holders benefit. This incentivizes buying to push the mark price up.
+
+The effect is automatic and continuous — no manual claiming of funding, no snapshots. The price of wRLP adjusts in real-time to reflect accumulated funding.
+
+> **For traders:** Funding is invisible in your token balance. It's embedded in the price. A long position in a premium market will slowly lose value even if the index stays flat — this is the "cost of carry."
+
+---
+
+## Margin Accounts (Brokers)
+
+Every user on RLD trades through a **margin account** — an isolated smart contract that holds your collateral and tracks your positions.
+
+**Key properties:**
+- **Isolated:** Each account is independent. One account's liquidation doesn't affect another.
+- **NFT-owned:** Your account is controlled by an ERC-721 NFT. Whoever holds the NFT controls the account.
+- **Cross-margined internally:** Within one account, your collateral, LP positions, and TWAMM orders all count toward your margin.
+- **Delegatable:** You can grant trading access to up to 8 operator addresses (bots, vaults, other contracts) without giving up ownership.
+
+**What counts as margin:**
+
+| Asset | Counted in NAV? |
+| --- | --- |
+| waUSDC balance (cash) | ✅ Yes |
+| wRLP balance (position tokens) | ✅ Yes, at index price |
+| Active V4 LP position (tracked) | ✅ Yes |
+| Active TWAMM order (tracked) | ✅ Yes |
+| Limit orders | ❌ No — invisible to margin |
+| Untracked LP positions | ❌ No — invisible to margin |
+
+### Cross-Margin Example
+
+Because RLD natively cross-margins everything inside a broker, you can use yield-generating assets to back your trades. 
+
+**Example Scenario:**
+1. You deposit **$10,000 USDC** into your margin account.
+2. You provide all of it as liquidity to the wRLP/waUSDC pool.
+3. Your account now holds **an LP position worth ~$10,000**.
+4. Even though you have no "cash" left, your LP position counts as collateral. 
+5. You can now mint and sell (short) **$5,000 of wRLP debt**, using the LP position itself to satisfy the 120% initial margin requirement.
+
+This allows you to earn LP fees and Aave yield simultaneously while running a directional short, vastly increasing capital efficiency.
+
+---
+
+## Collateralization & Health Factor
+
+Your margin account must always hold enough value to back your debt. This is measured by the **health factor:**
+
+```text
+Health Factor = Net Worth / Total Debt
+```
+
+### Calculating Net Worth
+
+Net Worth is the total value of all assets held inside your margin account. Because RLD is a cross-margin system, everything your account holds contributes to your net worth:
+
+```text
+Net Worth = 
+    + waUSDC balance (Cash)
+    + wRLP balance × Index Price (Long Positions)
+    + Active V4 LP position value
+    + Active TWAMM order value
+```
+
+**Why is wRLP tracked as collateral?**
+Unlike traditional perps where your "position" is just an abstract number in a database, on RLD your long position is a real ERC-20 token (`wRLP`). If you buy `wRLP` tokens, they sit in your margin account. 
+
+To determine your account's health, the protocol must value those tokens. Crucially, the protocol always values your `wRLP` holdings using the **Index Price** — not the Uniswap pool's market price. This protects your account from being liquidated due to short-term market manipulation or flash crashes on the DEX.
+
+- **Opening a position:** Your health factor must be above the **initial margin** (e.g., 120%).
+- **Staying safe:** Your health factor must stay above the **maintenance margin** (e.g., 109%).
+- **Getting liquidated:** If your health factor drops below maintenance, anyone can liquidate your account.
+
+**What moves your health factor:**
+- ⬇️ Rates rising (if you're short, your debt grows, lowering health)
+- ⬇️ Rates falling (if you're long, your position loses value, lowering health)
+- ⬇️ Funding decay (holding a position in a premium/discount market decreases net worth)
+- ⬆️ Adding collateral (increases net worth)
+- ⬆️ LP fees accruing (increases net worth)
+- ⬆️ Aave yield on your waUSDC (increases net worth)
+
+---
+
+## The wRLP Token
+
+**wRLP** is the position token of the protocol. It's a standard ERC-20 that represents exposure to the interest rate:
+
+- **Holding wRLP = Long exposure.** If rates go up, wRLP becomes more valuable.
+- **Owing wRLP (debt) = Short exposure.** If rates go down, your debt decreases and you profit.
+
+wRLP trades freely on the Uniswap V4 pool. You can buy it (go long), mint it against collateral (go short), or provide liquidity with it.
+
+---
+
+## TWAMM (Time-Weighted Average Market Making)
+
+Instead of executing a large swap instantly, TWAMM distributes your order evenly over a chosen time period. This gives you a time-weighted average price, avoiding front-running and reducing slippage.
+
+**Example:** Instead of selling 100,000 wRLP in a single transaction, submit a 24-hour TWAMM order that drips out ~4,166 wRLP per hour. Your average execution price will smooth out intra-day volatility.
+
+TWAMM is used automatically by synthetic bonds for their buy-back schedules, but you can also submit manual TWAMM orders from the trading interface.

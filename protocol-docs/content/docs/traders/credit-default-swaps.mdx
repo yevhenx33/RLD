@@ -1,0 +1,133 @@
+---
+title: Credit Default Swaps
+description: Parametric insurance against lending protocol defaults
+---
+
+# Credit Default Swaps
+
+Protocol insolvency is DeFi's largest unpriced tail risk. Every time you supply assets to Aave, Morpho, or any lending pool, you're effectively selling insurance against the protocol going bust — and you're not getting paid for it.
+
+RLD Credit Default Swaps (CDS) let you explicitly price and trade this risk. Buy protection to hedge your deposits, or sell protection to earn a premium for taking on tail risk.
+
+---
+
+## The Problem: Hidden Risk in Lending
+
+When you supply USDC to a lending protocol, you earn yield. What most users don't realize is that this yield includes an *invisible* insurance premium baked in.
+
+**What can go wrong:**
+- A collateral asset depegs (e.g., stETH loses peg → mass bad debt).
+- A smart contract exploit drains the pool.
+- An oracle failure triggers cascading liquidations.
+- Utilization hits 100% and you can't withdraw (bank run).
+
+In all of these scenarios, the lending pool accumulates **bad debt** — debt that can never be repaid. As a supplier, your deposits absorb this loss. You are, in options terminology, **short a put option** on every collateral asset in the pool.
+
+Traditional finance has credit default swaps to manage this exact risk.
+
+---
+
+## How RLD CDS Works
+
+RLD CDS is **parametric** — it doesn't require anyone to vote on whether a "credit event" happened. Instead, it uses the lending pool's own interest rate model as a deterministic trigger.
+
+**The insight:** When a lending pool is under severe stress (depeg, exploit, bank run), utilization spikes to 100% and the borrowing rate rockets to its maximum. This rate spike is a deterministic, on-chain signal that something is very wrong.
+
+### Step-by-Step: Buying Protection
+
+Imagine you hold 100k USDC on a lending protocol and want to insure it against default.
+
+**Step 1: Open a CDS Position**
+1. You navigate to the CDS market and select your coverage amount (e.g., $100k).
+2. The protocol mints a Long CDS position for you.
+3. To keep this position active, you pay a continuous funding premium. This premium is automatically deducted from your margin account over time.
+
+**Step 2: Monitoring the Trigger (Normal Markets)**
+While the lending pool is healthy, utilization is normal (e.g., 60-80%), and the borrowing rate is stable (e.g., 5-10%). 
+- Your CDS position remains inactive in terms of payout. 
+- You simply pay the ongoing premium, just like paying a monthly insurance bill.
+
+**Step 3: The Crisis Event (The Trigger)**
+A massive exploit occurs on the lending protocol. Depositors panic and try to withdraw their funds.
+- As funds leave, the pool's utilization skyrockets to **100%**.
+- Because there is no capital left to borrow or withdraw, the lending protocol's algorithmic interest rate model defensively spikes the borrowing rate to its absolute maximum (e.g., 100% APY or higher).
+- **This maximum rate spike is the objective, on-chain trigger.**
+
+**Step 4: Automatic Payout**
+Because your CDS position is mathematically indexed to the borrowing rate, its value explodes upward precisely as the rate spikes.
+- The underwriter's collateral is automatically transferred into your position's value.
+- You can now sell your CDS position to realize the cash payout.
+- The payout scales linearly with the rate: if the rate hits its defined maximum, you receive 100% of your insured notional.
+
+### Step-by-Step: Selling Protection (Underwriting)
+
+If you believe a lending pool is safe, you can act as the insurance provider and earn the premiums.
+
+**Step 1: Lock Collateral**
+You deposit USDC into your margin account and open a Short CDS position. Your USDC is locked as collateral to guarantee you can pay out buyers if a crisis happens.
+
+**Step 2: Collect Premium**
+In normal markets, you continuously receive funding premiums from protection buyers. 
+- Unlike standard lending yields (which you only earn from borrowers), CDS premiums scale dynamically. 
+- As pool utilization creeps up and risk increases, the premium you collect automatically accelerates. This ensures you are paid more when the system is under stress.
+
+**Step 3: Settlement in a Crisis**
+If the lending protocol fails and the rate hits maximum, your Short CDS position loses value.
+- Your locked collateral is mathematically transferred to the protection buyers.
+- Your maximum loss is strictly capped at the collateral you committed. You can never lose more than your initial deposit.
+
+---
+
+## Why Parametric?
+
+Traditional insurance  requires human governance to decide if a "claim event" happened. This introduces:
+- **Delay** — Claims take weeks to resolve.
+- **Subjectivity** — Committees can deny legitimate claims.
+- **Counterparty risk** — The insurance fund itself might be insolvent.
+
+Parametric CDS eliminates all three:
+- **Instant** — The rate model triggers automatically.
+- **Objective** — No human discretion. Math decides.
+- **Fully collateralized** — Underwriter capital is locked on-chain.
+
+---
+
+## Covered Risks
+
+| Risk Event | How CDS Detects It |
+| --- | --- |
+| **Stablecoin depeg** | Collateral value drops → liquidations fail → bad debt → utilization spikes |
+| **Smart contract exploit** | Funds drained → remaining depositors can't withdraw → utilization → 100% |
+| **Oracle failure** | Stale/manipulated prices → cascading liquidations → bad debt |
+| **Bank run** | Mass withdrawals → utilization spikes → rate hits maximum |
+| **LST/LRT slashing** | Collateral value drops suddenly → Poisson jump event |
+
+In every scenario, the common signature is the same: **utilization → 1, rate → maximum**. The CDS is calibrated to this universal distress signal.
+
+---
+
+## The Economics
+
+**Why does underwriting yield beat supply yield?**
+
+As a lender, you earn the supply rate but bear the full default risk. As a CDS underwriter, you earn a premium that scales with the *borrow rate* — which is always higher than the supply rate due to the utilization spread.
+
+During normal markets, the underwriter's premium equals the borrow rate scaled by how close utilization is to maximum. This means:
+- In calm markets (low utilization): small, steady premium.
+- As stress builds (rising utilization): premium accelerates convexly.
+- At maximum stress: premium matches the maximum borrow rate.
+
+This convex scaling means underwriters are naturally compensated *more* precisely when risk is highest — the opposite of traditional insurance where premiums are fixed regardless of conditions.
+
+---
+
+## Key Properties
+
+| Property | Detail |
+| --- | --- |
+| **Trigger** | Algorithmic — based on lending pool rate/utilization |
+| **Settlement** | Automatic — no claims process |
+| **Coverage** | Up to 100% of notional |
+| **Duration** | Arbitrary — same TWAMM-based mechanism as bonds |
+| **Collateral** | Fully backed by underwriter deposits |
+| **Premium** | Continuous funding — scales with risk level |

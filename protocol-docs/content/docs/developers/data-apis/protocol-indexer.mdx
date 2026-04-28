@@ -1,0 +1,506 @@
+---
+title: Protocol Indexer
+description: Real-time GraphQL API for querying RLD Protocol state
+---
+
+# Protocol Indexer
+
+The Protocol Indexer processes events from `RLDCore`, `PrimeBrokerFactory`, `BrokerRouter`, `GhostRouter`, and the Uniswap V4 `PoolManager` to maintain a complete off-chain replica of the protocol state. All data is served via a Strawberry GraphQL API at `/graphql` and companion REST endpoints.
+
+---
+
+## GraphQL API (`/graphql`)
+
+All GraphQL queries are available via `POST https://api.rld.fi/graphql`.
+
+```bash
+curl -X POST https://api.rld.fi/graphql \
+  -H "content-type: application/json" \
+  --data '{"query":"{ markets { marketId wrlp poolFee } }"}'
+```
+
+### `markets` — Market Registry
+
+Returns all deployed markets with their on-chain configuration.
+
+```graphql
+query {
+  markets {
+    marketId
+    brokerFactory
+    mockOracle
+    twammHook
+    wausdc
+    wrlp
+    poolId
+    poolFee
+    tickSpacing
+    minColRatio
+    maintenanceMargin
+    debtCap
+    normalizationFactor
+    totalDebtRaw
+    badDebt
+  }
+}
+```
+
+**Field Reference:**
+
+| Field | Description |
+| --- | --- |
+| `marketId` | Unique bytes32 identifier for this market |
+| `brokerFactory` | PrimeBrokerFactory address — deploy new brokers here |
+| `mockOracle` | Rate oracle address for index/spot price lookups |
+| `twammHook` | GhostRouter hook address for the V4 pool |
+| `wausdc` | Collateral token address (e.g., waUSDC) |
+| `wrlp` | Position token address (wRLP) |
+| `poolId` | Uniswap V4 pool identifier |
+| `poolFee` | Pool fee tier (e.g., 500 = 0.05%) |
+| `tickSpacing` | V4 tick spacing (e.g., 5) |
+| `minColRatio` | Minimum collateralization ratio (wad, 1e18 = 100%) |
+| `maintenanceMargin` | Liquidation threshold (wad) |
+| `debtCap` | Maximum total debt allowed in this market |
+| `normalizationFactor` | Current cumulative funding factor $NF(t)$ |
+| `totalDebtRaw` | Aggregate raw debt across all brokers (pre-normalization) |
+| `badDebt` | Cumulative socialized bad debt from failed liquidations |
+
+---
+
+### `brokers` — Account State
+
+Returns all brokers in a market with their latest balance snapshots.
+
+```graphql
+query GetBrokers($marketId: String!) {
+  brokers(marketId: $marketId) {
+    address
+    marketId
+    owner
+    createdBlock
+    activeTokenId
+    wausdcBalance
+    wrlpBalance
+    debtPrincipal
+    isFrozen
+    isLiquidated
+  }
+}
+```
+
+**Field Reference:**
+
+| Field | Description |
+| --- | --- |
+| `address` | Broker contract address |
+| `owner` | Current NFT holder (EOA) |
+| `createdBlock` | Block number when this broker was deployed |
+| `activeTokenId` | V4 LP position NFT tracked for solvency (0 = none) |
+| `wausdcBalance` | Raw collateral balance (6 decimal precision) |
+| `wrlpBalance` | Raw position token balance (6 decimals) |
+| `debtPrincipal` | Raw debt principal. Actual debt = `debtPrincipal × normalizationFactor / 1e18` |
+| `isFrozen` | True when the broker is in bond mode |
+| `isLiquidated` | True if the broker has been liquidated |
+
+**Typical Flow — Health Factor Monitoring:**
+
+```typescript
+const brokers = await query(`{
+  brokers(marketId: "${MARKET_ID}") {
+    address debtPrincipal wausdcBalance wrlpBalance
+  }
+}`);
+
+for (const b of brokers) {
+  const debt = BigInt(b.debtPrincipal) * BigInt(normFactor) / 10n**18n;
+  const nav = BigInt(b.wausdcBalance) + BigInt(b.wrlpBalance) * indexPrice / 10n**18n;
+  const healthFactor = nav * 10n**18n / debt;
+  if (healthFactor < maintenanceMargin) {
+    console.log(`Broker ${b.address} is liquidatable`);
+  }
+}
+```
+
+---
+
+### `poolSnapshot` — V4 Pool State
+
+Returns the latest indexed pool state for a market.
+
+```graphql
+query GetPoolState($marketId: String!) {
+  poolSnapshot(marketId: $marketId) {
+    marketId
+    blockNumber
+    blockTimestamp
+    markPrice
+    indexPrice
+    tick
+    sqrtPriceX96
+    liquidity
+    normalizationFactor
+    totalDebt
+    token0Balance
+    token1Balance
+    feeGrowthGlobal0
+    feeGrowthGlobal1
+  }
+}
+```
+
+**Field Reference:**
+
+| Field | Description |
+| --- | --- |
+| `markPrice` | Spot price derived from V4 pool's `sqrtPriceX96` ÷ normalization factor |
+| `indexPrice` | Oracle-reported underlying rate mapped to price space |
+| `sqrtPriceX96` | Raw Q96 square root price from V4's slot0 |
+| `tick` | Current tick of the V4 pool |
+| `liquidity` | Active liquidity at the current tick |
+| `normalizationFactor` | Current $NF(t)$ at this block |
+| `totalDebt` | Total normalized debt |
+| `feeGrowthGlobal0/1` | V4 cumulative fee growth accumulators (Q128) |
+
+> **Note:** The resolver uses COALESCE fallback — if the latest block has a null field, it scans backwards for the most recent non-null value. This ensures no stale-null responses during low-activity periods.
+
+---
+
+### `candles` — OHLCV Price Data
+
+Pre-aggregated candlestick data for charting.
+
+```graphql
+query GetCandles($marketId: String!, $resolution: String!) {
+  candles(marketId: $marketId, resolution: $resolution, limit: 500) {
+    bucket
+    markOpen
+    markHigh
+    markLow
+    markClose
+    indexOpen
+    indexHigh
+    indexLow
+    indexClose
+    volumeUsd
+    swapCount
+  }
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `marketId` | String! | Market identifier |
+| `resolution` | String! | `1H`, `4H`, `1D`, `1W` |
+| `fromBucket` | Int | Unix timestamp lower bound (optional) |
+| `toBucket` | Int | Unix timestamp upper bound (optional) |
+| `limit` | Int | Max rows returned (default 500) |
+
+Each candle tracks **both** mark and index OHLCV in parallel, enabling peg-deviation overlays on charts.
+
+---
+
+### `lpPositions` — V4 LP Positions
+
+```graphql
+query GetLpPositions($owner: String!) {
+  lpPositions(owner: $owner, activeOnly: true) {
+    tokenId
+    poolId
+    owner
+    liquidity
+    tickLower
+    tickUpper
+    mintBlock
+    isActive
+    isBurned
+  }
+}
+```
+
+The `owner` field is the broker address (not the EOA). `isActive` indicates non-zero liquidity. `isBurned` marks fully removed positions whose NFTs have been burned.
+
+---
+
+### `twammOrders` — TWAMM Stream Orders
+
+```graphql
+query GetTwammOrders($owner: String!) {
+  twammOrders(owner: $owner, activeOnly: true) {
+    orderId
+    poolId
+    owner
+    expiration
+    zeroForOne
+    amountIn
+    sellRate
+    status
+    isRegistered
+    blockNumber
+    startEpoch
+    nonce
+    txHash
+    isCancelled
+  }
+}
+```
+
+**Field Reference:**
+
+| Field | Description |
+| --- | --- |
+| `status` | `active`, `expired`, `cancelled`, `claimed` |
+| `isRegistered` | Whether the order is tracked as the broker's active TWAMM order for NAV |
+| `sellRate` | Scaled sell rate: `amountIn × 1e18 / duration` |
+| `startEpoch` / `expiration` | Epoch boundaries (unix timestamps aligned to `expirationInterval`) |
+| `isCancelled` | Derived boolean: `status == "cancelled"` |
+
+---
+
+### `brokerProfile` — Composite Account View
+
+Returns a fully hydrated broker profile with computed LP position values and fee earnings.
+
+```graphql
+query GetProfile($owner: String!) {
+  brokerProfile(owner: $owner)
+}
+```
+
+**Response structure:**
+
+```json
+{
+  "address": "0x...",
+  "owner": "0x...",
+  "wausdcBalance": "1000000000",
+  "wrlpBalance": "500000",
+  "debtPrincipal": "250000",
+  "activeLpTokenId": "12345",
+  "activeTwammOrderId": "0xabc...",
+  "isFrozen": false,
+  "isLiquidated": false,
+  "operators": ["0x...router", "0x...bot"],
+  "lpPositions": [
+    {
+      "tokenId": "12345",
+      "tickLower": -100,
+      "tickUpper": 100,
+      "liquidity": "50000000000",
+      "amount0": 1234.5678,
+      "amount1": 5678.9012,
+      "valueUsd": 12345.67,
+      "feesEarned0": 12.34,
+      "feesEarned1": 56.78,
+      "feesUsd": 120.50,
+      "inRange": true
+    }
+  ],
+  "twammOrders": [
+    {
+      "orderId": "0x...",
+      "amountIn": "1000000",
+      "sellRate": "100000",
+      "expiration": 1714900800,
+      "zeroForOne": true,
+      "status": "active"
+    }
+  ]
+}
+```
+
+LP position values are computed at query time using Uniswap V4 concentrated-liquidity math — the resolver converts `(liquidity, tickLower, tickUpper, currentTick)` into `(amount0, amount1)` using standard sqrt-price formulas, then prices them at the latest mark price.
+
+---
+
+### `snapshot` — Pre-Computed Market Snapshot
+
+```graphql
+query GetSnapshot($market: String) {
+  snapshot(market: $market)
+}
+```
+
+Returns the pre-computed JSON snapshot containing nested `market`, `pool`, `brokers`, and `derived` objects. The `derived` section includes:
+- `pegDeviationPct`: `(normalizedMark - index) / index × 100`
+- `fundingRateAnnPct`: Annualized funding rate based on the funding period
+
+---
+
+### `liquidityDistribution` — Tick Bin Histogram
+
+```graphql
+query {
+  liquidityDistribution(market: "perp")
+}
+```
+
+Returns a pre-built array of liquidity bins across the tick range for depth/liquidity chart rendering.
+
+---
+
+### `bonds` — Synthetic Bond Positions
+
+```graphql
+query GetBonds($owner: String!) {
+  bonds(owner: $owner)
+}
+```
+
+Returns all synthetic bonds minted by the owner: `notional`, `hedge`, `duration`, `entryRate`, `status` (`active` / `closed`), and mint/close transaction hashes.
+
+---
+
+### `coveragePositions` — CDS Coverage
+
+```graphql
+query GetCoverage($owner: String!) {
+  coveragePositions(owner: $owner, market: "cds")
+}
+```
+
+Returns CDS fixed-coverage positions opened through `CDSCoverageFactory`. Includes `coverage`, `initialCost`, `premiumBudget`, `duration`, and settlement amounts upon close.
+
+---
+
+### `brokerOperations` — Trade History
+
+```graphql
+query GetOps($owner: String!) {
+  brokerOperations(owner: $owner, limit: 50)
+}
+```
+
+Returns decoded `BrokerRouter` trade events with human-readable USD amounts:
+
+| Operation Type | Event Source |
+| --- | --- |
+| `OPEN_LONG` | `LongExecuted` |
+| `CLOSE_LONG` | `LongClosed` |
+| `OPEN_SHORT` | `ShortExecuted` |
+| `CLOSE_SHORT` | `ShortClosed` |
+| `DEPOSIT` | `Deposited` |
+
+---
+
+### `indexerStatus` — Health Check
+
+```graphql
+query {
+  indexerStatus {
+    marketId
+    lastIndexedBlock
+    lastIndexedAt
+    totalEvents
+  }
+}
+```
+
+Reports the indexing cursor position per market. Use this to detect indexer lag or stalls.
+
+---
+
+## REST Endpoints
+
+### `GET /api/market-info`
+
+Returns the full market configuration payload.
+
+```bash
+curl https://api.rld.fi/api/market-info?market=perp
+```
+
+**Response includes:**
+- Contract addresses: `brokerFactory`, `twammHook`, `ghostRouter`, `twapEngine`, `brokerRouter`, `bondFactory`, `v4PositionManager`, etc.
+- Token metadata: `collateral` (symbol, address), `position_token` (symbol, address)
+- Risk parameters: `minColRatio`, `maintenanceMargin`, `debtCap`, `fundingPeriodSec`
+- Both camelCase and snake_case variants for backward compatibility
+
+### `GET /api/status`
+
+```bash
+curl https://api.rld.fi/api/status
+```
+
+```json
+{
+  "status": "ok",
+  "last_indexed_block": 21456789,
+  "total_events": 15234,
+  "total_block_states": 8901,
+  "mark_price": 0.000345,
+  "index_price": 0.000340
+}
+```
+
+### `GET /api/events`
+
+Returns the latest decoded on-chain events (max 500).
+
+```bash
+curl "https://api.rld.fi/api/events?limit=20"
+```
+
+### `GET /api/volume`
+
+Returns 24-hour trading volume aggregated from hourly candle buckets.
+
+```bash
+curl https://api.rld.fi/api/volume
+```
+
+```json
+{
+  "volume_usd": 1234567.89,
+  "swap_count": 456,
+  "volume_formatted": "$1.23M"
+}
+```
+
+### `GET /api/latest`
+
+Returns the latest pre-computed snapshot with hydrated prices. Ideal for initial dashboard page load.
+
+```bash
+curl https://api.rld.fi/api/latest
+```
+
+### `GET /api/price-history`
+
+Returns block-level mark and index price timeseries. Index price gaps are forward-filled from the last known value.
+
+```bash
+curl "https://api.rld.fi/api/price-history?limit=500"
+```
+
+```json
+{
+  "points": [
+    {
+      "block_number": 21456700,
+      "block_timestamp": 1714300000,
+      "mark_price": 0.000345,
+      "index_price": 0.000340
+    }
+  ],
+  "count": 500
+}
+```
+
+### `GET /config`
+
+Returns the full deployment configuration. Bots and daemons poll this at startup to discover contract addresses and market IDs. Returns `503` until the deployer has bootstrapped the indexer.
+
+```bash
+curl https://api.rld.fi/config?market=perp
+```
+
+### `GET /healthz`
+
+Simple health check.
+
+```bash
+curl https://api.rld.fi/healthz
+# {"status": "ok"}
+```

@@ -1,0 +1,16 @@
+{
+  "title": "Smart Contracts",
+  "pages": [
+    "index",
+    "broker-creation",
+    "deposits",
+    "trading",
+    "twamm",
+    "limit-engine",
+    "liquidity",
+    "access-control",
+    "synthetic-bonds",
+    "liquidations",
+    "events"
+  ]
+}

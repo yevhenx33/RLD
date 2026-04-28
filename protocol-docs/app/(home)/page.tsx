@@ -3,25 +3,25 @@ import Link from 'next/link';
 /* ─── Link data ──────────────────────────────────────────── */
 
 const userLinks = [
-  { title: 'Getting Started', desc: 'Connect, deposit, and trade', href: '/docs' },
-  { title: 'Rate Perpetuals', desc: 'Trade rates as volatility', href: '/docs' },
-  { title: 'Synthetic Bonds', desc: 'Fix your yield — any maturity, one pool', href: '/docs' },
-  { title: 'Credit Default Swaps', desc: 'Parametric insurance against protocol defaults', href: '/docs' },
+  { title: 'Getting Started', desc: 'Connect, deposit, and trade', href: '/docs/traders/getting-started' },
+  { title: 'Rate Perpetuals', desc: 'Trade rates as volatility', href: '/docs/traders/rate-perpetuals' },
+  { title: 'Synthetic Bonds', desc: 'Fix your yield — any maturity, one pool', href: '/docs/traders/synthetic-bonds' },
+  { title: 'Credit Default Swaps', desc: 'Parametric insurance against protocol defaults', href: '/docs/traders/credit-default-swaps' },
 ];
 
 const devLinks = [
-  { title: 'Architecture', desc: 'Contracts, indices, markets, settlement, and margin', href: '/docs' },
-  { title: 'Smart Contracts', desc: 'Addresses, ABIs, and integration reference', href: '/docs' },
-  { title: 'Data & APIs', desc: 'GraphQL, WebSocket, and REST endpoints', href: '/docs' },
+  { title: 'Architecture', desc: 'Contracts, indices, markets, settlement, and margin', href: '/docs/developers/architecture' },
+  { title: 'Smart Contracts', desc: 'Addresses, ABIs, and integration reference', href: '/docs/developers/smart-contracts' },
+  { title: 'Data & APIs', desc: 'GraphQL, WebSocket, and REST endpoints', href: '/docs/developers/data-apis' },
 
 ];
 
 const researchLinks = [
-  { title: 'Executive Summary', desc: 'RLD and Parametric CDS — unified infrastructure for on-chain fixed-income', href: '/docs' },
-  { title: 'Rate-Level Perpetuals', desc: 'Transforming volatile DeFi yield into a tradable, persistent derivative', href: '/docs' },
-  { title: 'Synthetic Bonds', desc: 'Fixed-yield via continuous-time perpetuals and deterministic execution', href: '/docs' },
-  { title: 'JIT Matching Engine', desc: 'Ghost execution — Hub-and-spoke DEX architecture with composable liquidity', href: '/docs' },
-  { title: 'Parametric CDS', desc: 'On-chain solvency insurance via rate-bounded everlasting options', href: '/docs' },
+  { title: 'Executive Summary', desc: 'RLD and Parametric CDS — unified infrastructure for on-chain fixed-income', href: '/docs/research/executive-summary' },
+  { title: 'Rate-Level Perpetuals', desc: 'Transforming volatile DeFi yield into a tradable, persistent derivative', href: '/docs/research/rate-level-perpetuals' },
+  { title: 'Synthetic Bonds', desc: 'Fixed-yield via continuous-time perpetuals and deterministic execution', href: '/docs/research/synthetic-bonds' },
+  { title: 'JIT Matching Engine', desc: 'Ghost execution — Hub-and-spoke DEX architecture with composable liquidity', href: '/docs/research/jit-matching-engine' },
+  { title: 'Parametric CDS', desc: 'On-chain solvency insurance via rate-bounded everlasting options', href: '/docs/research/parametric-cds' },
 ];
 
 /* ─── Big panel ──────────────────────────────────────────── */
@@ -159,7 +159,7 @@ export default function HomePage() {
         <Panel
           index="03"
           label="Research"
-          title="Whitepapers"
+          title="Whitepaper"
           subtitle="Technical research, economic models, and protocol design rationale."
           links={researchLinks}
         />
@@ -168,8 +168,9 @@ export default function HomePage() {
       {/* Footer pinned to viewport bottom */}
       <div className="relative z-10 border-t border-[#141414]">
         <div className="max-w-[1100px] mx-auto px-8 md:px-22 py-5 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-6 text-[12px]">
-            <span className="font-mono  tracking-[0.3em] uppercase text-white font-bold">
+          <div className="flex items-center gap-3 text-[12px]">
+            <div className="w-[9px] h-[9px] bg-white shrink-0" />
+            <span className="font-mono tracking-[0.15em] uppercase text-white font-bold">
               RLD
             </span>
             <span className="font-mono tracking-[0.18em] uppercase text-[#444]">

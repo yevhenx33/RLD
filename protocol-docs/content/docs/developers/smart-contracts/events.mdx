@@ -1,0 +1,17 @@
+---
+title: Event Indexing
+description: Core on-chain events for off-chain state replication
+---
+
+# Event Indexing
+
+Analytics engines, MEV bots, and user interfaces must subscribe to the following core events emitted by `RLDCore` to maintain an accurate off-chain state replica:
+
+| Event Signature | Description |
+| --- | --- |
+| `MarketCreated(MarketId id, address collateral, address underlying, address pool)` | Emitted when a new market is launched. Identifies the V4 pool. |
+| `PositionModified(MarketId id, address user, int256 deltaCollateral, int256 deltaDebt)` | Emitted on every state-changing margin update. Used to calculate real-time Open Interest. |
+| `FundingApplied(MarketId marketId, uint256 oldNormFactor, uint256 newNormFactor, int256 fundingRate, uint256 timeDelta)` | Emitted when the normalization factor ($NF(t)$) updates due to pool imbalances. Essential for accurate Mark-to-Market accounting. |
+| `Liquidation(MarketId id, address user, address liquidator, uint256 debtCovered, uint256 collateralSeized, uint256 wRLPBurned)` | Emitted upon successful liquidation. |
+| `BadDebtSocialized(MarketId marketId, uint128 chunk, uint128 remainingBadDebt, uint128 newNormFactor)` | Emitted when underwater debt cannot be liquidated and is absorbed by the protocol. |
+| `BrokerCreated(address broker, address owner, uint256 tokenId)` | Emitted by the `PrimeBrokerFactory` during onboarding. |

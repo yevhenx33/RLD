@@ -1,0 +1,99 @@
+---
+title: Smart Contracts Integration
+description: Comprehensive integration guide, execution flows, and technical reference for RLD on Ethereum Mainnet
+---
+
+# Smart Contracts Integration
+
+This section serves as the canonical contract integration reference for building programmatic execution strategies, market-making bots, and vault integrations on top of the RLD protocol. It provides an extensive breakdown of contract interfaces, operational parameters, and the exact sequence of cross-contract calls required to safely interact with the protocol.
+
+## Address Registry
+
+The protocol is organized around a unified Core router (`RLDCore`) and per-market isolated broker factories. 
+
+*Note: Mainnet deployment addresses will be published following the final audit phase. Use the canonical `deployments.json` provided in the official release payload for your specific target network.*
+
+| Component | Description |
+| --- | --- |
+| `RLDCore` | The global clearinghouse, ledger, and state registry. Manages solvency and global settlement. |
+| `BrokerRouter` | The primary entry point for user operations (deposits, swaps, closing positions). |
+| `GhostRouter` | The execution router for Spot swaps, LP liquidity provisioning, and Just-In-Time limit orders. |
+| `TwapEngine` | The Time-Weighted Average Market Maker execution engine for continuous streaming trades. |
+| `BondFactory` | An advanced lifecycle wrapper for minting and closing fully hedged synthetic bonds. |
+| `PoolManager` | The underlying Uniswap V4 PoolManager singleton. |
+| `Permit2` | Standard Uniswap Permit2 contract used for all token approvals. |
+
+### Per-Market Addresses
+
+Each derivative market maintains its own isolated deployment artifacts to prevent cross-asset contamination:
+
+| Market | Broker Factory | Position Token | Collateral Token |
+| --- | --- | --- | --- |
+| Rate-Level Perps | `[PerpFactoryAddress]` | `wRLP` | `USDC` / `waUSDC` |
+| Parametric CDS | `[CDSFactoryAddress]` | `wCDSUSDC` | `USDC` |
+
+---
+
+## Core Interfaces
+
+To interact with the protocol, integrators should consume the canonical ABIs exposed in the protocol's interface directory.
+
+| Interface | Purpose |
+| --- | --- |
+| `IRLDCore.sol` | Fetching market configuration, active positions, global funding states, and initiating global settlement. |
+| `IPrimeBroker.sol` | Direct broker account operations (used by advanced vault integrators). |
+| `IGhostRouter.sol` | Spot trading, JIT execution, and LP liquidity provisioning. |
+| `ITwapEngine.sol` | Streaming algorithmic order execution. |
+
+### Key State Reads
+
+`IRLDCore` exposes the active risk parameters and ledger state for any given market. Integrators must continuously poll these reads to monitor account health and market capacity.
+
+```solidity
+function isValidMarket(MarketId id) external view returns (bool);
+function getMarketState(MarketId id) external view returns (MarketState memory);
+function getMarketAddresses(MarketId id) external view returns (MarketAddresses memory);
+function getMarketConfig(MarketId id) external view returns (MarketConfig memory);
+function getPosition(MarketId id, address user) external view returns (Position memory);
+function isSolvent(MarketId id, address user) external view returns (bool);
+```
+
+#### Understanding the `MarketConfig`
+The `MarketConfig` struct dictates the exact risk parameters enforced during `RLDCore.lock` execution:
+- `minColRatio`: The initial margin requirement (e.g., `1200000000000000000` for 120%). New positions cannot be opened if the post-execution state violates this ratio.
+- `maintenanceMargin`: The minimum collateralization ratio before an account becomes eligible for liquidation (e.g., `109%`).
+- `debtCap`: The absolute maximum aggregate debt allowed for the market, preventing unbounded liability.
+
+---
+
+## Core Execution Flow
+
+```text
+                   [ User / Bot / Agent ]
+                             |
+                             v
++---------------------------------------------------------+
+|                  BrokerRouter Contract                  |
+|  (Deposit routing, Position intent, Slippage checks)    |
++---------------------------------------------------------+
+                             |
+                             v
++---------------------------------------------------------+
+|            PrimeBroker (User Margin Account)            |
+|       (NFT-bound Proxy tracking isolated collateral)    |
++---------------------------------------------------------+
+                |                           |
+        (1. Lock State)             (2. Swap Request)
+                |                           |
+                v                           v
++-----------------------+       +-------------------------+
+|        RLDCore        |       |        GhostRouter      |
+|  (Global Ledger &     |       |   (JIT Spot Execution)  |
+|   Solvency Checks)    |       +-------------------------+
++-----------------------+                   |
+                ^                           |
+                |                   (3. Settle Swap)
+        (4. Verify Margin)                  |
+                |                           v
+                +-----------------> [ Uniswap V4 Pool ]
+```

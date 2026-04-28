@@ -1,0 +1,102 @@
+---
+title: Synthetic Bonds
+description: Lock in fixed yields for any duration from a single pool
+---
+
+# Synthetic Bonds
+
+Synthetic bonds let you fix your yield or borrowing cost for any duration you choose — 1 week, 3 months, or 2 years. Unlike traditional DeFi fixed-rate protocols that fragment liquidity across discrete maturity dates, RLD routes all maturities through a single perpetual pool. No roll risk. No liquidity fragmentation. Permissionless exit.
+
+---
+
+## How It Works
+
+A synthetic bond is a packaged strategy that combines three things:
+
+1. **Deposit** — Your USDC goes into Aave, earning floating supply yield.
+2. **Short** — The protocol mints wRLP and sells it, locking in today's rate as an upfront cash payment.
+3. **TWAMM Buy-Back** — A streaming order slowly buys back the wRLP over your chosen duration, systematically unwinding the hedge.
+
+The result: you receive a **fixed yield at entry**, regardless of what floating rates do afterward.
+
+```text
+                                        Your Bond
+                        ┌─────────────────────────────────────────┐
+                        │                                         │
+  Deposit USDC ────────►│  waUSDC collateral earning Aave yield   │
+                        │  + Short wRLP (locked-in rate)          │
+                        │  + TWAMM buying back wRLP over time     │
+                        │                                         │
+                        │  At maturity: TWAMM finishes,           │
+                        │  debt is repaid, collateral returned    │
+                        └─────────────────────────────────────────┘
+```
+
+---
+
+## Why It Works
+
+**If rates fall:** Your Aave yield drops, but your short wRLP position gains value — the wRLP you need to buy back is now cheaper. The profit from the short offsets the lost yield.
+
+**If rates rise:** Your Aave yield increases, compensating for the higher cost of buying back wRLP. The extra yield offsets the short position's loss.
+
+In both scenarios, your net return converges to the rate you locked in at entry. The TWAMM streaming order ensures the unwind happens gradually and predictably, avoiding single-block execution risk.
+
+---
+
+## Creating a Bond
+
+1. Navigate to the **Bonds** market.
+2. Choose your **notional** (how much USDC to deposit).
+3. Choose your **duration** (how long the fixed yield lasts).
+4. Review the **fixed rate** — this is the yield you'll receive, locked at the moment of creation.
+5. Confirm the transaction.
+
+**Behind the scenes**, the BondFactory:
+- Creates a new margin account.
+- Deposits your USDC as collateral.
+- Mints and sells wRLP to monetize the yield upfront.
+- Submits a TWAMM streaming order to buy back the wRLP over your duration.
+- **Freezes** the account — locking all positions in place for the duration.
+
+The freeze ensures nobody (not even you) can tamper with the bond's positions until maturity. The TWAMM order continues executing automatically inside the protocol's engine.
+
+---
+
+## At Maturity
+
+When the TWAMM order finishes:
+1. **Unfreeze** the account.
+2. **Claim** the TWAMM buy-back proceeds (the wRLP tokens bought over the duration).
+3. **Repay** the remaining debt.
+4. **Withdraw** your collateral + locked-in yield.
+
+If rates moved against you during the bond, the hedge already absorbed the difference. Your net return should closely match the fixed rate you locked in at entry.
+
+---
+
+## Use Cases
+
+### Fixed Yield on Stablecoins
+You have $100k in USDC sitting idle. Instead of earning 5% floating on Aave (which could drop to 2% next week), you create a 6-month bond and lock in 5% guaranteed.
+
+### Fixed-Cost Borrowing
+You're running a delta-neutral basis trade and need to borrow at a predictable rate. Create a bond to fix your borrow cost so funding spikes don't compress your P&L.
+
+### Yield Monetization
+Cash out future yield today. The short-sell proceeds give you an upfront payment representing the present value of your locked rate over the chosen duration. Useful for treasury management or capital reallocation.
+
+---
+
+## Key Properties
+
+| Property | Detail |
+| --- | --- |
+| **Duration** | Arbitrary — 1 hour to multi-year |
+| **Collateral** | USDC → waUSDC (earns Aave yield while locked) |
+| **Liquidity** | No fragmentation — all bonds use the same wRLP pool |
+| **Transferable** | Yes — the bond is an NFT. Transfer it to sell your fixed-rate position |
+| **Early exit** | Unfreeze early and close positions (forfeits the fixed-rate guarantee) |
+| **Liquidation risk** | Yes — if rates spike extremely, the bond's margin account can still be liquidated |
+
+> **Important:** Bonds are not risk-free. Extreme rate spikes can push the margin account toward liquidation. The initial over-collateralization (typically ~9% LTV) provides a large buffer, but not infinite protection.

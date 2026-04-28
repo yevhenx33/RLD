@@ -1,0 +1,29 @@
+---
+title: Limit Engine
+description: Ghost Limit orders with demand-triggered activation
+---
+
+# Limit Engine (Ghost Limits)
+
+The `LimitEngine` is a second spoke engine registered on the `GhostRouter`, implementing dormant limit orders that activate at trigger prices:
+
+```solidity
+function submitLimitOrder(
+    bytes32 marketId,
+    bool zeroForOne,
+    uint256 triggerPrice,
+    uint256 amountIn
+) external returns (bytes32 orderId);
+```
+
+**Trigger semantics:**
+- `zeroForOne=true` (sell token0): activates when `spot >= triggerPrice`.
+- `zeroForOne=false` (sell token1): activates when `spot <= triggerPrice`.
+
+Activation is **demand-triggered** and **one-way** — orders activate only when the GhostRouter queries engines during swap routing (`syncAndFetchGhost`, `applyNettingResult`, `takeGhost`). There is no autonomous background crossing loop, and orders do not deactivate after price reversion.
+
+**Post-activation accounting:** Activated inventory merges into a single global active pool per direction with shared `remainingInput`, `totalShares`, `earningsFactor`, and `depletionFactor`. Consumption via netting and taker intercept uses the same mechanism as TWAMM ghost. Order claims and cancels settle pro-rata via accumulator deltas.
+
+Settlement follows the same `claimTokens()` / `cancelOrder()` pattern as the `TwapEngine`.
+
+> **Important:** Limit orders are **not** tracked as collateral in the broker's `getNetAccountValue()`. Unlike TWAMM orders and V4 LP positions, which each have a dedicated valuation module, limit order value is invisible to the solvency engine. Funds committed to a limit order are effectively removed from the broker's NAV until claimed or cancelled. Operators should account for this when sizing positions.

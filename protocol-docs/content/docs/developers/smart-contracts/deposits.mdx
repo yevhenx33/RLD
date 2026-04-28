@@ -1,0 +1,55 @@
+---
+title: Deposits & Margin Management
+description: Funding broker accounts and managing collateral positions
+---
+
+# Deposits & Margin Management
+
+The `BrokerRouter` provides standard helper functions to sweep collateral from the user's EOA into their `PrimeBroker`.
+
+```solidity
+// For Permit2 flows (Requires EIP-712 Signature)
+function deposit(
+    address broker,
+    uint256 amount,
+    ISignatureTransfer.PermitTransferFrom calldata permit,
+    bytes calldata signature
+) external;
+
+// For standard ERC-20 approvals
+function depositWithApproval(address broker, uint256 amount) external;
+```
+
+**Under the Hood (Advanced Integration):**
+
+Collateral management and debt management are **two separate operations** in RLD. Unlike traditional lending protocols that bundle deposit and borrow into a single call, integrators must execute them sequentially:
+
+**Step 1 — Fund the Broker:**
+
+Collateral must be deposited into the `PrimeBroker` *before* opening any debt position. This is done either through the `BrokerRouter` helpers shown above, or by directly transferring collateral tokens to the broker address. The broker's `getNetAccountValue()` automatically includes any collateral token balance it holds.
+
+**Step 2 — Modify Debt via `modifyPosition`:**
+
+Once the broker is funded, the integrator calls `modifyPosition` to adjust the debt side of the position:
+
+```solidity
+function modifyPosition(
+    bytes32 rawMarketId,
+    int256 deltaCollateral,
+    int256 deltaDebt
+) external;
+```
+
+> **Important:** The `deltaCollateral` parameter is a legacy artifact kept for interface compatibility. It is **always passed as `0`** — `RLDCore` does not track collateral directly (collateral custody is fully delegated to the `PrimeBroker`). This parameter will be removed before mainnet production.
+
+- `deltaDebt > 0`: Mints new `wRLP` debt tokens (opens or increases a short position). The corresponding `PositionToken` is minted to the broker.
+- `deltaDebt < 0`: Burns `wRLP` debt tokens (repays or reduces a short position). The broker must hold sufficient `PositionToken` balance to burn.
+
+The broker internally calls `RLDCore.lock()`, which triggers the flash accounting callback. After all operations complete, `RLDCore` checks the broker's solvency by querying `getNetAccountValue()` against the total debt obligation. If the post-execution state violates the `minColRatio` (for new mints) or `maintenanceMargin` (for existing position adjustments), the entire transaction reverts atomically.
+
+**Example Integration Flow:**
+```text
+1. broker = PrimeBrokerFactory.createBroker(salt)
+2. USDC.transfer(broker, 10_000e6)              // Fund the broker
+3. broker.modifyPosition(marketId, 0, 1000e6)   // Mint 1000 wRLP debt
+```

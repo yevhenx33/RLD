@@ -1,6 +1,14 @@
 import { Inter, Space_Grotesk, JetBrains_Mono } from 'next/font/google';
+import type { Metadata } from 'next';
 import { Provider } from '@/components/provider';
 import './global.css';
+import 'katex/dist/katex.css';
+
+export const metadata: Metadata = {
+  metadataBase: new URL('https://docs.rld.fi'),
+  title: 'RLD Protocol Documentation',
+  description: 'Interest rate derivatives for on-chain finance',
+};
 
 const inter = Inter({
   subsets: ['latin'],

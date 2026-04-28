@@ -1,0 +1,12 @@
+{
+  "title": "Traders",
+  "pages": [
+    "getting-started",
+    "core-concepts",
+    "rate-perpetuals",
+    "synthetic-bonds",
+    "credit-default-swaps",
+    "providing-liquidity",
+    "risks"
+  ]
+}

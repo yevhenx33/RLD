@@ -1,0 +1,95 @@
+---
+title: Providing Liquidity
+description: Earn fees by market-making on rate perpetuals
+---
+
+# Providing Liquidity
+
+Liquidity Providers (LPs) on RLD earn trading fees by depositing assets into the wRLP/waUSDC Uniswap V4 pool. RLD's rate-based design gives LPs a structural advantage over traditional crypto LP positions.
+
+---
+
+## Why LP on Rate Markets?
+
+Providing liquidity on a price-derivative pool (like ETH/USDC) is risky because asset prices can trend infinitely. If ETH goes from \$2,000 to \$10,000 and never comes back, your LP position suffers permanent impermanent loss.
+
+**Rate markets are fundamentally different:**
+
+Interest rates can't trend infinitely. They're bounded by lending pool economics:
+- **Floor:** Rates stay above ~3-4% (SOFR / risk-free rate arbitrage).
+- **Ceiling:** Rates are hard-capped at the pool's maximum (~75-100% APY).
+- **Mean reversion:** When rates spike, suppliers flood in for high yield and borrowers repay expensive debt. Rates always come back.
+
+This means LP positions on RLD pools have a **convergence guarantee** — the price will eventually return to your concentrated range. Impermanent loss is temporary, not permanent.
+
+---
+
+## How It Works
+
+1. **Fund your margin account** with waUSDC and/or wRLP.
+2. Navigate to the **Liquidity** section.
+3. Choose your **tick range** — the interest rate band where you want to provide liquidity.
+4. Enter the amount of liquidity to add.
+5. Confirm the transaction.
+
+Your LP position is represented as a Uniswap V4 position NFT, held inside your margin account.
+
+### Choosing a Range
+
+The tick range determines which rate levels your liquidity covers:
+
+| Strategy | Range | Trade-Off |
+| --- | --- | --- |
+| **Tight** (e.g., 4-8% APY) | Narrow | Higher fee yield when in range, but stops earning when rates move outside |
+| **Wide** (e.g., 2-20% APY) | Broad | Lower fee yield per unit, but stays active through more market conditions |
+| **Spike** (e.g., 15-50% APY) | Upper tail | Captures explosive spike events, dormant during calm markets |
+
+For most LPs, a moderate range around the current rate equilibrium (~4-12%) captures the majority of trading volume while maintaining capital efficiency.
+
+---
+
+## Fees
+
+Every swap on the wRLP/waUSDC pool pays a 0.05% fee. This fee is distributed pro-rata to LPs with active liquidity at the current tick.
+
+**Fee collection:** Accrued fees are collected via the **Collect Fees** button in your portfolio. Fees are swept back to your margin account as waUSDC and wRLP, immediately improving your NAV.
+
+---
+
+## LP Positions as Collateral
+
+Your LP position counts toward your margin account's collateral value:
+
+```text
+Account NAV = Cash + wRLP Holdings + LP Position Value + TWAMM Value
+```
+
+This means you can simultaneously:
+- Provide liquidity (earn fees).
+- Use the LP position's value as margin for other trades.
+
+> **Limitation (V1):** Only **one** LP position per margin account is tracked for collateral. If you hold multiple positions, set your largest one as the active tracked position to maximize borrowing capacity. Untracked positions are invisible to the solvency engine.
+
+---
+
+## Managing Positions
+
+### Adding More Liquidity
+Create additional positions at different tick ranges, or add to an existing one.
+
+### Removing Liquidity
+Withdraw all or part of your position. If you remove everything, the position NFT is burned. A solvency check runs afterward — the transaction reverts if removing the LP would make your account insolvent.
+
+### Setting the Active Position
+If you hold multiple LP positions, use **Set Active Position** to choose which one counts as collateral. Always track your largest position.
+
+---
+
+## Risks
+
+| Risk | Description |
+| --- | --- |
+| **Out of range** | If rates move outside your tick range, you stop earning fees and hold one-sided exposure. Unlike spot LPs, rates *will* mean-revert, but timing is uncertain. |
+| **Impermanent loss** | Temporary divergence loss when rates move away from your entry. Structurally bounded by rate mean-reversion, but can be significant during extended spikes. |
+| **Funding exposure** | Your LP position holds both waUSDC and wRLP. The wRLP side is subject to normalization factor decay when mark ≠ index. |
+| **Liquidation** | If you're using your LP as margin for leveraged positions, a rate spike that pushes your LP out of range and reduces its value could trigger liquidation. |

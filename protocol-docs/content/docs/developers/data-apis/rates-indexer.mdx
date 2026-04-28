@@ -1,0 +1,327 @@
+---
+title: Rates & Analytics
+description: Historical lending rate data and cross-protocol market analytics
+---
+
+# Rates & Analytics
+
+The Rates & Analytics service provides deep historical data for quantitative analysis, backtesting, and dashboard visualizations. It exposes timeseries data for lending rates across major DeFi protocols (Aave V3, Euler, Fluid), off-chain benchmarks (SOFR, sUSDe), and ETH/USD prices — all accessible via GraphQL and REST endpoints.
+
+---
+
+## GraphQL API (`/analytics/graphql`)
+
+All analytics queries are available via `POST https://api.rld.fi/analytics/graphql`.
+
+```bash
+curl -X POST https://api.rld.fi/analytics/graphql \
+  -H "content-type: application/json" \
+  --data '{"query":"{ latestRates { usdc dai ethPrice } }"}'
+```
+
+### `rates` — Historical Lending Rates
+
+```graphql
+query GetRates($symbol: String!, $resolution: String!, $limit: Int!) {
+  rates(symbol: $symbol, resolution: $resolution, limit: $limit) {
+    timestamp
+    apy
+    ethPrice
+  }
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `symbol` | String | `"USDC"` | Rate symbol: `USDC`, `DAI`, `USDT`, `SOFR`, `sUSDe` |
+| `resolution` | String | `"1H"` | Time granularity: `5M`, `1H`, `4H`, `1D`, `1W` |
+| `limit` | Int | 500 | Max rows returned (capped at 10,000) |
+| `startDate` | String | — | Lower date bound: `YYYY-MM-DD` |
+| `endDate` | String | — | Upper date bound: `YYYY-MM-DD` |
+
+**Supported Symbols:**
+
+| Symbol | Description |
+| --- | --- |
+| `USDC` | Aave V3 USDC variable borrow APY |
+| `DAI` | Aave V3 DAI variable borrow APY |
+| `USDT` | Aave V3 USDT variable borrow APY |
+| `SOFR` | Secured Overnight Financing Rate (off-chain) |
+| `sUSDe` | Ethena sUSDe staking yield |
+
+**Resolution Behavior:**
+- `5M` and `1H`: Raw datapoints returned without aggregation.
+- `4H`, `1D`, `1W`: Datapoints are time-bucketed and averaged within each interval.
+
+**Example — Fetch 1 year of hourly USDC rates:**
+
+```graphql
+query {
+  rates(symbol: "USDC", resolution: "1H", limit: 8760) {
+    timestamp
+    apy
+    ethPrice
+  }
+}
+```
+
+Data is returned in **ascending** chronological order. NaN gaps are forward-filled from the previous valid data point.
+
+---
+
+### `ethPrices` — ETH/USD History
+
+```graphql
+query {
+  ethPrices(resolution: "1D", limit: 365) {
+    timestamp
+    price
+  }
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `resolution` | String | `"1H"` | `1H`, `4H`, `1D`, `1W` |
+| `limit` | Int | 500 | Max rows (capped at 10,000) |
+
+---
+
+### `latestRates` — Current Rate Snapshot
+
+Returns the single most recent rate snapshot across all tracked symbols.
+
+```graphql
+query {
+  latestRates {
+    timestamp
+    usdc
+    dai
+    usdt
+    sofr
+    susde
+    ethPrice
+  }
+}
+```
+
+All rate values are annualized decimals (e.g., `0.0534` = 5.34% APY). `ethPrice` is USD.
+
+**Typical Flow — Dashboard Header Widget:**
+
+```typescript
+const { latestRates } = await query(`{
+  latestRates { timestamp usdc dai sofr ethPrice }
+}`);
+
+// Display: USDC Borrow: 5.34% | DAI: 6.12% | SOFR: 5.30% | ETH: $3,245
+```
+
+---
+
+### `marketSnapshots` — Cross-Protocol Overview
+
+Aggregates the latest state of every lending market across protocols, grouped by symbol and protocol.
+
+```graphql
+query {
+  marketSnapshots {
+    symbol
+    protocol
+    supplyUsd
+    borrowUsd
+    supplyApy
+    borrowApy
+    utilization
+  }
+}
+```
+
+**Field Reference:**
+
+| Field | Description |
+| --- | --- |
+| `symbol` | Token symbol (e.g., `USDC`, `WETH`) |
+| `protocol` | Protocol identifier (e.g., `AAVE_MARKET`, `EULER_MARKET`) |
+| `supplyUsd` | Total supply TVL in USD |
+| `borrowUsd` | Total borrow TVL in USD |
+| `supplyApy` | TVL-weighted average supply APY |
+| `borrowApy` | TVL-weighted average borrow APY |
+| `utilization` | Weighted average utilization rate |
+
+Outlier markets (utilization > 99.5% or supply APY > 100%) are excluded from rate weighting to prevent contamination, but their TVL is still included in totals.
+
+---
+
+### `protocolMarkets` — Per-Market Detail
+
+Returns individual market-level data for a specific protocol.
+
+```graphql
+query {
+  protocolMarkets(protocol: "AAVE_MARKET") {
+    entityId
+    symbol
+    protocol
+    supplyUsd
+    borrowUsd
+    supplyApy
+    borrowApy
+    utilization
+    collateralSymbol
+    lltv
+  }
+}
+```
+
+**Allowed protocols:** `AAVE_MARKET`, `EULER_MARKET`, `FLUID_MARKET`
+
+The `entityId` is the protocol-specific market identifier (e.g., Aave's reserve address, Morpho's market hash). Markets with less than $1,000 in supply or borrow are filtered out.
+
+**Typical Flow — Protocol Comparison Table:**
+
+```graphql
+query {
+  aave: protocolMarkets(protocol: "AAVE_MARKET") {
+    entityId symbol supplyApy borrowApy supplyUsd
+  }
+  euler: protocolMarkets(protocol: "EULER_MARKET") {
+    entityId symbol supplyApy borrowApy supplyUsd
+  }
+}
+```
+
+---
+
+### `protocolTvlHistory` — Stacked TVL Chart
+
+Returns weekly aggregated TVL per protocol, pivoted for direct use in stacked bar/area charts.
+
+```graphql
+query {
+  protocolTvlHistory {
+    date
+    aave
+    euler
+    fluid
+  }
+}
+```
+
+Each data point represents the total supply USD grouped by week and protocol.
+
+**Typical Flow — TVL Stacked Area Chart:**
+
+```typescript
+const { protocolTvlHistory } = await query(`{
+  protocolTvlHistory { date aave euler fluid }
+}`);
+
+// Chart data is already pivoted:
+// [{ date: "2024-01-01", aave: 1200000, euler: 450000, fluid: 200000 }, ...]
+```
+
+---
+
+### `marketTimeseries` — Individual Market Chart
+
+Returns historical timeseries for a single lending market, pre-aggregated at the requested resolution.
+
+```graphql
+query GetMarketChart($entityId: String!, $resolution: String!) {
+  marketTimeseries(entityId: $entityId, resolution: $resolution, limit: 2000) {
+    timestamp
+    supplyApy
+    borrowApy
+    utilization
+    supplyUsd
+    borrowUsd
+  }
+}
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `entityId` | String! | — | Protocol-specific market identifier |
+| `resolution` | String | `"1H"` | `1H`, `4H`, `1D`, `1W` |
+| `limit` | Int | 2000 | Max rows (capped at 10,000) |
+
+**Typical Flow — Market Detail Page:**
+
+```typescript
+// Fetch 30 days of hourly data for a specific Aave USDC market
+const { marketTimeseries } = await query(`{
+  marketTimeseries(entityId: "aave_usdc_v3", resolution: "1H", limit: 720) {
+    timestamp supplyApy borrowApy utilization
+  }
+}`);
+```
+
+---
+
+## REST Endpoints
+
+### `GET /rates`
+
+```bash
+curl "https://api.rld.fi/rates?symbol=USDC&resolution=1H&limit=500"
+```
+
+Returns an array of `{ timestamp, apy, eth_price }` objects, sorted ascending by timestamp.
+
+**Parameters:**
+
+| Parameter | Values | Description |
+| --- | --- | --- |
+| `symbol` | `USDC`, `DAI`, `USDT`, `SOFR`, `sUSDe` | Rate to query |
+| `resolution` | `5M`, `1H`, `4H`, `1D`, `1W` | Time granularity |
+| `start_date` | `YYYY-MM-DD` | Optional lower date bound |
+| `end_date` | `YYYY-MM-DD` | Optional upper date bound |
+| `limit` | 1–100,000 | Max rows returned |
+
+### `GET /eth-prices`
+
+```bash
+curl "https://api.rld.fi/eth-prices?resolution=1D&limit=365"
+```
+
+Returns `{ timestamp, price }` array. Supports a `RAW` resolution mode for maximum block-level granularity (includes `block_number`).
+
+---
+
+## WebSocket — Live Rate Updates
+
+```javascript
+const ws = new WebSocket("wss://api.rld.fi/ws/rates");
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  // msg.type === "UPDATE"
+  // msg.data: { timestamp, USDC, DAI, USDT, SOFR, sUSDe, ETH }
+};
+```
+
+The server broadcasts the latest rate snapshot to all connected clients when new data is available. Messages follow this structure:
+
+```json
+{
+  "type": "UPDATE",
+  "data": {
+    "timestamp": 1714300800,
+    "USDC": 0.0534,
+    "DAI": 0.0612,
+    "USDT": 0.0498,
+    "SOFR": 0.0530,
+    "sUSDe": 0.1245,
+    "ETH": 3245.67
+  }
+}
+```
+
+Rate values are annualized decimals. `ETH` is the spot USD price.

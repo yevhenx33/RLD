@@ -1,0 +1,111 @@
+---
+title: Rate Perpetuals
+description: Trade interest rates as a volatility instrument
+---
+
+# Rate Perpetuals
+
+Rate-Level Perpetuals (RLP) transform DeFi's most volatile but overlooked metric — the lending pool borrowing rate — into a tradable, persistent derivative. Instead of trying to predict ETH price, you're trading whether Aave USDC borrow rates will go up or down.
+
+---
+
+## Why Trade Rates?
+
+DeFi borrow rates have a unique payoff profile that doesn't exist anywhere else in crypto:
+
+**Structurally bounded, violently volatile.**
+
+- **The floor:** Rates can't go below 0% and practically stay above ~3-4% (the risk-free rate floor set by SOFR / T-Bills). If DeFi rates drop below T-Bill yields, institutional capital arbitrages the gap.
+- **The ceiling:** Rates are hard-capped by the lending pool's maximum (~75-100% APY on Aave's Slope 2 curve).
+- **The spikes:** Between floor and ceiling, rates can 10-20× during leverage surges, liquidation cascades, or airdrop farming events.
+
+This creates a **mean-reverting, positively skewed instrument**. This is fundamentally different from trading ETH (which can trend infinitely in either direction).
+
+---
+
+## Going Long (Buying wRLP)
+
+**You believe rates will go up.** You spend collateral to buy wRLP tokens on the pool.
+
+**When to go long:**
+- ETH rally incoming → leveraged long demand → utilization and rates rise.
+- Market panic → liquidation cascades → utilization maxes out → rates explode.
+- Hedging your Aave borrow cost → lock in today's rate.
+
+
+**How it works:**
+1. From your funded margin account, click **Long**.
+2. Enter the amount of waUSDC to spend.
+3. The protocol swaps your waUSDC for wRLP via the Uniswap V4 pool.
+4. Your wRLP tokens sit in your margin account.
+5. If the index price rises (rates go up), your wRLP is worth more. Close anytime.
+
+**P&L:**
+```text
+Profit = (Exit Price - Entry Price) × Quantity
+```
+
+> **Watch out for funding:** If mark > index, you pay continuous funding as a long. In a sustained premium, this erodes your position even if rates are flat.
+
+---
+
+## Going Short (Minting wRLP Debt)
+
+**You believe rates will go down.** You mint wRLP tokens against your collateral and sell them. If rates drop, you buy them back cheaper and pocket the difference.
+
+**When to go short:**
+- Market cooling off after a rate spike → rates mean-reverting back to baseline.
+- Creating a synthetic bond → short + TWAMM buy-back = fixed yield.
+- Hedging your Aave lending yield → lock in today's rate for a custom maturity.
+
+
+**How it works:**
+1. From your funded margin account, click **Short**.
+2. Enter your initial collateral and target debt amount.
+3. The protocol mints wRLP, sells it on the pool, and deposits the proceeds back into your account.
+4. Your debt is tracked at the current normalization factor.
+5. If the index price falls (rates drop), your debt decreases in value. Close to realize profit.
+
+**P&L:**
+```text
+Profit = (Entry Price - Exit Price) × Quantity - Funding Cost
+```
+
+**Leverage:** Because the sell proceeds are deposited back as collateral, shorts are inherently leveraged.
+
+---
+
+## Closing Positions
+
+### Close Long
+Sell your wRLP tokens back to the pool for waUSDC. The proceeds stay in your margin account.
+
+### Close Short
+Buy back wRLP from the pool to repay your debt. If the rate dropped, you buy back cheaper than you sold — that's your profit.
+
+**Partial closes** are supported — you don't have to close everything at once. The protocol automatically caps debt repayment to your outstanding balance to prevent errors.
+
+---
+
+## The Asymmetric Edge
+
+Interest rates have a property that asset prices don't: **guaranteed mean reversion**. When Aave USDC hits 50% APY during a leverage event:
+- New suppliers flood in to capture high yield → supply increases.
+- Existing borrowers repay expensive debt → demand decreases.
+- Both forces mechanically push utilization (and rates) back to equilibrium.
+
+This means that long positions in rate perps have a built-in convergence guarantee that doesn't exist in traditional crypto derivatives. The rate *will* come back. The question is timing and magnitude.
+
+---
+
+## Quick Reference
+
+| Parameter | Typical Value |
+| --- | --- |
+| **Collateral** | USDC → waUSDC (auto-wrapped) |
+| **Position token** | wRLP |
+| **Index** | 100 × Aave USDC borrow APY |
+| **Initial margin** | ~120% |
+| **Maintenance margin** | ~109% |
+| **Pool fee** | 0.05% per swap |
+| **Funding** | Continuous (via normalization factor) |

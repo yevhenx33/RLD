@@ -1,0 +1,25 @@
+---
+title: Dutch Liquidations
+description: Time-decay auction liquidation mechanics
+---
+
+# Dutch Liquidations
+
+When a broker's collateral ratio drops below the `maintenanceMargin`, any third-party liquidator can absorb the debt via the Dutch Liquidation Module.
+
+```solidity
+function liquidate(
+    MarketId id,
+    address underwaterBroker,
+    uint256 maxDebtToCover
+) external;
+```
+
+## Dutch Auction Mechanics
+
+Unlike standard immediate-execution liquidations which cause toxic cascading slippage, RLD uses a continuous time-decay auction:
+
+1. The moment `isSolvent() == false`, the auction begins.
+2. The liquidation discount starts at 0% and linearly increases over the `badDebtPeriod` based on the `decayRateWad`.
+3. Liquidators strategically wait for the discount to cover their gas and slippage costs before calling `liquidate()`. 
+4. If a position reaches maximum decay without being liquidated, it is classified as Bad Debt and socialized across the protocol.
