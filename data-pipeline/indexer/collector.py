@@ -69,11 +69,11 @@ class ProtocolCollector:
     Vertical Event Collector logic. 
     Strictly isolated fetcher that ONLY pulls from HyperSync to the ClickHouse mempool.
     """
-    def __init__(self, source: BaseSource, clickhouse_host="localhost", clickhouse_port=8123):
+    def __init__(self, source: BaseSource, clickhouse_host=None, clickhouse_port=None):
         self.source = source
         self.envio_token = require_envio_token()
-        self.ch_host = clickhouse_host
-        self.ch_port = clickhouse_port
+        self.ch_host = clickhouse_host or os.getenv("CLICKHOUSE_HOST", "localhost")
+        self.ch_port = int(clickhouse_port or os.getenv("CLICKHOUSE_PORT", "8123"))
         self._hs_client = None
         self._ch = None
         self._health_table_ready = False

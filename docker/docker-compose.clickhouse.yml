@@ -1,6 +1,6 @@
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:24.12
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_IMAGE_TAG:-26.3.7.8}
     container_name: rld_clickhouse
     ports:
       - "127.0.0.1:8123:8123"
@@ -17,3 +17,8 @@ services:
         limits:
           memory: 12G
     restart: unless-stopped
+
+networks:
+  default:
+    name: rld_shared
+    external: true

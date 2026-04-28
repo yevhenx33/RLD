@@ -7,6 +7,7 @@
 .env.*
 !.env.example
 rate-dashboard.env
+docker/mainnet/*.hex
 
 # ── Python ─────────────────────────────────────────────────────
 __pycache__/

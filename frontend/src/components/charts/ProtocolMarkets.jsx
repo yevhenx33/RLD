@@ -23,17 +23,29 @@ const PROTOCOL_MAP = {
 
 const PROTOCOL_MARKETS_QUERY = `
   query ProtocolMarketsByProtocol($protocol: String!) {
-    protocolMarkets(protocol: $protocol) {
-      entityId
-      symbol
-      protocol
-      supplyUsd
-      borrowUsd
-      supplyApy
-      borrowApy
-      utilization
-      collateralSymbol
-      lltv
+    protocolMarketsPage(protocol: $protocol) {
+      freshness { ready status generatedAt }
+      stats {
+        totalSupplyUsd
+        totalBorrowUsd
+        averageUtilization
+        averageSupplyApy
+        averageBorrowApy
+        marketCount
+      }
+      rows {
+        entityId
+        symbol
+        protocol
+        supplyUsd
+        borrowUsd
+        supplyApy
+        borrowApy
+        utilization
+        collateralSymbol
+        lltv
+        isTrapped
+      }
     }
   }
 `;
@@ -78,7 +90,7 @@ export default function ProtocolMarkets() {
   }, [error]);
 
   const markets = useMemo(() => {
-    const rows = data?.protocolMarkets || [];
+    const rows = data?.protocolMarketsPage?.rows || [];
     return rows.map((r) => ({
       entityId: r.entityId,
       collateralIcon: r.collateralSymbol ? getTokenIcon(r.collateralSymbol) : null,
@@ -93,6 +105,7 @@ export default function ProtocolMarkets() {
       borrowApy: r.borrowApy || 0,
       utilization: r.utilization || 0,
       lltv: r.lltv || 0,
+      isTrapped: Boolean(r.isTrapped),
     }));
   }, [data]);
 
@@ -123,21 +136,16 @@ export default function ProtocolMarkets() {
 
   // --- Stats (exclude trapped markets from APY averages) ---
   const stats = useMemo(() => {
-    const totalSupply = markets.reduce((s, m) => s + m.supplyUsd, 0);
-    const totalBorrow = markets.reduce((s, m) => s + m.borrowUsd, 0);
-    const avgUtil = totalSupply > 0 ? totalBorrow / totalSupply : 0;
-    // Filter out trapped markets (util >= 99.5% or APY > 100%) for avg stats
-    const healthy = markets.filter((m) => m.utilization < 0.995 && m.supplyApy < 1.0);
-    const healthySupply = healthy.reduce((s, m) => s + m.supplyUsd, 0);
-    const healthyBorrow = healthy.reduce((s, m) => s + m.borrowUsd, 0);
-    const avgSupplyApy = healthySupply > 0
-      ? healthy.reduce((s, m) => s + m.supplyApy * m.supplyUsd, 0) / healthySupply
-      : 0;
-    const avgBorrowApy = healthyBorrow > 0
-      ? healthy.reduce((s, m) => s + m.borrowApy * m.borrowUsd, 0) / healthyBorrow
-      : 0;
-    return { totalSupply, totalBorrow, avgUtil, avgSupplyApy, avgBorrowApy, count: markets.length };
-  }, [markets]);
+    const pageStats = data?.protocolMarketsPage?.stats;
+    return {
+      totalSupply: pageStats?.totalSupplyUsd || 0,
+      totalBorrow: pageStats?.totalBorrowUsd || 0,
+      avgUtil: pageStats?.averageUtilization || 0,
+      avgSupplyApy: pageStats?.averageSupplyApy || 0,
+      avgBorrowApy: pageStats?.averageBorrowApy || 0,
+      count: pageStats?.marketCount || 0,
+    };
+  }, [data]);
 
   const COLUMNS = [
     { key: "supplyUsd", label: "Supply USD" },
@@ -241,7 +249,7 @@ export default function ProtocolMarkets() {
               </thead>
               <tbody className="divide-y divide-white/5">
                 {pagedData.map((m) => {
-                  const isTrapped = m.utilization >= 0.995 && m.supplyApy > 1.0;
+                  const isTrapped = m.isTrapped;
                   return (
                     <tr
                       key={m.entityId}

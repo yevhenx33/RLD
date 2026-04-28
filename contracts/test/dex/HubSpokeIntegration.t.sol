@@ -99,4 +99,27 @@ contract HubSpokeIntegrationTest is Test {
         assertEq(claimed, 100e18, "unexpected claimed earnings");
         assertEq(t0.balanceOf(alice), aliceBefore + claimed, "claim transfer mismatch");
     }
+
+    function test_routerForceSettleEngineCrystallizesTwapGhost() external {
+        vm.prank(alice);
+        bytes32 orderId = engine.submitStream(marketId, true, 120, 1_200e18);
+
+        uint256 startEpoch = _nextEpoch(block.timestamp);
+        vm.warp(startEpoch + 60);
+
+        MockERC20 t1 = token1 == address(tokenA) ? tokenA : tokenB;
+        t1.mint(address(poolManager), 1_000_000e18);
+
+        router.forceSettleEngine(address(engine), marketId, true);
+
+        (uint256 ghost0,,,,) = engine.states(marketId);
+        assertEq(ghost0, 0, "force settle should clear token0 ghost");
+
+        uint256 aliceBefore = t1.balanceOf(alice);
+        vm.prank(alice);
+        uint256 claimed = engine.claimTokens(marketId, orderId);
+
+        assertEq(claimed, 600e18, "unexpected force-settle claim");
+        assertEq(t1.balanceOf(alice), aliceBefore + claimed, "claim transfer mismatch");
+    }
 }

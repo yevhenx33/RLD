@@ -17,41 +17,44 @@ const CHART_RESOLUTION = "1D";
 const TIMESERIES_LIMIT_DAYS = 500;
 const FLOW_LIMIT_DAYS = 500;
 
-const LENDING_POOL_CORE_QUERY = `
-  query LendingPoolCore($protocol: String!, $entityId: String!, $timeseriesLimit: Int!) {
-    protocolMarkets(protocol: $protocol, entityId: $entityId) {
-      entityId
-      symbol
-      protocol
-      supplyUsd
-      borrowUsd
-      supplyApy
-      borrowApy
-      utilization
-    }
-    marketTimeseries(entityId: $entityId, resolution: "1D", limit: $timeseriesLimit) {
-      timestamp
-      supplyApy
-      borrowApy
-      utilization
-      supplyUsd
-      borrowUsd
-    }
-  }
-`;
-
-const LENDING_POOL_FLOW_QUERY = `
-  query LendingPoolFlow($entityId: String!, $flowLimit: Int!) {
-    marketFlowTimeseries(entityId: $entityId, resolution: "1D", limit: $flowLimit) {
-      timestamp
-      supplyInflowUsd
-      supplyOutflowUsd
-      borrowInflowUsd
-      borrowOutflowUsd
-      netSupplyFlowUsd
-      netBorrowFlowUsd
-      cumulativeSupplyNetInflowUsd
-      cumulativeBorrowNetInflowUsd
+const LENDING_POOL_PAGE_QUERY = `
+  query LendingPoolPage($protocol: String!, $entityId: String!, $timeseriesLimit: Int!, $flowLimit: Int!) {
+    lendingPoolPage(
+      protocol: $protocol
+      entityId: $entityId
+      timeseriesLimit: $timeseriesLimit
+      flowLimit: $flowLimit
+    ) {
+      freshness { ready status generatedAt }
+      market {
+        entityId
+        symbol
+        protocol
+        supplyUsd
+        borrowUsd
+        supplyApy
+        borrowApy
+        utilization
+      }
+      rateChart {
+        timestamp
+        supplyApy
+        borrowApy
+        utilization
+        supplyUsd
+        borrowUsd
+      }
+      flowChart {
+        timestamp
+        supplyInflowUsd
+        supplyOutflowUsd
+        borrowInflowUsd
+        borrowOutflowUsd
+        netSupplyFlowUsd
+        netBorrowFlowUsd
+        cumulativeSupplyNetInflowUsd
+        cumulativeBorrowNetInflowUsd
+      }
     }
   }
 `;
@@ -81,37 +84,28 @@ export default function LendingPoolPage() {
     return raw;
   }, [marketId, protocolKey]);
 
-  const { data: coreGqlData, isLoading: coreLoading } = useSWR(
-    normalizedEntityId ? [ENVIO_GRAPHQL_URL, `envio.lending-pool.core.${normalizedEntityId}.v2`] : null,
+  const { data: pageGqlData, isLoading: pageLoading } = useSWR(
+    normalizedEntityId ? [ENVIO_GRAPHQL_URL, `envio.lending-pool.page.${normalizedEntityId}.v1`] : null,
     ([url]) =>
       postGraphQL(url, {
-        query: LENDING_POOL_CORE_QUERY,
+        query: LENDING_POOL_PAGE_QUERY,
         variables: {
           protocol: protocolKey,
           entityId: normalizedEntityId,
           timeseriesLimit: TIMESERIES_LIMIT_DAYS,
+          flowLimit: FLOW_LIMIT_DAYS,
         },
       }),
-    { refreshInterval: 30000, dedupingInterval: 5000, revalidateOnFocus: false }
-  );
-
-  const { data: flowGqlData, isLoading: flowLoading } = useSWR(
-    normalizedEntityId ? [ENVIO_GRAPHQL_URL, `envio.lending-pool.flow.${normalizedEntityId}.v3`] : null,
-    ([url]) =>
-      postGraphQL(url, {
-        query: LENDING_POOL_FLOW_QUERY,
-        variables: { entityId: normalizedEntityId, flowLimit: FLOW_LIMIT_DAYS },
-      }),
     {
-      refreshInterval: 300000,
-      dedupingInterval: 60000,
+      refreshInterval: 30000,
+      dedupingInterval: 5000,
       revalidateOnFocus: false,
     }
   );
 
   const { market, tsData, flowData } = useMemo(() => {
-    const rows = coreGqlData?.protocolMarkets || [];
-    const rawMarket = rows[0] || null;
+    const page = pageGqlData?.lendingPoolPage || {};
+    const rawMarket = page.market || null;
 
     let safeMarket = null;
     if (rawMarket) {
@@ -128,20 +122,8 @@ export default function LendingPoolPage() {
       };
     }
 
-    const rawTs = coreGqlData?.marketTimeseries || [];
-    const chart = rawTs
-      .map((p) => ({
-        timestamp: Number(p.timestamp) || 0,
-        supplyApy: p.supplyApy ? p.supplyApy * 100 : 0,
-        borrowApy: p.borrowApy ? p.borrowApy * 100 : 0,
-        utilization: p.utilization ? p.utilization * 100 : 0,
-        supplyUsd: Math.max(0, Number(p.supplyUsd) || 0),
-        borrowUsd: Math.max(0, Number(p.borrowUsd) || 0),
-      }))
-      .filter((p) => p.timestamp > 0)
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    const rawFlow = flowGqlData?.marketFlowTimeseries || [];
+    const chart = page.rateChart || [];
+    const rawFlow = page.flowChart || [];
     const flowBase = rawFlow
       .map((p) => {
         const supplyOutflowAbs = Math.max(0, Number(p.supplyOutflowUsd) || 0);
@@ -188,9 +170,9 @@ export default function LendingPoolPage() {
     ).rows;
 
     return { market: safeMarket, tsData: chart, flowData: flow };
-  }, [coreGqlData, flowGqlData]);
+  }, [pageGqlData]);
 
-  if (coreLoading && !market) {
+  if (pageLoading && !market) {
     return (
       <div className="min-h-screen bg-[#050505] flex items-center justify-center">
         <Loader2 className="w-8 h-8 text-cyan-500 animate-spin" />
@@ -381,7 +363,7 @@ export default function LendingPoolPage() {
                   </div>
                 </div>
               </div>
-              {flowLoading && flowData.length === 0 ? (
+              {pageLoading && flowData.length === 0 ? (
                 <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
                   <Loader2 size={14} className="animate-spin" />
                   Loading Flow History...
@@ -424,7 +406,7 @@ export default function LendingPoolPage() {
                   </div>
                 </div>
               </div>
-              {flowLoading && flowData.length === 0 ? (
+              {pageLoading && flowData.length === 0 ? (
                 <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
                   <Loader2 size={14} className="animate-spin" />
                   Loading Flow History...
@@ -463,7 +445,7 @@ export default function LendingPoolPage() {
                   </div>
                 </div>
               </div>
-              {flowLoading && flowData.length === 0 ? (
+              {pageLoading && flowData.length === 0 ? (
                 <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
                   <Loader2 size={14} className="animate-spin" />
                   Loading Flow History...

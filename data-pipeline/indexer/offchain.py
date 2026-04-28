@@ -29,10 +29,10 @@ class OffchainCollector:
     Vertical Event Collector logic perfectly isolated for REST/Offchain endpoints.
     Uses time-based checkpointing instead of EVM blocks.
     """
-    def __init__(self, source: BaseSource, clickhouse_host="localhost", clickhouse_port=8123):
+    def __init__(self, source: BaseSource, clickhouse_host=None, clickhouse_port=None):
         self.source = source
-        self.ch_host = clickhouse_host
-        self.ch_port = clickhouse_port
+        self.ch_host = clickhouse_host or os.getenv("CLICKHOUSE_HOST", "localhost")
+        self.ch_port = int(clickhouse_port or os.getenv("CLICKHOUSE_PORT", "8123"))
         self._ch = None
 
     def _create_ch_client(self):

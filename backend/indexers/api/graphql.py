@@ -1140,19 +1140,35 @@ def _env_truthy(name: str, default: bool) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
-def _is_internal_client(host: str | None) -> bool:
+def _admin_allowed_clients(env_name: str = "INDEXER_ADMIN_ALLOWED_CLIENTS") -> list[str]:
+    raw = os.getenv(env_name, "127.0.0.1,::1,localhost")
+    return [entry.strip().lower() for entry in raw.split(",") if entry.strip()]
+
+
+def _is_admin_allowed_client(host: str | None, allowed_clients: list[str]) -> bool:
     if not host:
         return False
     normalized = host.strip().lower()
-    if normalized in {"localhost"}:
-        return True
     if normalized.startswith("::ffff:"):
         normalized = normalized[7:]
+    if normalized in allowed_clients:
+        return True
     try:
-        ip = ipaddress.ip_address(normalized)
+        client_ip = ipaddress.ip_address(normalized)
     except ValueError:
         return False
-    return ip.is_loopback or ip.is_private
+    if client_ip.is_loopback and any(entry in {"127.0.0.1", "::1", "localhost"} for entry in allowed_clients):
+        return True
+    for entry in allowed_clients:
+        try:
+            if "/" in entry:
+                if client_ip in ipaddress.ip_network(entry, strict=False):
+                    return True
+            elif client_ip == ipaddress.ip_address(entry):
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _error_response(
@@ -1176,10 +1192,11 @@ def _admin_forbidden_response(
     admin_token: str,
     allow_unsafe_reset: bool,
     admin_internal_only: bool,
+    admin_allowed_clients: list[str],
     log: logging.Logger,
 ) -> JSONResponse | None:
     client_host = request.client.host if request.client else None
-    if admin_internal_only and not _is_internal_client(client_host):
+    if admin_internal_only and not _is_admin_allowed_client(client_host, admin_allowed_clients):
         log.warning("Rejected admin call from non-internal client host=%s", client_host)
         return JSONResponse(
             {"status": "forbidden", "detail": "admin endpoint is internal-only"},
@@ -1235,6 +1252,7 @@ def create_app() -> FastAPI:
     }
     expose_internal_errors = _env_truthy("INDEXER_EXPOSE_INTERNAL_ERRORS", False)
     admin_internal_only = _env_truthy("INDEXER_ADMIN_INTERNAL_ONLY", True)
+    admin_allowed_clients = _admin_allowed_clients()
 
     @app.get("/healthz")
     async def healthz():
@@ -1266,6 +1284,7 @@ def create_app() -> FastAPI:
                 admin_token,
                 allow_unsafe_reset,
                 admin_internal_only,
+                admin_allowed_clients,
                 log,
             )
             if denied is not None:
@@ -1307,6 +1326,7 @@ def create_app() -> FastAPI:
                 admin_token,
                 allow_unsafe_reset,
                 admin_internal_only,
+                admin_allowed_clients,
                 log,
             )
             if denied is not None:
@@ -1351,6 +1371,7 @@ def create_app() -> FastAPI:
                 admin_token,
                 allow_unsafe_reset,
                 admin_internal_only,
+                admin_allowed_clients,
                 log,
             )
             if denied is not None:

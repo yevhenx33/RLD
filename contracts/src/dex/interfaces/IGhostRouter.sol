@@ -20,6 +20,9 @@ interface IGhostRouter {
     /// @notice Set the market oracle to Uniswap V4 pool price.
     function setUniswapOracle(bytes32 marketId) external;
 
+    /// @notice Set the maximum observation heartbeat gap before TWAP history is considered stale.
+    function setOracleMaxStaleness(bytes32 marketId, uint32 maxStaleness) external;
+
     /// @notice Sets who can manage fees for a market (owner can always override).
     function setMarketFeeController(bytes32 marketId, address controller) external;
 
@@ -52,6 +55,12 @@ interface IGhostRouter {
 
     /// @notice Allows Spokes to automatically settle depleted streams across V4 safely
     function settleGhost(bytes32 marketId, bool zeroForOne, uint256 amountIn) external returns (uint256 amountOut);
+
+    /// @notice Permissionless router entrypoint for registered engines that expose force settlement.
+    function forceSettleEngine(address engine, bytes32 marketId, bool zeroForOne) external;
+
+    /// @notice Permissionless heartbeat to keep the native price accumulator fresh between swaps.
+    function pokeOracle(bytes32 marketId) external;
 
     /// @notice Query the native price accumulator for TWAP computation.
     /// @dev Returns price cumulatives (Σ price×Δt, price in 1e18) at each requested point.

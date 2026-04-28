@@ -56,8 +56,10 @@ services:
       - INDEXER_ADMIN_TOKEN=${INDEXER_ADMIN_TOKEN:?INDEXER_ADMIN_TOKEN must be set}
       - INDEXER_ALLOW_UNSAFE_ADMIN_RESET=${INDEXER_ALLOW_UNSAFE_ADMIN_RESET:-false}
       - INDEXER_ADMIN_INTERNAL_ONLY=${INDEXER_ADMIN_INTERNAL_ONLY:-true}
+      - INDEXER_ADMIN_ALLOWED_CLIENTS=${INDEXER_ADMIN_ALLOWED_CLIENTS:-127.0.0.1,::1,localhost,172.20.0.1,172.17.0.1}
       - INDEXER_EXPOSE_INTERNAL_ERRORS=${INDEXER_EXPOSE_INTERNAL_ERRORS:-false}
       - INDEXER_CORS_ORIGINS=${INDEXER_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}
+      - SIM_CLICKHOUSE_HOST=${SIM_CLICKHOUSE_HOST:-rld_clickhouse}
     volumes:
       - ./deployment.json:/config/deployment.json:ro
     ports:
@@ -103,6 +105,7 @@ services:
       - MAX_RATE_AGE_SECONDS=${MAX_RATE_AGE_SECONDS:-900}
       - REQUIRE_RATE_TIMESTAMP=${REQUIRE_RATE_TIMESTAMP:-true}
       - DATABASE_URL=postgresql://rld:${DB_PASSWORD:?DB_PASSWORD must be set}@postgres:5432/rld_indexer
+      - INDEXER_RESET_URL=${INDEXER_RESET_URL:-http://host.docker.internal:${INDEXER_PORT:-8080}/admin/reset}
       - SKIP_USER_SETUP=${SKIP_USER_SETUP:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"

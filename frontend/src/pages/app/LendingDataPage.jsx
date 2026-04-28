@@ -10,26 +10,32 @@ import { getTokenIcon } from "../../utils/tokenIcons";
 
 const LENDING_DATA_QUERY = `
   query LendingDataHub($displayIn: String!) {
-    marketSnapshots(protocol: "AAVE_MARKET") {
-      entityId
-      symbol
-      protocol
-      supplyUsd
-      borrowUsd
-      supplyApy
-      borrowApy
-      utilization
-    }
-    protocolTvlHistory(displayIn: $displayIn) {
-      date
-      aave
-      euler
-      fluid
-    }
-    protocolApyHistory(protocol: "AAVE_MARKET", resolution: "1W", limit: 5000) {
-      timestamp
-      averageSupplyApy
-      averageBorrowApy
+    lendingDataPage(displayIn: $displayIn) {
+      freshness { ready status generatedAt }
+      stats {
+        totalSupplyUsd
+        totalBorrowUsd
+        averageSupplyApy
+        averageBorrowApy
+        marketCount
+      }
+      chartData {
+        timestamp
+        tvl
+        averageSupplyApy
+        averageBorrowApy
+      }
+      markets {
+        entityId
+        symbol
+        protocol
+        supplyUsd
+        borrowUsd
+        supplyApy
+        borrowApy
+        utilization
+        netWorth
+      }
     }
   }
 `;
@@ -93,127 +99,18 @@ export default function LendingDataPage() {
   );
 
   const { stats, chartData, marketsData } = useMemo(() => {
-    // 1) Canonical Aave snapshot normalization
-    const aaveMarkets = (gqlData?.marketSnapshots || []).map((row) => {
-      const supplyUsd = Math.max(0, Number(row?.supplyUsd) || 0);
-      const borrowUsd = Math.max(0, Number(row?.borrowUsd) || 0);
-      const supplyApy = Math.max(0, Number(row?.supplyApy) || 0);
-      const borrowApy = Math.max(0, Number(row?.borrowApy) || 0);
-
-      return {
-        entityId: String(row?.entityId || ""),
-        symbol: String(row?.symbol || "UNKNOWN"),
-        protocol: String(row?.protocol || "AAVE_MARKET"),
-        supplyUsd,
-        borrowUsd,
-        supplyApy,
-        borrowApy,
-        utilization: supplyUsd > 0 ? Math.min(1, borrowUsd / supplyUsd) : 0,
-      };
-    });
-
-    // 2) Top-level stats derived from canonical snapshot
-    const totals = aaveMarkets.reduce(
-      (acc, market) => {
-        acc.totalSupplyUsd += market.supplyUsd;
-        acc.totalBorrowUsd += market.borrowUsd;
-        acc.weightedSupplyApy += market.supplyApy * market.supplyUsd;
-        acc.weightedBorrowApy += market.borrowApy * market.borrowUsd;
-        return acc;
-      },
-      {
+    const page = gqlData?.lendingDataPage || {};
+    return {
+      stats: page.stats || {
         totalSupplyUsd: 0,
         totalBorrowUsd: 0,
-        weightedSupplyApy: 0,
-        weightedBorrowApy: 0,
-      }
-    );
-    const stats = {
-      totalSupplyUsd: totals.totalSupplyUsd,
-      totalBorrowUsd: totals.totalBorrowUsd,
-      averageSupplyApy:
-        totals.totalSupplyUsd > 0 ? totals.weightedSupplyApy / totals.totalSupplyUsd : 0,
-      averageBorrowApy:
-        totals.totalBorrowUsd > 0 ? totals.weightedBorrowApy / totals.totalBorrowUsd : 0,
-      marketCount: aaveMarkets.length,
+        averageSupplyApy: 0,
+        averageBorrowApy: 0,
+        marketCount: 0,
+      },
+      chartData: page.chartData || [],
+      marketsData: page.markets || [],
     };
-
-    // 3) Chart transformation (weekly timestamps + Aave TVL + optional APY overlays)
-    const rawHistory = gqlData?.protocolTvlHistory || [];
-    const tvlPoints = rawHistory
-      .map((row) => {
-        const rawDate = typeof row?.date === "string" ? row.date.trim() : "";
-        if (!rawDate) return null;
-
-        // Normalize DB-style timestamps so parsing is deterministic in browsers.
-        let normalizedDate = rawDate;
-        if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
-          normalizedDate = `${rawDate}T00:00:00Z`;
-        } else if (rawDate.includes(" ")) {
-          normalizedDate = `${rawDate.replace(" ", "T")}Z`;
-        }
-
-        const timestampMs = Date.parse(normalizedDate);
-        if (!Number.isFinite(timestampMs)) return null;
-
-        const tvl = Number(row?.aave);
-        return {
-          timestamp: Math.floor(timestampMs / 1000),
-          tvl: Number.isFinite(tvl) && tvl > 0 ? tvl : 0,
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .reduce((acc, point) => {
-        if (acc.length === 0 || acc[acc.length - 1].timestamp !== point.timestamp) {
-          acc.push(point);
-          return acc;
-        }
-        acc[acc.length - 1] = point;
-        return acc;
-      }, []);
-    const apyPoints = (gqlData?.protocolApyHistory || [])
-      .map((row) => {
-        const ts = Number(row?.timestamp) || 0;
-        if (ts <= 0) return null;
-        const averageSupplyApy = Number(row?.averageSupplyApy);
-        const averageBorrowApy = Number(row?.averageBorrowApy);
-        return {
-          timestamp: ts,
-          averageSupplyApy: Number.isFinite(averageSupplyApy) ? averageSupplyApy * 100 : null,
-          averageBorrowApy: Number.isFinite(averageBorrowApy) ? averageBorrowApy * 100 : null,
-        };
-      })
-      .filter(Boolean);
-    const chartByTimestamp = new Map();
-    for (const point of tvlPoints) {
-      chartByTimestamp.set(point.timestamp, { ...point });
-    }
-    for (const point of apyPoints) {
-      const existing = chartByTimestamp.get(point.timestamp) || {
-        timestamp: point.timestamp,
-        tvl: 0,
-      };
-      chartByTimestamp.set(point.timestamp, {
-        ...existing,
-        averageSupplyApy: point.averageSupplyApy,
-        averageBorrowApy: point.averageBorrowApy,
-      });
-    }
-    const APRIL_2023_TS = 1680307200; // April 1, 2023
-    const chart = [...chartByTimestamp.values()]
-      .sort((a, b) => a.timestamp - b.timestamp)
-      .filter((p) => p.timestamp >= APRIL_2023_TS);
-
-    // 4) Markets table rows
-    const tableData = [...aaveMarkets]
-      .sort((a, b) => b.borrowUsd - a.borrowUsd)
-      .map(m => ({
-        ...m,
-        netWorth: Math.max(0, m.supplyUsd - m.borrowUsd)
-      }));
-
-    return { stats, chartData: chart, marketsData: tableData };
   }, [gqlData]);
 
   const ITEMS_PER_PAGE = 10;

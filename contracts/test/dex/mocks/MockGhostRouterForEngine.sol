@@ -57,6 +57,8 @@ contract MockGhostRouterForEngine is IGhostRouter {
 
     function setUniswapOracle(bytes32) external pure override {}
 
+    function setOracleMaxStaleness(bytes32, uint32) external pure override {}
+
     function setMarketFeeController(bytes32 marketId, address controller) external override {
         marketFeeController[marketId] = controller;
     }
@@ -88,14 +90,27 @@ contract MockGhostRouterForEngine is IGhostRouter {
         IERC20Like(token).transferFrom(from, address(this), amount);
     }
 
-    function settleGhost(bytes32 marketId, bool zeroForOne, uint256 amountIn) external override returns (uint256 amountOut) {
+    function settleGhost(bytes32 marketId, bool zeroForOne, uint256 amountIn)
+        external
+        override
+        returns (uint256 amountOut)
+    {
         uint256 overrideOut = markets[marketId].settleOutOverride;
         amountOut = overrideOut == 0 ? amountIn : overrideOut;
         address buyToken = zeroForOne ? markets[marketId].token1 : markets[marketId].token0;
         IMintableERC20Like(buyToken).mint(address(this), amountOut);
     }
 
-    function observe(bytes32, uint32[] calldata secondsAgos) external pure override returns (uint256[] memory priceCumulatives) {
+    function forceSettleEngine(address, bytes32, bool) external pure override {}
+
+    function pokeOracle(bytes32) external pure override {}
+
+    function observe(bytes32, uint32[] calldata secondsAgos)
+        external
+        pure
+        override
+        returns (uint256[] memory priceCumulatives)
+    {
         priceCumulatives = new uint256[](secondsAgos.length);
     }
 }

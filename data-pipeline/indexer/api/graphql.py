@@ -2,6 +2,7 @@ import os
 import threading
 import atexit
 import math
+import logging
 from bisect import bisect_left
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
@@ -28,6 +29,8 @@ from indexer.protocols import (  # noqa: E402
 )
 from indexer.state import get_source_status  # noqa: E402
 from indexer.tokens import TOKENS, get_usd_price  # noqa: E402
+
+logger = logging.getLogger("rld.clickhouse_api")
 
 MAX_LIMIT = 10000
 MAX_READY_LAG_BLOCKS = int(os.getenv("INDEXER_MAX_READY_LAG_BLOCKS", "250000"))
@@ -176,6 +179,102 @@ class MarketFlowPoint:
     cumulative_borrow_net_inflow_usd: float = strawberry.field(
         name="cumulativeBorrowNetInflowUsd", default=0.0
     )
+
+
+@strawberry.type
+class AnalyticsFreshness:
+    ready: bool
+    status: str
+    version: str
+    generated_at: int = strawberry.field(name="generatedAt")
+
+
+@strawberry.type
+class LendingDataStats:
+    total_supply_usd: float = strawberry.field(name="totalSupplyUsd")
+    total_borrow_usd: float = strawberry.field(name="totalBorrowUsd")
+    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+    average_borrow_apy: float = strawberry.field(name="averageBorrowApy")
+    market_count: int = strawberry.field(name="marketCount")
+
+
+@strawberry.type
+class LendingDataChartPoint:
+    timestamp: int
+    tvl: float
+    average_supply_apy: Optional[float] = strawberry.field(name="averageSupplyApy", default=None)
+    average_borrow_apy: Optional[float] = strawberry.field(name="averageBorrowApy", default=None)
+
+
+@strawberry.type
+class LendingDataMarketRow:
+    entity_id: str = strawberry.field(name="entityId")
+    symbol: str
+    protocol: str
+    supply_usd: float = strawberry.field(name="supplyUsd")
+    borrow_usd: float = strawberry.field(name="borrowUsd")
+    supply_apy: float = strawberry.field(name="supplyApy")
+    borrow_apy: float = strawberry.field(name="borrowApy")
+    utilization: float
+    net_worth: float = strawberry.field(name="netWorth")
+
+
+@strawberry.type
+class LendingDataPagePayload:
+    freshness: AnalyticsFreshness
+    stats: LendingDataStats
+    chart_data: list[LendingDataChartPoint] = strawberry.field(name="chartData")
+    markets: list[LendingDataMarketRow]
+
+
+@strawberry.type
+class ProtocolMarketsStats:
+    total_supply_usd: float = strawberry.field(name="totalSupplyUsd")
+    total_borrow_usd: float = strawberry.field(name="totalBorrowUsd")
+    average_utilization: float = strawberry.field(name="averageUtilization")
+    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+    average_borrow_apy: float = strawberry.field(name="averageBorrowApy")
+    market_count: int = strawberry.field(name="marketCount")
+
+
+@strawberry.type
+class ProtocolMarketRow:
+    entity_id: str = strawberry.field(name="entityId")
+    symbol: str
+    protocol: str
+    supply_usd: float = strawberry.field(name="supplyUsd")
+    borrow_usd: float = strawberry.field(name="borrowUsd")
+    supply_apy: float = strawberry.field(name="supplyApy")
+    borrow_apy: float = strawberry.field(name="borrowApy")
+    utilization: float
+    collateral_symbol: Optional[str] = strawberry.field(name="collateralSymbol", default=None)
+    lltv: Optional[float] = None
+    is_trapped: bool = strawberry.field(name="isTrapped", default=False)
+
+
+@strawberry.type
+class ProtocolMarketsPagePayload:
+    freshness: AnalyticsFreshness
+    stats: ProtocolMarketsStats
+    rows: list[ProtocolMarketRow]
+
+
+@strawberry.type
+class LendingPoolRatePoint:
+    timestamp: int
+    supply_apy: float = strawberry.field(name="supplyApy")
+    borrow_apy: float = strawberry.field(name="borrowApy")
+    utilization: float
+    supply_usd: float = strawberry.field(name="supplyUsd")
+    borrow_usd: float = strawberry.field(name="borrowUsd")
+
+
+@strawberry.type
+class LendingPoolPagePayload:
+    freshness: AnalyticsFreshness
+    market: Optional[MarketDetail]
+    rate_chart: list[LendingPoolRatePoint] = strawberry.field(name="rateChart")
+    flow_chart: list[MarketFlowPoint] = strawberry.field(name="flowChart")
 
 
 def _new_clickhouse_client():
@@ -1426,6 +1525,218 @@ def _query_market_snapshots(ch, protocol: Optional[str] = None) -> list[MarketSn
     ]
 
 
+def _finite_non_negative(value: object) -> float:
+    try:
+        numeric = float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(numeric):
+        return 0.0
+    return max(0.0, numeric)
+
+
+def _freshness_payload(status: str = "ready", ready: bool = True) -> AnalyticsFreshness:
+    return AnalyticsFreshness(
+        ready=ready,
+        status=status,
+        version=INDEXER_VERSION,
+        generated_at=int(datetime.now(timezone.utc).timestamp()),
+    )
+
+
+def _build_lending_data_page_payload(
+    freshness: AnalyticsFreshness,
+    markets: list[MarketSnapshot],
+    tvl_history: list[ProtocolTvlPoint],
+    apy_history: list[ProtocolApyPoint],
+) -> LendingDataPagePayload:
+    normalized_markets: list[LendingDataMarketRow] = []
+    for row in markets:
+        supply_usd = _finite_non_negative(row.supply_usd)
+        borrow_usd = _finite_non_negative(row.borrow_usd)
+        supply_apy = _finite_non_negative(row.supply_apy)
+        borrow_apy = _finite_non_negative(row.borrow_apy)
+        utilization = min(1.0, borrow_usd / supply_usd) if supply_usd > 0 else 0.0
+        normalized_markets.append(
+            LendingDataMarketRow(
+                entity_id=str(row.entity_id or ""),
+                symbol=str(row.symbol or "UNKNOWN"),
+                protocol=str(row.protocol or AAVE_MARKET),
+                supply_usd=supply_usd,
+                borrow_usd=borrow_usd,
+                supply_apy=supply_apy,
+                borrow_apy=borrow_apy,
+                utilization=utilization,
+                net_worth=max(0.0, supply_usd - borrow_usd),
+            )
+        )
+
+    totals_supply = sum(row.supply_usd for row in normalized_markets)
+    totals_borrow = sum(row.borrow_usd for row in normalized_markets)
+    weighted_supply = sum(row.supply_apy * row.supply_usd for row in normalized_markets)
+    weighted_borrow = sum(row.borrow_apy * row.borrow_usd for row in normalized_markets)
+    stats = LendingDataStats(
+        total_supply_usd=totals_supply,
+        total_borrow_usd=totals_borrow,
+        average_supply_apy=weighted_supply / totals_supply if totals_supply > 0 else 0.0,
+        average_borrow_apy=weighted_borrow / totals_borrow if totals_borrow > 0 else 0.0,
+        market_count=len(normalized_markets),
+    )
+
+    chart_by_ts: dict[int, LendingDataChartPoint] = {}
+    for row in tvl_history:
+        raw_date = str(row.date or "").strip()
+        if not raw_date:
+            continue
+        normalized_date = raw_date
+        if len(raw_date) == 10 and raw_date[4] == "-" and raw_date[7] == "-":
+            normalized_date = f"{raw_date}T00:00:00+00:00"
+        elif " " in raw_date:
+            normalized_date = f"{raw_date.replace(' ', 'T')}+00:00"
+        try:
+            ts = int(datetime.fromisoformat(normalized_date.replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            continue
+        chart_by_ts[ts] = LendingDataChartPoint(
+            timestamp=ts,
+            tvl=_finite_non_negative(row.aave),
+        )
+
+    for row in apy_history:
+        ts = int(row.timestamp or 0)
+        if ts <= 0:
+            continue
+        existing = chart_by_ts.get(ts) or LendingDataChartPoint(timestamp=ts, tvl=0.0)
+        existing.average_supply_apy = _finite_non_negative(row.average_supply_apy) * 100.0
+        existing.average_borrow_apy = _finite_non_negative(row.average_borrow_apy) * 100.0
+        chart_by_ts[ts] = existing
+
+    april_2023 = 1680307200
+    chart_data = sorted(
+        [point for point in chart_by_ts.values() if point.timestamp >= april_2023],
+        key=lambda point: point.timestamp,
+    )
+    normalized_markets.sort(key=lambda row: row.borrow_usd, reverse=True)
+    return LendingDataPagePayload(
+        freshness=freshness,
+        stats=stats,
+        chart_data=chart_data,
+        markets=normalized_markets,
+    )
+
+
+def _build_protocol_markets_page_payload(
+    freshness: AnalyticsFreshness,
+    markets: list[MarketDetail],
+) -> ProtocolMarketsPagePayload:
+    rows: list[ProtocolMarketRow] = []
+    for market in markets:
+        supply_usd = _finite_non_negative(market.supply_usd)
+        borrow_usd = _finite_non_negative(market.borrow_usd)
+        supply_apy = _finite_non_negative(market.supply_apy)
+        borrow_apy = _finite_non_negative(market.borrow_apy)
+        utilization = min(1.0, borrow_usd / supply_usd) if supply_usd > 0 else 0.0
+        is_trapped = utilization >= 0.995 and supply_apy > 1.0
+        rows.append(
+            ProtocolMarketRow(
+                entity_id=str(market.entity_id or ""),
+                symbol=str(market.symbol or "UNKNOWN"),
+                protocol=str(market.protocol or ""),
+                supply_usd=supply_usd,
+                borrow_usd=borrow_usd,
+                supply_apy=supply_apy,
+                borrow_apy=borrow_apy,
+                utilization=utilization,
+                collateral_symbol=market.collateral_symbol,
+                lltv=market.lltv,
+                is_trapped=is_trapped,
+            )
+        )
+    rows.sort(key=lambda row: row.supply_usd, reverse=True)
+
+    total_supply = sum(row.supply_usd for row in rows)
+    total_borrow = sum(row.borrow_usd for row in rows)
+    healthy = [row for row in rows if not row.is_trapped]
+    healthy_supply = sum(row.supply_usd for row in healthy)
+    healthy_borrow = sum(row.borrow_usd for row in healthy)
+    stats = ProtocolMarketsStats(
+        total_supply_usd=total_supply,
+        total_borrow_usd=total_borrow,
+        average_utilization=total_borrow / total_supply if total_supply > 0 else 0.0,
+        average_supply_apy=(
+            sum(row.supply_apy * row.supply_usd for row in healthy) / healthy_supply
+            if healthy_supply > 0
+            else 0.0
+        ),
+        average_borrow_apy=(
+            sum(row.borrow_apy * row.borrow_usd for row in healthy) / healthy_borrow
+            if healthy_borrow > 0
+            else 0.0
+        ),
+        market_count=len(rows),
+    )
+    return ProtocolMarketsPagePayload(freshness=freshness, stats=stats, rows=rows)
+
+
+def _build_lending_pool_page_payload(
+    freshness: AnalyticsFreshness,
+    markets: list[MarketDetail],
+    timeseries: list[MarketTimeseriesPoint],
+    flows: list[MarketFlowPoint],
+) -> LendingPoolPagePayload:
+    market = markets[0] if markets else None
+    rate_chart = [
+        LendingPoolRatePoint(
+            timestamp=int(point.timestamp or 0),
+            supply_apy=_finite_non_negative(point.supply_apy) * 100.0,
+            borrow_apy=_finite_non_negative(point.borrow_apy) * 100.0,
+            utilization=_finite_non_negative(point.utilization) * 100.0,
+            supply_usd=_finite_non_negative(point.supply_usd),
+            borrow_usd=_finite_non_negative(point.borrow_usd),
+        )
+        for point in timeseries
+        if int(point.timestamp or 0) > 0
+    ]
+    rate_chart.sort(key=lambda point: point.timestamp)
+    return LendingPoolPagePayload(
+        freshness=freshness,
+        market=market,
+        rate_chart=rate_chart,
+        flow_chart=flows,
+    )
+
+
+def _query_lending_data_page(ch, display_in: str) -> LendingDataPagePayload:
+    return _build_lending_data_page_payload(
+        _freshness_payload(),
+        _query_market_snapshots(ch, AAVE_MARKET),
+        _query_protocol_tvl_history(ch, display_in),
+        _query_protocol_apy_history(ch, AAVE_MARKET, "1W", 5000),
+    )
+
+
+def _query_protocol_markets_page(ch, protocol: str) -> ProtocolMarketsPagePayload:
+    return _build_protocol_markets_page_payload(
+        _freshness_payload(),
+        _query_protocol_markets(ch, protocol),
+    )
+
+
+def _query_lending_pool_page(
+    ch,
+    protocol: str,
+    entity_id: str,
+    timeseries_limit: int,
+    flow_limit: int,
+) -> LendingPoolPagePayload:
+    return _build_lending_pool_page_payload(
+        _freshness_payload(),
+        _query_protocol_markets(ch, protocol, entity_id),
+        _query_market_timeseries(ch, entity_id, "1D", timeseries_limit),
+        _query_market_flow_timeseries(ch, entity_id, "1D", flow_limit),
+    )
+
+
 def _query_latest_rates(ch) -> Optional[LatestRates]:
     latest = LatestRates(timestamp=0)
     max_ts = 0
@@ -1906,6 +2217,27 @@ def _query_market_flow_timeseries(ch, entity_id: str, resolution: str, limit: in
 
 @strawberry.type
 class Query:
+    @strawberry.field(name="lendingDataPage")
+    def lending_data_page(self, display_in: str = "USD") -> LendingDataPagePayload:
+        ch = get_clickhouse_client()
+        return _query_lending_data_page(ch, display_in)
+
+    @strawberry.field(name="protocolMarketsPage")
+    def protocol_markets_page(self, protocol: str = AAVE_MARKET) -> ProtocolMarketsPagePayload:
+        ch = get_clickhouse_client()
+        return _query_protocol_markets_page(ch, protocol)
+
+    @strawberry.field(name="lendingPoolPage")
+    def lending_pool_page(
+        self,
+        protocol: str = AAVE_MARKET,
+        entity_id: str = "",
+        timeseries_limit: int = 500,
+        flow_limit: int = 500,
+    ) -> LendingPoolPagePayload:
+        ch = get_clickhouse_client()
+        return _query_lending_pool_page(ch, protocol, entity_id, timeseries_limit, flow_limit)
+
     @strawberry.field(name="historicalRates")
     def historical_rates(
         self, symbols: List[str], resolution: str, limit: int = 17520
@@ -2006,9 +2338,10 @@ def healthz():
         }
     except Exception as exc:
         close_clickhouse_client()
+        logger.warning("ClickHouse health check failed: %s", exc)
         return JSONResponse(
             status_code=503,
-            content={"status": "degraded", "clickhouse": "down", "error": str(exc)},
+            content={"status": "degraded", "clickhouse": "down", "reason": "clickhouse_unavailable"},
         )
 
 
@@ -2033,9 +2366,10 @@ def status():
         }
     except Exception as exc:
         close_clickhouse_client()
+        logger.warning("ClickHouse status check failed: %s", exc)
         return JSONResponse(
             status_code=503,
-            content={"status": "degraded", "version": INDEXER_VERSION, "error": str(exc)},
+            content={"status": "degraded", "version": INDEXER_VERSION, "reason": "clickhouse_unavailable"},
         )
 
 
@@ -2047,7 +2381,8 @@ def metrics():
         return Response(_prometheus_metrics(ch), media_type="text/plain; version=0.0.4")
     except Exception as exc:
         close_clickhouse_client()
-        return Response(f"# metrics unavailable: {exc}\n", status_code=503, media_type="text/plain")
+        logger.warning("ClickHouse metrics check failed: %s", exc)
+        return Response("# metrics unavailable\n", status_code=503, media_type="text/plain")
 
 
 @app.get("/readyz")
@@ -2098,9 +2433,10 @@ def readyz():
         }
     except Exception as exc:
         close_clickhouse_client()
+        logger.warning("ClickHouse readiness check failed: %s", exc)
         return JSONResponse(
             status_code=503,
-            content={"status": "not_ready", "reason": "clickhouse_unavailable", "error": str(exc)},
+            content={"status": "not_ready", "reason": "clickhouse_unavailable"},
         )
 
 
@@ -2140,7 +2476,8 @@ def get_usdc_borrow_apy():
         return payload
     except Exception as exc:
         close_clickhouse_client()
-        return JSONResponse(status_code=500, content={"error": str(exc)})
+        logger.warning("USDC borrow APY lookup failed: %s", exc)
+        return JSONResponse(status_code=500, content={"error": "rate_unavailable"})
 
 
 def create_app():

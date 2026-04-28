@@ -391,15 +391,8 @@ class FaucetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Health check."""
         if self.path == '/health':
-            whale_addr = whale.address if whale else "not initialized"
-            sf_addr = sim_funder.address if sim_funder else "not initialized"
-            sf_admin = simfunder_admin.address if simfunder_admin else "not initialized"
-            self._send_json(200, {
-                "status": "ok",
-                "whale": whale_addr,
-                "simFunderAdmin": sf_admin,
-                "simFunder": sf_addr,
-            })
+            ready = bool(whale and sim_funder and simfunder_admin)
+            self._send_json(200, {"status": "ok", "ready": ready})
             return
         self._send_json(404, {"status": "not_found"})
 

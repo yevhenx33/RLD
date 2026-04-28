@@ -1,8 +1,6 @@
 import { SWRConfig } from "swr";
-import { useLocation } from "react-router-dom";
 import ErrorBoundary from "./ErrorBoundary";
 import { WalletProvider } from "../context/WalletContext";
-import { SimulationProvider } from "../context/SimulationContext";
 
 const swrConfig = {
   revalidateOnFocus: false,
@@ -26,18 +24,11 @@ const swrConfig = {
 };
 
 export default function AppProviders({ children }) {
-  const location = useLocation();
-  const isPublicSurface =
-    location.pathname === "/" || location.pathname.startsWith("/intel");
-  const simulationPollInterval = isPublicSurface ? 10000 : 2000;
-
   return (
     <ErrorBoundary>
       <SWRConfig value={swrConfig}>
         <WalletProvider>
-          <SimulationProvider pollInterval={simulationPollInterval}>
-            {children}
-          </SimulationProvider>
+          {children}
         </WalletProvider>
       </SWRConfig>
     </ErrorBoundary>

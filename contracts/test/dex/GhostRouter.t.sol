@@ -213,6 +213,27 @@ contract GhostRouterIntegrationTest is Test {
         assertEq(amountOut, 10e18, "swap should continue via fallback despite reverting engine");
     }
 
+    function test_globalNettingRevertsAtomicallyIfContributorCommitFails() external {
+        bytes32 marketId = router.initializeMarket(key, address(oracle));
+        oracle.setPrice(marketId, 1e18);
+
+        MockGhostEngine failingCommitEngine = new MockGhostEngine();
+        router.registerEngine(address(failingCommitEngine));
+
+        engine.setGhost(10e18, 0);
+        failingCommitEngine.setGhost(0, 10e18);
+        failingCommitEngine.setRevertOnApply(true);
+
+        _fundSwapPath(100e18, 100e18);
+
+        vm.prank(taker);
+        vm.expectRevert(MockGhostEngine.ApplyReverted.selector);
+        router.swap(marketId, true, 1e18, 1);
+
+        assertEq(engine.ghost0(), 10e18, "successful engine commit should roll back");
+        assertEq(failingCommitEngine.ghost1(), 10e18, "failing engine inventory should remain");
+    }
+
     function test_fallbackSwapSupportsStrictApproveTokensAcrossRepeatedSwaps() external {
         MockStrictApproveERC20 strictA = new MockStrictApproveERC20("StrictA", "STA", 18);
         MockStrictApproveERC20 strictB = new MockStrictApproveERC20("StrictB", "STB", 18);
@@ -222,8 +243,9 @@ contract GhostRouterIntegrationTest is Test {
         MockGhostOracle localOracle = new MockGhostOracle();
         localRouter.registerEngine(address(localEngine));
 
-        (address localToken0, address localToken1) =
-            address(strictA) < address(strictB) ? (address(strictA), address(strictB)) : (address(strictB), address(strictA));
+        (address localToken0, address localToken1) = address(strictA) < address(strictB)
+            ? (address(strictA), address(strictB))
+            : (address(strictB), address(strictA));
 
         PoolKey memory localKey = PoolKey({
             currency0: Currency.wrap(localToken0),
@@ -291,5 +313,22 @@ contract GhostRouterIntegrationTest is Test {
         tooOld[1] = 0;
         vm.expectRevert(GhostRouter.ObservationTooOld.selector);
         router.observe(marketId, tooOld);
+    }
+
+    function test_observeRequiresFreshObservationHeartbeat() external {
+        bytes32 marketId = router.initializeMarket(key, address(oracle));
+        oracle.setPrice(marketId, 2e18);
+
+        vm.warp(block.timestamp + router.DEFAULT_ORACLE_MAX_STALENESS() + 1);
+
+        uint32[] memory current = new uint32[](1);
+        current[0] = 0;
+
+        vm.expectRevert(GhostRouter.OracleObservationStale.selector);
+        router.observe(marketId, current);
+
+        router.pokeOracle(marketId);
+        uint256[] memory cumulatives = router.observe(marketId, current);
+        assertEq(cumulatives.length, 1, "unexpected cumulative count");
     }
 }

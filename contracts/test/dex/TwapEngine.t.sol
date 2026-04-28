@@ -165,7 +165,9 @@ contract TwapEngineUnitTest is TwapEngineBaseTest {
         vm.prank(alice);
         engine.cancelOrder(MARKET_A, orderA);
 
-        assertTrue(engine.isEpochEventSet(MARKET_A, sharedExpiry), "shared expiry bit should remain after partial cancel");
+        assertTrue(
+            engine.isEpochEventSet(MARKET_A, sharedExpiry), "shared expiry bit should remain after partial cancel"
+        );
     }
 
     function test_bitmapAccountsForOppositeDirectionEpochCollisions() external {
@@ -213,7 +215,9 @@ contract TwapEngineUnitTest is TwapEngineBaseTest {
         vm.warp(block.timestamp + (INTERVAL * 100_000));
         vm.prank(address(router));
         (uint256 ghostAfterIdleSync,) = engine.syncAndFetchGhost(MARKET_A);
-        assertEq(ghostAfterIdleSync, ghostAfterExpiry, "idempotent sync should not change ghost after all events consumed");
+        assertEq(
+            ghostAfterIdleSync, ghostAfterExpiry, "idempotent sync should not change ghost after all events consumed"
+        );
     }
 
     function test_epochCloseAutoSettleAllocatesFinalGhostProceeds() external {
@@ -271,6 +275,33 @@ contract TwapEngineUnitTest is TwapEngineBaseTest {
         assertEq(claimedStarting, 0, "order starting at same epoch should not receive prior-stream settlement");
     }
 
+    function test_partialEpochExpirySettlesBeforeRateDecrease() external {
+        uint256 amountA = 1_200e18;
+        uint256 amountB = 1_800e18;
+        uint256 durationA = 120;
+        uint256 durationB = 180;
+
+        vm.prank(alice);
+        bytes32 expiringOrder = engine.submitStream(MARKET_A, true, durationA, amountA);
+        vm.prank(alice);
+        bytes32 continuingOrder = engine.submitStream(MARKET_A, true, durationB, amountB);
+
+        uint256 startEpoch = _nextEpoch(block.timestamp);
+        vm.warp(startEpoch + durationA + 1);
+
+        vm.prank(address(router));
+        (uint256 ghost0,) = engine.syncAndFetchGhost(MARKET_A);
+        assertEq(ghost0, 10e18, "only post-expiry continuing flow should remain as ghost");
+
+        vm.prank(alice);
+        uint256 claimedExpiring = engine.claimTokens(MARKET_A, expiringOrder);
+        vm.prank(alice);
+        uint256 claimedContinuing = engine.claimTokens(MARKET_A, continuingOrder);
+
+        assertApproxEqAbs(claimedExpiring, 1_200e18, 1, "expiring order should receive accrued proceeds");
+        assertApproxEqAbs(claimedContinuing, 1_200e18, 1, "continuing order should keep its accrued share");
+    }
+
     function test_cancelLastOrderClaimsAutoSettleProceeds() external {
         uint256 amountIn = 1_200e18;
         uint256 duration = 120;
@@ -289,6 +320,28 @@ contract TwapEngineUnitTest is TwapEngineBaseTest {
 
         assertEq(refund, 900e18, "refund mismatch");
         assertApproxEqAbs(earnings, settleOut, 1, "cancel should include auto-settle earnings");
+    }
+
+    function test_partialCancelSettlesBeforeRateDecrease() external {
+        uint256 amountIn = 1_200e18;
+        uint256 duration = 120;
+
+        vm.prank(alice);
+        bytes32 cancelledOrder = engine.submitStream(MARKET_A, true, duration, amountIn);
+        vm.prank(alice);
+        bytes32 continuingOrder = engine.submitStream(MARKET_A, true, duration, amountIn);
+
+        uint256 startEpoch = _nextEpoch(block.timestamp);
+        vm.warp(startEpoch + 30);
+
+        vm.prank(alice);
+        (uint256 refund, uint256 earnings) = engine.cancelOrder(MARKET_A, cancelledOrder);
+        assertEq(refund, 900e18, "refund mismatch");
+        assertApproxEqAbs(earnings, 300e18, 1, "cancelled order should receive accrued proceeds");
+
+        vm.prank(alice);
+        uint256 claimedContinuing = engine.claimTokens(MARKET_A, continuingOrder);
+        assertApproxEqAbs(claimedContinuing, 300e18, 1, "continuing order should keep accrued share");
     }
 
     function test_takeGhostRoundsInputConsumedUpForTinyFills() external {
@@ -371,7 +424,7 @@ contract TwapEngineUnitTest is TwapEngineBaseTest {
         assertEq(token1.balanceOf(solver), solverToken1Before - expectedPayment, "solver token1 payment mismatch");
     }
 
-    function test_cancelOrderRefundsOnlyUnsoldPrincipal() external {
+    function test_cancelOrderRefundsOnlyUnsoldPrincipalAndClaimsAccruedProceeds() external {
         uint256 amountIn = 1_200e18;
         uint256 duration = 120;
 
@@ -385,7 +438,7 @@ contract TwapEngineUnitTest is TwapEngineBaseTest {
         vm.prank(alice);
         (uint256 refund, uint256 earnings) = engine.cancelOrder(MARKET_A, orderId);
 
-        assertEq(earnings, 0, "unexpected earnings");
+        assertApproxEqAbs(earnings, 300e18, 1, "cancel should include accrued proceeds");
         assertEq(refund, 900e18, "refund mismatch");
     }
 

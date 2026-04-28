@@ -10,6 +10,7 @@ import {FixedPointMathLib} from "../../shared/utils/FixedPointMathLib.sol";
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IGhostRouter} from "../../dex/interfaces/IGhostRouter.sol";
 import {ITwapEngine} from "../../dex/interfaces/ITwapEngine.sol";
 import {ISpotOracle} from "../../shared/interfaces/ISpotOracle.sol";
 import {IRLDOracle} from "../../shared/interfaces/IRLDOracle.sol";
@@ -742,8 +743,13 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
         uint256 ghost = zfo ? streamGhostT0 : streamGhostT1;
         if (ghost == 0) return;
 
+        address ghostRouter = ITwapEngine(twapEngine).ghostRouter();
         try
-            ITwapEngine(twapEngine).forceSettle(activeTwammOrder.marketId, zfo)
+            IGhostRouter(ghostRouter).forceSettleEngine(
+                twapEngine,
+                activeTwammOrder.marketId,
+                zfo
+            )
         {} catch {}
     }
 

@@ -4,22 +4,25 @@ import { Link, useLocation } from "react-router-dom";
 import { useWallet } from "../../context/WalletContext";
 import { useFaucet } from "../../hooks/useFaucet";
 import { useToast } from "../../hooks/useToast";
-import { useSim } from "../../context/SimulationContext";
 import { ToastContainer } from "../common/Toast";
 import { Menu, X, Droplets, Loader2 } from "lucide-react";
 import { prefetchRoute } from "../../app/prefetchRoutes";
 
 const WalletModal = lazy(() => import("../modals/WalletModal"));
 
-export default function Header({ isCapped, ratesLoaded, transparent = false }) {
+export default function Header({
+  isCapped,
+  ratesLoaded,
+  transparent = false,
+  marketInfo = null,
+  faucetEnabled = false,
+}) {
   const { account, connectWallet, disconnect } = useWallet();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const location = useLocation();
   const { toasts, addToast, removeToast } = useToast();
 
-  // Faucet integration
-  const { marketInfo } = useSim();
   const waUsdcAddr = marketInfo?.collateral?.address;
   const { 
     requestFaucet, 
@@ -207,7 +210,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
             </div>
 
             {/* REQUEST FUNDS (only when connected) */}
-            {account && (
+            {account && faucetEnabled && (
               <button
                 onClick={handleFaucetClick}
                 disabled={faucetLoading}
@@ -325,7 +328,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
             </nav>
 
             {/* MOBILE FAUCET */}
-            {account && (
+            {account && faucetEnabled && (
               <div className="pt-4 border-t border-white/5">
                 <button
                   onClick={handleFaucetClick}
@@ -352,7 +355,7 @@ export default function Header({ isCapped, ratesLoaded, transparent = false }) {
             account={account}
             usdcBalance={usdcBalance}
             waUsdcBalance={waUsdcBalance}
-            onFaucet={handleFaucetClick}
+            onFaucet={faucetEnabled ? handleFaucetClick : null}
             faucetLoading={faucetLoading}
             faucetStep={faucetStep}
             ethBalance={faucetEthBalance}

@@ -29,7 +29,7 @@ Admin/reset endpoint:
 - `POST /admin/reset`
 - Requests must include `X-Admin-Token` matching `INDEXER_ADMIN_TOKEN`.
 - Unsafe reset bypass (`INDEXER_ALLOW_UNSAFE_ADMIN_RESET=true`) is for local-only workflows.
-- `INDEXER_ADMIN_INTERNAL_ONLY=true` keeps reset internal/private-network only.
+- `INDEXER_ADMIN_INTERNAL_ONLY=true` keeps reset limited to `INDEXER_ADMIN_ALLOWED_CLIENTS`; avoid broad private subnet allowlists.
 - `INDEXER_EXPOSE_INTERNAL_ERRORS=false` suppresses raw exception leakage in API responses.
 
 Rates/analytics API contract (served by `data-pipeline`):

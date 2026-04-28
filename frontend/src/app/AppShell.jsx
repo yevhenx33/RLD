@@ -5,6 +5,8 @@ export default function AppShell({
   transparentHeader = false,
   ratesLoaded = true,
   isCapped = false,
+  marketInfo = null,
+  faucetEnabled = false,
 }) {
   return (
     <>
@@ -12,6 +14,8 @@ export default function AppShell({
         transparent={transparentHeader}
         ratesLoaded={ratesLoaded}
         isCapped={isCapped}
+        marketInfo={marketInfo}
+        faucetEnabled={faucetEnabled}
       />
       <Outlet />
     </>

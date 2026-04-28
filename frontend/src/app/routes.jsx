@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import AppShell from "./AppShell";
 import LoadingScreen from "./LoadingScreen";
 import { useEnvioStatus } from "../hooks/queries/useEnvioStatus";
+import { SimulationProvider, useSim } from "../context/SimulationContext";
 
 const HomepagePage = lazy(() => import("../pages/public/HomepagePage"));
 const IntelPage = lazy(() => import("../pages/public/IntelPage"));
@@ -49,9 +50,29 @@ function PublicShell() {
   return <AppShell transparentHeader ratesLoaded isCapped={false} />;
 }
 
-function RuntimeShell() {
+function AnalyticsShell() {
+  return <AppShell ratesLoaded isCapped={false} />;
+}
+
+function SimulationRuntimeShellInner() {
   const { ratesLoaded, isCapped } = useEnvioStatus();
-  return <AppShell ratesLoaded={ratesLoaded} isCapped={isCapped} />;
+  const { marketInfo } = useSim();
+  return (
+    <AppShell
+      ratesLoaded={ratesLoaded}
+      isCapped={isCapped}
+      marketInfo={marketInfo}
+      faucetEnabled
+    />
+  );
+}
+
+function SimulationRuntimeShell() {
+  return (
+    <SimulationProvider pollInterval={2000}>
+      <SimulationRuntimeShellInner />
+    </SimulationProvider>
+  );
 }
 
 export default function AppRoutes() {
@@ -62,9 +83,7 @@ export default function AppRoutes() {
         <Route path="/intel" element={renderLazy(IntelPage)} />
       </Route>
 
-      <Route element={<RuntimeShell />}>
-        <Route path="/bonds" element={renderLazy(BondsDirectoryPage)} />
-        <Route path="/bonds/:address" element={renderLazy(BondsPage)} />
+      <Route element={<AnalyticsShell />}>
         <Route path="/data" element={renderLazy(LendingDataPage)} />
         <Route
           path="/data/:protocol"
@@ -74,6 +93,11 @@ export default function AppRoutes() {
           path="/data/:protocol/:marketId"
           element={renderLazy(LendingPoolPage)}
         />
+      </Route>
+
+      <Route element={<SimulationRuntimeShell />}>
+        <Route path="/bonds" element={renderLazy(BondsDirectoryPage)} />
+        <Route path="/bonds/:address" element={renderLazy(BondsPage)} />
         <Route
           path="/explore"
           element={<Navigate to="/data" replace />}

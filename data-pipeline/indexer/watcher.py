@@ -50,9 +50,9 @@ def get_aave_rpc_borrow_apy(block_number: int, asset_address: str) -> float:
         return 0.0
 
 class ShadowWatcher:
-    def __init__(self, clickhouse_host="localhost", clickhouse_port=8123):
-        self.ch_host = clickhouse_host
-        self.ch_port = clickhouse_port
+    def __init__(self, clickhouse_host=None, clickhouse_port=None):
+        self.ch_host = clickhouse_host or os.getenv("CLICKHOUSE_HOST", "localhost")
+        self.ch_port = int(clickhouse_port or os.getenv("CLICKHOUSE_PORT", "8123"))
 
     def get_ch_client(self):
         return clickhouse_connect.get_client(

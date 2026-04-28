@@ -4,6 +4,8 @@ pragma solidity ^0.8.26;
 import {IGhostEngine} from "../../../src/dex/interfaces/IGhostEngine.sol";
 
 contract MockGhostEngine is IGhostEngine {
+    error ApplyReverted();
+
     uint256 public ghost0;
     uint256 public ghost1;
 
@@ -12,6 +14,7 @@ contract MockGhostEngine is IGhostEngine {
     uint256 public lastTakeAmountIn;
 
     bool public consumeAllInput;
+    bool public revertOnApply;
     uint256 public scriptedFilledOut;
     uint256 public scriptedInputConsumed;
 
@@ -28,11 +31,16 @@ contract MockGhostEngine is IGhostEngine {
         scriptedInputConsumed = _scriptedInputConsumed;
     }
 
+    function setRevertOnApply(bool _revertOnApply) external {
+        revertOnApply = _revertOnApply;
+    }
+
     function syncAndFetchGhost(bytes32) external view returns (uint256 outGhost0, uint256 outGhost1) {
         return (ghost0, ghost1);
     }
 
     function applyNettingResult(bytes32, uint256 consumed0, uint256 consumed1, uint256 spotPrice) external {
+        if (revertOnApply) revert ApplyReverted();
         lastNettingSpotPrice = spotPrice;
         ghost0 -= consumed0;
         ghost1 -= consumed1;

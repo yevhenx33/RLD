@@ -81,11 +81,7 @@ contract TwapEngine is ITwapEngine, ReentrancyGuard {
         bool orderExpired
     );
     event GhostSettled(
-        bytes32 indexed marketId,
-        bool indexed zeroForOne,
-        uint8 indexed reason,
-        uint256 ghostIn,
-        uint256 amountOut
+        bytes32 indexed marketId, bool indexed zeroForOne, uint8 indexed reason, uint256 ghostIn, uint256 amountOut
     );
     event NettingApplied(bytes32 indexed marketId, uint256 consumed0, uint256 consumed1, uint256 spotPrice);
     event GhostTaken(
@@ -206,15 +202,19 @@ contract TwapEngine is ITwapEngine, ReentrancyGuard {
     }
 
     /// @notice Cross an epoch boundary for one stream direction.
-    function _crossEpoch(bytes32 marketId, TwapState storage state, StreamPool storage stream, bool zeroForOne, uint256 epoch)
-        internal
-    {
+    function _crossEpoch(
+        bytes32 marketId,
+        TwapState storage state,
+        StreamPool storage stream,
+        bool zeroForOne,
+        uint256 epoch
+    ) internal {
         uint256 starting = stream.sellRateStartingAtInterval[epoch];
         uint256 expiring = stream.sellRateEndingAtInterval[epoch];
 
-        // If all previously-active flow expires at this boundary and ghost remains,
-        // settle before mutating rates so those expiring orders receive final proceeds.
-        if (expiring > 0 && stream.sellRateCurrent == expiring) {
+        // Settle before any active rate decrease so departing flow receives its
+        // pro-rata share of ghost accrued while it was active.
+        if (expiring > 0) {
             _settleGhostForDirection(marketId, state, stream, zeroForOne, SETTLE_REASON_EPOCH_CLOSE);
         }
 
@@ -490,9 +490,9 @@ contract TwapEngine is ITwapEngine, ReentrancyGuard {
         bool orderStarted = state.lastUpdateTime >= order.startEpoch;
         bool orderExpired = state.lastUpdateTime >= order.expiration;
 
-        // If this is the final active order in the direction, settle outstanding
-        // ghost before claiming so final proceeds are not left unclaimable.
-        if (!orderExpired && orderStarted && stream.sellRateCurrent == order.sellRate) {
+        // Crystallize accrued ghost before reducing active flow so the cancelled
+        // order receives proceeds earned while it was still participating.
+        if (!orderExpired && orderStarted) {
             _settleGhostForDirection(marketId, state, stream, order.zeroForOne, SETTLE_REASON_LAST_CANCEL);
         }
 
@@ -669,11 +669,7 @@ contract TwapEngine is ITwapEngine, ReentrancyGuard {
         StreamOrder storage order,
         uint256 committedLastUpdateTime,
         uint256 asOfTime
-    )
-        internal
-        view
-        returns (uint256 earningsOut, uint256 effectiveEF)
-    {
+    ) internal view returns (uint256 earningsOut, uint256 effectiveEF) {
         effectiveEF = stream.earningsFactorCurrent;
 
         // Cap at expiration snapshot if this preview timestamp is at/after expiry.
@@ -726,7 +722,8 @@ contract TwapEngine is ITwapEngine, ReentrancyGuard {
         StreamPool storage stream = streamPools[marketId][zeroForOne];
         if (stream.sellRateCurrent == 0) revert NoActiveStream();
 
-        (, uint256 amountOut) = _settleGhostForDirection(marketId, state, stream, zeroForOne, SETTLE_REASON_FORCE_SETTLE);
+        (, uint256 amountOut) =
+            _settleGhostForDirection(marketId, state, stream, zeroForOne, SETTLE_REASON_FORCE_SETTLE);
         emit ForceSettled(marketId, zeroForOne, ghostAmount, amountOut);
     }
 

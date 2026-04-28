@@ -11,6 +11,10 @@
 #  RPC endpoint (local only):
 #    http://127.0.0.1:8546
 #
+#  Required secret:
+#    MAINNET_JWT_SECRET_PATH defaults to /etc/rld/mainnet/jwt.hex.
+#    Keep this file outside the repository and mode 600.
+#
 #  Disk budget: ~224 GB Reth + ~35 GB Lighthouse ≈ 260 GB
 #  Sync time:   ~12-24h (minimal mode, Storage V2)
 # ═══════════════════════════════════════════════════════════════
@@ -26,7 +30,7 @@ services:
       - "30304:30304/udp"
     volumes:
       - /mnt/data/reth:/data
-      - ./mainnet/jwt.hex:/jwt.hex:ro
+      - ${MAINNET_JWT_SECRET_PATH:-/etc/rld/mainnet/jwt.hex}:/jwt.hex:ro
     command:
       - node
       - --datadir=/data
@@ -60,7 +64,7 @@ services:
       - "127.0.0.1:5052:5052"         # Beacon API (local only)
     volumes:
       - /mnt/data/lighthouse:/data
-      - ./mainnet/jwt.hex:/jwt.hex:ro
+      - ${MAINNET_JWT_SECRET_PATH:-/etc/rld/mainnet/jwt.hex}:/jwt.hex:ro
     command:
       - lighthouse
       - bn

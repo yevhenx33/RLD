@@ -130,70 +130,20 @@ jobs:
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
 
-      - name: SSH preflight and auth mode selection
-        env:
-          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
-          DEPLOY_AUTO_INSTALL_KEY: ${{ secrets.DEPLOY_AUTO_INSTALL_KEY }}
+      - name: SSH preflight
         run: |
           set -euo pipefail
 
-          SSH_KEY_CMD=(
-            ssh
+          ssh \
             -i "$DEPLOY_SSH_KEY_PATH" \
             -p "$DEPLOY_PORT" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o PreferredAuthentications=publickey \
-            "$DEPLOY_USER@$DEPLOY_HOST"
-          )
-
-          if "${SSH_KEY_CMD[@]}" "echo 'SSH auth OK (key)'"; then
-            echo "DEPLOY_AUTH_MODE=key" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          echo "::warning::Key auth failed for $DEPLOY_USER@$DEPLOY_HOST"
-
-          if [ -z "${DEPLOY_PASSWORD:-}" ]; then
-            echo "::error::Key auth failed and DEPLOY_PASSWORD is not configured. Add the matching public key to ~/.ssh/authorized_keys for DEPLOY_USER, or set DEPLOY_PASSWORD to allow fallback."
-            exit 1
-          fi
-
-          if ! command -v sshpass >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y sshpass
-          fi
-
-          # Optional self-heal: install CI public key using password auth.
-          auto_install="$(printf '%s' "${DEPLOY_AUTO_INSTALL_KEY:-false}" | tr '[:upper:]' '[:lower:]')"
-          if [ "$auto_install" = "1" ] || [ "$auto_install" = "true" ] || [ "$auto_install" = "yes" ]; then
-            pub_key="$(ssh-keygen -y -f "$DEPLOY_SSH_KEY_PATH")"
-            pub_key_b64="$(printf '%s' "$pub_key" | base64 -w0)"
-            sshpass -p "$DEPLOY_PASSWORD" ssh \
-              -p "$DEPLOY_PORT" \
-              -o PreferredAuthentications=password \
-              -o PubkeyAuthentication=no \
-              "$DEPLOY_USER@$DEPLOY_HOST" \
-              "set -euo pipefail; pub_key=\$(echo '$pub_key_b64' | base64 -d); mkdir -p ~/.ssh; chmod 700 ~/.ssh; touch ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; grep -qxF \"\$pub_key\" ~/.ssh/authorized_keys || echo \"\$pub_key\" >> ~/.ssh/authorized_keys"
-          fi
-
-          # Re-test key auth after optional install.
-          if "${SSH_KEY_CMD[@]}" "echo 'SSH auth OK (key after fallback)'"; then
-            echo "DEPLOY_AUTH_MODE=key" >> "$GITHUB_ENV"
-            exit 0
-          fi
-
-          # Final fallback to password mode for this run.
-          sshpass -p "$DEPLOY_PASSWORD" ssh \
-            -p "$DEPLOY_PORT" \
-            -o PreferredAuthentications=password \
-            -o PubkeyAuthentication=no \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "echo 'SSH auth OK (password fallback)'"
-          echo "DEPLOY_AUTH_MODE=password" >> "$GITHUB_ENV"
+            "echo 'SSH auth OK (key)'"
 
-      - name: Deploy frontend to server (native SCP, key)
-        if: env.DEPLOY_AUTH_MODE == 'key'
+      - name: Deploy frontend to server
         run: |
           set -euo pipefail
           scp \
@@ -205,21 +155,7 @@ jobs:
             -r dist/* \
             "$DEPLOY_USER@$DEPLOY_HOST:/home/ubuntu/RLD/frontend/dist/"
 
-      - name: Deploy frontend to server (native SCP, password fallback)
-        if: env.DEPLOY_AUTH_MODE == 'password'
-        env:
-          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          sshpass -p "$DEPLOY_PASSWORD" scp \
-            -P "$DEPLOY_PORT" \
-            -o PreferredAuthentications=password \
-            -o PubkeyAuthentication=no \
-            -r dist/* \
-            "$DEPLOY_USER@$DEPLOY_HOST:/home/ubuntu/RLD/frontend/dist/"
-
-      - name: Restart services (native SSH, key)
-        if: env.DEPLOY_AUTH_MODE == 'key'
+      - name: Restart services
         run: |
           set -euo pipefail
           ssh \
@@ -260,44 +196,3 @@ jobs:
           echo "✅ Deploy complete"
           EOF
 
-      - name: Restart services (native SSH, password fallback)
-        if: env.DEPLOY_AUTH_MODE == 'password'
-        env:
-          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          sshpass -p "$DEPLOY_PASSWORD" ssh \
-            -p "$DEPLOY_PORT" \
-            -o PreferredAuthentications=password \
-            -o PubkeyAuthentication=no \
-            "$DEPLOY_USER@$DEPLOY_HOST" <<'EOF'
-          set -euo pipefail
-          cd /home/ubuntu/RLD
-
-          # Sync ALL config files first (docker-compose, nginx.conf, etc.)
-          git fetch origin main
-          git reset --hard origin/main
-
-          # Force fonts.css and font files from git into dist/ (SCP unreliable for root files)
-          mkdir -p /home/ubuntu/RLD/frontend/dist/fonts
-          cp /home/ubuntu/RLD/frontend/public/fonts.css /home/ubuntu/RLD/frontend/dist/fonts.css
-          cp /home/ubuntu/RLD/frontend/public/fonts/*.woff2 /home/ubuntu/RLD/frontend/dist/fonts/
-          echo "✅ fonts.css: $(wc -c < /home/ubuntu/RLD/frontend/dist/fonts.css) bytes, has JBM: $(grep -c 'JetBrains Mono' /home/ubuntu/RLD/frontend/dist/fonts.css || echo 0)"
-
-          # Force-recreate the frontend container with the new dist/
-          # docker-compose.frontend.yml now uses volume mounts — no image rebuild
-          echo "🔄 Restarting frontend container..."
-          docker compose -f docker/docker-compose.frontend.yml up -d --no-deps --force-recreate frontend
-          echo "✅ Frontend live"
-
-          # Rebuild canonical backend services if backend changed
-          if git diff HEAD~1 --name-only | grep -q "^backend/"; then
-            echo "🔄 Backend changed — rebuilding simulation indexer + monitor-bot..."
-            docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env build indexer
-            docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env up -d --no-deps indexer
-            docker compose -f docker/docker-compose.infra.yml --env-file docker/.env build monitor-bot
-            docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d --no-deps --force-recreate monitor-bot
-          fi
-
-          echo "✅ Deploy complete"
-          EOF

@@ -49,7 +49,7 @@ services:
     env_file:
       - ../data-pipeline/.env
     environment:
-      - CLICKHOUSE_HOST=host.docker.internal
+      - CLICKHOUSE_HOST=rld_clickhouse
       - CLICKHOUSE_PORT=8123
       - CLICKHOUSE_USER=${CLICKHOUSE_API_USER:-${CLICKHOUSE_USER:-default}}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_API_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
@@ -87,8 +87,6 @@ services:
       - ../data-pipeline/indexer:/app/indexer
     ports:
       - "127.0.0.1:${RATES_API_PORT:-5000}:5000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ulimits:
       nofile:
         soft: 65536

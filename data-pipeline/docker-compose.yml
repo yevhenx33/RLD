@@ -5,7 +5,7 @@ services:
     env_file:
       - .env
     environment:
-      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_HOST=rld_clickhouse
       - CLICKHOUSE_PORT=8123
       - CLICKHOUSE_USER=${CLICKHOUSE_MIGRATION_USER:-${CLICKHOUSE_USER:-default}}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_MIGRATION_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
@@ -19,7 +19,6 @@ services:
       - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
       - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
     command: ["python", "/app/scripts/rld_indexer.py", "migrate", "--backfill", "--rebuild-views"]
-    network_mode: "host"
     restart: "no"
 
   graphql_api:
@@ -32,7 +31,7 @@ services:
       migrate_clickhouse:
         condition: service_completed_successfully
     environment:
-      - CLICKHOUSE_HOST=host.docker.internal
+      - CLICKHOUSE_HOST=rld_clickhouse
       - CLICKHOUSE_PORT=8123
       - CLICKHOUSE_USER=${CLICKHOUSE_API_USER:-${CLICKHOUSE_USER:-default}}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_API_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
@@ -68,8 +67,6 @@ services:
       ]
     ports:
       - "127.0.0.1:5000:5000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ulimits:
       nofile:
         soft: 65536
@@ -97,7 +94,7 @@ services:
       migrate_clickhouse:
         condition: service_completed_successfully
     environment:
-      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_HOST=rld_clickhouse
       - CLICKHOUSE_PORT=8123
       - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
@@ -110,7 +107,6 @@ services:
       - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
       - INDEXER_VERSION=${INDEXER_VERSION:-dev}
     command: ["python", "/app/scripts/rld_indexer.py", "worker", "--source", "AAVE_MARKET"]
-    network_mode: "host"
 
   chainlink_worker:
     image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
@@ -122,7 +118,7 @@ services:
       migrate_clickhouse:
         condition: service_completed_successfully
     environment:
-      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_HOST=rld_clickhouse
       - CLICKHOUSE_PORT=8123
       - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
@@ -135,7 +131,6 @@ services:
       - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
       - INDEXER_VERSION=${INDEXER_VERSION:-dev}
     command: ["python", "/app/scripts/rld_indexer.py", "worker", "--source", "CHAINLINK_PRICES"]
-    network_mode: "host"
 
   sofr_worker:
     image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
@@ -147,7 +142,7 @@ services:
       migrate_clickhouse:
         condition: service_completed_successfully
     environment:
-      - CLICKHOUSE_HOST=127.0.0.1
+      - CLICKHOUSE_HOST=rld_clickhouse
       - CLICKHOUSE_PORT=8123
       - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
@@ -160,7 +155,6 @@ services:
       - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
       - INDEXER_VERSION=${INDEXER_VERSION:-dev}
     command: ["python", "/app/scripts/rld_indexer.py", "worker", "--source", "SOFR_RATES"]
-    network_mode: "host"
 
 networks:
   default:

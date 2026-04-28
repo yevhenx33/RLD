@@ -43,10 +43,10 @@ class ProtocolProcessor:
     Strictly isolated decoder that reads from ClickHouse mempool 
     and idempotently writes to unified_timeseries.
     """
-    def __init__(self, source: BaseSource, clickhouse_host="localhost", clickhouse_port=8123):
+    def __init__(self, source: BaseSource, clickhouse_host=None, clickhouse_port=None):
         self.source = source
-        self.ch_host = clickhouse_host
-        self.ch_port = clickhouse_port
+        self.ch_host = clickhouse_host or os.getenv("CLICKHOUSE_HOST", "localhost")
+        self.ch_port = int(clickhouse_port or os.getenv("CLICKHOUSE_PORT", "8123"))
         self.batch_blocks = 50_000 
         self._ch = None
         
