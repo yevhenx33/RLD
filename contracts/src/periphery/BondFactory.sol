@@ -411,6 +411,7 @@ contract BondFactory is ReentrancyGuard {
         PoolKey calldata poolKey
     ) internal {
         address collToken = pb.collateralToken();
+        _validatePoolKey(poolKey, collToken, positionToken);
 
         // 1. Quote exact waUSDC input needed for wrlpNeeded output
         bool zeroForOne = collToken < positionToken;
@@ -445,6 +446,7 @@ contract BondFactory is ReentrancyGuard {
         uint256 amountIn,
         PoolKey calldata poolKey
     ) internal returns (uint256 amountOut) {
+        _validatePoolKey(poolKey, tokenIn, tokenOut);
         bool zeroForOne = tokenIn < tokenOut;
 
         SwapParams memory swapParams = SwapParams({
@@ -475,6 +477,21 @@ contract BondFactory is ReentrancyGuard {
         amountOut = zeroForOne
             ? uint256(int256(delta.amount1()))
             : uint256(int256(delta.amount0()));
+    }
+
+    function _validatePoolKey(
+        PoolKey calldata poolKey,
+        address tokenA,
+        address tokenB
+    ) internal pure {
+        require(address(poolKey.hooks) == address(0), "Unexpected hooks");
+        address currency0 = Currency.unwrap(poolKey.currency0);
+        address currency1 = Currency.unwrap(poolKey.currency1);
+        require(
+            (currency0 == tokenA && currency1 == tokenB) ||
+                (currency0 == tokenB && currency1 == tokenA),
+            "Wrong pool"
+        );
     }
 
     /// @notice Uniswap V4 swap settlement callback

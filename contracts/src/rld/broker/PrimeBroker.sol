@@ -1071,6 +1071,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             abi.encodeWithSelector(PrimeBrokerOpsModule.claimExpiredTwammOrder.selector)
         );
         claimedBuyToken = abi.decode(result, (uint256));
+        _checkSolvency();
     }
 
     function claimExpiredTwammOrderWithId(
@@ -1092,6 +1093,7 @@ contract PrimeBroker is IPrimeBroker, ReentrancyGuard {
             )
         );
         claimedBuyToken = abi.decode(result, (uint256));
+        _checkSolvency();
     }
 
     /* ============================================================================================ */
