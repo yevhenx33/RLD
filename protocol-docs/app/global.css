@@ -6,7 +6,7 @@ html {
   scrollbar-gutter: stable;
 }
 
-html > body[data-scroll-locked] {
+html>body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
 }
@@ -14,10 +14,23 @@ html > body[data-scroll-locked] {
 .dark {
   --radius: 0rem;
   --fd-radius: 0rem;
+
+  /* Match rld.fi landing page background */
+  --color-fd-background: #050505;
+  --color-fd-card: #0a0a0a;
+  --color-fd-popover: #0a0a0a;
+  --color-fd-border: rgba(255, 255, 255, 0.06);
+  --color-fd-muted: #111111;
 }
 
 /* Brutalist Edge Enforcement */
-.rounded, .rounded-sm, .rounded-md, .rounded-lg, .rounded-xl, .rounded-2xl, .rounded-3xl, 
+.rounded,
+.rounded-sm,
+.rounded-md,
+.rounded-lg,
+.rounded-xl,
+.rounded-2xl,
+.rounded-3xl,
 [class*="rounded-"] {
   border-radius: 0px !important;
 }
