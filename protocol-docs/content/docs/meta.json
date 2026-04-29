@@ -1,9 +1,12 @@
 {
   "title": "Documentation",
   "pages": [
+    "---Home---",
+    "index",
+    "ai",
+    "---Documentation---",
     "traders",
     "developers",
-    "research",
-    "ai"
+    "research"
   ]
 }
