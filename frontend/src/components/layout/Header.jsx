@@ -184,7 +184,7 @@ export default function Header({
               <span className="text-white/10">|</span>
 
               <a
-                href={import.meta.env.DEV ? "http://localhost:3000" : "https://docs.rld.fi"}
+                href={import.meta.env.DEV ? "http://localhost:3000/home" : "https://docs.rld.fi/home"}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="transition-colors px-2 tracking-widest text-white hover:text-cyan-500 cursor-pointer"
@@ -317,7 +317,7 @@ export default function Header({
                 DATA
               </Link>
               <a
-                href={import.meta.env.DEV ? "http://localhost:3000" : "https://docs.rld.fi"}
+                href={import.meta.env.DEV ? "http://localhost:3000/home" : "https://docs.rld.fi/home"}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="py-2 text-gray-500 hover:text-cyan-500 transition-colors"

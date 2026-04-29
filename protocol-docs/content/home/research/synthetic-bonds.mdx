@@ -1,15 +1,12 @@
 ---
-title: Synthetic Bonds
+title: Synthetic Bonds and Fixed Income
 description: Fixed-yield via continuous-time perpetuals and deterministic execution
 ---
-
-# 03: Synthetic Bonds and Fixed Income
-
 ## Abstract
 
 This document formalizes the construction of Synthetic Bonds by coupling the continuous-time Rate-Level Perpetual (RLP) derivative with deterministic execution algorithms. The proposed architecture provides fixed-yield and fixed-borrowing costs for arbitrary programmable durations. By routing all temporal maturities through a single unified perpetual liquidity pool, this mechanism resolves the liquidity fragmentation problem endemic to existing Decentralized Finance (DeFi) fixed-income primitives.
 
-## 1. Literature Integration and Market Failure
+## 1. Literature Integration
 
 Current DeFi fixed-income markets suffer from severe liquidity fragmentation due to reliance on rigid, date-specific maturity architectures. An analysis of incumbent systems reveals two primary structural limitations:
 
@@ -167,7 +164,7 @@ Because the upfront monetization loop naturally expands the user's collateral to
 
 **Observations:**
 
-- **Variance Crush Profile:** The TWAMM-hedged architecture mathematically reduces volatility. By explicitly comparing the unhedged vs hedged variance, the strategy demonstrates a massive variance reduction (e.g. from 12.30% down to a tightly bounded 1.23% in Chaotic regimes).
+- **Variance Reduction Profile:** The TWAMM-hedged architecture mathematically reduces volatility. By explicitly comparing the unhedged vs hedged variance, the strategy demonstrates a massive variance reduction (e.g. from 12.30% down to a tightly bounded 1.23% in Chaotic regimes).
 - **The Funding Tolerance Buffer Explained:** Because the Yield Monetization loop expands the user's collateral to ~\$110k at origination, the strategy structurally over-performs the 10% target in a neutral market. This extra yield (e.g. 10.84% baseline) acts as a massive protective buffer.
 - **Margin of Safety:** This buffer explicitly defines how much funding rate traders can tolerate without losing their promised 10% fixed yield. The data mathematically show that traders can handle a continuous annualized funding rate penalty of up to -16.38% and the 110k collateral buffer will completely absorb it — allowing the trader to walk away with exactly their expected 10.0% fixed yield intact. Only if the annualized funding drag exceeds -16.38% will the promised fixed yield begin to decay.
 

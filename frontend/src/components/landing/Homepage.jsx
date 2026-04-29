@@ -767,8 +767,8 @@ function CoreArchitectureSection() {
           <div className="flex items-center gap-6">
             {[
               { label: 'X/Twitter', href: 'https://x.com/rld_fi' },
-              { label: 'GitHub', href: 'https://github.com/leooos33/RLD' },
-              { label: 'Docs', href: 'https://docs.rld.fi' },
+              { label: 'GitHub', href: 'https://github.com/yevhenx33/RLD' },
+              { label: 'Docs', href: 'https://docs.rld.fi/home' },
             ].map((link) => (
               <a
                 key={link.label}

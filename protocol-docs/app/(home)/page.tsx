@@ -3,25 +3,25 @@ import Link from 'next/link';
 /* ─── Link data ──────────────────────────────────────────── */
 
 const userLinks = [
-  { title: 'Getting Started', desc: 'Connect, deposit, and trade', href: '/docs/traders/getting-started' },
-  { title: 'Rate Perpetuals', desc: 'Trade rates as volatility', href: '/docs/traders/rate-perpetuals' },
-  { title: 'Synthetic Bonds', desc: 'Fix your yield — any maturity, one pool', href: '/docs/traders/synthetic-bonds' },
-  { title: 'Credit Default Swaps', desc: 'Parametric insurance against protocol defaults', href: '/docs/traders/credit-default-swaps' },
+  { title: 'Getting Started', desc: 'Connect, deposit, and trade', href: '/home/traders/getting-started' },
+  { title: 'Rate Perpetuals', desc: 'Trade rates as volatility', href: '/home/traders/rate-perpetuals' },
+  { title: 'Synthetic Bonds', desc: 'Fix your yield — any maturity, one pool', href: '/home/traders/synthetic-bonds' },
+  { title: 'Credit Default Swaps', desc: 'Parametric insurance against protocol defaults', href: '/home/traders/credit-default-swaps' },
 ];
 
 const devLinks = [
-  { title: 'Architecture', desc: 'Contracts, indices, markets, settlement, and margin', href: '/docs/developers/architecture' },
-  { title: 'Smart Contracts', desc: 'Addresses, ABIs, and integration reference', href: '/docs/developers/smart-contracts' },
-  { title: 'Data & APIs', desc: 'GraphQL, WebSocket, and REST endpoints', href: '/docs/developers/data-apis' },
+  { title: 'Architecture', desc: 'Contracts, indices, markets, settlement, and margin', href: '/home/developers/architecture' },
+  { title: 'Smart Contracts', desc: 'Addresses, ABIs, and integration reference', href: '/home/developers/smart-contracts' },
+  { title: 'Data & APIs', desc: 'GraphQL, WebSocket, and REST endpoints', href: '/home/developers/data-apis' },
 
 ];
 
 const researchLinks = [
-  { title: 'Executive Summary', desc: 'RLD and Parametric CDS — unified infrastructure for on-chain fixed-income', href: '/docs/research/executive-summary' },
-  { title: 'Rate-Level Perpetuals', desc: 'Transforming volatile DeFi yield into a tradable, persistent derivative', href: '/docs/research/rate-level-perpetuals' },
-  { title: 'Synthetic Bonds', desc: 'Fixed-yield via continuous-time perpetuals and deterministic execution', href: '/docs/research/synthetic-bonds' },
-  { title: 'JIT Matching Engine', desc: 'Ghost execution — Hub-and-spoke DEX architecture with composable liquidity', href: '/docs/research/jit-matching-engine' },
-  { title: 'Parametric CDS', desc: 'On-chain solvency insurance via rate-bounded everlasting options', href: '/docs/research/parametric-cds' },
+  { title: 'Executive Summary', desc: 'RLD and Parametric CDS — unified infrastructure for on-chain fixed-income', href: '/home/research/executive-summary' },
+  { title: 'Rate-Level Perpetuals', desc: 'Transforming volatile DeFi yield into a tradable, persistent derivative', href: '/home/research/rate-level-perpetuals' },
+  { title: 'Synthetic Bonds', desc: 'Fixed-yield via continuous-time perpetuals and deterministic execution', href: '/home/research/synthetic-bonds' },
+  { title: 'JIT Matching Engine', desc: 'Ghost execution — Hub-and-spoke DEX architecture with composable liquidity', href: '/home/research/jit-matching-engine' },
+  { title: 'Parametric CDS', desc: 'On-chain solvency insurance via rate-bounded everlasting options', href: '/home/research/parametric-cds' },
 ];
 
 /* ─── Big panel ──────────────────────────────────────────── */
@@ -89,7 +89,7 @@ function Panel({
       {/* Panel footer CTA */}
       <div className="px-8 py-5 border-t border-[#141414]">
         <Link
-          href="/docs"
+          href="/home"
           className="inline-flex items-center gap-2 font-mono text-[11px] tracking-[0.22em] uppercase text-[#555] hover:text-white transition-colors duration-200"
         >
           Browse all {label.toLowerCase()} docs

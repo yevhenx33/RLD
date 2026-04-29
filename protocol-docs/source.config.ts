@@ -6,7 +6,7 @@ import rehypeKatex from 'rehype-katex';
 // You can customize Zod schemas for frontmatter and `meta.json` here
 // see https://fumadocs.dev/docs/mdx/collections
 export const docs = defineDocs({
-  dir: 'content/docs',
+  dir: 'content/home',
   docs: {
     schema: pageSchema,
     postprocess: {

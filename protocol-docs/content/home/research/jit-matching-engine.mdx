@@ -1,10 +1,7 @@
 ---
-title: JIT Matching Engine
+title: The Just-In-Time Matching Engine
 description: Ghost execution — Hub-and-spoke DEX architecture with composable liquidity
 ---
-
-# 04: The Just-In-Time Matching Engine
-
 ## Abstract
 
 The execution of continuous-time derivatives and programmatic order types (e.g., TWAP, limit orders) faces immense friction due to liquidity fragmentation and Maximal Extractable Value (MEV) leakage. This chapter introduces the Just-In-Time Matching (JTM) Engine, a substrate-agnostic execution protocol operating as a standalone Hub-and-Spoke architecture. By collapsing traditional $O(n)$ Limit Order Books into $O(1)$ pre-aggregated virtual "ghost" balances, the JTM Engine structurally internalizes the Coincidence of Wants (CoW), routing organic solver flow directly against dormant liquidity to strictly eliminate Loss-Versus-Rebalancing (LVR).
