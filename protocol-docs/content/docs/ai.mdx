@@ -8,6 +8,7 @@ description: Feed your agent RLD docs via llms.txt, Markdown pages, and MCP
 <Cards>
   <Card title="RLD Docs" description="Feed your agent RLD docs via llms.txt, Markdown pages, and MCP." />
   <Card title="RLD Contracts" description="Give your agent access to RLD contract ABIs, addresses, and integration patterns." />
+  <Card title="RLD Research" description="Feed your agent the full whitepapers — mechanism design, proofs, and economic models." />
 </Cards>
 
 ---
@@ -103,4 +104,29 @@ Then read the smart contracts trading page at
 https://docs.rld.fi/llms.mdx/docs/developers/smart-contracts/trading/content.md 
 and write a TypeScript script that executes a long position on the rate perps market 
 using ethers.js v6.
+```
+
+---
+
+## RLD Research
+
+The full whitepapers are available as machine-readable Markdown. These cover mechanism design, mathematical proofs, economic models, and protocol architecture in rigorous detail.
+
+### Research Papers
+
+| Paper | Markdown URL |
+| --- | --- |
+| [Executive Summary](/docs/research/executive-summary) | `https://docs.rld.fi/llms.mdx/docs/research/executive-summary/content.md` |
+| [Rate-Level Perpetuals](/docs/research/rate-level-perpetuals) | `https://docs.rld.fi/llms.mdx/docs/research/rate-level-perpetuals/content.md` |
+| [Synthetic Bonds](/docs/research/synthetic-bonds) | `https://docs.rld.fi/llms.mdx/docs/research/synthetic-bonds/content.md` |
+| [JIT Matching Engine](/docs/research/jit-matching-engine) | `https://docs.rld.fi/llms.mdx/docs/research/jit-matching-engine/content.md` |
+| [Parametric CDS](/docs/research/parametric-cds) | `https://docs.rld.fi/llms.mdx/docs/research/parametric-cds/content.md` |
+
+### Example Agent Prompt
+
+```text
+Read the RLD Parametric CDS whitepaper at 
+https://docs.rld.fi/llms.mdx/docs/research/parametric-cds/content.md 
+and explain how the premium scaling mechanism ensures underwriters 
+earn a convex risk premium that dominates passive supply yield.
 ```
