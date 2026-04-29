@@ -1,7 +1,7 @@
 export const appName = 'RLD';
-export const docsRoute = '/home';
-export const docsImageRoute = '/og/home';
-export const docsContentRoute = '/llms.mdx/home';
+export const docsRoute = '/';
+export const docsImageRoute = '/og';
+export const docsContentRoute = '/llms.mdx';
 
 // fill this with your actual GitHub info, for example:
 export const gitConfig = {
