@@ -1,63 +1,75 @@
 ---
 title: Using RLD with AI
-description: Feed your agent RLD docs via llms.txt, Markdown pages, and MCP
+description: Give your AI agent full access to RLD documentation, contract interfaces, and research papers
 ---
 
 # Using RLD with AI
 
-<Cards>
-  <Card title="RLD Docs" description="Feed your agent RLD docs via llms.txt, Markdown pages, and MCP." />
-  <Card title="RLD Contracts" description="Give your agent access to RLD contract ABIs, addresses, and integration patterns." />
-  <Card title="RLD Research" description="Feed your agent the full whitepapers — mechanism design, proofs, and economic models." />
-</Cards>
+Every page on this site — documentation, contract references, and research papers — is machine-readable. Use any of the methods below to give your AI coding agent full context on the RLD Protocol.
 
 ---
 
-## RLD Docs
+## Quick Start
 
-Every page on this site is machine-readable. Use any of the methods below to give your AI coding agent full access to the RLD Protocol documentation, contract interfaces, and integration patterns.
-
-### Read docs as Markdown
-
-Every page on this site is available as plain Markdown — append `/content.md` to the docs URL path:
-
-```text
-https://docs.rld.fi/llms.mdx/docs/traders/core-concepts/content.md
-https://docs.rld.fi/llms.mdx/docs/developers/smart-contracts/trading/content.md
-```
-
-This returns the full page content as raw Markdown, suitable for pasting directly into agent context windows.
-
-### llms.txt
-
-Two `llms.txt` files are served at the root for LLM consumption:
-
-| URL | Contents |
-| --- | --- |
-| [`/llms.txt`](https://docs.rld.fi/llms.txt) | Concise index of all pages with titles and descriptions |
-| [`/llms-full.txt`](https://docs.rld.fi/llms-full.txt) | Complete documentation in a single file |
-
-**Usage with Claude Code:**
+The fastest way to get your agent working with RLD is to point it at the documentation index:
 
 ```bash
 claude -p "Read https://docs.rld.fi/llms.txt and summarize the RLD protocol"
 ```
 
-**Usage with Cursor / Windsurf:**
+---
 
-Add `https://docs.rld.fi/llms.txt` as a documentation source in your editor's AI settings. The agent will automatically reference it when answering questions about RLD.
+## Read Any Page as Markdown
 
-### MCP Server
+Every page on this site is available as plain Markdown. Append `/content.md` to the URL path under `/llms.mdx/docs/`:
 
-The docs include a built-in Model Context Protocol (MCP) server for programmatic navigation of documentation.
+```text
+https://docs.rld.fi/llms.mdx/docs/content.md
+https://docs.rld.fi/llms.mdx/docs/traders/core-concepts/content.md
+https://docs.rld.fi/llms.mdx/docs/developers/smart-contracts/trading/content.md
+https://docs.rld.fi/llms.mdx/docs/research/parametric-cds/content.md
+```
 
-**Claude Code:**
+This returns raw Markdown content that can be pasted directly into any agent context window.
+
+---
+
+## llms.txt
+
+Two index files are served at the root for bulk LLM consumption:
+
+| URL | Contents |
+| --- | --- |
+| [`/llms.txt`](https://docs.rld.fi/llms.txt) | Concise index of all pages with titles, descriptions, and paths |
+| [`/llms-full.txt`](https://docs.rld.fi/llms-full.txt) | Complete documentation content in a single file |
+
+Use `/llms.txt` when you need the agent to understand the structure and pick relevant pages. Use `/llms-full.txt` when you want to load the entire knowledge base into context at once.
+
+**Cursor / Windsurf:** Add `https://docs.rld.fi/llms.txt` as a documentation source in your editor's AI settings.
+
+---
+
+## MCP Server
+
+The docs expose a [Model Context Protocol](https://modelcontextprotocol.io) server that gives agents programmatic access to search and retrieve documentation.
+
+**Available tools:**
+
+| Tool | Description |
+| --- | --- |
+| `list_pages` | List all documentation pages with titles, descriptions, and URLs |
+| `get_page` | Retrieve the full Markdown content of any page by slug |
+| `search_docs` | Search pages by keyword across titles and descriptions |
+
+### Claude Code
 
 ```bash
 claude mcp add --transport http rld-docs https://docs.rld.fi/api/mcp
 ```
 
-**Manual configuration (Claude Desktop, Cursor, etc.):**
+### Manual Configuration
+
+For Claude Desktop, Cursor, Windsurf, or any MCP-compatible client:
 
 ```json
 {
@@ -69,64 +81,63 @@ claude mcp add --transport http rld-docs https://docs.rld.fi/api/mcp
 }
 ```
 
-Once connected, your agent can search and retrieve any page from the documentation tree programmatically.
+Once connected, the agent can navigate the full documentation tree — searching for topics, fetching specific pages, and reading contract interfaces without manual URL construction.
 
 ---
 
-## RLD Contracts
+## Key Pages by Use Case
 
-### ABI Reference
+### For Building on RLD
 
-Contract ABIs and deployment addresses are published in the canonical `deployments.json` shipped with each protocol release. Point your agent at the smart contracts section for full interface documentation:
-
-```text
-https://docs.rld.fi/llms.mdx/docs/developers/smart-contracts/content.md
-```
-
-### Key Integration Pages
-
-For agents building on top of RLD, the most relevant pages are:
-
-| Page | What It Covers |
+| Page | Slug |
 | --- | --- |
-| [Smart Contracts Overview](/docs/developers/smart-contracts) | Address registry, core interfaces, execution flow |
-| [Trading & Execution](/docs/developers/smart-contracts/trading) | Long/short flows, swap callbacks, slippage protection |
-| [Deposits & Margin](/docs/developers/smart-contracts/deposits) | Funding brokers, modifyPosition, collateral management |
-| [TWAMM & Streaming](/docs/developers/smart-contracts/twamm) | Streaming order submission, ghost accumulation, settlement |
-| [Access Control](/docs/developers/smart-contracts/access-control) | Operator system, freeze/unfreeze, NFT transfer safety |
-| [Data & APIs](/docs/developers/data-apis) | GraphQL endpoints for querying protocol state |
+| [Smart Contracts Overview](/docs/developers/smart-contracts) | `developers/smart-contracts` |
+| [Trading & Execution](/docs/developers/smart-contracts/trading) | `developers/smart-contracts/trading` |
+| [Deposits & Margin](/docs/developers/smart-contracts/deposits) | `developers/smart-contracts/deposits` |
+| [TWAMM & Streaming](/docs/developers/smart-contracts/twamm) | `developers/smart-contracts/twamm` |
+| [Access Control](/docs/developers/smart-contracts/access-control) | `developers/smart-contracts/access-control` |
+| [Data & APIs](/docs/developers/data-apis) | `developers/data-apis` |
 
-### Example Agent Prompt
+### For Understanding the Protocol
 
-```text
-Read https://docs.rld.fi/llms.txt to understand the RLD protocol structure. 
-Then read the smart contracts trading page at 
-https://docs.rld.fi/llms.mdx/docs/developers/smart-contracts/trading/content.md 
-and write a TypeScript script that executes a long position on the rate perps market 
-using ethers.js v6.
-```
-
----
-
-## RLD Research
-
-The full whitepapers are available as machine-readable Markdown. These cover mechanism design, mathematical proofs, economic models, and protocol architecture in rigorous detail.
+| Page | Slug |
+| --- | --- |
+| [Core Concepts](/docs/traders/core-concepts) | `traders/core-concepts` |
+| [Rate Perpetuals](/docs/traders/rate-perpetuals) | `traders/rate-perpetuals` |
+| [Synthetic Bonds](/docs/traders/synthetic-bonds) | `traders/synthetic-bonds` |
+| [Credit Default Swaps](/docs/traders/credit-default-swaps) | `traders/credit-default-swaps` |
 
 ### Research Papers
 
-| Paper | Markdown URL |
+| Paper | Slug |
 | --- | --- |
-| [Executive Summary](/docs/research/executive-summary) | `https://docs.rld.fi/llms.mdx/docs/research/executive-summary/content.md` |
-| [Rate-Level Perpetuals](/docs/research/rate-level-perpetuals) | `https://docs.rld.fi/llms.mdx/docs/research/rate-level-perpetuals/content.md` |
-| [Synthetic Bonds](/docs/research/synthetic-bonds) | `https://docs.rld.fi/llms.mdx/docs/research/synthetic-bonds/content.md` |
-| [JIT Matching Engine](/docs/research/jit-matching-engine) | `https://docs.rld.fi/llms.mdx/docs/research/jit-matching-engine/content.md` |
-| [Parametric CDS](/docs/research/parametric-cds) | `https://docs.rld.fi/llms.mdx/docs/research/parametric-cds/content.md` |
+| [Executive Summary](/docs/research/executive-summary) | `research/executive-summary` |
+| [Rate-Level Perpetuals](/docs/research/rate-level-perpetuals) | `research/rate-level-perpetuals` |
+| [Synthetic Bonds](/docs/research/synthetic-bonds) | `research/synthetic-bonds` |
+| [JIT Matching Engine](/docs/research/jit-matching-engine) | `research/jit-matching-engine` |
+| [Parametric CDS](/docs/research/parametric-cds) | `research/parametric-cds` |
 
-### Example Agent Prompt
+---
 
+## Example Prompts
+
+**Integration task:**
 ```text
-Read the RLD Parametric CDS whitepaper at 
-https://docs.rld.fi/llms.mdx/docs/research/parametric-cds/content.md 
-and explain how the premium scaling mechanism ensures underwriters 
-earn a convex risk premium that dominates passive supply yield.
+Read https://docs.rld.fi/llms.txt to understand the RLD protocol. Then read 
+the trading page at developers/smart-contracts/trading and write a TypeScript 
+script that executes a long position using ethers.js v6.
+```
+
+**Research analysis:**
+```text
+Read the Parametric CDS whitepaper at research/parametric-cds and explain how 
+the premium scaling mechanism ensures underwriters earn a convex risk premium 
+that dominates passive supply yield.
+```
+
+**Architecture review:**
+```text
+Use the RLD docs MCP server to search for "TWAMM" and read all matching pages. 
+Then explain how ghost accumulation and the epoch bitmap make accrual O(events) 
+instead of O(intervals).
 ```
