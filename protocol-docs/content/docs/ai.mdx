@@ -1,0 +1,106 @@
+---
+title: Using RLD with AI
+description: Feed your agent RLD docs via llms.txt, Markdown pages, and MCP
+---
+
+# Using RLD with AI
+
+<Cards>
+  <Card title="RLD Docs" description="Feed your agent RLD docs via llms.txt, Markdown pages, and MCP." />
+  <Card title="RLD Contracts" description="Give your agent access to RLD contract ABIs, addresses, and integration patterns." />
+</Cards>
+
+---
+
+## RLD Docs
+
+Every page on this site is machine-readable. Use any of the methods below to give your AI coding agent full access to the RLD Protocol documentation, contract interfaces, and integration patterns.
+
+### Read docs as Markdown
+
+Every page on this site is available as plain Markdown — append `/content.md` to the docs URL path:
+
+```text
+https://docs.rld.fi/llms.mdx/docs/traders/core-concepts/content.md
+https://docs.rld.fi/llms.mdx/docs/developers/smart-contracts/trading/content.md
+```
+
+This returns the full page content as raw Markdown, suitable for pasting directly into agent context windows.
+
+### llms.txt
+
+Two `llms.txt` files are served at the root for LLM consumption:
+
+| URL | Contents |
+| --- | --- |
+| [`/llms.txt`](https://docs.rld.fi/llms.txt) | Concise index of all pages with titles and descriptions |
+| [`/llms-full.txt`](https://docs.rld.fi/llms-full.txt) | Complete documentation in a single file |
+
+**Usage with Claude Code:**
+
+```bash
+claude -p "Read https://docs.rld.fi/llms.txt and summarize the RLD protocol"
+```
+
+**Usage with Cursor / Windsurf:**
+
+Add `https://docs.rld.fi/llms.txt` as a documentation source in your editor's AI settings. The agent will automatically reference it when answering questions about RLD.
+
+### MCP Server
+
+The docs include a built-in Model Context Protocol (MCP) server for programmatic navigation of documentation.
+
+**Claude Code:**
+
+```bash
+claude mcp add --transport http rld-docs https://docs.rld.fi/api/mcp
+```
+
+**Manual configuration (Claude Desktop, Cursor, etc.):**
+
+```json
+{
+  "mcpServers": {
+    "rld-docs": {
+      "url": "https://docs.rld.fi/api/mcp"
+    }
+  }
+}
+```
+
+Once connected, your agent can search and retrieve any page from the documentation tree programmatically.
+
+---
+
+## RLD Contracts
+
+### ABI Reference
+
+Contract ABIs and deployment addresses are published in the canonical `deployments.json` shipped with each protocol release. Point your agent at the smart contracts section for full interface documentation:
+
+```text
+https://docs.rld.fi/llms.mdx/docs/developers/smart-contracts/content.md
+```
+
+### Key Integration Pages
+
+For agents building on top of RLD, the most relevant pages are:
+
+| Page | What It Covers |
+| --- | --- |
+| [Smart Contracts Overview](/docs/developers/smart-contracts) | Address registry, core interfaces, execution flow |
+| [Trading & Execution](/docs/developers/smart-contracts/trading) | Long/short flows, swap callbacks, slippage protection |
+| [Deposits & Margin](/docs/developers/smart-contracts/deposits) | Funding brokers, modifyPosition, collateral management |
+| [TWAMM & Streaming](/docs/developers/smart-contracts/twamm) | Streaming order submission, ghost accumulation, settlement |
+| [Access Control](/docs/developers/smart-contracts/access-control) | Operator system, freeze/unfreeze, NFT transfer safety |
+| [Data & APIs](/docs/developers/data-apis) | GraphQL endpoints for querying protocol state |
+
+### Example Agent Prompt
+
+```text
+Read https://docs.rld.fi/llms.txt to understand the RLD protocol structure. 
+Then read the smart contracts trading page at 
+https://docs.rld.fi/llms.mdx/docs/developers/smart-contracts/trading/content.md 
+and write a TypeScript script that executes a long position on the rate perps market 
+using ethers.js v6.
+```
