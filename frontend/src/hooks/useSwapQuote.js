@@ -2,6 +2,11 @@ import { useCallback, useMemo, useRef, useEffect, useState } from "react";
 import { ethers } from "ethers";
 import useSWR from "swr";
 import { rpcProvider } from "../utils/provider";
+import {
+  HOOKLESS_POOL,
+  buildHooklessPoolKey,
+  buildQuoterExactInputSingleParams,
+} from "../lib/peripheryIntegration";
 
 // Mainnet V4 Quoter ABI — quoteExactInputSingle(QuoteExactSingleParams)
 // Uses struct-wrapped params matching the deployed Quoter at 0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203
@@ -42,7 +47,7 @@ const QUOTER_ABI = [
 /**
  * useSwapQuote — Fetch a precise V4 swap quote using the on-chain V4Quoter.
  *
- * @param {object} infrastructure - { v4_quoter, twamm_hook, pool_fee, tick_spacing }
+ * @param {object} infrastructure - { v4_quoter, pool_fee, tick_spacing }
  * @param {string} collateralAddr - waUSDC address
  * @param {string} positionAddr   - wRLP address
  * @param {number} amountIn       - Amount to swap (human units, 6 decimals)
@@ -89,44 +94,20 @@ export function useSwapQuote(
         provider,
       );
 
-      // Build pool key — token0 must be < token1 by address
-      const token0 =
-        collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-          ? collateralAddr
-          : positionAddr;
-      const token1 =
-        collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-          ? positionAddr
-          : collateralAddr;
-
-      const poolKey = {
-        currency0: token0,
-        currency1: token1,
-        fee: infrastructure.pool_fee || 500,
-        tickSpacing: infrastructure.tick_spacing || 5,
-        hooks: infrastructure.twamm_hook,
-      };
-
-      // Determine swap direction
-      // BUY  (open long):  sell collateral for position → zeroForOne = collateral < position
-      // SELL (close long): sell position for collateral → zeroForOne = position < collateral
-      const zeroForOne =
-        direction === "SELL"
-          ? positionAddr.toLowerCase() < collateralAddr.toLowerCase()
-          : collateralAddr.toLowerCase() < positionAddr.toLowerCase();
-
       // Both waUSDC and wRLP have 6 decimals
       const exactAmount = ethers.parseUnits(String(debouncedAmount), 6);
+      const params = buildQuoterExactInputSingleParams(
+        infrastructure,
+        collateralAddr,
+        positionAddr,
+        exactAmount,
+        direction,
+      );
 
       // V4Quoter.quoteExactInputSingle is NOT a view function —
       // it calls PoolManager.unlock() which reverts internally.
       // Use eth_call (staticCall) to simulate without sending a tx.
-      const result = await quoter.quoteExactInputSingle.staticCall({
-        poolKey,
-        zeroForOne,
-        exactAmount,
-        hookData: "0x",
-      });
+      const result = await quoter.quoteExactInputSingle.staticCall(params);
 
       const amountOutRaw = result[0]; // BigInt
       const gasEstimateRaw = result[1]; // BigInt
@@ -185,9 +166,9 @@ export function useSwapQuote(
       positionAddr.toLowerCase(),
       Number(debouncedAmount),
       direction,
-      infrastructure.pool_fee || 500,
-      infrastructure.tick_spacing || 5,
-      infrastructure.twamm_hook?.toLowerCase() || "",
+      buildHooklessPoolKey(infrastructure, collateralAddr, positionAddr)?.fee || 500,
+      buildHooklessPoolKey(infrastructure, collateralAddr, positionAddr)?.tickSpacing || 5,
+      HOOKLESS_POOL,
     ];
   }, [infrastructure, collateralAddr, positionAddr, debouncedAmount, direction]);
 

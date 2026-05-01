@@ -12,6 +12,7 @@ import {AaveAdapter} from "../../src/rld/modules/adapters/AaveAdapter.sol";
 import {BrokerRouter} from "../../src/periphery/BrokerRouter.sol";
 import {BondFactory} from "../../src/periphery/BondFactory.sol";
 import {PeripheryGhostLib} from "../../src/periphery/lib/PeripheryGhostLib.sol";
+import {GhostRouter} from "../../src/dex/GhostRouter.sol";
 import {WrappedAToken} from "../../src/shared/wrappers/WrappedAToken.sol";
 import {IRLDCore, MarketId} from "../../src/shared/interfaces/IRLDCore.sol";
 import {IPrimeBroker} from "../../src/shared/interfaces/IPrimeBroker.sol";
@@ -22,6 +23,7 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Position} from "v4-core/src/libraries/Position.sol";
 
 import "../dex/mocks/MockERC20.sol";
+import "../dex/mocks/MockPoolManager.sol";
 
 contract MockAuditFactory {
     address public owner;
@@ -140,6 +142,16 @@ contract BondFactoryHarness is BondFactory {
 
     function exposedValidate(PoolKey calldata poolKey, address tokenA, address tokenB) external pure {
         PeripheryGhostLib.validatePoolKey(poolKey, tokenA, tokenB);
+    }
+}
+
+contract PeripheryGhostLibHarness {
+    function exposedValidate(PoolKey calldata poolKey, address tokenA, address tokenB) external pure {
+        PeripheryGhostLib.validatePoolKey(poolKey, tokenA, tokenB);
+    }
+
+    function exposedGhostPoolId(PoolKey calldata poolKey) external pure returns (bytes32) {
+        return PeripheryGhostLib.ghostPoolId(poolKey);
     }
 }
 
@@ -264,6 +276,66 @@ contract ApprovedAuditFixesTest is Test {
 
         vm.expectRevert(PeripheryGhostLib.UnexpectedHook.selector);
         factory.exposedValidate(key, tokenA, tokenB);
+    }
+
+    function test_cdsCoverageFactoryRejectsHookedPoolKeys() external {
+        PeripheryGhostLibHarness harness = new PeripheryGhostLibHarness();
+        (address tokenA, address tokenB) = _orderedTokens();
+        PoolKey memory key = _poolKey(tokenA, tokenB, address(0xBEEF));
+
+        vm.expectRevert(PeripheryGhostLib.UnexpectedHook.selector);
+        harness.exposedValidate(key, tokenA, tokenB);
+    }
+
+    function test_brokerRouterSelectorsAndEventTopicsStayIndexerCompatible() external pure {
+        assertEq(
+            BrokerRouter.executeLong.selector,
+            bytes4(keccak256("executeLong(address,uint256,(address,address,uint24,int24,address),uint256)"))
+        );
+        assertEq(
+            BrokerRouter.closeLong.selector,
+            bytes4(keccak256("closeLong(address,uint256,(address,address,uint24,int24,address),uint256)"))
+        );
+        assertEq(
+            BrokerRouter.executeShort.selector,
+            bytes4(keccak256("executeShort(address,uint256,uint256,(address,address,uint24,int24,address),uint256)"))
+        );
+        assertEq(
+            BrokerRouter.closeShort.selector,
+            bytes4(keccak256("closeShort(address,uint256,(address,address,uint24,int24,address),uint256)"))
+        );
+        assertEq(
+            BrokerRouter.depositWithApproval.selector,
+            bytes4(keccak256("depositWithApproval(address,uint256,uint256)"))
+        );
+        assertEq(
+            BrokerRouter.deposit.selector,
+            bytes4(keccak256("deposit(address,uint256,uint256,((address,uint256),uint256,uint256),bytes)"))
+        );
+
+        assertEq(BrokerRouter.SwapExecuted.selector, keccak256("SwapExecuted(address,uint8,uint256,uint256)"));
+        assertEq(
+            BrokerRouter.ShortPositionUpdated.selector,
+            keccak256("ShortPositionUpdated(address,uint256,uint256)")
+        );
+        assertEq(
+            BrokerRouter.ShortPositionClosed.selector,
+            keccak256("ShortPositionClosed(address,uint256,uint256)")
+        );
+        assertEq(BrokerRouter.Deposited.selector, keccak256("Deposited(address,uint256,uint256)"));
+    }
+
+    function test_peripheryGhostPoolIdMatchesGhostRouterMarketId() external {
+        MockPoolManager poolManager = new MockPoolManager();
+        poolManager.setSqrtPriceX96(uint160(1 << 96));
+        GhostRouter ghostRouter = new GhostRouter(address(poolManager), address(this));
+        (address tokenA, address tokenB) = _orderedTokens();
+        PoolKey memory key = _poolKey(tokenA, tokenB, address(0));
+        PeripheryGhostLibHarness harness = new PeripheryGhostLibHarness();
+
+        bytes32 marketId = ghostRouter.initializeMarketWithUniswapOracle(key);
+
+        assertEq(marketId, harness.exposedGhostPoolId(key), "periphery and GhostRouter market ids diverged");
     }
 
     function test_dutchLiquidationBonusUsesNetWorthMarginHealth() external {

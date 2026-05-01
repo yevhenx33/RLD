@@ -368,6 +368,7 @@ MARKET_CONFIG_SELECT = """
            min_col_ratio, maintenance_margin, debt_cap,
            swap_router, bond_factory, broker_executor,
            funding_period_sec, v4_quoter, broker_router,
+           deposit_adapter,
            v4_position_manager, v4_state_view, pool_manager
     FROM markets
 """
@@ -429,7 +430,7 @@ def _overlay_deployment_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     for key in (
         "token0", "token1", "zero_for_one_long", "funding_model",
         "settlement_module", "decay_rate_wad", "collateral_symbol",
-        "position_symbol", "type", "cds_coverage_factory",
+        "position_symbol", "type", "deposit_adapter", "cds_coverage_factory",
     ):
         if key in market_entry and not payload.get(key):
             payload[key] = market_entry[key]
@@ -437,8 +438,9 @@ def _overlay_deployment_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     for key in (
         "rpc_url", "rld_core", "pool_manager",
         "swap_router", "bond_factory",
-        "broker_executor", "broker_router", "v4_quoter", "v4_position_manager",
-        "ghost_router", "twap_engine", "twap_engine_lens", "cds_coverage_factory",
+        "broker_executor", "broker_router", "deposit_adapter",
+        "v4_quoter", "v4_position_manager", "ghost_router",
+        "twap_engine", "twap_engine_lens", "cds_coverage_factory",
     ):
         if key in deploy_cfg and not payload.get(key):
             payload[key] = deploy_cfg[key]
@@ -476,6 +478,7 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "fundingPeriodSec": row["funding_period_sec"],
         "v4Quoter": _record_get(row, "v4_quoter", ""),
         "brokerRouter": _record_get(row, "broker_router", ""),
+        "depositAdapter": _record_get(row, "deposit_adapter", ""),
         "v4PositionManager": _record_get(row, "v4_position_manager", ""),
         "v4StateView": _record_get(row, "v4_state_view", ""),
         "poolManager": _record_get(row, "pool_manager", ""),
@@ -502,12 +505,28 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "funding_period_sec": payload["fundingPeriodSec"],
         "v4_quoter": payload["v4Quoter"],
         "broker_router": payload["brokerRouter"],
+        "deposit_adapter": payload["depositAdapter"],
         "v4_position_manager": payload["v4PositionManager"],
         "v4_state_view": payload["v4StateView"],
         "pool_manager": payload["poolManager"],
     })
 
     payload = _overlay_deployment_config(payload)
+    for camel, snake in (
+        ("brokerRouter", "broker_router"),
+        ("depositAdapter", "deposit_adapter"),
+        ("brokerExecutor", "broker_executor"),
+        ("bondFactory", "bond_factory"),
+        ("v4Quoter", "v4_quoter"),
+        ("ghostRouter", "ghost_router"),
+        ("twapEngine", "twap_engine"),
+        ("twapEngineLens", "twap_engine_lens"),
+        ("poolManager", "pool_manager"),
+    ):
+        if not payload.get(camel) and payload.get(snake):
+            payload[camel] = payload[snake]
+        if not payload.get(snake) and payload.get(camel):
+            payload[snake] = payload[camel]
 
     payload["collateral"] = {
         "name": collateral_symbol,
@@ -521,6 +540,8 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
     }
     payload["infrastructure"] = {
         "brokerRouter": payload["brokerRouter"],
+        "depositAdapter": payload["depositAdapter"],
+        "deposit_adapter": payload["depositAdapter"],
         "brokerExecutor": payload["brokerExecutor"],
         "twammHook": payload["twammHook"],
         "twamm_hook": payload["twammHook"],

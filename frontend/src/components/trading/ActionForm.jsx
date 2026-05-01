@@ -6,6 +6,11 @@ import { useTwammOrder } from "../../hooks/useTwammOrder";
 import { usePoolLiquidity, liquidityToAmounts, computeLiquidity } from "../../hooks/usePoolLiquidity";
 import { ZERO_FOR_ONE_LONG } from "../../config/simulationConfig";
 import { ChevronDown } from "lucide-react";
+import {
+  BROKER_ROUTER_LONG_ABI,
+  buildHooklessPoolKey,
+  encodeExecuteLongCalldata,
+} from "../../lib/peripheryIntegration";
 
 
 // PrimeBroker ABI subset for mint
@@ -372,23 +377,6 @@ const BROKER_NONCE_ABI = [
   "function operatorNonces(address operator) view returns (uint256)",
 ];
 
-const POOL_KEY_TUPLE = {
-  name: "poolKey", type: "tuple",
-  components: [
-    { name: "currency0", type: "address" },
-    { name: "currency1", type: "address" },
-    { name: "fee", type: "uint24" },
-    { name: "tickSpacing", type: "int24" },
-    { name: "hooks", type: "address" },
-  ],
-};
-
-const ROUTER_LONG_ABI = [{
-  name: "executeLong", type: "function", stateMutability: "nonpayable",
-  inputs: [{ name: "broker", type: "address" }, { name: "amountIn", type: "uint256" }, POOL_KEY_TUPLE],
-  outputs: [{ name: "amountOut", type: "uint256" }],
-}];
-
 const BROKER_ADD_LP_ABI = [
   "function addPoolLiquidity(address twammHook, int24 tickLower, int24 tickUpper, uint128 liquidity, uint128 amount0Max, uint128 amount1Max) external returns (uint256 tokenId)",
 ];
@@ -542,16 +530,11 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       const hookAddr = infrastructure.twamm_hook;
       const tickSpacing = infrastructure.tick_spacing || 5;
 
-      // Build pool key
-      const c0 = collateralToken.address.toLowerCase() < positionToken.address.toLowerCase()
-        ? collateralToken.address : positionToken.address;
-      const c1 = collateralToken.address.toLowerCase() < positionToken.address.toLowerCase()
-        ? positionToken.address : collateralToken.address;
-      const poolKey = {
-        currency0: c0, currency1: c1,
-        fee: infrastructure.pool_fee || 500,
-        tickSpacing, hooks: hookAddr,
-      };
+      const poolKey = buildHooklessPoolKey(
+        infrastructure,
+        collateralToken.address,
+        positionToken.address,
+      );
 
       // Compute tick range
       const pL = parseFloat(minPrice);
@@ -573,11 +556,12 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       if (swapAmount_raw > 0n) {
         setLpStep("Quoting swap output...");
         try {
-          const routerForQuote = new ethers.Contract(routerAddr, ROUTER_LONG_ABI, signer);
+          const routerForQuote = new ethers.Contract(routerAddr, BROKER_ROUTER_LONG_ABI, signer);
           const quotedOut = await routerForQuote.executeLong.staticCall(
             brokerAddress,
             swapAmount_raw,
             poolKey,
+            0n,
           );
           const bufferedOut = (quotedOut * SWAP_QUOTE_BUFFER_BPS) / 10_000n;
           if (bufferedOut <= 0n) throw new Error("Swap quote returned zero output");
@@ -606,8 +590,12 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       if (swapAmount_raw > 0n) {
         if (depositMode === "USDC") {
           // executeLong: swap waUSDC → wRLP
-          const routerIface = new ethers.Interface(ROUTER_LONG_ABI);
-          const swapData = routerIface.encodeFunctionData("executeLong", [brokerAddress, swapAmount_raw, poolKey]);
+          const swapData = encodeExecuteLongCalldata(
+            brokerAddress,
+            swapAmount_raw,
+            poolKey,
+            0n,
+          );
           calls.push({ target: routerAddr, data: swapData });
         } else {
           throw new Error("Atomic LP for wRLP input is not implemented yet");

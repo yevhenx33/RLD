@@ -234,7 +234,7 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
     rows = await conn.fetch("""
         SELECT market_id, broker_factory, mock_oracle, twamm_hook,
                ghost_router, twap_engine, twap_engine_lens,
-               bond_factory, wausdc, wrlp,
+               bond_factory, broker_router, deposit_adapter, wausdc, wrlp,
                product_metadata
         FROM markets
     """)
@@ -256,6 +256,8 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
         _remember(r.get("twap_engine"))
         _remember(r.get("twap_engine_lens"))
         _remember(r.get("bond_factory"))
+        _remember(r.get("broker_router"))
+        _remember(r.get("deposit_adapter"))
         _remember(r.get("wausdc"))
         _remember(r.get("wrlp"))
         metadata = r.get("product_metadata") or {}

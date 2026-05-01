@@ -2,6 +2,10 @@ import { useState, useCallback } from "react";
 import { ethers } from "ethers";
 import { getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
+import {
+  buildHooklessPoolKey,
+  buildHooklessPoolKeyArray,
+} from "../lib/peripheryIntegration";
 
 // ── ABI fragments ─────────────────────────────────────────────────
 
@@ -26,22 +30,6 @@ const ERC20_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
 ];
 
-/**
- * V4 PoolKey.hooks must exactly match the on-chain pool initialization.
- * In this stack pools are initialized hookless, so we should pass twamm_hook
- * as-is (including address(0)).
- */
-function v4PoolHooksAddress(infra) {
-  if (!infra) return null;
-  const explicit = infra.twamm_hook ?? infra.twammHook;
-  if (explicit == null || explicit === "") return null;
-  try {
-    return ethers.getAddress(explicit);
-  } catch {
-    return null;
-  }
-}
-
 // ── Hook ──────────────────────────────────────────────────────────
 
 /**
@@ -56,7 +44,7 @@ function v4PoolHooksAddress(infra) {
  *   2. bondFactory.closeBond() → unfreezes, unwinds TWAMM, repays debt, withdraws
  *
  * @param {string} account           Connected wallet address
- * @param {object} infrastructure    { bond_factory, broker_factory, broker_router, twamm_hook, pool_fee, tick_spacing }
+ * @param {object} infrastructure    { bond_factory, broker_factory, broker_router, pool_fee, tick_spacing }
  * @param {string} collateralAddr    waUSDC address
  * @param {string} positionAddr      wRLP address
  */
@@ -101,9 +89,8 @@ export function useBondExecution(
 
       // Bond factory address (from indexer API — no fallback)
       const bondFactoryAddr = infrastructure?.bond_factory;
-      const poolHooks = v4PoolHooksAddress(infrastructure);
 
-      if (!bondFactoryAddr || poolHooks == null) {
+      if (!bondFactoryAddr) {
         setError("Bond factory not available — waiting for config");
         return;
       }
@@ -120,14 +107,11 @@ export function useBondExecution(
         const readProvider = rpcProvider;
 
         // ── Build pool key ──────────────────────────────────────
-        const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();
-        const poolKey = {
-          currency0: sorted ? positionAddr : collateralAddr,
-          currency1: sorted ? collateralAddr : positionAddr,
-          fee: infrastructure.pool_fee || 500,
-          tickSpacing: infrastructure.tick_spacing || 5,
-          hooks: poolHooks,
-        };
+        const poolKey = buildHooklessPoolKey(
+          infrastructure,
+          collateralAddr,
+          positionAddr,
+        );
 
         // ── Compute debt amount (wRLP tokens to mint) ────────────
         // 1. Yield in USD = notional × rate × pro-rata duration
@@ -331,12 +315,6 @@ export function useBondExecution(
         return;
       }
 
-      const poolHooks = v4PoolHooksAddress(infrastructure);
-      if (poolHooks == null) {
-        setError("Missing infrastructure");
-        return;
-      }
-
       setExecuting(true);
       if (pauseRef) pauseRef.current = true;
       setError(null);
@@ -346,14 +324,11 @@ export function useBondExecution(
         const signer = await getSigner();
 
         // ── 1. Build pool key ─────────────────────────────────────
-        const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();
-        const poolKeyArr = [
-          sorted ? positionAddr : collateralAddr,
-          sorted ? collateralAddr : positionAddr,
-          infrastructure.pool_fee || 500,
-          infrastructure.tick_spacing || 5,
-          poolHooks,
-        ];
+        const poolKeyArr = buildHooklessPoolKeyArray(
+          infrastructure,
+          collateralAddr,
+          positionAddr,
+        );
 
         // ── 2. Close bond (single TX, no approval needed) ──────────
         setStep("Closing bond...");

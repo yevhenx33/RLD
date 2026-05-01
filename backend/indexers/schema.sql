@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS markets (
   broker_executor     TEXT,
   v4_quoter           TEXT,
   broker_router       TEXT,
+  deposit_adapter     TEXT,
   v4_position_manager TEXT,
   v4_state_view       TEXT,
   pool_manager        TEXT,
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS markets (
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS ghost_router TEXT;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS twap_engine TEXT;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS twap_engine_lens TEXT;
+ALTER TABLE markets ADD COLUMN IF NOT EXISTS deposit_adapter TEXT;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS market_type TEXT NOT NULL DEFAULT 'perp';
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS collateral_token TEXT;
 ALTER TABLE markets ADD COLUMN IF NOT EXISTS collateral_symbol TEXT;

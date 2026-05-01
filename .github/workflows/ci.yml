@@ -23,6 +23,22 @@ jobs:
   backend-tests:
     name: Backend tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: rld
+          POSTGRES_PASSWORD: rld_dev_password
+          POSTGRES_DB: rld_indexer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rld -d rld_indexer_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      SIM_INDEXER_TEST_DATABASE_URL: postgresql://rld:rld_dev_password@localhost:5432/rld_indexer_test
     steps:
       - uses: actions/checkout@v5
 
@@ -51,6 +67,25 @@ jobs:
 
       - name: Audit backend dependencies
         run: pip-audit -r backend/requirements.txt
+
+  contracts-tests:
+    name: Contracts tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Build contracts
+        run: forge build
+
+      - name: Run contracts tests
+        run: forge test
 
   data-pipeline-tests:
     name: Data pipeline tests
@@ -103,6 +138,9 @@ jobs:
 
       - name: Lint frontend
         run: npm run lint
+
+      - name: Run frontend unit tests
+        run: npm run test
 
       - name: Build frontend
         run: npm run build

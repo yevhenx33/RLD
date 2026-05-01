@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { ethers } from "ethers";
 import { getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
+import { buildHooklessPoolKeyArray } from "../lib/peripheryIntegration";
 
 const POOL_KEY_TUPLE = {
   name: "poolKey",
@@ -72,27 +73,8 @@ function getCoverageFactory(infrastructure) {
   );
 }
 
-function getPoolHooks(infrastructure) {
-  const hooks = infrastructure?.twamm_hook ?? infrastructure?.twammHook;
-  if (hooks == null || hooks === "") return null;
-  try {
-    return ethers.getAddress(hooks);
-  } catch {
-    return null;
-  }
-}
-
 function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
-  const hooks = getPoolHooks(infrastructure);
-  if (hooks == null || !collateralAddr || !positionAddr) return null;
-  const sorted = positionAddr.toLowerCase() < collateralAddr.toLowerCase();
-  return [
-    sorted ? positionAddr : collateralAddr,
-    sorted ? collateralAddr : positionAddr,
-    infrastructure?.pool_fee || 500,
-    infrastructure?.tick_spacing || 5,
-    hooks,
-  ];
+  return buildHooklessPoolKeyArray(infrastructure, collateralAddr, positionAddr);
 }
 
 function extractBroker(receipt) {
