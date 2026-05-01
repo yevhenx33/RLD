@@ -4,19 +4,12 @@ pragma solidity ^0.8.26;
 import {
     ReentrancyGuard
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {PrimeBroker} from "../rld/broker/PrimeBroker.sol";
-import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
-import {IERC20} from "../shared/interfaces/IERC20.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {MarketId} from "../shared/interfaces/IRLDCore.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
-import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
-import {ERC721} from "solmate/src/tokens/ERC721.sol";
 import {
     ISignatureTransfer
 } from "permit2/src/interfaces/ISignatureTransfer.sol";
+import {BrokerRouterLib} from "./lib/BrokerRouterLib.sol";
 
 /// @title  BrokerRouter — Universal Execution Layer for PrimeBroker
 /// @author RLD Protocol
@@ -38,8 +31,7 @@ import {
 ///     │       onlyBrokerAuthorized(broker)                   │
 ///     │     msg.sender == NFT owner OR operator              │
 ///     │                  │                                    │
-///     │       PoolManager.unlock()  ← V4 swaps              │
-///     │       unlockCallback()      ← settlement             │
+///     │       GhostRouter.swap()    ← routed swaps           │
 ///     └──────────────────────────────────────────────────────┘
 ///     ```
 ///
@@ -63,7 +55,7 @@ import {
 ///
 ///     | Function        | Tokens In              | Tokens Out             |
 ///     |-----------------|------------------------|------------------------|
-///     | `deposit()`     | USDC → waUSDC (wrap)   | waUSDC → broker        |
+///     | `deposit()`     | Underlying → adapter    | collateral → broker    |
 ///     | `executeLong()`  | waUSDC → V4 swap       | wRLP → broker          |
 ///     | `closeLong()`    | wRLP → V4 swap         | waUSDC → broker        |
 ///     | `executeShort()` | mint wRLP → V4 swap    | waUSDC → broker (loop) |
@@ -79,9 +71,6 @@ import {
 ///     | `closeLong()`         | `onlyBrokerAuthorized`      | NFT owner / operator |
 ///     | `executeShort()`      | `onlyBrokerAuthorized`      | NFT owner / operator |
 ///     | `closeShort()`        | `onlyBrokerAuthorized`      | NFT owner / operator |
-///     | `setDepositRoute()`   | `onlyOwner`                 | Protocol admin       |
-///     | `transferOwnership()` | `onlyOwner`                 | Protocol admin       |
-///     | `unlockCallback()`    | `msg.sender == poolManager` | PoolManager only     |
 ///
 /// ## Test Coverage (Phase 4 — 17 tests)
 ///
@@ -92,92 +81,72 @@ import {
 ///     - No token residuals left in router after any operation
 ///     - Unauthorized caller reverts
 ///
-/// ## Bugs Found & Fixed During Penetration Testing
-///
-///     1. **closeShort() debt underflow** — Repaying more wRLP than
-///        outstanding `debtPrincipal` caused an arithmetic underflow.
-///        Fix: cap repayment at `debtPrincipal`.
-///     2. **No pool key validation** — User-supplied `PoolKey` was
-///        accepted without checking currencies matched the broker's
-///        tokens.  Fix: added `_validatePoolKey()`.
-///     3. **Implicit swap proceeds** — `BalanceDelta` was decoded but
-///        output amount was never explicitly checked.  Fix: explicit
-///        `delta.amount0()` / `delta.amount1()` decode.
-///
 /// ## Known Limitations
 ///
-///     - Deposit routes must be registered per collateral token by
-///       the protocol admin before deposits work.
-///     - Swap slippage protection is minimal (uses price limits only).
-///     - `calculateOptimalDebt()` does not account for swap fees.
+///     - Deposit conversion is delegated to a per-market adapter configured at
+///       deployment.
 contract BrokerRouter is ReentrancyGuard {
-    using CurrencySettler for Currency;
+    uint8 internal constant ACTION_EXECUTE_LONG = 1;
+    uint8 internal constant ACTION_CLOSE_LONG = 2;
 
     /* ============================================================================================ */
     /*                                          IMMUTABLES                                          */
     /* ============================================================================================ */
 
-    /// @notice Uniswap V4 PoolManager singleton
-    IPoolManager public immutable poolManager;
+    /// @notice PrimeBrokerFactory trusted for broker NFT ownership.
+    address public immutable brokerFactory;
+
+    /// @notice Market this router is bound to.
+    MarketId public immutable marketId;
+
+    /// @notice Broker collateral token for this market.
+    address public immutable collateralToken;
+
+    /// @notice Broker position/debt token for this market.
+    address public immutable positionToken;
+
+    /// @notice Token accepted for user deposits.
+    address public immutable underlyingToken;
+
+    /// @notice Protocol-specific converter for underlying deposits.
+    address public immutable depositAdapter;
+
+    /// @notice GhostRouter used for all executable swaps
+    address public immutable ghostRouter;
 
     /// @notice Permit2 singleton for gasless token approvals
     ISignatureTransfer public immutable permit2;
-
-    /// @notice Protocol admin who can register deposit routes
-    address public owner;
 
     /* ============================================================================================ */
     /*                                       DEPOSIT ROUTES                                         */
     /* ============================================================================================ */
 
-    /// @notice Configuration for wrapping underlying tokens into broker collateral
-    /// @dev Maps collateralToken → how to produce it from raw underlying
-    struct DepositRoute {
-        address underlying; // e.g. USDC
-        address aToken; // e.g. aUSDC
-        address wrapped; // e.g. waUSDC (the broker's collateralToken)
-        address aavePool; // Aave V3 pool for supply()
-    }
-
-    /// @notice Registry: collateralToken → deposit route
-    mapping(address => DepositRoute) public depositRoutes;
-
-    /* ============================================================================================ */
-    /*                                          SWAP STATE                                          */
-    /* ============================================================================================ */
-
-    /// @notice Callback data for V4 swap settlement
-    struct SwapCallback {
-        address sender;
-        PoolKey key;
-        SwapParams params;
+    /// @notice Constructor configuration for a per-market router.
+    struct MarketConfig {
+        address brokerFactory;
+        MarketId marketId;
+        address collateralToken;
+        address positionToken;
+        address underlyingToken;
+        address depositAdapter;
     }
 
     /* ============================================================================================ */
     /*                                           EVENTS                                             */
     /* ============================================================================================ */
 
-    event DepositRouteSet(
-        address indexed collateralToken,
-        address underlying,
-        address aavePool
-    );
-    event LongExecuted(
+    event SwapExecuted(
         address indexed broker,
+        uint8 indexed action,
         uint256 amountIn,
         uint256 amountOut
     );
-    event LongClosed(
-        address indexed broker,
-        uint256 amountIn,
-        uint256 amountOut
-    );
-    event ShortExecuted(
+    event ShortPositionUpdated(
         address indexed broker,
         uint256 debtAmount,
         uint256 proceeds
     );
-    event ShortClosed(
+    event ShortPositionClosed(
         address indexed broker,
         uint256 debtRepaid,
         uint256 collateralSpent
@@ -185,7 +154,7 @@ contract BrokerRouter is ReentrancyGuard {
     event Deposited(
         address indexed broker,
         uint256 underlyingAmount,
-        uint256 wrappedAmount
+        uint256 collateralAmount
     );
 
     /* ============================================================================================ */
@@ -193,11 +162,12 @@ contract BrokerRouter is ReentrancyGuard {
     /* ============================================================================================ */
 
     error NotAuthorized();
-    error NoDepositRoute();
-    error NotPoolManager();
     error PoolKeyMismatch();
     error SlippageExceeded();
     error UnexpectedHook();
+    error InvalidRoute();
+    error PermitTokenMismatch();
+    error InvalidBroker();
 
     /* ============================================================================================ */
     /*                                          MODIFIERS                                           */
@@ -206,168 +176,103 @@ contract BrokerRouter is ReentrancyGuard {
     /// @notice Restricts to broker NFT owner or any operator of that broker
     /// @dev Mirrors PrimeBroker's own onlyAuthorized modifier
     modifier onlyBrokerAuthorized(address broker) {
-        PrimeBroker pb = PrimeBroker(payable(broker));
-        address brokerOwner = ERC721(pb.factory()).ownerOf(
-            uint256(uint160(broker))
-        );
-        if (msg.sender != brokerOwner && !pb.operators(msg.sender)) {
-            revert NotAuthorized();
-        }
+        _onlyBrokerAuthorized(broker);
         _;
     }
 
-    /// @notice Restricts to protocol admin
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
-        _;
+    function _onlyBrokerAuthorized(address broker) internal view {
+        BrokerRouterLib.authorizeBroker(
+            broker,
+            brokerFactory,
+            marketId,
+            collateralToken,
+            positionToken
+        );
     }
 
     /* ============================================================================================ */
     /*                                         CONSTRUCTOR                                          */
     /* ============================================================================================ */
 
-    /// @param _poolManager Uniswap V4 PoolManager singleton
+    /// @param _ghostRouter GhostRouter singleton
     /// @param _permit2 Permit2 singleton address
-    constructor(address _poolManager, address _permit2) {
-        poolManager = IPoolManager(_poolManager);
+    /// @param config Per-market immutable router configuration
+    constructor(
+        address _ghostRouter,
+        address _permit2,
+        MarketConfig memory config
+    ) {
+        if (
+            _ghostRouter == address(0) ||
+            config.brokerFactory == address(0) ||
+            MarketId.unwrap(config.marketId) == bytes32(0) ||
+            config.collateralToken == address(0) ||
+            config.positionToken == address(0) ||
+            config.underlyingToken == address(0) ||
+            config.depositAdapter == address(0)
+        ) revert InvalidRoute();
+
+        brokerFactory = config.brokerFactory;
+        marketId = config.marketId;
+        collateralToken = config.collateralToken;
+        positionToken = config.positionToken;
+        underlyingToken = config.underlyingToken;
+        depositAdapter = config.depositAdapter;
+        ghostRouter = _ghostRouter;
         permit2 = ISignatureTransfer(_permit2);
-        owner = msg.sender;
-    }
-
-    /* ============================================================================================ */
-    /*                                         ADMIN                                                */
-    /* ============================================================================================ */
-
-    /// @notice Register a deposit route for a collateral token
-    /// @dev Called once per market. Maps collateralToken → wrapping path.
-    ///      Example: waUSDC → {underlying: USDC, aToken: aUSDC, wrapped: waUSDC, aavePool: ...}
-    /// @param collateralToken The broker's collateral token (e.g. waUSDC)
-    /// @param route The wrapping path configuration
-    function setDepositRoute(
-        address collateralToken,
-        DepositRoute calldata route
-    ) external onlyOwner {
-        require(route.underlying != address(0), "Invalid route");
-        depositRoutes[collateralToken] = route;
-        emit DepositRouteSet(collateralToken, route.underlying, route.aavePool);
-    }
-
-    /// @notice Transfer ownership of the router
-    /// @param newOwner The new admin address
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "Invalid owner");
-        owner = newOwner;
     }
 
     /* ============================================================================================ */
     /*                                         DEPOSIT                                              */
     /* ============================================================================================ */
 
-    /// @notice Deposit underlying tokens (e.g. USDC), auto-wrap into broker collateral (e.g. waUSDC)
-    /// @dev Flow: Pull USDC via Permit2 → supply to Aave → wrap aUSDC → send to broker
-    ///      Uses the deposit route registry for market-independent wrapping.
+    /// @notice Deposit underlying tokens and convert them into broker collateral.
+    /// @dev Flow: pull underlying via Permit2 → adapter converts → broker receives collateral.
     /// @param broker The PrimeBroker to deposit into
     /// @param amount Amount of underlying tokens to deposit
+    /// @param minCollateralOut Minimum collateral required from the adapter
     /// @param permit Permit2 transfer parameters (token, amount, nonce, deadline)
     /// @param signature User's Permit2 signature authorizing the transfer
     function deposit(
         address broker,
         uint256 amount,
+        uint256 minCollateralOut,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata signature
     ) external onlyBrokerAuthorized(broker) nonReentrant {
-        PrimeBroker pb = PrimeBroker(payable(broker));
-        address collateral = pb.collateralToken();
-        DepositRoute memory route = depositRoutes[collateral];
-        if (route.underlying == address(0)) revert NoDepositRoute();
-
-        // 1. Pull underlying (e.g. USDC) from user via Permit2
-        permit2.permitTransferFrom(
+        uint256 collateralAmount = BrokerRouterLib.depositWithPermit(
+            broker,
+            amount,
+            minCollateralOut,
+            permit2,
+            underlyingToken,
+            collateralToken,
+            depositAdapter,
             permit,
-            ISignatureTransfer.SignatureTransferDetails({
-                to: address(this),
-                requestedAmount: amount
-            }),
-            msg.sender,
             signature
         );
-
-        // 2. Supply to Aave → get aToken
-        IERC20(route.underlying).approve(route.aavePool, amount);
-        // Aave V3 supply: supply(asset, amount, onBehalfOf, referralCode)
-        (bool success, ) = route.aavePool.call(
-            abi.encodeWithSignature(
-                "supply(address,uint256,address,uint16)",
-                route.underlying,
-                amount,
-                address(this),
-                0
-            )
-        );
-        require(success, "Aave supply failed");
-
-        // 3. Wrap aToken → collateral token (e.g. aUSDC → waUSDC)
-        uint256 aBalance = IERC20(route.aToken).balanceOf(address(this));
-        IERC20(route.aToken).approve(route.wrapped, aBalance);
-        // ERC4626-style deposit: deposit(assets, receiver)
-        (bool wrapSuccess, ) = route.wrapped.call(
-            abi.encodeWithSignature(
-                "deposit(uint256,address)",
-                aBalance,
-                broker // Mint wrapped tokens directly to broker
-            )
-        );
-        require(wrapSuccess, "Wrap failed");
-
-        emit Deposited(broker, amount, aBalance);
+        emit Deposited(broker, amount, collateralAmount);
     }
 
     /// @notice Deposit underlying tokens using a standard ERC20 approval (no Permit2)
     /// @dev Requires user to have called underlying.approve(router, amount) beforehand
     /// @param broker The PrimeBroker to deposit into
     /// @param amount Amount of underlying tokens to deposit
+    /// @param minCollateralOut Minimum collateral required from the adapter
     function depositWithApproval(
         address broker,
-        uint256 amount
+        uint256 amount,
+        uint256 minCollateralOut
     ) external onlyBrokerAuthorized(broker) nonReentrant {
-        PrimeBroker pb = PrimeBroker(payable(broker));
-        address collateral = pb.collateralToken();
-        DepositRoute memory route = depositRoutes[collateral];
-        if (route.underlying == address(0)) revert NoDepositRoute();
-
-        // 1. Pull underlying from user via standard transferFrom
-        IERC20(route.underlying).transferFrom(
-            msg.sender,
-            address(this),
-            amount
+        uint256 collateralAmount = BrokerRouterLib.depositWithApproval(
+            broker,
+            amount,
+            minCollateralOut,
+            underlyingToken,
+            collateralToken,
+            depositAdapter
         );
-
-        // 2. Supply to Aave → get aToken
-        IERC20(route.underlying).approve(route.aavePool, amount);
-        (bool success, ) = route.aavePool.call(
-            abi.encodeWithSignature(
-                "supply(address,uint256,address,uint16)",
-                route.underlying,
-                amount,
-                address(this),
-                0
-            )
-        );
-        require(success, "Aave supply failed");
-
-        // 3. Wrap aToken → collateral token → send to broker
-        uint256 aBalance = IERC20(route.aToken).balanceOf(address(this));
-        IERC20(route.aToken).approve(route.wrapped, aBalance);
-        (bool wrapSuccess, ) = route.wrapped.call(
-            abi.encodeWithSignature(
-                "deposit(uint256,address)",
-                aBalance,
-                broker
-            )
-        );
-        require(wrapSuccess, "Wrap failed");
-
-        emit Deposited(broker, amount, aBalance);
+        emit Deposited(broker, amount, collateralAmount);
     }
 
     /* ============================================================================================ */
@@ -375,70 +280,34 @@ contract BrokerRouter is ReentrancyGuard {
     /* ============================================================================================ */
 
     /// @notice Buy position tokens (wRLP) with collateral (waUSDC) — simple long
-    /// @dev Flow: Withdraw waUSDC from broker → swap via V4 → return wRLP to broker
+    /// @dev Flow: Withdraw waUSDC from broker → swap through GhostRouter → return wRLP to broker
     ///      Reads collateralToken and positionToken from broker (market-independent).
     /// @param broker The PrimeBroker to trade from
     /// @param amountIn Amount of collateral to swap
     /// @param poolKey V4 pool key for routing the swap
+    /// @param minAmountOut Minimum position tokens required from the swap
     /// @return amountOut Amount of position tokens received
     function executeLong(
         address broker,
         uint256 amountIn,
-        PoolKey calldata poolKey
+        PoolKey calldata poolKey,
+        uint256 minAmountOut
     )
         external
         onlyBrokerAuthorized(broker)
         nonReentrant
         returns (uint256 amountOut)
     {
-        PrimeBroker pb = PrimeBroker(payable(broker));
-        address collateral = pb.collateralToken();
-        address position = pb.positionToken();
-        _validatePoolKey(poolKey, collateral, position);
-
-        // 1. Withdraw collateral from broker to this router
-        pb.withdrawToken(pb.collateralToken(), address(this), amountIn);
-
-        // 2. Approve PoolManager for the swap
-        IERC20(collateral).approve(address(poolManager), amountIn);
-
-        // 3. Determine swap direction
-        bool zeroForOne = collateral < position;
-
-        {
-            SwapParams memory swapParams = SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: -int256(amountIn), // negative = exact input in V4
-                sqrtPriceLimitX96: zeroForOne
-                    ? 4295128740 // MIN_SQRT_PRICE + 1
-                    : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
-            });
-
-            // 4. Execute swap via PoolManager
-            BalanceDelta delta = abi.decode(
-                poolManager.unlock(
-                    abi.encode(
-                        SwapCallback({
-                            sender: address(this),
-                            key: poolKey,
-                            params: swapParams
-                        })
-                    )
-                ),
-                (BalanceDelta)
-            );
-
-            // 5. Calculate output (the token we received — positive delta)
-            amountOut = zeroForOne
-                ? uint256(int256(delta.amount1()))
-                : uint256(int256(delta.amount0()));
-        }
-
-        // 6. Transfer ALL position tokens back to broker
-        uint256 posBalance = IERC20(position).balanceOf(address(this));
-        IERC20(position).transfer(broker, posBalance);
-
-        emit LongExecuted(broker, amountIn, posBalance);
+        amountOut = BrokerRouterLib.swapBrokerExactInput(
+            broker,
+            ghostRouter,
+            poolKey,
+            collateralToken,
+            positionToken,
+            amountIn,
+            minAmountOut
+        );
+        emit SwapExecuted(broker, ACTION_EXECUTE_LONG, amountIn, amountOut);
     }
 
     /* ============================================================================================ */
@@ -450,65 +319,29 @@ contract BrokerRouter is ReentrancyGuard {
     /// @param broker The PrimeBroker to trade from
     /// @param amountIn Amount of wRLP to sell
     /// @param poolKey V4 pool key for routing the swap
+    /// @param minAmountOut Minimum collateral required from the swap
     /// @return amountOut Amount of collateral received
     function closeLong(
         address broker,
         uint256 amountIn,
-        PoolKey calldata poolKey
+        PoolKey calldata poolKey,
+        uint256 minAmountOut
     )
         external
         onlyBrokerAuthorized(broker)
         nonReentrant
         returns (uint256 amountOut)
     {
-        PrimeBroker pb = PrimeBroker(payable(broker));
-        address collateral = pb.collateralToken();
-        address position = pb.positionToken();
-        _validatePoolKey(poolKey, collateral, position);
-
-        // 1. Withdraw position tokens (wRLP) from broker to this router
-        pb.withdrawToken(pb.positionToken(), address(this), amountIn);
-
-        // 2. Approve PoolManager for the swap
-        IERC20(position).approve(address(poolManager), amountIn);
-
-        // 3. Determine swap direction (selling position for collateral)
-        bool zeroForOne = position < collateral;
-
-        {
-            SwapParams memory swapParams = SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: -int256(amountIn), // negative = exact input in V4
-                sqrtPriceLimitX96: zeroForOne
-                    ? 4295128740 // MIN_SQRT_PRICE + 1
-                    : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
-            });
-
-            // 4. Execute swap via PoolManager
-            BalanceDelta delta = abi.decode(
-                poolManager.unlock(
-                    abi.encode(
-                        SwapCallback({
-                            sender: address(this),
-                            key: poolKey,
-                            params: swapParams
-                        })
-                    )
-                ),
-                (BalanceDelta)
-            );
-
-            // 5. Calculate output (collateral received — positive delta)
-            amountOut = zeroForOne
-                ? uint256(int256(delta.amount1()))
-                : uint256(int256(delta.amount0()));
-        }
-
-        // 6. Transfer ALL collateral proceeds back to broker
-        uint256 colBalance = IERC20(collateral).balanceOf(address(this));
-        IERC20(collateral).transfer(broker, colBalance);
-
-        emit LongClosed(broker, amountIn, colBalance);
+        amountOut = BrokerRouterLib.swapBrokerExactInput(
+            broker,
+            ghostRouter,
+            poolKey,
+            positionToken,
+            collateralToken,
+            amountIn,
+            minAmountOut
+        );
+        emit SwapExecuted(broker, ACTION_CLOSE_LONG, amountIn, amountOut);
     }
 
     /* ============================================================================================ */
@@ -522,39 +355,12 @@ contract BrokerRouter is ReentrancyGuard {
     /// @param initialCollateral Amount of collateral to use as margin
     /// @param targetDebtAmount Amount of wRLP debt to mint
     /// @param poolKey V4 pool key for routing the swap
+    /// @param minProceeds Minimum collateral proceeds required from the swap
     /// @return proceeds Amount of collateral received from selling wRLP
     function executeShort(
         address broker,
         uint256 initialCollateral,
         uint256 targetDebtAmount,
-        PoolKey calldata poolKey
-    )
-        external
-        onlyBrokerAuthorized(broker)
-        nonReentrant
-        returns (uint256 proceeds)
-    {
-        return
-            _executeShort(
-                broker,
-                initialCollateral,
-                targetDebtAmount,
-                poolKey,
-                0
-            );
-    }
-
-    /// @notice Leveraged short with slippage guard on collateral proceeds.
-    /// @param broker The PrimeBroker to trade from
-    /// @param initialCollateral Amount of collateral to use as margin
-    /// @param targetDebtAmount Amount of wRLP debt to mint
-    /// @param poolKey V4 pool key for routing the swap
-    /// @param minProceeds Minimum collateral proceeds required from the swap
-    /// @return proceeds Amount of collateral received from selling wRLP
-    function executeShortWithMinOut(
-        address broker,
-        uint256 initialCollateral,
-        uint256 targetDebtAmount,
         PoolKey calldata poolKey,
         uint256 minProceeds
     )
@@ -563,82 +369,18 @@ contract BrokerRouter is ReentrancyGuard {
         nonReentrant
         returns (uint256 proceeds)
     {
-        return
-            _executeShort(
-                broker,
-                initialCollateral,
-                targetDebtAmount,
-                poolKey,
-                minProceeds
-            );
-    }
-
-    function _executeShort(
-        address broker,
-        uint256 initialCollateral,
-        uint256 targetDebtAmount,
-        PoolKey calldata poolKey,
-        uint256 minProceeds
-    ) internal returns (uint256 proceeds) {
-        PrimeBroker pb = PrimeBroker(payable(broker));
-        address collateral = pb.collateralToken();
-        address position = pb.positionToken();
-        bytes32 rawMarketId = MarketId.unwrap(pb.marketId());
-        _validatePoolKey(poolKey, collateral, position);
-
-        // 1. Deposit collateral and mint wRLP debt
-        pb.modifyPosition(
-            rawMarketId,
-            int256(initialCollateral),
-            int256(targetDebtAmount)
+        proceeds = BrokerRouterLib.executeShort(
+            broker,
+            initialCollateral,
+            targetDebtAmount,
+            poolKey,
+            minProceeds,
+            ghostRouter,
+            marketId,
+            collateralToken,
+            positionToken
         );
-
-        // 2. Withdraw minted wRLP to this router
-        pb.withdrawToken(pb.positionToken(), address(this), targetDebtAmount);
-
-        // 3. Approve PoolManager for swap
-        IERC20(position).approve(address(poolManager), targetDebtAmount);
-
-        // 4. Swap wRLP → collateral
-        bool zeroForOne = position < collateral;
-
-        {
-            SwapParams memory swapParams = SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: -int256(targetDebtAmount), // negative = exact input in V4
-                sqrtPriceLimitX96: zeroForOne
-                    ? 4295128740
-                    : 1461446703485210103287273052203988822378723970341
-            });
-
-            BalanceDelta delta = abi.decode(
-                poolManager.unlock(
-                    abi.encode(
-                        SwapCallback({
-                            sender: address(this),
-                            key: poolKey,
-                            params: swapParams
-                        })
-                    )
-                ),
-                (BalanceDelta)
-            );
-
-            // 5. Calculate actual swap output explicitly
-            proceeds = zeroForOne
-                ? uint256(int256(delta.amount1()))
-                : uint256(int256(delta.amount0()));
-        }
-
-        if (proceeds < minProceeds) revert SlippageExceeded();
-
-        // 6. Transfer swap proceeds back to broker
-        IERC20(collateral).transfer(broker, proceeds);
-
-        // 7. Deposit proceeds as additional collateral (no new debt)
-        pb.modifyPosition(rawMarketId, int256(proceeds), int256(0));
-
-        emit ShortExecuted(broker, targetDebtAmount, proceeds);
+        emit ShortPositionUpdated(broker, targetDebtAmount, proceeds);
     }
 
     /* ============================================================================================ */
@@ -651,161 +393,30 @@ contract BrokerRouter is ReentrancyGuard {
     /// @param broker The PrimeBroker to close the short on
     /// @param collateralToSpend Amount of waUSDC to use for buying wRLP
     /// @param poolKey V4 pool key for routing the swap
+    /// @param minDebtBought Minimum wRLP required from the swap
     /// @return debtRepaid Amount of wRLP debt repaid
     function closeShort(
         address broker,
         uint256 collateralToSpend,
-        PoolKey calldata poolKey
+        PoolKey calldata poolKey,
+        uint256 minDebtBought
     )
         external
         onlyBrokerAuthorized(broker)
         nonReentrant
         returns (uint256 debtRepaid)
     {
-        PrimeBroker pb = PrimeBroker(payable(broker));
-        address collateral = pb.collateralToken();
-        address position = pb.positionToken();
-        _validatePoolKey(poolKey, collateral, position);
-
-        // 1. Withdraw collateral (waUSDC) from broker to buy wRLP
-        pb.withdrawToken(pb.collateralToken(), address(this), collateralToSpend);
-
-        // 2. Approve PoolManager for the swap
-        IERC20(collateral).approve(address(poolManager), collateralToSpend);
-
-        // 3. Swap waUSDC → wRLP (exact input: spend all collateralToSpend)
-        bool zeroForOne = collateral < position;
-
-        {
-            SwapParams memory swapParams = SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: -int256(collateralToSpend), // negative = exact input
-                sqrtPriceLimitX96: zeroForOne
-                    ? 4295128740 // MIN_SQRT_PRICE + 1
-                    : 1461446703485210103287273052203988822378723970341 // MAX_SQRT_PRICE - 1
-            });
-
-            BalanceDelta delta = abi.decode(
-                poolManager.unlock(
-                    abi.encode(
-                        SwapCallback({
-                            sender: address(this),
-                            key: poolKey,
-                            params: swapParams
-                        })
-                    )
-                ),
-                (BalanceDelta)
-            );
-
-            // 4. Calculate wRLP received (positive delta on the output side)
-            debtRepaid = zeroForOne
-                ? uint256(int256(delta.amount1()))
-                : uint256(int256(delta.amount0()));
-        }
-
-        // 5. Transfer ALL wRLP to broker (needed for burn in modifyPosition)
-        uint256 posBalance = IERC20(position).balanceOf(address(this));
-        IERC20(position).transfer(broker, posBalance);
-
-        _finalizeCloseShort(broker, debtRepaid, collateralToSpend);
-    }
-
-    /* ============================================================================================ */
-    /*                                     V4 CALLBACK                                              */
-    /* ============================================================================================ */
-
-    /// @notice Uniswap V4 swap settlement callback
-    /// @dev Called by PoolManager during unlock(). Settles token transfers for the swap.
-    function unlockCallback(
-        bytes calldata rawData
-    ) external returns (bytes memory) {
-        if (msg.sender != address(poolManager)) revert NotPoolManager();
-
-        SwapCallback memory data = abi.decode(rawData, (SwapCallback));
-
-        BalanceDelta delta = poolManager.swap(
-            data.key,
-            data.params,
-            new bytes(0)
+        debtRepaid = BrokerRouterLib.closeShort(
+            broker,
+            collateralToSpend,
+            poolKey,
+            minDebtBought,
+            ghostRouter,
+            marketId,
+            collateralToken,
+            positionToken
         );
-
-        // Settle: pay tokens we owe, take tokens we're owed
-        if (data.params.zeroForOne) {
-            if (delta.amount0() < 0) {
-                data.key.currency0.settle(
-                    poolManager,
-                    data.sender,
-                    uint256(-int256(delta.amount0())),
-                    false
-                );
-            }
-            if (delta.amount1() > 0) {
-                data.key.currency1.take(
-                    poolManager,
-                    data.sender,
-                    uint256(int256(delta.amount1())),
-                    false
-                );
-            }
-        } else {
-            if (delta.amount1() < 0) {
-                data.key.currency1.settle(
-                    poolManager,
-                    data.sender,
-                    uint256(-int256(delta.amount1())),
-                    false
-                );
-            }
-            if (delta.amount0() > 0) {
-                data.key.currency0.take(
-                    poolManager,
-                    data.sender,
-                    uint256(int256(delta.amount0())),
-                    false
-                );
-            }
-        }
-
-        return abi.encode(delta);
-    }
-
-    /* ============================================================================================ */
-    /*                                     INTERNAL HELPERS                                         */
-    /* ============================================================================================ */
-
-    function _finalizeCloseShort(
-        address broker,
-        uint256 debtRepaid,
-        uint256 collateralToSpend
-    ) internal {
-        PrimeBroker pb = PrimeBroker(payable(broker));
-        address collateral = pb.collateralToken();
-        address position = pb.positionToken();
-        bytes32 rawMarketId = MarketId.unwrap(pb.marketId());
-
-        // 6. Cap repayment at actual outstanding debt to prevent underflow
-        uint128 currentDebt = IRLDCore(pb.CORE())
-            .getPosition(pb.marketId(), address(pb))
-            .debtPrincipal;
-        if (debtRepaid > currentDebt) {
-            debtRepaid = currentDebt;
-        }
-
-        // 7. Repay debt: Core will burn wRLP from broker
-        pb.modifyPosition(rawMarketId, int256(0), -int256(debtRepaid));
-
-        // 8. Return any leftover collateral or excess wRLP to broker
-        uint256 leftover = IERC20(collateral).balanceOf(address(this));
-        if (leftover > 0) {
-            IERC20(collateral).transfer(broker, leftover);
-        }
-        uint256 excessPos = IERC20(position).balanceOf(address(this));
-        if (excessPos > 0) {
-            IERC20(position).transfer(broker, excessPos);
-        }
-
-        emit ShortClosed(broker, debtRepaid, collateralToSpend);
+        emit ShortPositionClosed(broker, debtRepaid, collateralToSpend);
     }
 
     /// @notice Validates that the pool's currencies match the broker's token pair
@@ -815,30 +426,7 @@ contract BrokerRouter is ReentrancyGuard {
         address collateral,
         address position
     ) internal pure {
-        if (address(poolKey.hooks) != address(0)) revert UnexpectedHook();
-        address c0 = Currency.unwrap(poolKey.currency0);
-        address c1 = Currency.unwrap(poolKey.currency1);
-        bool valid = (c0 == collateral && c1 == position) ||
-            (c0 == position && c1 == collateral);
-        if (!valid) revert PoolKeyMismatch();
+        BrokerRouterLib.validatePoolKey(poolKey, collateral, position);
     }
 
-    /* ============================================================================================ */
-    /*                                        VIEW HELPERS                                          */
-    /* ============================================================================================ */
-
-    /// @notice Calculate optimal debt for target leverage (convenience helper)
-    /// @param collateralAmount Initial collateral
-    /// @param targetLTV Target loan-to-value (e.g., 40 = 40%)
-    /// @param wRLPPriceE6 wRLP price in collateral terms (6 decimals)
-    /// @return debtAmount Amount of wRLP to mint
-    function calculateOptimalDebt(
-        uint256 collateralAmount,
-        uint256 targetLTV,
-        uint256 wRLPPriceE6
-    ) external pure returns (uint256 debtAmount) {
-        uint256 targetDebtValue = (collateralAmount * targetLTV) /
-            (100 - targetLTV);
-        debtAmount = (targetDebtValue * 1e6) / wRLPPriceE6;
-    }
 }

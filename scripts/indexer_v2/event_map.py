@@ -44,8 +44,9 @@ EVENTS = {
 
     # ── ROUTER ──────────────────────────────────────────────────
     "Deposited(address,uint256,uint256)":                       "Router_Deposited",
-    "LongExecuted(address,uint256,uint256)":                    "Router_LongExecuted",
-    "ShortExecuted(address,uint256,uint256)":                   "Router_ShortExecuted",
+    "SwapExecuted(address,uint8,uint256,uint256)":              "Router_SwapExecuted",
+    "ShortPositionUpdated(address,uint256,uint256)":            "Router_ShortPositionUpdated",
+    "ShortPositionClosed(address,uint256,uint256)":             "Router_ShortPositionClosed",
 }
 
 # Build topic0 hex → event name

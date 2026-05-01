@@ -499,6 +499,7 @@ contract RLDMarketFactory is ReentrancyGuard {
             nftSymbol,
             METADATA_RENDERER, // Currently unused, reserved for future
             CORE, // Passed to brokers during init
+            owner, // Allows post-market router registration for future brokers
             operators // BrokerRouter pre-approved on every broker
         );
         factory = address(pbFactory);

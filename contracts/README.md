@@ -77,14 +77,15 @@ Added `closeShort` to `BrokerRouter.sol` — allows partial or full repayment of
 function closeShort(
     address broker,
     uint256 collateralToSpend,
-    PoolKey calldata poolKey
+    PoolKey calldata poolKey,
+    uint256 minDebtBought
 ) external onlyBrokerAuthorized(broker) nonReentrant returns (uint256 debtRepaid)
 ```
 
 ### Execution Flow
 
 1. **Withdraw collateral** — `pb.withdrawCollateral(router, collateralToSpend)` pulls waUSDC from broker
-2. **Swap waUSDC → wRLP** — exact-input swap via V4 PoolManager
+2. **Swap waUSDC → wRLP** — exact-input swap via GhostRouter
 3. **Transfer wRLP to broker** — router sends bought wRLP back to broker
 4. **Repay debt** — `pb.modifyPosition(marketId, 0, -debtRepaid)` burns wRLP via RLDCore
 5. **Return leftover** — any residual collateral returned to broker
@@ -92,14 +93,13 @@ function closeShort(
 ### Event
 
 ```solidity
-event ShortClosed(address indexed broker, uint256 debtRepaid, uint256 collateralSpent);
+event ShortPositionClosed(address indexed broker, uint256 debtRepaid, uint256 collateralSpent);
 ```
 
 ### Deployment
 
-Deployed via `script/DeployBrokerRouter.s.sol`. After deployment:
+Deployed via `script/DeployBrokerRouter.s.sol` with the market's deposit adapter route:
 
-- Call `setDepositRoute(waUSDC, route)` to configure deposit wrapping path
 - Call `broker.setOperator(routerAddress, true)` to authorize the router
 
 ### Known Limitation: TWAP Oracle Staleness

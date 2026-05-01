@@ -582,7 +582,7 @@ def main() -> None:
             core_addr,
             checksum(deploy["twap_engine"]),
             collateral_token,
-            checksum(deploy.get("pool_manager") or deploy.get("v4_pool_manager")),
+            checksum(deploy["ghost_router"]),
             checksum(deploy["v4_quoter"]),
             args.r_max_wad,
         ],

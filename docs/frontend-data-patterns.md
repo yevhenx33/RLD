@@ -71,9 +71,9 @@ const refresh = useCallback(async () => {
 
 ---
 
-## Pattern B: `useBondPositions` + `_syncAndNotify` (Basis Trade Page)
+## Pattern B: `useBondPositions` + `_syncAndNotify`
 
-> **Used by:** `/strategies/basis-trade`
+> **Used by:** transaction flows that need the bond list refreshed before showing success UI.
 
 ### Architecture
 
@@ -97,14 +97,13 @@ const { data, mutate } = useSWR(swrKey, gqlFetcher, {
 
 ### Key Mechanism: `_syncAndNotify` (Toast After State)
 
-The execution hook (`useBasisTradeExecution`) accepts `onRefreshComplete` callbacks:
+Execution hooks can accept `onRefreshComplete` callbacks:
 
 ```js
-// In BasisTrade.jsx — wire refresh into execution hook
 const { refresh: refreshBonds } = useBondPositions(...);
 
-const { createBasisTrade } = useBasisTradeExecution(
-  account, infrastructure, collateral, position, externalContracts,
+const { executeAction } = useExecutionHook(
+  account, infrastructure,
   { onRefreshComplete: [refreshBonds] },  // ← toast waits for this
 );
 ```
@@ -158,10 +157,10 @@ When a refresh function from one hook is needed by another, declare the data hoo
 ```js
 // ✅ Correct order — refreshBonds available for onRefreshComplete
 const { refresh: refreshBonds } = useBondPositions(...);
-const { createBasisTrade } = useBasisTradeExecution(..., { onRefreshComplete: [refreshBonds] });
+const { executeAction } = useExecutionHook(..., { onRefreshComplete: [refreshBonds] });
 
 // ❌ Wrong — refreshBonds not yet defined
-const { createBasisTrade } = useBasisTradeExecution(..., { onRefreshComplete: [refreshBonds] });
+const { executeAction } = useExecutionHook(..., { onRefreshComplete: [refreshBonds] });
 const { refresh: refreshBonds } = useBondPositions(...);
 ```
 

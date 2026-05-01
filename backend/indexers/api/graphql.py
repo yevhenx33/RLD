@@ -366,7 +366,7 @@ MARKET_CONFIG_SELECT = """
            wausdc, wausdc_symbol, wrlp, wrlp_symbol,
            pool_id, pool_fee, tick_spacing,
            min_col_ratio, maintenance_margin, debt_cap,
-           swap_router, bond_factory, basis_trade_factory, broker_executor,
+           swap_router, bond_factory, broker_executor,
            funding_period_sec, v4_quoter, broker_router,
            v4_position_manager, v4_state_view, pool_manager
     FROM markets
@@ -436,7 +436,7 @@ def _overlay_deployment_config(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     for key in (
         "rpc_url", "rld_core", "pool_manager",
-        "swap_router", "bond_factory", "basis_trade_factory",
+        "swap_router", "bond_factory",
         "broker_executor", "broker_router", "v4_quoter", "v4_position_manager",
         "ghost_router", "twap_engine", "twap_engine_lens", "cds_coverage_factory",
     ):
@@ -472,7 +472,6 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "debtCap": str(row["debt_cap"]),
         "swapRouter": row["swap_router"],
         "bondFactory": row["bond_factory"],
-        "basisTradeFactory": row["basis_trade_factory"],
         "brokerExecutor": row["broker_executor"],
         "fundingPeriodSec": row["funding_period_sec"],
         "v4Quoter": _record_get(row, "v4_quoter", ""),
@@ -499,7 +498,6 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "debt_cap": payload["debtCap"],
         "swap_router": payload["swapRouter"],
         "bond_factory": payload["bondFactory"],
-        "basis_trade_factory": payload["basisTradeFactory"],
         "broker_executor": payload["brokerExecutor"],
         "funding_period_sec": payload["fundingPeriodSec"],
         "v4_quoter": payload["v4Quoter"],
@@ -533,7 +531,6 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
         "twapEngineLens": payload["twapEngineLens"],
         "twap_engine_lens": payload["twapEngineLens"],
         "bondFactory": payload["bondFactory"],
-        "basisTradeFactory": payload["basisTradeFactory"],
         "poolFee": payload["poolFee"],
         "tickSpacing": payload["tickSpacing"],
         "poolManager": payload["poolManager"],
@@ -752,7 +749,7 @@ class Query:
     async def broker_operations(self, owner: str, limit: int = 50) -> Optional[JSON]:
         """Trade operations for a broker, queried by owner address.
         
-        Reads BrokerRouter events (LongExecuted, LongClosed, etc.) from the
+        Reads BrokerRouter events from the
         events table. Broker address is in topics[1] (indexed param).
         Returns decoded operations with human-readable amounts.
         """
@@ -774,8 +771,8 @@ class Query:
                 SELECT event_name, block_timestamp, block_number, tx_hash, data
                 FROM events
                 WHERE event_name IN (
-                    'LongExecuted', 'LongClosed',
-                    'ShortExecuted', 'ShortClosed', 'Deposited'
+                    'RouterSwapExecuted',
+                    'ShortPositionUpdated', 'ShortPositionClosed', 'Deposited'
                 )
                 AND data::jsonb->'topics'->>1 = $1
                 ORDER BY block_number DESC, log_index DESC
@@ -784,15 +781,14 @@ class Query:
 
         ops = []
         OP_META = {
-            "LongExecuted":  "OPEN_LONG",
-            "LongClosed":    "CLOSE_LONG",
-            "ShortExecuted": "OPEN_SHORT",
-            "ShortClosed":   "CLOSE_SHORT",
+            "RouterSwapExecuted": "SWAP",
+            "ShortPositionUpdated": "OPEN_SHORT",
+            "ShortPositionClosed": "CLOSE_SHORT",
             "Deposited":     "DEPOSIT",
         }
         for r in rows:
-            raw_hex = r["data"].get("raw", "") if isinstance(r["data"], dict) else ""
-            raw_hex = json.loads(r["data"]).get("raw", "") if isinstance(r["data"], str) else raw_hex
+            event_data = json.loads(r["data"]) if isinstance(r["data"], str) else r["data"]
+            raw_hex = event_data.get("raw", "") if isinstance(event_data, dict) else ""
             # Decode (uint256, uint256) from data
             amount1 = 0
             amount2 = 0
@@ -802,8 +798,17 @@ class Query:
                     amount2 = int(raw_hex[66:130], 16)
                 except ValueError:
                     pass
+            op_type = OP_META.get(r["event_name"], r["event_name"])
+            if r["event_name"] == "RouterSwapExecuted" and isinstance(event_data, dict):
+                topics = event_data.get("topics") or []
+                if len(topics) > 2:
+                    try:
+                        action = int(topics[2], 16)
+                        op_type = "OPEN_LONG" if action == 1 else "CLOSE_LONG" if action == 2 else "SWAP"
+                    except (TypeError, ValueError):
+                        pass
             ops.append({
-                "type": OP_META.get(r["event_name"], r["event_name"]),
+                "type": op_type,
                 "amount1": amount1 / 1e6,
                 "amount2": amount2 / 1e6,
                 "blockNumber": r["block_number"],

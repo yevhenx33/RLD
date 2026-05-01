@@ -65,7 +65,7 @@ function executeLong(
 │  7. Transfer ALL wRLP balance back to broker                         │
 │     → Router ends with zero token balance                            │
 │                                                                      │
-│  8. Emit LongExecuted(broker, amountIn, amountOut)                   │
+│  8. Emit SwapExecuted(broker, 1, amountIn, amountOut)                │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -110,8 +110,7 @@ function executeShortWithMinOut(
 │  3. pb.withdrawToken(positionToken, router, targetDebtAmount)         │
 │     → Move newly minted wRLP from broker to router                    │
 │                                                                       │
-│  4. Swap wRLP → waUSDC via V4                                         │
-│     └─ Same unlock/callback pattern as executeLong                    │
+│  4. Swap wRLP → waUSDC via GhostRouter                                │
 │                                                                       │
 │  5. proceeds = collateral received from swap                          │
 │     → if proceeds < minProceeds: revert SlippageExceeded()            │
@@ -125,7 +124,7 @@ function executeShortWithMinOut(
 │        └─ Debt = targetDebtAmount × NF × indexPrice                   |
 │        → Must satisfy: NAV ≥ Debt × minColRatio                       |
 │                                                                       │
-│  8. Emit ShortExecuted(broker, targetDebtAmount, proceeds)            |
+│  8. Emit ShortPositionUpdated(broker, targetDebtAmount, proceeds)     |
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -145,7 +144,7 @@ function closeLong(
 ) external returns (uint256 amountOut);
 ```
 
-**Flow:** Withdraw `wRLP` from broker → swap via V4 for `waUSDC` → transfer proceeds back to broker. The broker's NAV shifts from position token exposure to collateral exposure.
+**Flow:** Withdraw `wRLP` from broker → swap through GhostRouter for `waUSDC` → transfer proceeds back to broker. The broker's NAV shifts from position token exposure to collateral exposure.
 
 ## Close Short
 
@@ -164,7 +163,7 @@ function closeShort(
 ```text
 ┌── closeShort(broker, collateralToSpend, poolKey)       ────────────────┐
 │                                                                        │
-│  1. Withdraw waUSDC from broker → swap for wRLP via V4                 │
+│  1. Withdraw waUSDC from broker → swap for wRLP via GhostRouter        │
 │                                                                        │
 │  2. Transfer purchased wRLP back to broker                             │
 │                                                                        │
@@ -179,7 +178,7 @@ function closeShort(
 │                                                                        │
 │  5. Return any leftover tokens to broker (dust protection)             |
 │                                                                        │
-│  6. Emit ShortClosed(broker, debtRepaid, collateralToSpend)            |
+│  6. Emit ShortPositionClosed(broker, debtRepaid, collateralToSpend)    |
 └────────────────────────────────────────────────────────────────────────┘
 ```
 

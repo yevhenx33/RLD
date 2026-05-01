@@ -8,17 +8,11 @@ import {PrimeBroker} from "../rld/broker/PrimeBroker.sol";
 import {PrimeBrokerFactory} from "../rld/core/PrimeBrokerFactory.sol";
 import {IERC20} from "../shared/interfaces/IERC20.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
-import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
-import {ITwapEngine} from "../dex/interfaces/ITwapEngine.sol";
 import {IRLDCore, MarketId} from "../shared/interfaces/IRLDCore.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {IV4Quoter} from "v4-periphery/src/interfaces/IV4Quoter.sol";
+import {PeripheryGhostLib} from "./lib/PeripheryGhostLib.sol";
+import {PeripheryTwapLib} from "./lib/PeripheryTwapLib.sol";
 
 /// @dev Minimal interface for WrappedAToken (waUSDC, waUSDT, etc.)
 interface IWrappedAToken {
@@ -79,23 +73,19 @@ interface IAavePool {
 ///   Total: 1 wallet popup per action. Zero approvals for close.
 ///
 contract BondFactory is ReentrancyGuard {
-    using CurrencySettler for Currency;
     /* ============================= IMMUTABLES ============================= */
 
     /// @notice The PrimeBrokerFactory that deploys broker clones and mints NFTs
     PrimeBrokerFactory public immutable BROKER_FACTORY;
 
-    /// @notice The BrokerRouter for executing short positions (mint only)
-    address public immutable ROUTER;
+    /// @notice GhostRouter used for all executable swaps
+    address public immutable GHOST_ROUTER;
 
     /// @notice The TwapEngine for streaming orders
     address public immutable TWAP_ENGINE;
 
     /// @notice The collateral token (waUSDC)
     address public immutable COLLATERAL;
-
-    /// @notice Uniswap V4 PoolManager for direct swaps
-    IPoolManager public immutable POOL_MANAGER;
 
     /// @notice V4 Quoter for exact output quotes
     IV4Quoter public immutable QUOTER;
@@ -134,37 +124,25 @@ contract BondFactory is ReentrancyGuard {
     /// @notice Emitted when user returns NFT to BondFactory custody
     event BondReturned(address indexed user, address indexed broker);
 
-    /* ========================= SWAP CALLBACK ============================== */
-
-    /// @dev Data passed through PoolManager.unlock() for swap settlement
-    struct SwapCallback {
-        address sender;
-        PoolKey key;
-        SwapParams params;
-    }
-
     /* ============================ CONSTRUCTOR ============================= */
 
     constructor(
         address brokerFactory_,
-        address router_,
+        address ghostRouter_,
         address twapEngine_,
         address collateral_,
-        address poolManager_,
         address quoter_
     ) {
         require(brokerFactory_ != address(0), "Invalid factory");
-        require(router_ != address(0), "Invalid router");
+        require(ghostRouter_ != address(0), "Invalid ghostRouter");
         require(twapEngine_ != address(0), "Invalid twapEngine");
         require(collateral_ != address(0), "Invalid collateral");
-        require(poolManager_ != address(0), "Invalid poolManager");
         require(quoter_ != address(0), "Invalid quoter");
 
         BROKER_FACTORY = PrimeBrokerFactory(brokerFactory_);
-        ROUTER = router_;
+        GHOST_ROUTER = ghostRouter_;
         TWAP_ENGINE = twapEngine_;
         COLLATERAL = collateral_;
-        POOL_MANAGER = IPoolManager(poolManager_);
         QUOTER = IV4Quoter(quoter_);
     }
 
@@ -176,7 +154,7 @@ contract BondFactory is ReentrancyGuard {
     ///   1. Create fresh broker (NFT → this contract)
     ///   2. Pull ONLY notional from user → broker (no separate hedge)
     ///   3. Deposit collateral + mint wRLP debt via modifyPosition
-    ///   4. Withdraw minted wRLP → swap on V4 → waUSDC proceeds
+    ///   4. Withdraw minted wRLP → swap through GhostRouter → waUSDC proceeds
     ///   5. Send proceeds to broker → submit TWAMM buy-back order
     ///   6. Freeze broker, track ownership
     ///
@@ -221,8 +199,13 @@ contract BondFactory is ReentrancyGuard {
         // ── 4. Withdraw minted wRLP → swap → waUSDC proceeds ───────────
         address positionToken = pb.positionToken();
         pb.withdrawToken(pb.positionToken(), address(this), debtAmount);
-        uint256 proceeds = _swapExactInput(
-            positionToken, COLLATERAL, debtAmount, poolKey
+        uint256 proceeds = PeripheryGhostLib.swapExactInput(
+            GHOST_ROUTER,
+            poolKey,
+            positionToken,
+            COLLATERAL,
+            debtAmount,
+            0
         );
 
         // ── 5. Send proceeds to broker → TWAMM buy-back order ──────────
@@ -230,10 +213,10 @@ contract BondFactory is ReentrancyGuard {
 
         // TwapEngine / GhostRouter key markets by the **hookless** V4 pool id (see
         // GhostRouter._initializeMarket). Core marketId != ghost marketId.
-        bool sellCollateral = Currency.unwrap(poolKey.currency0) == COLLATERAL;
+        bool sellCollateral = PeripheryGhostLib.zeroForOne(poolKey, COLLATERAL);
         pb.submitTwammOrder(
             TWAP_ENGINE,
-            _ghostPoolId(poolKey),
+            PeripheryGhostLib.ghostPoolId(poolKey),
             sellCollateral,
             duration,
             proceeds
@@ -255,8 +238,8 @@ contract BondFactory is ReentrancyGuard {
     ///   1. Verify ownership (custodied or claimed)
     ///   2. Unfreeze broker
     ///   3. Cancel/claim TWAMM order
-    ///   4. If wRLP shortfall: quote exact amount → withdraw waUSDC → swap on V4 → repay debt
-    ///   5. Convert leftover wRLP → waUSDC via V4 swap
+    ///   4. If wRLP shortfall: quote exact amount → withdraw waUSDC → swap through GhostRouter → repay debt
+    ///   5. Convert leftover wRLP → waUSDC through GhostRouter
     ///   6. Withdraw collateral to user (optionally unwrap to USDC)
     ///
     /// @param broker         The bond's PrimeBroker address
@@ -286,7 +269,7 @@ contract BondFactory is ReentrancyGuard {
         }
 
         // ── 3. Handle TWAMM order ───────────────────────────────────────
-        _handleTwammClose(pb);
+        PeripheryTwapLib.closeActiveOrder(pb, TWAP_ENGINE);
 
         // ── 4. Repay wRLP debt ──────────────────────────────────────────
         address coreAddr = pb.CORE();
@@ -303,7 +286,7 @@ contract BondFactory is ReentrancyGuard {
             address positionToken = pb.positionToken();
             uint256 wrlpBalance = ERC20(positionToken).balanceOf(broker);
 
-            // If wRLP insufficient, buy the exact shortfall via V4 swap
+            // If wRLP insufficient, buy the shortfall through GhostRouter
             if (wrlpBalance < debtPrincipal) {
                 uint256 shortfall = debtPrincipal - wrlpBalance;
                 _buyExactWRLP(pb, shortfall, positionToken, poolKey);
@@ -321,23 +304,7 @@ contract BondFactory is ReentrancyGuard {
         }
 
         // ── 5. Convert leftover wRLP → waUSDC ───────────────────────────
-        {
-            address positionToken = pb.positionToken();
-            uint256 leftoverWRLP = ERC20(positionToken).balanceOf(broker);
-            if (leftoverWRLP > 0) {
-                // Withdraw wRLP from broker → this contract
-                pb.withdrawToken(pb.positionToken(), address(this), leftoverWRLP);
-                // Swap wRLP → waUSDC on V4
-                uint256 waUSDCReceived = _swapExactInput(
-                    positionToken,
-                    COLLATERAL,
-                    leftoverWRLP,
-                    poolKey
-                );
-                // Send waUSDC to broker so it's included in final withdrawal
-                IERC20(COLLATERAL).transfer(broker, waUSDCReceived);
-            }
-        }
+        _sellLeftoverPosition(pb, poolKey);
 
         // ── 6. Withdraw collateral ───────────────────────────────────────
         address collateralToken = pb.collateralToken();
@@ -378,27 +345,28 @@ contract BondFactory is ReentrancyGuard {
         emit BondReturned(msg.sender, broker);
     }
 
+    function _sellLeftoverPosition(
+        PrimeBroker pb,
+        PoolKey calldata poolKey
+    ) internal {
+        address broker = address(pb);
+        address positionToken = pb.positionToken();
+        uint256 leftoverWRLP = ERC20(positionToken).balanceOf(broker);
+        if (leftoverWRLP == 0) return;
+
+        pb.withdrawToken(positionToken, address(this), leftoverWRLP);
+        uint256 waUSDCReceived = PeripheryGhostLib.swapExactInput(
+            GHOST_ROUTER,
+            poolKey,
+            positionToken,
+            COLLATERAL,
+            leftoverWRLP,
+            0
+        );
+        IERC20(COLLATERAL).transfer(broker, waUSDCReceived);
+    }
+
     /* ========================= INTERNAL HELPERS ========================== */
-
-    /// @dev GhostRouter registers `markets` under the hookless V4 pool id (hooks must be zero there).
-    function _ghostPoolId(PoolKey calldata poolKey) internal pure returns (bytes32) {
-        PoolKey memory k = poolKey;
-        k.hooks = IHooks(address(0));
-        return PoolId.unwrap(k.toId());
-    }
-
-    /// @notice Helper to handle TWAMM cancellation to bypass deep stack limits natively.
-    function _handleTwammClose(PrimeBroker pb) internal {
-        (bytes32 trackedMarketId, bytes32 orderId) = pb.activeTwammOrder();
-        if (orderId != bytes32(0)) {
-            (, , , , uint256 expiration, ) = ITwapEngine(TWAP_ENGINE).streamOrders(trackedMarketId, orderId);
-            if (block.timestamp >= expiration) {
-                pb.claimExpiredTwammOrder();
-            } else {
-                pb.cancelTwammOrder();
-            }
-        }
-    }
 
     /* ========================= V4 SWAP HELPERS ============================ */
 
@@ -411,10 +379,10 @@ contract BondFactory is ReentrancyGuard {
         PoolKey calldata poolKey
     ) internal {
         address collToken = pb.collateralToken();
-        _validatePoolKey(poolKey, collToken, positionToken);
+        PeripheryGhostLib.validatePoolKey(poolKey, collToken, positionToken);
 
         // 1. Quote exact waUSDC input needed for wrlpNeeded output
-        bool zeroForOne = collToken < positionToken;
+        bool zeroForOne = PeripheryGhostLib.zeroForOne(poolKey, collToken);
         (uint256 amountIn, ) = QUOTER.quoteExactOutputSingle(
             IV4Quoter.QuoteExactSingleParams({
                 poolKey: poolKey,
@@ -428,125 +396,17 @@ contract BondFactory is ReentrancyGuard {
         pb.withdrawToken(pb.collateralToken(), address(this), amountIn);
 
         // 3. Swap waUSDC → wRLP on V4 (exact input = amountIn)
-        uint256 wrlpReceived = _swapExactInput(
+        uint256 wrlpReceived = PeripheryGhostLib.swapExactInput(
+            GHOST_ROUTER,
+            poolKey,
             collToken,
             positionToken,
             amountIn,
-            poolKey
+            0
         );
 
         // 4. Transfer wRLP to broker for debt repayment
         IERC20(positionToken).transfer(address(pb), wrlpReceived);
-    }
-
-    /// @dev Swap exact input amount on V4 pool. Returns output amount.
-    function _swapExactInput(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        PoolKey calldata poolKey
-    ) internal returns (uint256 amountOut) {
-        _validatePoolKey(poolKey, tokenIn, tokenOut);
-        bool zeroForOne = tokenIn < tokenOut;
-
-        SwapParams memory swapParams = SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: -int256(amountIn), // negative = exact input
-            sqrtPriceLimitX96: zeroForOne
-                ? uint160(4295128740) // MIN_SQRT_PRICE + 1
-                : uint160(1461446703485210103287273052203988822378723970341) // MAX_SQRT_PRICE - 1
-        });
-
-        // Approve PoolManager to pull input tokens
-        IERC20(tokenIn).approve(address(POOL_MANAGER), amountIn);
-
-        BalanceDelta delta = abi.decode(
-            POOL_MANAGER.unlock(
-                abi.encode(
-                    SwapCallback({
-                        sender: address(this),
-                        key: poolKey,
-                        params: swapParams
-                    })
-                )
-            ),
-            (BalanceDelta)
-        );
-
-        // Output is the positive delta on the output side
-        amountOut = zeroForOne
-            ? uint256(int256(delta.amount1()))
-            : uint256(int256(delta.amount0()));
-    }
-
-    function _validatePoolKey(
-        PoolKey calldata poolKey,
-        address tokenA,
-        address tokenB
-    ) internal pure {
-        require(address(poolKey.hooks) == address(0), "Unexpected hooks");
-        address currency0 = Currency.unwrap(poolKey.currency0);
-        address currency1 = Currency.unwrap(poolKey.currency1);
-        require(
-            (currency0 == tokenA && currency1 == tokenB) ||
-                (currency0 == tokenB && currency1 == tokenA),
-            "Wrong pool"
-        );
-    }
-
-    /// @notice Uniswap V4 swap settlement callback
-    /// @dev Called by PoolManager during unlock(). Settles token transfers.
-    function unlockCallback(
-        bytes calldata rawData
-    ) external returns (bytes memory) {
-        require(msg.sender == address(POOL_MANAGER), "Not PoolManager");
-
-        SwapCallback memory data = abi.decode(rawData, (SwapCallback));
-
-        BalanceDelta delta = POOL_MANAGER.swap(
-            data.key,
-            data.params,
-            new bytes(0)
-        );
-
-        // Settle: pay tokens we owe, take tokens we're owed
-        if (data.params.zeroForOne) {
-            if (delta.amount0() < 0) {
-                data.key.currency0.settle(
-                    POOL_MANAGER,
-                    data.sender,
-                    uint256(-int256(delta.amount0())),
-                    false
-                );
-            }
-            if (delta.amount1() > 0) {
-                data.key.currency1.take(
-                    POOL_MANAGER,
-                    data.sender,
-                    uint256(int256(delta.amount1())),
-                    false
-                );
-            }
-        } else {
-            if (delta.amount1() < 0) {
-                data.key.currency1.settle(
-                    POOL_MANAGER,
-                    data.sender,
-                    uint256(-int256(delta.amount1())),
-                    false
-                );
-            }
-            if (delta.amount0() > 0) {
-                data.key.currency0.take(
-                    POOL_MANAGER,
-                    data.sender,
-                    uint256(int256(delta.amount0())),
-                    false
-                );
-            }
-        }
-
-        return abi.encode(delta);
     }
 
     /* =========================== INTERNAL ================================= */

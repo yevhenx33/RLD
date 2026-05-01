@@ -144,6 +144,16 @@ CORE_ABI: list[dict[str, Any]] = [
     },
 ]
 
+BROKER_FACTORY_ABI: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "name": "setDefaultOperators",
+        "stateMutability": "nonpayable",
+        "inputs": [{"name": "operators", "type": "address[]"}],
+        "outputs": [],
+    },
+]
+
 GHOST_ORACLE_ABI: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -497,12 +507,6 @@ def main() -> None:
         rpc_url,
         [],
     )
-    broker_router = _forge_create(
-        "src/periphery/BrokerRouter.sol:BrokerRouter",
-        deployer_key,
-        rpc_url,
-        [POOL_MANAGER, PERMIT2],
-    )
     ghost_router = _forge_create(
         "src/dex/GhostRouter.sol:GhostRouter",
         deployer_key,
@@ -547,7 +551,7 @@ def main() -> None:
             ghost_router,
             deployer,  # metadata renderer placeholder (non-zero required)
             funding_period,
-            broker_router,
+            ZERO_ADDRESS,
         ],
     )
     core = _forge_create(
@@ -666,6 +670,36 @@ def main() -> None:
         )
     _ok(f"Core marketId verified: {market_id}")
 
+    deposit_adapter = _forge_create(
+        "src/periphery/adapters/AaveWrappedDepositAdapter.sol:AaveWrappedDepositAdapter",
+        deployer_key,
+        rpc_url,
+        [underlying_token, AUSDC, collateral_token, AAVE_POOL],
+    )
+    _ok(f"Deposit adapter: {deposit_adapter}")
+
+    broker_router_config = (
+        f"({broker_factory},{market_id},{collateral_token},{position_token},{underlying_token},{deposit_adapter})"
+    )
+    broker_router = _forge_create(
+        "src/periphery/BrokerRouter.sol:BrokerRouter",
+        deployer_key,
+        rpc_url,
+        [ghost_router, PERMIT2, broker_router_config],
+    )
+    _ok(f"BrokerRouter: {broker_router}")
+
+    broker_factory_contract = w3.eth.contract(
+        address=_checksum(broker_factory),
+        abi=BROKER_FACTORY_ABI,
+    )
+    _send_tx(
+        w3,
+        deployer_key,
+        broker_factory_contract.functions.setDefaultOperators([broker_router]),
+        "PrimeBrokerFactory.setDefaultOperators",
+    )
+
     token0, token1 = sorted([collateral_token, position_token], key=lambda a: int(a, 16))
     pool_id_bytes = Web3.keccak(
         abi_encode(
@@ -705,7 +739,7 @@ def main() -> None:
         f"spot={spot_price}, expected={expected_pool_price}, delta={delta}"
     )
 
-    # Optional BondFactory deployment. BasisTradeFactory remains opt-in (heavy deps).
+    # Optional BondFactory deployment.
     bond_factory = ""
     if os.getenv("DEPLOY_BOND_FACTORY", "true").lower() in ("1", "true", "yes"):
         try:
@@ -713,7 +747,7 @@ def main() -> None:
                 "src/periphery/BondFactory.sol:BondFactory",
                 deployer_key,
                 rpc_url,
-                [broker_factory, broker_router, twap_engine, wausdc, POOL_MANAGER, V4_QUOTER],
+                [broker_factory, ghost_router, twap_engine, wausdc, V4_QUOTER],
             )
             _ok(f"BondFactory: {bond_factory}")
         except SystemExit:
@@ -736,6 +770,8 @@ def main() -> None:
         "position_token": _checksum(position_token),
         "position_name": "Wrapped RLP: aUSDC",
         "position_symbol": "wRLP",
+        "broker_router": _checksum(broker_router),
+        "deposit_adapter": _checksum(deposit_adapter),
         "broker_factory": _checksum(broker_factory),
         "rate_oracle": _checksum(mock_oracle),
         "spot_oracle": _checksum(mock_oracle),
@@ -778,12 +814,12 @@ def main() -> None:
         "broker_router": _checksum(broker_router),
         "wausdc": _checksum(wausdc),
         "position_token": _checksum(position_token),
+        "deposit_adapter": _checksum(deposit_adapter),
         "sim_funder": _checksum(sim_funder),
         "broker_factory": _checksum(broker_factory),
         # Keep empty to avoid incompatible legacy swap path usage.
         "swap_router": "",
         "bond_factory": _checksum(bond_factory) if bond_factory else "",
-        "basis_trade_factory": "",
         "broker_executor": _checksum(broker_executor),
         "pool_manager": _checksum(POOL_MANAGER),
         "v4_pool_manager": _checksum(POOL_MANAGER),

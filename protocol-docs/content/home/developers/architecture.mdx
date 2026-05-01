@@ -14,18 +14,18 @@ RLD is a singleton market factory, margin-account, and execution stack for rate-
 ┌────────────────────────────────────────────────────────────────────────┐
 │                          PERIPHERY LAYER                               │
 │                                                                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
-│  │ BrokerRouter │  │ BondFactory  │  │CDSCoverage   │  │BasisTrade  │  │
-│  │              │  │              │  │Factory       │  │Factory     │  │
-│  │ deposit()    │  │ mintBond()   │  │              │  │            │  │
-│  │ executeLong()│  │ closeBond()  │  │ buyCoverage()│  │ openBasis()│  │
-│  │ executeShort │  │              │  │              │  │            │  │
-│  │ closeLong()  │  │              │  │              │  │            │  │
-│  │ closeShort() │  │              │  │              │  │            │  │
-│  └──────┬───────┘  └──────────────┘  └──────────────┘  └────────────┘  │
-└─────────┼──────────────────┼─────────────────┼───────────────┼─────────┘
-          │                  │                 │               │
-          v                  v                 v               v
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                    │
+│  │ BrokerRouter │  │ BondFactory  │  │CDSCoverage   │                    │
+│  │              │  │              │  │Factory       │                    │
+│  │ deposit()    │  │ mintBond()   │  │              │                    │
+│  │ executeLong()│  │ closeBond()  │  │ buyCoverage()│                    │
+│  │ executeShort │  │              │  │              │                    │
+│  │ closeLong()  │  │              │  │              │                    │
+│  │ closeShort() │  │              │  │              │                    │
+│  └──────┬───────┘  └──────────────┘  └──────────────┘                    │
+└─────────┼──────────────────┼─────────────────┼──────────────────────────┘
+          │                  │                 │
+          v                  v                 v
 ┌────────────────────────────────────────────────────────────────────────┐
 │                       BROKER ACCOUNT LAYER                             │
 │                                                                        │
@@ -467,7 +467,7 @@ submitLimitOrder(marketId, zeroForOne, triggerPrice, amountIn)
 
 ### BrokerRouter
 
-The primary user-facing entry point. Pre-approved as an operator on every broker during factory deployment. Validates broker ownership, handles Permit2 deposits, and orchestrates V4 pool interactions through `PoolManager.unlock()`.
+The primary user-facing entry point. Pre-approved as an operator on every broker during factory deployment. Validates broker ownership, handles Permit2 deposits, and routes executable swaps through GhostRouter.
 
 ### BondFactory
 
@@ -476,10 +476,6 @@ Wraps the full synthetic bond Yield Monetization loop into atomic `mintBond()` /
 ### CDSCoverageFactory
 
 Provides the user-facing CDS coverage purchase flow. Wraps broker creation, collateral deposit, and position initialization for CDS market participants.
-
-### BasisTradeFactory
-
-Enables structured basis trade positions combining multiple protocol components in a single transaction.
 
 ### PrimeBrokerLens
 
