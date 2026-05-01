@@ -5,36 +5,37 @@ import { rpcProvider } from "../utils/provider";
 
 // BrokerRouter event ABIs
 const EVENTS_ABI = [
-  "event LongExecuted(address indexed broker, uint256 amountIn, uint256 amountOut)",
-  "event LongClosed(address indexed broker, uint256 amountIn, uint256 amountOut)",
-  "event ShortExecuted(address indexed broker, uint256 debtAmount, uint256 proceeds)",
-  "event ShortClosed(address indexed broker, uint256 debtRepaid, uint256 collateralSpent)",
-  "event Deposited(address indexed broker, uint256 underlyingAmount, uint256 wrappedAmount)",
+  "event SwapExecuted(address indexed broker, uint8 indexed action, uint256 amountIn, uint256 amountOut)",
+  "event ShortPositionUpdated(address indexed broker, uint256 debtAmount, uint256 proceeds)",
+  "event ShortPositionClosed(address indexed broker, uint256 debtRepaid, uint256 collateralSpent)",
+  "event Deposited(address indexed broker, uint256 underlyingAmount, uint256 collateralAmount)",
 ];
 
 const IFACE = new ethers.Interface(EVENTS_ABI);
 
 // Pre-compute topic hashes
 const EVENT_TOPICS = {
-  LongExecuted: IFACE.getEvent("LongExecuted").topicHash,
-  LongClosed: IFACE.getEvent("LongClosed").topicHash,
-  ShortExecuted: IFACE.getEvent("ShortExecuted").topicHash,
-  ShortClosed: IFACE.getEvent("ShortClosed").topicHash,
+  SwapExecuted: IFACE.getEvent("SwapExecuted").topicHash,
+  ShortPositionUpdated: IFACE.getEvent("ShortPositionUpdated").topicHash,
+  ShortPositionClosed: IFACE.getEvent("ShortPositionClosed").topicHash,
   Deposited: IFACE.getEvent("Deposited").topicHash,
 };
 
 const OP_META = {
-  LongExecuted: { label: "OPEN_LONG", color: "text-green-400 bg-green-500/20" },
-  LongClosed: { label: "CLOSE_LONG", color: "text-pink-400 bg-pink-500/20" },
-  ShortExecuted: {
+  ShortPositionUpdated: {
     label: "OPEN_SHORT",
     color: "text-orange-400 bg-orange-500/20",
   },
-  ShortClosed: {
+  ShortPositionClosed: {
     label: "CLOSE_SHORT",
     color: "text-yellow-400 bg-yellow-500/20",
   },
   Deposited: { label: "DEPOSIT", color: "text-cyan-400 bg-cyan-500/20" },
+};
+
+const SWAP_ACTION_META = {
+  1: { label: "OPEN_LONG", color: "text-green-400 bg-green-500/20" },
+  2: { label: "CLOSE_LONG", color: "text-pink-400 bg-pink-500/20" },
 };
 
 /**
@@ -99,7 +100,10 @@ export function useOperations(
           const parsed = IFACE.parseLog({ topics: log.topics, data: log.data });
           if (!parsed) continue;
 
-          const meta = OP_META[parsed.name];
+          const meta =
+            parsed.name === "SwapExecuted"
+              ? SWAP_ACTION_META[Number(parsed.args.action)]
+              : OP_META[parsed.name];
           if (!meta) continue;
 
           allOps.push({

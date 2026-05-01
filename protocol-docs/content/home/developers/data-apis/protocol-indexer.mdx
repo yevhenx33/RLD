@@ -376,10 +376,10 @@ Returns decoded `BrokerRouter` trade events with human-readable USD amounts:
 
 | Operation Type | Event Source |
 | --- | --- |
-| `OPEN_LONG` | `LongExecuted` |
-| `CLOSE_LONG` | `LongClosed` |
-| `OPEN_SHORT` | `ShortExecuted` |
-| `CLOSE_SHORT` | `ShortClosed` |
+| `OPEN_LONG` | `SwapExecuted` action `1` |
+| `CLOSE_LONG` | `SwapExecuted` action `2` |
+| `OPEN_SHORT` | `ShortPositionUpdated` |
+| `CLOSE_SHORT` | `ShortPositionClosed` |
 | `DEPOSIT` | `Deposited` |
 
 ---

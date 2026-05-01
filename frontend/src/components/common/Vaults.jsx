@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Lock,
   Shield,
-  TrendingUp,
   Zap,
   Layers,
 } from "lucide-react";
@@ -59,25 +58,6 @@ const STRATEGIES = [
   },
   {
     id: "003",
-    slug: "basis-trade",
-    name: "Basis Trade",
-    headline: "Leveraged carry trade",
-    description:
-      "High-yield carry strategy using sUSDe collateral with built-in rate hedging.",
-    apy: 22.1,
-    tvl: 3_100_000,
-    asset: "sUSDe",
-    protocol: "AAVE V3",
-    risk: "HIGH",
-    riskLabel: "Aggressive",
-    status: "ACTIVE",
-
-    icon: TrendingUp,
-    linked: true,
-    features: ["High yield", "Rate hedged", "sUSDe native"],
-  },
-  {
-    id: "004",
     slug: "rate-arbitrage",
     name: "Rate Arbitrage",
     headline: "Earn delta-neutral yield from rate arbitrage.",
@@ -96,7 +76,7 @@ const STRATEGIES = [
     features: ["Arbitrage", "Spread capture"],
   },
   {
-    id: "005",
+    id: "004",
     slug: "cds-vault",
     name: "CDS Vault",
     headline: "Insure against pool failures",

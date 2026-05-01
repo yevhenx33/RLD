@@ -11,6 +11,7 @@ import {UniswapV4BrokerModule} from "../../src/rld/modules/broker/UniswapV4Broke
 import {AaveAdapter} from "../../src/rld/modules/adapters/AaveAdapter.sol";
 import {BrokerRouter} from "../../src/periphery/BrokerRouter.sol";
 import {BondFactory} from "../../src/periphery/BondFactory.sol";
+import {PeripheryGhostLib} from "../../src/periphery/lib/PeripheryGhostLib.sol";
 import {WrappedAToken} from "../../src/shared/wrappers/WrappedAToken.sol";
 import {IRLDCore, MarketId} from "../../src/shared/interfaces/IRLDCore.sol";
 import {IPrimeBroker} from "../../src/shared/interfaces/IPrimeBroker.sol";
@@ -110,7 +111,20 @@ contract MockAuditOracle {
 }
 
 contract BrokerRouterHarness is BrokerRouter {
-    constructor() BrokerRouter(address(0x1000), address(0x2000)) {}
+    constructor()
+        BrokerRouter(
+            address(0x1000),
+            address(0x2000),
+            MarketConfig({
+                brokerFactory: address(0x3000),
+                marketId: MarketId.wrap(bytes32("MARKET")),
+                collateralToken: address(0x4000),
+                positionToken: address(0x5000),
+                underlyingToken: address(0x6000),
+                depositAdapter: address(0x7000)
+            })
+        )
+    {}
 
     function exposedValidate(PoolKey calldata poolKey, address collateral, address position) external pure {
         _validatePoolKey(poolKey, collateral, position);
@@ -120,12 +134,12 @@ contract BrokerRouterHarness is BrokerRouter {
 contract BondFactoryHarness is BondFactory {
     constructor()
         BondFactory(
-            address(0x1000), address(0x2000), address(0x3000), address(0x4000), address(0x5000), address(0x6000)
+            address(0x1000), address(0x2000), address(0x3000), address(0x4000), address(0x5000)
         )
     {}
 
     function exposedValidate(PoolKey calldata poolKey, address tokenA, address tokenB) external pure {
-        _validatePoolKey(poolKey, tokenA, tokenB);
+        PeripheryGhostLib.validatePoolKey(poolKey, tokenA, tokenB);
     }
 }
 
@@ -248,7 +262,7 @@ contract ApprovedAuditFixesTest is Test {
         (address tokenA, address tokenB) = _orderedTokens();
         PoolKey memory key = _poolKey(tokenA, tokenB, address(0xBEEF));
 
-        vm.expectRevert(bytes("Unexpected hooks"));
+        vm.expectRevert(PeripheryGhostLib.UnexpectedHook.selector);
         factory.exposedValidate(key, tokenA, tokenB);
     }
 

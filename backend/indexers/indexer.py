@@ -108,20 +108,13 @@ CUSTOM_TOPICS = {
         "CoverageOpened",
     Web3.keccak(text="CoverageClosed(address,address,uint256,uint256)").hex():
         "CoverageClosed",
-    # BasisTradeFactory
-    Web3.keccak(text="BasisTradeOpened(address,address,uint256,uint256,uint256)").hex():
-        "BasisTradeOpened",
-    Web3.keccak(text="BasisTradeClosed(address,address,uint256)").hex():
-        "BasisTradeClosed",
     # BrokerRouter — trade execution events
-    Web3.keccak(text="LongExecuted(address,uint256,uint256)").hex():
-        "LongExecuted",
-    Web3.keccak(text="LongClosed(address,uint256,uint256)").hex():
-        "LongClosed",
-    Web3.keccak(text="ShortExecuted(address,uint256,uint256)").hex():
-        "ShortExecuted",
-    Web3.keccak(text="ShortClosed(address,uint256,uint256)").hex():
-        "ShortClosed",
+    Web3.keccak(text="SwapExecuted(address,uint8,uint256,uint256)").hex():
+        "RouterSwapExecuted",
+    Web3.keccak(text="ShortPositionUpdated(address,uint256,uint256)").hex():
+        "ShortPositionUpdated",
+    Web3.keccak(text="ShortPositionClosed(address,uint256,uint256)").hex():
+        "ShortPositionClosed",
     Web3.keccak(text="Deposited(address,uint256,uint256)").hex():
         "Deposited",
     # TwapEngine (Ghost DEX)
@@ -241,7 +234,7 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
     rows = await conn.fetch("""
         SELECT market_id, broker_factory, mock_oracle, twamm_hook,
                ghost_router, twap_engine, twap_engine_lens,
-               bond_factory, basis_trade_factory, wausdc, wrlp,
+               bond_factory, wausdc, wrlp,
                product_metadata
         FROM markets
     """)
@@ -263,7 +256,6 @@ async def build_address_market_map(conn: asyncpg.Connection) -> dict[str, str]:
         _remember(r.get("twap_engine"))
         _remember(r.get("twap_engine_lens"))
         _remember(r.get("bond_factory"))
-        _remember(r.get("basis_trade_factory"))
         _remember(r.get("wausdc"))
         _remember(r.get("wrlp"))
         metadata = r.get("product_metadata") or {}
@@ -867,7 +859,7 @@ async def dispatch(
         except Exception as e:
             log.warning("[dispatch] ERC20Transfer decode failed: %s", e)
 
-    elif event_name in ("BondMinted", "BasisTradeOpened") and market_id:
+    elif event_name == "BondMinted" and market_id:
         # topics: [sig, user, broker]  data: (notional uint256, hedge uint256, duration uint256)
         try:
             user   = "0x" + (topics[1][-20:].hex() if isinstance(topics[1], bytes) else topics[1][-40:])
@@ -882,7 +874,7 @@ async def dispatch(
         except Exception as e:
             log.warning("[dispatch] %s decode failed block=%d: %s", event_name, block_number, e)
 
-    elif event_name in ("BondClosed", "BasisTradeClosed"):
+    elif event_name == "BondClosed":
         # topics: [sig, user, broker]  data: ...
         try:
             broker = "0x" + (topics[2][-20:].hex() if isinstance(topics[2], bytes) else topics[2][-40:])

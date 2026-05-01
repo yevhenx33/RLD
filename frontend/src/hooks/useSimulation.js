@@ -46,7 +46,6 @@ function _remapMarketInfo(mi) {
       poolId: mi.infrastructure?.poolId || mi.infrastructure?.pool_id || mi.poolId || mi.pool_id || "",
       pool_id: mi.infrastructure?.poolId || mi.infrastructure?.pool_id || mi.poolId || mi.pool_id || "",
       bond_factory: mi.infrastructure?.bondFactory || mi.infrastructure?.bond_factory || mi.bondFactory || "",
-      basis_trade_factory: mi.infrastructure?.basisTradeFactory || mi.infrastructure?.basis_trade_factory || mi.basisTradeFactory || "",
       pool_fee: mi.infrastructure?.poolFee || mi.poolFee || 0,
       tick_spacing: mi.infrastructure?.tickSpacing || mi.tickSpacing || 0,
       pool_manager: mi.infrastructure?.poolManager || mi.poolManager || "",

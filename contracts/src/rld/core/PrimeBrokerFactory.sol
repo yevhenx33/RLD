@@ -67,6 +67,8 @@ interface IBondMetadataRenderer {
 contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     using Clones for address;
 
+    uint8 public constant MAX_DEFAULT_OPERATORS = 8;
+
     /* ============================================================================================ */
     /*                                          IMMUTABLES                                          */
     /* ============================================================================================ */
@@ -90,6 +92,9 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     /// @dev Passed to each broker during initialization so clones can call Core
     address public immutable CORE;
 
+    /// @notice Admin allowed to update default operators for future brokers
+    address public immutable DEFAULT_OPERATOR_ADMIN;
+
     /// @notice Default operators set on every new broker (e.g., BrokerRouter)
     /// @dev Set at factory deployment. Every createBroker() call passes these
     ///      to PrimeBroker.initialize() as pre-approved operators.
@@ -108,6 +113,12 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
         address indexed owner,
         uint256 tokenId
     );
+    event DefaultOperatorsUpdated(address[] operators);
+
+    modifier onlyDefaultOperatorAdmin() {
+        require(msg.sender == DEFAULT_OPERATOR_ADMIN, "Not admin");
+        _;
+    }
 
     /* ============================================================================================ */
     /*                                         CONSTRUCTOR                                          */
@@ -121,6 +132,7 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
     /// @param symbol The ERC721 collection symbol (e.g., "RLD-aUSDC")
     /// @param renderer Optional metadata renderer (currently unused, can be address(0))
     /// @param core The RLDCore singleton address (passed to brokers during init)
+    /// @param defaultOperatorAdmin Admin allowed to update default operators
     /// @param _defaultOperators Addresses to pre-approve on every new broker (e.g., BrokerRouter)
     constructor(
         address implementation,
@@ -129,16 +141,32 @@ contract PrimeBrokerFactory is ERC721, ReentrancyGuard {
         string memory symbol,
         address renderer,
         address core,
+        address defaultOperatorAdmin,
         address[] memory _defaultOperators
     ) ERC721(name, symbol) {
         require(implementation != address(0), "Invalid implementation");
         require(MarketId.unwrap(marketId) != bytes32(0), "Invalid marketId");
         require(core != address(0), "Invalid core");
+        require(defaultOperatorAdmin != address(0), "Invalid admin");
         IMPLEMENTATION = implementation;
         MARKET_ID = marketId;
         RENDERER = renderer; // Stored but currently unused (see RENDERER docs)
         CORE = core;
+        DEFAULT_OPERATOR_ADMIN = defaultOperatorAdmin;
         defaultOperators = _defaultOperators;
+    }
+
+    /// @notice Updates default operators applied to brokers created after this call.
+    function setDefaultOperators(
+        address[] calldata operators
+    ) external onlyDefaultOperatorAdmin {
+        require(operators.length <= MAX_DEFAULT_OPERATORS, "Too many operators");
+        delete defaultOperators;
+        for (uint256 i = 0; i < operators.length; i++) {
+            require(operators[i] != address(0), "Invalid operator");
+            defaultOperators.push(operators[i]);
+        }
+        emit DefaultOperatorsUpdated(defaultOperators);
     }
 
     /* ============================================================================================ */

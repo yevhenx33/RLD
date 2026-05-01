@@ -114,13 +114,13 @@ function OperationsFeed({
       {operations.slice(0, 15).map((op) => {
         // Format amounts based on event type
         let detail = "";
-        if (op.type === "LongExecuted") {
-          detail = `${formatOpAmount(op.args[1])} ${collateralSymbol} → ${formatOpAmount(op.args[2])} ${positionSymbol}`;
-        } else if (op.type === "LongClosed") {
-          detail = `${formatOpAmount(op.args[1])} ${positionSymbol} → ${formatOpAmount(op.args[2])} ${collateralSymbol}`;
-        } else if (op.type === "ShortExecuted") {
+        if (op.type === "SwapExecuted" && Number(op.args.action) === 1) {
+          detail = `${formatOpAmount(op.args.amountIn)} ${collateralSymbol} → ${formatOpAmount(op.args.amountOut)} ${positionSymbol}`;
+        } else if (op.type === "SwapExecuted" && Number(op.args.action) === 2) {
+          detail = `${formatOpAmount(op.args.amountIn)} ${positionSymbol} → ${formatOpAmount(op.args.amountOut)} ${collateralSymbol}`;
+        } else if (op.type === "ShortPositionUpdated") {
           detail = `${formatOpAmount(op.args[1])} debt · ${formatOpAmount(op.args[2])} proceeds`;
-        } else if (op.type === "ShortClosed") {
+        } else if (op.type === "ShortPositionClosed") {
           detail = `${formatOpAmount(op.args[1])} repaid · ${formatOpAmount(op.args[2])} spent`;
         } else if (op.type === "Deposited") {
           detail = `${formatOpAmount(op.args[1])} → ${formatOpAmount(op.args[2])} ${collateralSymbol}`;

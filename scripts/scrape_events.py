@@ -61,11 +61,9 @@ EVENTS = {
     "ModifyLiquidity(bytes32,address,int24,int24,int256,bytes32)": "V4_ModifyLiquidity",
 
     # BrokerRouter
-    "DepositRouteSet(address,address,address)":                 "Router_DepositRouteSet",
-    "LongExecuted(address,uint256,uint256)":                    "Router_LongExecuted",
-    "LongClosed(address,uint256,uint256)":                      "Router_LongClosed",
-    "ShortExecuted(address,uint256,uint256)":                   "Router_ShortExecuted",
-    "ShortClosed(address,uint256,uint256)":                     "Router_ShortClosed",
+    "SwapExecuted(address,uint8,uint256,uint256)":              "Router_SwapExecuted",
+    "ShortPositionUpdated(address,uint256,uint256)":            "Router_ShortPositionUpdated",
+    "ShortPositionClosed(address,uint256,uint256)":             "Router_ShortPositionClosed",
     "Deposited(address,uint256,uint256)":                       "Router_Deposited",
 
     # BondFactory
@@ -73,13 +71,6 @@ EVENTS = {
     "BondClosed(address,address,uint256,uint256,int256,uint256)": "BondClosed",
     "BondClaimed(address,address)":                             "BondClaimed",
     "BondReturned(address,address)":                            "BondReturned",
-
-    # BasisTradeFactory
-    "BasisTradeOpened(address,address,uint256,uint256,uint256,uint256)": "BasisTradeOpened",
-    "BasisTradeClosed(address,address,uint256,uint256,int256)": "BasisTradeClosed",
-
-    # PoolLiquidityManager (standalone)
-    # same sigs as PrimeBroker LP events — already covered above
 
     # ERC20
     "Transfer(address,address,uint256)":                        "ERC20_Transfer",
