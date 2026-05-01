@@ -357,7 +357,7 @@ export default function SimulationTerminal() {
     fetchWrlp();
     const interval = setInterval(fetchWrlp, 12000);
     return () => clearInterval(interval);
-  }, [brokerAddress, enrichedMarketInfo?.position_token?.address]);
+  }, [brokerAddress, enrichedMarketInfo?.position_token?.address, positionSymbol]);
 
   const closeAmountNum = Number.parseFloat(closeAmount);
   const hasCloseAmount = Number.isFinite(closeAmountNum) && closeAmountNum > 0;

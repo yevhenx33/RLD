@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import "forge-std/Test.sol";
 import "../../src/rld/core/RLDCore.sol";
 import "../../src/rld/core/RLDMarketFactory.sol";
+import "../../src/rld/core/PrimeBrokerFactory.sol";
 import "../../src/rld/tokens/PositionToken.sol";
 import "../../src/rld/broker/PrimeBroker.sol";
 import "../dex/mocks/MockPoolManager.sol";
@@ -27,6 +28,10 @@ contract DummyMock {
     }
 }
 
+contract MockPermit2 {
+    function approve(address, address, uint160, uint48) external {}
+}
+
 contract MarketDeploymentTest is Test {
     RLDCore core;
     RLDMarketFactory factory;
@@ -39,8 +44,11 @@ contract MarketDeploymentTest is Test {
     MockRateOracle rateOracle;
     GhostSingletonOracle ghostOracle;
     DummyMock ghostRouter;
+    address brokerRouter = address(0x4000);
+    address constant PERMIT2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 
     function setUp() public {
+        vm.etch(PERMIT2, address(new MockPermit2()).code);
         poolManager = new MockPoolManager();
         collateral = new MockERC20("aUSDC", "aUSDC", 6);
         underlying = new MockERC20("USDC", "USDC", 6);
@@ -63,7 +71,7 @@ contract MarketDeploymentTest is Test {
             address(ghostRouter), // previously address(0x2)
             address(0x3000),      // MetadataRenderer Mock
             30 days,
-            address(0x4000)       // BrokerRouter Mock
+            brokerRouter          // BrokerRouter Mock
         );
 
         // Core args: factory, poolManager
@@ -118,5 +126,11 @@ contract MarketDeploymentTest is Test {
         // since only Core holds ownership permissions to direct PositionTokens
         vm.expectRevert("UNAUTHORIZED");
         PositionToken(posTkn).mint(address(this), 100);
+
+        address broker = PrimeBrokerFactory(brokerFactory).createBroker(bytes32(uint256(1)));
+        assertTrue(
+            PrimeBroker(payable(broker)).operators(brokerRouter),
+            "BrokerRouter must be a default operator on deployed brokers"
+        );
     }
 }

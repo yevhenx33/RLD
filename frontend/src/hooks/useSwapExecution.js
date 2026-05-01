@@ -2,68 +2,10 @@ import { useState, useCallback } from "react";
 import { ethers } from "ethers";
 import { getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
-
-// BrokerRouter ABI (executeLong + closeLong)
-const POOL_KEY_TUPLE = {
-  name: "poolKey",
-  type: "tuple",
-  components: [
-    { name: "currency0", type: "address" },
-    { name: "currency1", type: "address" },
-    { name: "fee", type: "uint24" },
-    { name: "tickSpacing", type: "int24" },
-    { name: "hooks", type: "address" },
-  ],
-};
-
-const BROKER_ROUTER_ABI = [
-  {
-    name: "executeLong",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "broker", type: "address" },
-      { name: "amountIn", type: "uint256" },
-      POOL_KEY_TUPLE,
-    ],
-    outputs: [{ name: "amountOut", type: "uint256" }],
-  },
-  {
-    name: "closeLong",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "broker", type: "address" },
-      { name: "amountIn", type: "uint256" },
-      POOL_KEY_TUPLE,
-    ],
-    outputs: [{ name: "amountOut", type: "uint256" }],
-  },
-  {
-    name: "executeShortWithMinOut",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "broker", type: "address" },
-      { name: "initialCollateral", type: "uint256" },
-      { name: "targetDebtAmount", type: "uint256" },
-      POOL_KEY_TUPLE,
-      { name: "minProceeds", type: "uint256" },
-    ],
-    outputs: [{ name: "proceeds", type: "uint256" }],
-  },
-  {
-    name: "closeShort",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "broker", type: "address" },
-      { name: "collateralToSpend", type: "uint256" },
-      POOL_KEY_TUPLE,
-    ],
-    outputs: [{ name: "debtRepaid", type: "uint256" }],
-  },
-];
+import {
+  BROKER_ROUTER_ABI,
+  buildHooklessPoolKey,
+} from "../lib/peripheryIntegration";
 
 // PrimeBroker.setOperator + operators check
 const BROKER_ABI = [
@@ -138,21 +80,7 @@ function formatRepayDebtError(error) {
 // ── Shared helpers ────────────────────────────────────────────────
 
 function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
-  const token0 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? collateralAddr
-      : positionAddr;
-  const token1 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? positionAddr
-      : collateralAddr;
-  return {
-    currency0: token0,
-    currency1: token1,
-    fee: infrastructure.pool_fee || 500,
-    tickSpacing: infrastructure.tick_spacing || 5,
-    hooks: infrastructure.twamm_hook,
-  };
+  return buildHooklessPoolKey(infrastructure, collateralAddr, positionAddr);
 }
 
 /** Ensure BrokerRouter is approved as operator on the broker. */
@@ -271,6 +199,7 @@ export function useSwapExecution(
           brokerAddress,
           amountInWei,
           poolKey,
+          0n,
           { gasLimit: 1_000_000 },
         );
         setTxHash(tx.hash);
@@ -309,6 +238,7 @@ export function useSwapExecution(
         !account ||
         !brokerAddress ||
         !infrastructure?.broker_router ||
+        !collateralAddr ||
         !positionAddr
       ) {
         setError("Missing required addresses");
@@ -361,9 +291,13 @@ export function useSwapExecution(
         const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
 
         setStep("Confirm close in wallet...");
-        const tx = await router.closeLong(brokerAddress, amountInWei, poolKey, {
-          gasLimit: 1_000_000,
-        });
+        const tx = await router.closeLong(
+          brokerAddress,
+          amountInWei,
+          poolKey,
+          0n,
+          { gasLimit: 1_000_000 },
+        );
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -405,7 +339,13 @@ export function useSwapExecution(
    */
   const executeShort = useCallback(
     async (initialCollateral, targetDebtAmount, minProceeds = 0, onSuccess) => {
-      if (!account || !brokerAddress || !infrastructure?.broker_router) {
+      if (
+        !account ||
+        !brokerAddress ||
+        !infrastructure?.broker_router ||
+        !collateralAddr ||
+        !positionAddr
+      ) {
         setError("Missing required addresses");
         return;
       }
@@ -451,16 +391,16 @@ export function useSwapExecution(
 
         // Preflight catches SlippageExceeded before wallet confirmation.
         setStep("Preflighting short...");
-        await router.executeShortWithMinOut.staticCall(...shortArgs);
+        await router.executeShort.staticCall(...shortArgs);
 
         setStep("Estimating gas...");
         const gasLimit = await estimateGasLimit(
-          () => router.executeShortWithMinOut.estimateGas(...shortArgs),
+          () => router.executeShort.estimateGas(...shortArgs),
           2_500_000,
         );
 
         setStep("Confirm short in wallet...");
-        const tx = await router.executeShortWithMinOut(...shortArgs, { gasLimit });
+        const tx = await router.executeShort(...shortArgs, { gasLimit });
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -495,7 +435,16 @@ export function useSwapExecution(
    */
   const executeCloseShort = useCallback(
     async (amountIn, onSuccess) => {
-      if (!account || !brokerAddress || !infrastructure?.broker_router) return;
+      if (
+        !account ||
+        !brokerAddress ||
+        !infrastructure?.broker_router ||
+        !collateralAddr ||
+        !positionAddr
+      ) {
+        setError("Missing required addresses");
+        return;
+      }
       setExecuting(true);
       setError(null);
       setTxHash(null);
@@ -521,6 +470,7 @@ export function useSwapExecution(
           brokerAddress,
           amountInWei,
           poolKey,
+          0n,
           {
             gasLimit: 1_500_000,
           },

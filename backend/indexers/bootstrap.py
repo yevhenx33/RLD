@@ -131,6 +131,7 @@ def _market_entries(cfg: dict) -> list[dict]:
         "broker_executor": cfg.get("broker_executor", ""),
         "v4_quoter": cfg.get("v4_quoter", ""),
         "broker_router": cfg.get("broker_router", ""),
+        "deposit_adapter": cfg.get("deposit_adapter", ""),
         "v4_position_manager": cfg.get("v4_position_manager", ""),
         "v4_state_view": cfg.get("v4_state_view", ""),
         "pool_manager": cfg.get("pool_manager", cfg.get("v4_pool_manager", "")),
@@ -204,7 +205,8 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                     broker_factory, mock_oracle, twamm_hook, ghost_router, twap_engine, twap_engine_lens,
                     wausdc, wausdc_symbol, wrlp, wrlp_symbol,
                     pool_id, pool_fee, tick_spacing,
-                    swap_router, bond_factory, basis_trade_factory, broker_executor, v4_quoter, broker_router,
+                    swap_router, bond_factory, basis_trade_factory, broker_executor,
+                    v4_quoter, broker_router, deposit_adapter,
                     v4_position_manager, v4_state_view, pool_manager,
                     min_col_ratio, maintenance_margin, liq_close_factor,
                     funding_period_sec, debt_cap, created_at
@@ -213,10 +215,11 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                     $4, $5, $6, $7, $8, $9,
                     $10, $11, $12, $13,
                     $14, $15, $16,
-                    $17, $18, $19, $20, $21, $22,
-                    $23, $24, $25,
-                    $26, $27, $28,
-                    $29, $30, NOW()
+                    $17, $18, $19, $20,
+                    $21, $22, $23,
+                    $24, $25, $26,
+                    $27, $28, $29,
+                    $30, $31, NOW()
                 )
                 ON CONFLICT (market_id) DO UPDATE SET
                     wausdc              = COALESCE(NULLIF(EXCLUDED.wausdc, ''),              markets.wausdc),
@@ -238,6 +241,7 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                     broker_executor     = COALESCE(NULLIF(EXCLUDED.broker_executor, ''),     markets.broker_executor),
                     v4_quoter           = COALESCE(NULLIF(EXCLUDED.v4_quoter, ''),           markets.v4_quoter),
                     broker_router       = COALESCE(NULLIF(EXCLUDED.broker_router, ''),       markets.broker_router),
+                    deposit_adapter     = COALESCE(NULLIF(EXCLUDED.deposit_adapter, ''),     markets.deposit_adapter),
                     v4_position_manager = COALESCE(NULLIF(EXCLUDED.v4_position_manager, ''), markets.v4_position_manager),
                     v4_state_view       = COALESCE(NULLIF(EXCLUDED.v4_state_view, ''),       markets.v4_state_view),
                     pool_manager        = COALESCE(NULLIF(EXCLUDED.pool_manager, ''),        markets.pool_manager),
@@ -269,6 +273,7 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                 _entry_value(entry, cfg, "broker_executor", ""),
                 _entry_value(entry, cfg, "v4_quoter", ""),
                 _entry_value(entry, cfg, "broker_router", ""),
+                _entry_value(entry, cfg, "deposit_adapter", ""),
                 _entry_value(entry, cfg, "v4_position_manager", ""),
                 _entry_value(entry, cfg, "v4_state_view", ""),
                 _entry_value(entry, cfg, "pool_manager", cfg.get("v4_pool_manager", "")),
