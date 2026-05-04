@@ -3,6 +3,6 @@
   "pages": [
     "index",
     "protocol-indexer",
-    "rates-indexer"
+    "rates-analytics"
   ]
 }

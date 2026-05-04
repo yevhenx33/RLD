@@ -1,0 +1,16 @@
+[Unit]
+Description=Fluid Protocol Real-Time Indexer
+After=network.target clickhouse-server.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/RLD/backend/analytics
+EnvironmentFile=-/home/ubuntu/RLD/backend/analytics/.env
+ExecStart=/home/ubuntu/RLD/backend/analytics/.venv/bin/python3 /home/ubuntu/RLD/backend/analytics/scripts/fluid_realtime_indexer.py
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

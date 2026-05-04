@@ -23,8 +23,8 @@ This document defines the canonical runtime component inventory for production o
 | Simulation | Faucet service | `docker/reth/Dockerfile.faucet` | Loopback (`127.0.0.1:8088`) | High | Protocol backend |
 | Simulation | MM/chaos daemons | `backend/services/combined_daemon.py`, `backend/tools/chaos_daemon.py` | Internal Docker network | High | Protocol backend |
 | Analytics | ClickHouse | `docker/docker-compose.clickhouse.yml` | Internal + loopback only | High | Data platform |
-| Analytics | Collectors/processors | `data-pipeline/scripts/run_indexer.py` | Internal/host-local | High | Data platform |
-| Analytics | Envio GraphQL API | `data-pipeline/indexer/api/graphql.py` | Loopback (`127.0.0.1:5000`) | Medium-High | Data platform |
+| Analytics | Collectors/processors | `backend/analytics/scripts/run_indexer.py` | Internal/host-local | High | Data platform |
+| Analytics | Envio GraphQL API | `backend/analytics/api/graphql.py` | Loopback (`127.0.0.1:5000`) | Medium-High | Data platform |
 | Ops | Monitor bot | `backend/services/monitor_bot.py` | Loopback (`127.0.0.1:8083`) | Medium | Platform/Ops |
 | Ops | Dashboard status service | `docker/dashboard/live_status_server.py` | Loopback (`127.0.0.1:8091`) | Low-Medium | Platform/Ops |
 

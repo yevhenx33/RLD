@@ -34,7 +34,7 @@ RLD_ROOT = DOCKER_DIR.parent
 
 COMPOSE_ANVIL = DOCKER_DIR / "docker-compose.yml"
 COMPOSE_RETH = SCRIPT_DIR / "docker-compose.reth.yml"
-ENVIO_COMPOSE = RLD_ROOT / "data-pipeline" / "docker-compose.yml"
+ENVIO_COMPOSE = RLD_ROOT / "backend" / "analytics" / "docker-compose.yml"
 ENV_FILE = DOCKER_DIR / ".env"
 
 DEPLOY_JSON = DOCKER_DIR / "deployment.json"

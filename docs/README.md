@@ -67,5 +67,5 @@ bash docker/scripts/stack.sh smoke --public-base https://rld.fi
 ## Scope Notes
 
 - Reth simulation + rates + frontend + monitor bot are launch-critical.
-- `data-pipeline` analytics docs remain available but are non-launch-critical for V2.
+- `backend/analytics` analytics docs remain available but are non-launch-critical for V2.
 - GhostRouter/TWAP launch requires an in-house arb/route solver; do not assume external arbitrage keeps execution optimal.

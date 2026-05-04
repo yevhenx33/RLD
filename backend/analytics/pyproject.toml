@@ -1,0 +1,25 @@
+[project]
+name = "rld-analytics"
+version = "0.1.0"
+description = "Aave V3 data pipeline extraction"
+readme = "docs/INDEXER_ARCHITECTURE.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.1",
+    "tqdm>=4.66.2",
+    "web3>=6.15.0",
+    "asyncpg>=0.29.0",
+]
+
+
+[tool.coverage.run]
+omit = [
+    "backend/analytics/scripts/*",
+    "backend/analytics/tests/*",
+    "backend/analytics/test_*.py",
+    "backend/analytics/verify.py",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*.py" = ["E401", "E402", "E701", "E702", "E722", "F401", "F541", "F841"]

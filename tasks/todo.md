@@ -31,22 +31,22 @@ new-front/
 - [ ] Polish animations & micro-interactions
 
 ## Review: CDS Backtest Logic
-- [x] Implemented standalone Python script (`backend/rates/cds_backtest.py`)
+- [x] Implemented standalone Python script (the legacy CDS backtest script)
 - [x] Verified Poka-Yoke metrics (Max payout bounds, Sharpe ratio)
 
 ## Review: Rolling Cointegration Analysis
-- [x] Implemented `backend/rates/rolling_cointegration.py` to sweep Engle-Granger regressions over 1-30 day lags on a 90-day window.
+- [x] Implemented the legacy rolling cointegration script to sweep Engle-Granger regressions over 1-30 day lags on a 90-day window.
 - [x] Verified Poka-Yoke constraints and successfully detected the mathematical pricing dislocation periods.
 - [ ] Needs Review: Final model tuning to operationalize this lag logic into a real-time statistical arbitrage signal validator.
 
 ## Review: Global Cointegration Analysis
-- [x] Implemented `backend/rates/global_cointegration.py` to establish the mathematical theorem of global structural cointegration without rolling windows.
+- [x] Implemented the legacy global cointegration script to establish the mathematical theorem of global structural cointegration without rolling windows.
 - [x] Swept history to find the absolute Geometric Optimal Lag.
 - [x] Ran Quarterly segmented Poka-Yoke metrics, proving global baseline adherence despite anomalous quarters (e.g. Q3 2025).
 - [ ] Needs Review: Check if we want to build a real-time pipeline monitoring the global ADF p-value as an aggregate systemic risk warning.
 
 ## Review: Monthly Cointegration Constraints
-- [x] Authored `backend/rates/monthly_cointegration.py` implementing dual-pass macro vs micro framework.
+- [x] Authored the legacy monthly cointegration script implementing dual-pass macro vs micro framework.
 - [x] Proven that pure Monthly Resampling (N=36) breaks the degrees of freedom for an ADF Cointegration test, yielding a false negative.
 - [x] Grouped daily array into Monthly Micro-Segments, extracting exact 30-day dislocation windows compared to strong Q4 coupled epochs.
 
@@ -56,10 +56,10 @@ new-front/
 - [x] Finalized and executed an Engle-Granger pipeline with dynamic geometric lag shift that cleared the `0.08` maximum fitness stringency threshold.
 
 ## Review: High-Frequency Hourly Cointegration Segregation
-- [x] Architected `backend/rates/autoresearch/hourly_segment_cointegration.py` pipeline pulling from the true `1H` frontend index.
-- [x] Architected `backend/rates/autoresearch/hourly_90d_rolling_cointegration.py` using 90-day overlapping sequences ($N=2160$ hours per window).
+- [x] Architected the legacy hourly segment cointegration pipeline pulling from the true `1H` frontend index.
+- [x] Architected the legacy 90-day rolling cointegration pipeline using 90-day overlapping sequences ($N=2160$ hours per window).
 - [x] Verified that over 90-Day structural horizons, cointegration holds with 94% success rate (61 of 65 epochs), definitively proving the 90-day mean-reverting arbitrage thesis for the whitepaper.
-- [x] Executed `backend/rates/autoresearch/visualize_1h_step_pvalues.py` via Python multiprocessing, sweeping exactly 24,954 dense 1H intervals across the final SQLite `clean_rates.db`.
+- [x] Executed the legacy 1h p-value visualization job via Python multiprocessing, sweeping exactly 24,954 dense 1H intervals across the final SQLite `clean_rates.db`.
 - [x] Finalized the comprehensive `cointegration_analysis_report.md` artifact incorporating all methodologies, exact anomaly maps, and an embedded P-Value analytical series chart for Agent handoff.
 
 ## Review: CDS Mathematical Simulation (Phase 2)
@@ -101,7 +101,7 @@ new-front/
 - [x] Integrated `LidoRebaseSource` and `StaticPegsSource` in the unified `run_indexer.py` engine loops.
 - [x] Validated USR (Resolv Protocol) as an absolute static `$1.000` structure and mapped it deterministically into `StaticPegsSource`.
 
-## [Review] Data Pipeline Architecture Refactor
+## [Review] Analytics Architecture Refactor
 - [ ] Review decoupled run_indexer.py argparse implementation
 - [ ] Review genesis_block parameter functionality in collector/processor
 - [ ] Review Watcher mempool atomic purge logic

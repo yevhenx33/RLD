@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RLD // INFRA STATUS</title>
-    <script src="/vendor/react.min.js"></script>
-    <script src="/vendor/react-dom.min.js"></script>
-    <script src="/vendor/babel.min.js"></script>
+    <script src="vendor/react.min.js?v=dashboard-20260504"></script>
+    <script src="vendor/react-dom.min.js?v=dashboard-20260504"></script>
+    <script src="vendor/babel.min.js?v=dashboard-20260504"></script>
     <link
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
       rel="stylesheet"
@@ -839,6 +839,9 @@
           backups: bk,
           history: hist,
           stacks: stackDataRaw,
+          contracts: contractsState,
+          compose: composeProjects,
+          domains: domainDataRaw,
         } = d;
         const stackData = stackDataRaw || {};
         const running = cts.filter(
@@ -928,7 +931,7 @@
           "simulation",
           "execution",
           "frontend_edge",
-          "legacy_rates",
+          "docs",
         ];
         const stackRows = stackOrder
           .map((key) => ({ key, ...(stackData[key] || {}) }))
@@ -981,16 +984,65 @@
                 : "frontend container missing",
             };
           }
-          if (row.key === "legacy_rates") {
+          if (row.key === "docs") {
             return {
-              signal: row.running ? "deprecated live" : "removed",
-              detail: row.containers?.matched
-                ? `${row.containers.matched} container(s) detected`
-                : "no legacy containers",
+              signal: row.components?.docs_container ? "docs running" : "docs missing",
+              detail: row.containers?.names?.length
+                ? row.containers.names.join(", ")
+                : "docs container unavailable",
             };
           }
           return { signal: "—", detail: "—" };
         };
+
+
+        const groupContainers = (needles) => {
+          const lower = needles.map((n) => n.toLowerCase());
+          const matched = cts.filter((c) =>
+            lower.some((needle) => String(c.name || "").toLowerCase().includes(needle)),
+          );
+          const runningCount = matched.filter((c) => c.status === "healthy" || c.status === "running").length;
+          return { matched, runningCount };
+        };
+        const componentStatus = (components) => {
+          const values = Object.values(components || {});
+          if (!values.length) return "unknown";
+          const okCount = values.filter(Boolean).length;
+          if (okCount === values.length) return "healthy";
+          return okCount > 0 ? "degraded" : "critical";
+        };
+        const fallbackDomains = (() => {
+          const backendGroup = groupContainers(["mm-daemon", "arb-bot", "chaos-trader", "monitor-bot"]);
+          const analyticsGroup = groupContainers(["rld_graphql_api", "aave_worker", "chainlink_worker", "sofr_worker"]);
+          const simGroup = groupContainers(["rld-indexer", "rld-postgres", "rld-reth", "rld-faucet"]);
+          const frontendGroup = groupContainers(["frontend"]);
+          const docsGroup = groupContainers(["docs"]);
+          const expectedCompose = ["rld-clickhouse", "rld-analytics", "rld-infra", "rld-reth", "rld-frontend", "rld-docs"];
+          const composeNames = Array.isArray(composeProjects) ? composeProjects.map((p) => p.Name || p.name).filter(Boolean) : [];
+          const contracts = contractsState || {};
+          const loadOk = Number(sys.load?.[0] || 0) <= Number(sys.cpu_cores || 1) * 0.8;
+          const memOk = memPct <= 85;
+          const diskOk = Math.max(Number(sys.disk?.percent || 0), Number(sys.data_disk?.percent || 0)) <= 85;
+          const mk = (label, owner, components, signal, detail) => ({ label, owner, status: componentStatus(components), components, signal, detail });
+          return {
+            backend: mk("Backend Services", "protocol-backend", { monitor_bot: !!svc.monitor_bot?.healthy, mm_daemon: backendGroup.runningCount >= 1, execution_bots: groupContainers(["arb-bot", "chaos-trader"]).runningCount >= 2, rates_client_path: !!envioSvc.healthy }, `${backendGroup.runningCount}/${Math.max(backendGroup.matched.length, 1)} containers`, "daemon, bots, monitor API, rates client path"),
+            frontend: mk("Frontend Edge", "frontend", { container: frontendGroup.runningCount >= 1, edge_nginx: !!svc.nginx?.healthy, public_https: Number(svc.nginx?.response_ms || -1) > 0 }, `${svc.nginx?.response_ms ?? "?"}ms public probe`, frontendGroup.matched.map((c) => c.name).join(", ") || "frontend container unavailable"),
+            infra: mk("Infrastructure", "devops", { compose_projects: expectedCompose.every((name) => composeNames.includes(name)), clickhouse: groupContainers(["clickhouse"]).runningCount >= 1, postgres: groupContainers(["postgres"]).runningCount >= 1, reth: groupContainers(["rld-reth"]).runningCount >= 1, backups: bk?.status === "success" }, `${composeNames.length}/${expectedCompose.length} compose projects`, `docker images ${dk.active ?? "?"} active, backups ${bk?.status || "unknown"}`),
+            analytics_indexers: mk("Analytics Indexers", "analytics", { graphql_api: !!envioSvc.healthy, readiness: !!envioSvc.ready, clickhouse: d.databases?.envio_indexer?.clickhouse === "ok", workers: analyticsGroup.runningCount >= 4 }, `${(d.databases?.envio_indexer?.sourceStatus || []).length} source rows`, `ready HTTP ${envioSvc.ready_http ?? "?"}, max lag ${envioSvc.ready_max_lag ?? "?"}`),
+            simulation_indexer: mk("Simulation Indexer", "protocol-backend", { indexer_api: !!svc.indexer?.healthy, postgres_state: !!d.databases?.pool_state?.healthy, reth_rpc: !!svc.anvil?.healthy, containers: simGroup.runningCount >= 4 }, stackData.simulation?.blockGap != null ? `gap ${stackData.simulation.blockGap} blocks` : "gap ?", `chain ${svc.anvil?.block || "?"} / indexed ${d.databases?.pool_state?.last_indexed_block || "?"}`),
+            contracts: mk("Contracts", "protocol-contracts", { deployment_json: !!contracts.deploymentExists, core_addresses: Number(contracts.coreAddressCount || 0) >= 5, artifacts: Number(contracts.artifactCount || 0) > 0, tests: Number(contracts.testCount || 0) > 0 }, `${contracts.coreAddressCount || 0} deployed addresses`, `deploy block ${contracts.deployBlock || "?"}, artifacts ${contracts.artifactCount || 0}, tests ${contracts.testCount || 0}`),
+            resources: mk("Resource Usage", "devops", { cpu_load: loadOk, memory: memOk, disk: diskOk, logs: Number(sys.errors_today || 0) < 10 }, `load ${sys.load?.[0] ?? "?"}/${sys.cpu_cores ?? "?"}, mem ${memPct}%`, `disk ${sys.disk?.percent ?? "?"}%, data disk ${sys.data_disk?.percent ?? "?"}%, errors today ${sys.errors_today ?? "?"}`),
+            docs: mk("Protocol Docs", "docs", { container: docsGroup.runningCount >= 1 }, `${docsGroup.runningCount}/${Math.max(docsGroup.matched.length, 1)} containers`, docsGroup.matched.map((c) => c.name).join(", ") || "docs container unavailable"),
+          };
+        })();
+        const domainData = domainDataRaw || fallbackDomains;
+        const domainOrder = ["backend", "frontend", "infra", "analytics_indexers", "simulation_indexer", "contracts", "resources", "docs"];
+        const domainRows = domainOrder.map((key) => ({ key, ...(domainData[key] || fallbackDomains[key] || {}) })).filter((row) => row.label);
+        const domainHealthy = domainRows.filter((row) => row.status === "healthy").length;
+        const composeRows = Array.isArray(composeProjects) ? composeProjects : [];
+        const contracts = contractsState || {};
+        const contractCoreRows = Object.entries(contracts.core || {}).slice(0, 8);
+        const indexerSourceRows = Array.isArray(d.databases?.envio_indexer?.sourceStatus) ? d.databases.envio_indexer.sourceStatus : [];
 
         return (
           <div className="wrap">
@@ -1079,6 +1131,58 @@
               </a>
             </div>
 
+
+            {/* SYSTEM DOMAIN COVERAGE */}
+            <Card title="SYSTEM DOMAIN COVERAGE" badge={<Badge text={`${domainHealthy}/${domainRows.length} HEALTHY`} type={domainHealthy === domainRows.length ? "g" : domainHealthy > 0 ? "a" : "r"} />} style={{ marginBottom: 1 }} delay={0}>
+              <table className="tbl">
+                <thead><tr><th style={{ width: 16 }}></th><th>domain</th><th>owner</th><th>status</th><th className="r">components</th><th>signal</th><th>detail</th></tr></thead>
+                <tbody>
+                  {domainRows.map((row) => {
+                    const components = row.components || {};
+                    const ok = Object.values(components).filter(Boolean).length;
+                    const total = Object.keys(components).length;
+                    return <tr key={row.key}>
+                      <td><Dot ok={stackDotOk(row.status)} /></td>
+                      <td style={{ color: "var(--tb)", fontWeight: 500 }}>{row.label}</td>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>{row.owner || "?"}</td>
+                      <td><Badge text={String(row.status || "unknown").toUpperCase()} type={stackBadgeType(row.status)} /></td>
+                      <td className="r" style={{ color: ok === total ? "var(--g)" : ok > 0 ? "var(--a)" : "var(--r)", fontSize: 10 }}>{ok}/{total || "?"}</td>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>{row.signal || "?"}</td>
+                      <td style={{ color: "var(--td)", fontSize: 10 }}>{row.detail || "?"}</td>
+                    </tr>;
+                  })}
+                </tbody>
+              </table>
+            </Card>
+
+            {/* CONTRACTS + COMPOSE */}
+            <div className="grid g2" style={{ marginBottom: 1 }}>
+              <Card title="CONTRACT DEPLOYMENT STATE" badge={<Badge text={String(contracts.status || "unknown").toUpperCase()} type={stackBadgeType(contracts.status)} />} delay={1}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <Metric value={contracts.coreAddressCount || 0} unit="addr" label="core deployed" color="var(--g)" />
+                    <div style={{ fontSize: 10, color: "var(--td)", marginTop: 6 }}>block {contracts.deployBlock || "?"} - fork {contracts.forkBlock || "?"}</div>
+                    <div style={{ fontSize: 10, color: "var(--td)", marginTop: 3 }}>src {fmtN(contracts.sourceCount)} - tests {fmtN(contracts.testCount)} - artifacts {fmtN(contracts.artifactCount)}</div>
+                  </div>
+                  <table className="tbl"><tbody>
+                    {contractCoreRows.length ? contractCoreRows.map(([name, value]) => <tr key={name}><td style={{ fontSize: 10 }}>{name}</td><td className="r" style={{ color: "var(--tb)", fontSize: 10 }}>{fmtAddr(value)}</td></tr>) : <tr><td style={{ color: "var(--td)", fontSize: 10 }}>deployment metadata unavailable</td></tr>}
+                  </tbody></table>
+                </div>
+              </Card>
+              <Card title="COMPOSE PROJECTS" badge={<Badge text={`${composeRows.length} PROJECTS`} type={composeRows.length >= 6 ? "g" : "a"} />} delay={2}>
+                <table className="tbl">
+                  <thead><tr><th style={{ width: 16 }}></th><th>project</th><th>status</th><th>compose file</th></tr></thead>
+                  <tbody>
+                    {composeRows.length ? composeRows.map((row, i) => {
+                      const name = row.Name || row.name || "?";
+                      const status = row.Status || row.status || "?";
+                      const config = String(row.ConfigFiles || row.configFiles || "").replace("/home/ubuntu/RLD/", "");
+                      return <tr key={`${name}-${i}`}><td><Dot ok={String(status).startsWith("running") ? true : "degraded"} /></td><td style={{ color: "var(--tb)", fontSize: 10 }}>{name}</td><td style={{ color: String(status).startsWith("running") ? "var(--g)" : "var(--a)", fontSize: 10 }}>{status}</td><td style={{ color: "var(--td)", fontSize: 9 }}>{config || "?"}</td></tr>;
+                    }) : <tr><td colSpan="4" style={{ color: "var(--td)", fontSize: 10 }}>compose project data unavailable</td></tr>}
+                  </tbody>
+                </table>
+              </Card>
+            </div>
             {/* ══ ROW 1: Key Metrics ══ */}
             <div className="grid g5" style={{ marginBottom: 1 }}>
               <Card title="UPTIME" delay={0}>
@@ -1835,7 +1939,6 @@
                 >
                   {(() => {
                     const pool = d.databases?.pool_state || {};
-                    const legacy = stackData?.legacy_rates || {};
                     const gap =
                       svc?.anvil?.block && pool?.last_indexed_block
                         ? Number(svc.anvil.block) - Number(pool.last_indexed_block)
@@ -1864,12 +1967,6 @@
                           <span>block state rows</span>
                           <span style={{ color: "var(--tb)" }}>{fmtN(pool.block_states_rows)}</span>
                         </div>
-                        <div style={{ borderTop: "1px dashed rgba(255,255,255,0.08)", paddingTop: 6, fontSize: 10 }}>
-                          <span style={{ color: "var(--td)" }}>legacy rates container:</span>{" "}
-                          <span style={{ color: legacy.running ? "var(--a)" : "var(--g)" }}>
-                            {legacy.running ? "still running (remove before prod)" : "not running"}
-                          </span>
-                        </div>
                       </div>
                     );
                   })()}
@@ -1877,6 +1974,25 @@
               </div>
             )}
 
+
+            {/* INDEXER SOURCE MATRIX */}
+            <Card title="INDEXER SOURCE MATRIX" badge={<Badge text={`${indexerSourceRows.length} SOURCE SIGNALS`} type={indexerSourceRows.length ? "c" : "a"} />} style={{ marginBottom: 1 }} delay={10}>
+              <table className="tbl">
+                <thead><tr><th>source</th><th>kind</th><th className="r">head</th><th className="r">event</th><th className="r">processed</th><th>last data</th><th>last success</th><th>error</th></tr></thead>
+                <tbody>
+                  {indexerSourceRows.length ? indexerSourceRows.map((row, i) => <tr key={`${row.source}-${row.kind}-${i}`}>
+                    <td style={{ color: "var(--tb)", fontSize: 10 }}>{row.source || "?"}</td>
+                    <td style={{ fontSize: 10 }}>{row.kind || "?"}</td>
+                    <td className="r" style={{ fontSize: 10 }}>{fmtN(row.sourceHeadBlock || row.lastScannedBlock)}</td>
+                    <td className="r" style={{ fontSize: 10 }}>{fmtN(row.lastEventBlock)}</td>
+                    <td className="r" style={{ fontSize: 10 }}>{fmtN(row.lastProcessedBlock)}</td>
+                    <td style={{ color: "var(--td)", fontSize: 10 }}>{row.lastDataTimestamp || "?"}</td>
+                    <td style={{ color: "var(--td)", fontSize: 10 }}>{row.lastSuccessAt ? fmtAgo(row.lastSuccessAt) : "?"}</td>
+                    <td style={{ color: row.lastError ? "var(--r)" : "var(--td)", fontSize: 10 }}>{row.lastError || "?"}</td>
+                  </tr>) : <tr><td colSpan="8" style={{ color: "var(--td)", fontSize: 10 }}>indexer source data unavailable</td></tr>}
+                </tbody>
+              </table>
+            </Card>
             {/* ══ ROW 5: Git + Backups + Docker + Activity ══ */}
             <div className="grid g4" style={{ marginBottom: 1 }}>
               <Card title="LAST DEPLOY" delay={10}>

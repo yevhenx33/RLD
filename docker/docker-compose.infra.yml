@@ -1,18 +1,9 @@
-# ═══════════════════════════════════════════════════════════════
-# RLD Infrastructure — Reth V2 Launch Baseline
-# ═══════════════════════════════════════════════════════════════
-# Always-on services independent from simulation restarts.
-#
-# Launch-critical:
-#   - envio-graphql (data-pipeline)
-#   - monitor-bot
-#
-# Usage:
-#   docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
-# ═══════════════════════════════════════════════════════════════
+name: rld-infra
 
 services:
   monitor-bot:
+    container_name: rld-monitor-bot
+    image: rld-monitor-bot:latest
     build:
       context: ..
       dockerfile: backend/Dockerfile.bot
@@ -27,12 +18,20 @@ services:
       - MAINNET_RPC_URL=${BOT_RPC_URL:-https://eth.llamarpc.com}
       - API_KEY=${API_KEY:-}
       - PYTHONUNBUFFERED=1
-    depends_on:
-      graphql-api:
-        condition: service_healthy
+      - PYTHONDONTWRITEBYTECODE=1
     volumes:
-      - ./bot-data:/data
+      - bot-data:/data
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "protocol-ops"
+      com.rld.service: "monitor-bot"
+      com.rld.tier: "infra"
+      com.rld.persistence: "volume:bot-data"
+      com.rld.description: "Telegram monitor and alert bot for RLD runtime health"
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
       interval: 30s
@@ -40,72 +39,10 @@ services:
       start_period: 30s
       retries: 3
 
-  graphql-api:
-    build:
-      context: ../data-pipeline
-      dockerfile: Dockerfile.indexer
-    container_name: rld_graphql_api
-    restart: unless-stopped
-    env_file:
-      - ../data-pipeline/.env
-    environment:
-      - CLICKHOUSE_HOST=rld_clickhouse
-      - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_API_USER:-${CLICKHOUSE_USER:-default}}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_API_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
-      - CLICKHOUSE_CONNECT_TIMEOUT=5
-      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
-      - CLICKHOUSE_QUERY_RETRIES=1
-      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
-      - ENVIO_CORS_ORIGINS=${ENVIO_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}
-      - INDEXER_READY_PROTOCOLS=${INDEXER_READY_PROTOCOLS:-AAVE_MARKET,CHAINLINK_PRICES,SOFR_RATES}
-      - INDEXER_MAX_READY_LAG_BLOCKS=${INDEXER_MAX_READY_LAG_BLOCKS:-250000}
-      - INDEXER_MAX_READY_SOFR_BUSINESS_DAYS=${INDEXER_MAX_READY_SOFR_BUSINESS_DAYS:-3}
-      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
-      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
-    command:
-      [
-        "uvicorn",
-        "indexer.api.graphql:create_app",
-        "--factory",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "5000",
-        "--workers",
-        "2",
-        "--http",
-        "h11",
-        "--timeout-keep-alive",
-        "5",
-        "--limit-max-requests",
-        "20000",
-        "--limit-concurrency",
-        "512"
-      ]
-    volumes:
-      - ../data-pipeline/indexer:/app/indexer
-    ports:
-      - "127.0.0.1:${RATES_API_PORT:-5000}:5000"
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python3",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:5000/livez', timeout=2)"
-        ]
-      interval: 15s
-      timeout: 5s
-      start_period: 20s
-      retries: 5
-
 volumes:
   bot-data:
+    external: true
+    name: rld_monitor_bot_data
 
 networks:
   default:

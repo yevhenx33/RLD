@@ -1,7 +1,9 @@
+name: rld-clickhouse
+
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:${CLICKHOUSE_IMAGE_TAG:-26.3.7.8}
     container_name: rld_clickhouse
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_IMAGE_TAG:-26.3.7.8}
     ports:
       - "127.0.0.1:8123:8123"
       - "127.0.0.1:9000:9000"
@@ -17,6 +19,18 @@ services:
         limits:
           memory: 12G
     restart: unless-stopped
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "clickhouse"
+      com.rld.tier: "database"
+      com.rld.persistence: "bind:/mnt/data/clickhouse"
+      com.rld.description: "Persistent ClickHouse store for rates analytics and protocol-derived tables"
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
 
 networks:
   default:

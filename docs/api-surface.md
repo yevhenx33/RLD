@@ -7,7 +7,7 @@ Single source of truth for API routing across edge, frontend nginx, dashboard ng
 | Plane | Service owner | Internal bind | Contract purpose |
 |---|---|---|---|
 | Simulation API | `backend/indexers/api/graphql.py` | `indexer:8080` | Simulation state, GraphQL, compatibility REST, control plane |
-| Analytics/Rates API | `data-pipeline/indexer/api/graphql.py` | `rld_graphql_api:5000` | Historical analytics, rates GraphQL, readiness, oracle rate feed |
+| Analytics/Rates API | `backend/analytics/api/graphql.py` | `rld_graphql_api:5000` | Historical analytics, rates GraphQL, readiness, oracle rate feed |
 | Faucet API | `docker/reth/faucet_server.py` | `faucet:8088` | Funding endpoint for simulation wallets |
 
 ## Public Edge Contract (`https://rld.fi`)
