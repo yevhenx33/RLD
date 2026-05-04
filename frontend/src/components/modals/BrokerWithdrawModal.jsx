@@ -54,11 +54,11 @@ export default function BrokerWithdrawModal({
       const tx = await broker[fnName](userAddr, raw, { gasLimit: 300_000n });
 
       setExecutionStep("Waiting for confirmation...");
-      await tx.wait();
+      const receipt = await tx.wait();
 
       // Atomic: refresh state THEN close modal
       setAmount("");
-      onSuccess?.();
+      onSuccess?.(receipt);
       onClose();
     } catch (e) {
       console.error("[Withdraw] failed:", e);

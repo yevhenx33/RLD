@@ -4,6 +4,7 @@ import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
 import { SIM_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { rpcProvider } from "../utils/provider";
+import { BROKER_DATA_QUERY, LEGACY_BROKER_DATA_QUERY, getActiveBrokerState, isBrokerSyncedToBlock, isScopedBrokerQueryUnsupported } from "./brokerDataConfig.js";
 
 // ── Minimal ABI for TWAMM enrichment only ───────────────────────────
 const TWAP_ENGINE_VIEW_ABI = [
@@ -82,16 +83,7 @@ function liquidityToAmounts(liquidity, tickLower, tickUpper, currentTick) {
 
 // ── GQL query: one round-trip for everything ────────────────────────
 
-const BROKER_DATA_QUERY = `
-  query BrokerData($owner: String!, $marketId: String!) {
-    brokerProfile(owner: $owner)
-    poolSnapshot(marketId: $marketId) {
-      markPrice indexPrice tick
-      normalizationFactor
-    }
-    brokerOperations(owner: $owner)
-  }
-`;
+export { BROKER_DATA_QUERY, LEGACY_BROKER_DATA_QUERY, resolveSelectedBrokerAddress } from "./brokerDataConfig.js";
 
 async function gqlFetch(query, variables) {
   return postGraphQL(SIM_GRAPHQL_URL, { query, variables });
@@ -118,10 +110,18 @@ async function gqlFetch(query, variables) {
  * @param {React.RefObject} pauseRef    When .current is truthy, block updates are paused
  * @returns {{ data, refresh }}
  */
-export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, pauseRef) {
+export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, pauseRef, selectedBrokerAddress) {
   const [data, setData] = useState(null);
   const mountedRef = useRef(true);
   const fetchingRef = useRef(false);
+  const queuedFetchRef = useRef(false);
+  const queuedForceRef = useRef(false);
+  const selectedBrokerAddressRef = useRef(null);
+  const syncTargetRef = useRef(null);
+
+  useEffect(() => {
+    selectedBrokerAddressRef.current = selectedBrokerAddress;
+  }, [selectedBrokerAddress]);
 
   const marketId = marketInfo?.marketId || marketInfo?.market_id;
   const twammMarketId = marketInfo?.poolId || marketInfo?.pool_id || marketId;
@@ -136,28 +136,81 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
   const positionSymbol = marketInfo?.position_token?.symbol || marketInfo?.positionToken?.symbol || "wRLP";
 
   // ── Core fetch: GQL + minimal RPC → single setState ───────────
-  const fetchAll = useCallback(async (force = false) => {
+  const fetchAll = useCallback(async (force = false, brokerAddressOverride = undefined) => {
     if (!account || !marketId) return;
     // Skip block-driven updates while TX is executing (unless forced by refresh())
     if (!force && pauseRef?.current) return;
-    if (fetchingRef.current) return;
+    if (fetchingRef.current) {
+      queuedFetchRef.current = true;
+      queuedForceRef.current = queuedForceRef.current || force;
+      return;
+    }
+    if (brokerAddressOverride !== undefined) {
+      selectedBrokerAddressRef.current = brokerAddressOverride;
+    }
     fetchingRef.current = true;
 
     try {
       // ── Phase 1: One GQL round-trip ─────────────────────────────
-      const gql = await gqlFetch(BROKER_DATA_QUERY, {
-        owner: account,
-        marketId,
-      });
+      let usedLegacyBrokerQuery = false;
+      let gql;
+      try {
+        gql = await gqlFetch(BROKER_DATA_QUERY, {
+          owner: account,
+          marketId,
+          brokerAddress: selectedBrokerAddressRef.current || null,
+        });
+      } catch (e) {
+        if (!isScopedBrokerQueryUnsupported(e)) throw e;
+        usedLegacyBrokerQuery = true;
+        gql = await gqlFetch(LEGACY_BROKER_DATA_QUERY, {
+          owner: account,
+          marketId,
+        });
+      }
 
-      const profile = gql.brokerProfile; // null if no broker
+      const brokerAccounts = (gql.brokers || []).filter(
+        (broker) => broker.owner?.toLowerCase() === account.toLowerCase(),
+      );
+      let profile = gql.brokerProfile; // null if no broker for this market/selection
+      let operations = gql.brokerOperations || [];
+      const activeBrokerState = getActiveBrokerState(
+        brokerAccounts,
+        selectedBrokerAddressRef.current,
+        profile,
+      );
+      const activeBrokerAddress = activeBrokerState.activeBrokerAddress;
+      const syncTarget = syncTargetRef.current;
+      const syncApplies = !!(
+        syncTarget?.minBlock &&
+        activeBrokerAddress &&
+        syncTarget.brokerAddress?.toLowerCase() === activeBrokerAddress.toLowerCase()
+      );
+      const isBrokerSyncing = syncApplies && !isBrokerSyncedToBlock(
+        activeBrokerState.activeBroker,
+        syncTarget.minBlock,
+      );
+      if (syncApplies && !isBrokerSyncing) {
+        syncTargetRef.current = null;
+      }
+      if (usedLegacyBrokerQuery && profile) {
+        const selectedBroker = selectedBrokerAddressRef.current?.toLowerCase();
+        const profileBroker = profile.address?.toLowerCase();
+        const profileInCurrentMarket = brokerAccounts.some(
+          (broker) => broker.address?.toLowerCase() === profileBroker,
+        );
+        const profileMatchesSelection = !selectedBroker || profileBroker === selectedBroker;
+        if (!profileInCurrentMarket || !profileMatchesSelection) {
+          profile = null;
+          operations = [];
+        }
+      }
       // TWAMM orders are nested inside brokerProfile (status-based, not isCancelled)
       const rawTwamm = (profile?.twammOrders || []).map((o) => ({
         ...o,
         isCancelled: o.status !== "active",
       }));
       const snapshot = gql.poolSnapshot;
-      const operations = gql.brokerOperations || [];
 
       // Pool snapshot data for client-side math
       const markPrice = snapshot?.markPrice || 0;
@@ -384,11 +437,9 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
       // ── Phase 3: Client-side NAV math ───────────────────────────
       // Balances are raw uint256 strings from the indexer DB (6 decimals).
       // Convert to human-readable floats for client math.
-      const toHuman = (raw) => Number(raw || "0") / 1e6;
-
-      const collateral = toHuman(profile?.wausdcBalance);   // waUSDC balance (human)
-      const wrlpBalance = toHuman(profile?.wrlpBalance);    // wRLP balance (human)
-      const debtPrincipal = toHuman(profile?.debtPrincipal); // debt principal (human)
+      const collateral = activeBrokerState.brokerBalance;   // waUSDC balance (human)
+      const wrlpBalance = activeBrokerState.wrlpBalance;    // wRLP balance (human)
+      const debtPrincipal = activeBrokerState.debtPrincipal; // debt principal (human)
 
       // True debt = principal × normalizationFactor (wRLP units)
       const trueDebt = debtPrincipal * normFactor;
@@ -465,14 +516,56 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
         : 1.1;
       const isSolvent = healthFactor > maintMargin;
 
+      if (!profile) {
+        if (mountedRef.current) {
+          setData({
+            brokerAccounts,
+            hasBroker: activeBrokerState.hasTradingBroker,
+            hasTradingBroker: activeBrokerState.hasTradingBroker,
+            brokerAddress: activeBrokerState.activeBrokerAddress,
+            activeBrokerAddress: activeBrokerState.activeBrokerAddress,
+            activeBroker: activeBrokerState.activeBroker,
+            brokerBalance: activeBrokerState.brokerBalance,
+            collateralBalance: activeBrokerState.brokerBalance,
+            positionBalance: 0,
+            wrlpTokenBalance: activeBrokerState.wrlpBalance,
+            debtPrincipal: activeBrokerState.debtPrincipal,
+            trueDebt: 0,
+            debtValue: 0,
+            nav: 0,
+            v4LPValue: 0,
+            healthFactor: Infinity,
+            isSolvent: true,
+            colRatio: Infinity,
+            normFactor,
+            activeTokenId: 0,
+            lpPositions: [],
+            twammOrders: [],
+            operations,
+            markPrice,
+            indexPrice,
+            currentTick,
+            isBrokerSyncing,
+            brokerSyncTargetBlock: syncTarget?.minBlock || null,
+            brokerUpdatedBlock: activeBrokerState.updatedBlock,
+            _profile: null,
+          });
+        }
+        return;
+      }
+
       // ── Phase 4: ONE atomic setState ────────────────────────────
       if (mountedRef.current) {
         setData((prev) => ({
           ...prev,
 
           // Broker account
-          hasBroker: profile !== null,
-          brokerAddress: profile?.address || null,
+          brokerAccounts,
+          hasBroker: activeBrokerState.hasTradingBroker,
+          hasTradingBroker: activeBrokerState.hasTradingBroker,
+          brokerAddress: activeBrokerState.activeBrokerAddress,
+          activeBrokerAddress: activeBrokerState.activeBrokerAddress,
+          activeBroker: activeBrokerState.activeBroker,
           brokerBalance: collateral,
 
           // Broker state (from GQL + client math)
@@ -506,6 +599,9 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
           markPrice,
           indexPrice,
           currentTick,
+          isBrokerSyncing,
+          brokerSyncTargetBlock: syncTarget?.minBlock || null,
+          brokerUpdatedBlock: activeBrokerState.updatedBlock,
 
           // Raw profile for modals
           _profile: profile,
@@ -516,6 +612,23 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
       // On error, keep stale data — don't clear
     } finally {
       fetchingRef.current = false;
+      if (queuedFetchRef.current && mountedRef.current) {
+        const queuedForce = queuedForceRef.current;
+        queuedFetchRef.current = false;
+        queuedForceRef.current = false;
+        fetchAll(queuedForce);
+      } else if (syncTargetRef.current && mountedRef.current) {
+        const target = syncTargetRef.current;
+        if (Date.now() < target.deadlineMs) {
+          setTimeout(() => {
+            if (mountedRef.current && syncTargetRef.current === target) {
+              fetchAll(true, target.brokerAddress);
+            }
+          }, 750);
+        } else {
+          syncTargetRef.current = null;
+        }
+      }
     }
   }, [
     account,
@@ -529,22 +642,34 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
     marketInfo,
     blockTimestamp,
     pauseRef,
+    selectedBrokerAddress,
   ]);
 
   // ── Block-driven: refresh when new block arrives ──────────────
   useEffect(() => {
     mountedRef.current = true;
-    if (blockNumber && account && marketId) fetchAll();
+    if (blockNumber && account && marketId) {
+      fetchAll();
+    } else {
+      setData(null);
+    }
     return () => {
       mountedRef.current = false;
     };
   }, [blockNumber, fetchAll, account, marketId]);
 
   // ── refresh(): call after any transaction ─────────────────────
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (brokerAddressOverride = undefined, minUpdatedBlock = null) => {
+    if (minUpdatedBlock && brokerAddressOverride) {
+      syncTargetRef.current = {
+        brokerAddress: brokerAddressOverride,
+        minBlock: Number(minUpdatedBlock),
+        deadlineMs: Date.now() + 12_000,
+      };
+    }
     // Small delay to let chain state settle after TX confirmation
     await new Promise((r) => setTimeout(r, 500));
-    await fetchAll(true); // force=true bypasses executing pause
+    await fetchAll(true, brokerAddressOverride); // force=true bypasses executing pause
   }, [fetchAll]);
 
   return { data, refresh };

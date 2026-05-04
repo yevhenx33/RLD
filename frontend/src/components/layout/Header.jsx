@@ -35,6 +35,7 @@ export default function Header({
     account,
     waUsdcAddr,
     marketInfo?.external_contracts,
+    { enabled: faucetEnabled && isModalOpen },
   );
 
   const handleFaucetClick = async () => {

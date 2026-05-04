@@ -1,7 +1,12 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { ethers } from "ethers";
 
 const WalletContext = createContext();
+
+let ethersModulePromise;
+function loadEthers() {
+  ethersModulePromise ||= import("ethers").then((mod) => mod.ethers);
+  return ethersModulePromise;
+}
 
 export function WalletProvider({ children }) {
   const [account, setAccount] = useState(null);
@@ -26,6 +31,7 @@ export function WalletProvider({ children }) {
 
   const fetchBalances = async (acc, prov) => {
     if (!acc || !prov) return;
+    const ethers = await loadEthers();
 
     // Get Network info for debug
     const net = await prov.getNetwork();
@@ -76,52 +82,48 @@ export function WalletProvider({ children }) {
 
   // Check if wallet is already connected
   useEffect(() => {
-    if (window.ethereum) {
-      const tempProvider = new ethers.BrowserProvider(window.ethereum);
-       
-      setProvider(tempProvider);
+    if (!window.ethereum) return undefined;
 
-      // Auto-connect if already authorized
-      window.ethereum
-        .request({ method: "eth_accounts" })
-        .then((accounts) => {
-          if (accounts.length > 0) {
-            setAccount(accounts[0]);
-            fetchBalances(accounts[0], tempProvider);
-          }
-        })
-        .catch(console.error);
+    window.ethereum
+      .request({ method: "eth_accounts" })
+      .then((accounts) => {
+        if (accounts.length === 0) return;
+        loadEthers().then((ethers) => {
+          const tempProvider = new ethers.BrowserProvider(window.ethereum);
+          setProvider(tempProvider);
+          setAccount(accounts[0]);
+          fetchBalances(accounts[0], tempProvider);
+        });
+      })
+      .catch(console.error);
 
-      // Listen for accountsChanged
-      const handleAccountsChanged = (accounts) => {
-        const newAccount = accounts.length > 0 ? accounts[0] : null;
-        setAccount(newAccount);
-        if (newAccount) {
+    const handleAccountsChanged = (accounts) => {
+      const newAccount = accounts.length > 0 ? accounts[0] : null;
+      setAccount(newAccount);
+      if (newAccount) {
+        loadEthers().then((ethers) => {
+          const tempProvider = new ethers.BrowserProvider(window.ethereum);
+          setProvider(tempProvider);
           fetchBalances(newAccount, tempProvider);
-        } else {
-          setBalance("0");
-          setUsdcBalance("0");
-        }
-      };
+        });
+      } else {
+        setBalance("0");
+        setUsdcBalance("0");
+      }
+    };
 
-      // Listen for chainChanged (optional but good practice) to refetch?
-      // For now simple account change is enough.
+    window.ethereum.on("accountsChanged", handleAccountsChanged);
 
-      window.ethereum.on("accountsChanged", handleAccountsChanged);
-
-      return () => {
-        window.ethereum.removeListener(
-          "accountsChanged",
-          handleAccountsChanged,
-        );
-      };
-    }
+    return () => {
+      window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const connectWallet = async () => {
     if (!provider) {
       if (window.ethereum) {
+        const ethers = await loadEthers();
         const tempProvider = new ethers.BrowserProvider(window.ethereum);
         setProvider(tempProvider);
         try {
