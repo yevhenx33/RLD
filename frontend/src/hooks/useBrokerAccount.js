@@ -3,6 +3,7 @@ import useSWR from "swr";
 import { ethers } from "ethers";
 import { RPC_URL, getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
+import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 // ── Minimal ABIs ───────────────────────────────────────────────────
 const FACTORY_ABI = [
@@ -92,8 +93,8 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
       return ethers.formatUnits(bal, 6);
     },
     {
-      refreshInterval: 12000,
-      dedupingInterval: 2000,
+      refreshInterval: REFRESH_INTERVALS.BROKER_ACCOUNT_MS,
+      dedupingInterval: REFRESH_INTERVALS.BROKER_ACCOUNT_DEDUPE_MS,
       revalidateOnFocus: false,
       keepPreviousData: true,
     },

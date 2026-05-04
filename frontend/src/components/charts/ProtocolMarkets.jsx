@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ArrowLeft,
 } from "lucide-react";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
@@ -77,8 +78,8 @@ export default function ProtocolMarkets() {
     ([url, , variables]) =>
       postGraphQL(url, { query: PROTOCOL_MARKETS_QUERY, variables }),
     {
-      refreshInterval: 30000,
-      dedupingInterval: 5000,
+      refreshInterval: REFRESH_INTERVALS.ANALYTICS_PAGE_MS,
+      dedupingInterval: REFRESH_INTERVALS.ANALYTICS_DEDUPE_MS,
       revalidateOnFocus: false,
     },
   );

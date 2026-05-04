@@ -9,6 +9,7 @@ import { formatNum } from "../../utils/helpers";
 import { calcHedgeSize, calcInitialLTV } from "../../utils/hedgeCalc";
 import { useToast } from "../../hooks/useToast";
 import { ToastContainer } from "../common/Toast";
+import { debugLog } from "../../utils/debugLogger";
 
 // Hooks
 import { useTradeLogic } from "../../hooks/useTradeLogic";
@@ -729,7 +730,7 @@ export default function BondsPage() {
         onConfirm={() => {
           createBond(notional, maturityHours, latest.apy, (receipt) => {
             setShowBondModal(false);
-            console.log("[Bond] Created:", receipt.hash, "Broker:", receipt.brokerAddress);
+            debugLog("[Bond] Created:", receipt.hash, "Broker:", receipt.brokerAddress);
             addToast({
               type: "success",
               title: "Bond Created",

@@ -6,6 +6,7 @@ import {
   buildHooklessPoolKey,
   buildHooklessPoolKeyArray,
 } from "../lib/peripheryIntegration";
+import { debugLog } from "../utils/debugLogger";
 
 // ── ABI fragments ─────────────────────────────────────────────────
 
@@ -128,7 +129,7 @@ export function useBondExecution(
         // Self-funding: user pays only notional (swap proceeds fund TWAMM)
         const totalWei = notionalWei;
 
-        console.log("[Bond] Notional:", notionalUSD, "Yield:", yieldUSD.toFixed(2),
+        debugLog("[Bond] Notional:", notionalUSD, "Yield:", yieldUSD.toFixed(2),
                      "Debt:", debtWRLP.toFixed(6), "wRLP (mark:", markPrice, ")");
 
         // ── Determine which token to approve ─────────────────────
@@ -143,7 +144,7 @@ export function useBondExecution(
             const aToken = new ethers.Contract(aTokenAddr, ATOKEN_ABI, readProvider);
             approveTokenAddr = await aToken.UNDERLYING_ASSET_ADDRESS();
             approveLabel = "USDC";
-            console.log("[Bond] Using underlying:", approveTokenAddr);
+            debugLog("[Bond] Using underlying:", approveTokenAddr);
           } catch (e) {
             console.warn("[Bond] Failed to derive underlying, falling back to waUSDC", e);
           }
@@ -179,7 +180,7 @@ export function useBondExecution(
             ethers.MaxUint256,
           );
           await approveTx.wait();
-          console.log(`[Bond] Approved BondFactory for ${approveLabel}`);
+          debugLog(`[Bond] Approved BondFactory for ${approveLabel}`);
         }
 
         // ── Mint bond (single TX) ───────────────────────────────
@@ -195,7 +196,7 @@ export function useBondExecution(
 
         const durationSec = Math.floor(durationHours * 3600);
 
-        console.log("[Bond] mintBond params:", {
+        debugLog("[Bond] mintBond params:", {
           notionalWei: notionalWei.toString(),
           debtWei: debtWei.toString(),
           durationSec,
@@ -220,7 +221,7 @@ export function useBondExecution(
 
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
-        console.log(`[MintBond] Gas used: ${receipt.gasUsed.toString()}`);
+        debugLog(`[MintBond] Gas used: ${receipt.gasUsed.toString()}`);
 
         if (receipt.status === 1) {
           // Parse BondMinted event for broker address
@@ -345,7 +346,7 @@ export function useBondExecution(
 
         setStep("Waiting for confirmation...");
         const receipt = await tx.wait();
-        console.log(`[CloseBond] Gas used: ${receipt.gasUsed.toString()}`);
+        debugLog(`[CloseBond] Gas used: ${receipt.gasUsed.toString()}`);
 
         if (receipt.status === 1) {
           // Parse BondClosed event for return amounts
@@ -358,7 +359,7 @@ export function useBondExecution(
               });
               if (parsed?.name === "BondClosed") {
                 const collReturned = ethers.formatUnits(parsed.args.collateralReturned, 6);
-                console.log("[CloseBond] Returned:", collReturned, "waUSDC");
+                debugLog("[CloseBond] Returned:", collReturned, "waUSDC");
                 break;
               }
             } catch { /* not our event */ }

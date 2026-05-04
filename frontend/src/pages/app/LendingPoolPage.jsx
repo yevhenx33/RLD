@@ -2,10 +2,11 @@ import React, { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { Activity, ArrowLeft, Loader2, ExternalLink } from "lucide-react";
-import RLDPerformanceChart from "../../components/charts/RLDChart";
+import RLDPerformanceChart from "../../charts/primitives/RLDPerformanceChart";
 import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
 import { getTokenIcon } from "../../utils/tokenIcons";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 
 const PROTOCOL_MAP = {
   aave: "AAVE_MARKET",
@@ -97,8 +98,8 @@ export default function LendingPoolPage() {
         },
       }),
     {
-      refreshInterval: 30000,
-      dedupingInterval: 5000,
+      refreshInterval: REFRESH_INTERVALS.ANALYTICS_PAGE_MS,
+      dedupingInterval: REFRESH_INTERVALS.ANALYTICS_DEDUPE_MS,
       revalidateOnFocus: false,
     }
   );

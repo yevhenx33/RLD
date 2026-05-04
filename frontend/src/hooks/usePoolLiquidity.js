@@ -2,6 +2,13 @@ import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 import { getSigner } from "../utils/connection";
 import { rpcProvider } from "../utils/provider";
+import { debugLog } from "../utils/debugLogger";
+import {
+  computeLiquidity,
+  decodePositionInfo,
+  liquidityToAmounts,
+  priceToTick,
+} from "../lib/poolMath";
 
 // ── PrimeBroker LP ABI ────────────────────────────────────────────
 const BROKER_LP_ABI = [
@@ -26,136 +33,6 @@ const STATE_VIEW_ABI = [
   "function getPositionInfo(bytes32 poolId, address owner, int24 tickLower, int24 tickUpper, bytes32 salt) view returns (uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128)",
   "function getFeeGrowthInside(bytes32 poolId, int24 tickLower, int24 tickUpper) view returns (uint256 feeGrowthInside0X128, uint256 feeGrowthInside1X128)",
 ];
-
-// ── Tick math helpers ─────────────────────────────────────────────
-
-/**
- * Convert price to Uniswap V4 tick, aligned to tick spacing.
- * price = 1.0001^tick → tick = log(price) / log(1.0001)
- */
-function priceToTick(price, tickSpacing = 5) {
-  if (price <= 0) return 0;
-  const raw = Math.log(price) / Math.log(1.0001);
-  return Math.floor(raw / tickSpacing) * tickSpacing;
-}
-
-/**
- * Compute V4 concentrated liquidity from token amounts and price range.
- *
- * Follows standard Uni V3/V4 math:
- *   amount0 = L × (1/√pC − 1/√pU)   (when in range)
- *   amount1 = L × (√pC − √pL)        (when in range)
- *
- * We solve for L from whichever amount the user supplied, or min(L0, L1)
- * when both are supplied.
- */
-const MAX_UINT128 = (1n << 128n) - 1n;
-
-function safeSqrtPrice(tick) {
-  // Clamp tick to avoid Infinity/zero from Math.pow
-  const clamped = Math.max(-887270, Math.min(887270, tick));
-  return Math.sqrt(Math.pow(1.0001, clamped));
-}
-
-/**
- * Decode tickLower and tickUpper from V4 PositionInfo (packed bytes32).
- * Layout (LSB → MSB):
- *   [0..7]   hasSubscriber (8 bits)
- *   [8..31]  tickLower     (24 bits, int24)
- *   [32..55] tickUpper     (24 bits, int24)
- *   [56..255] poolId       (200 bits)
- */
-function decodePositionInfo(infoBytes32) {
-  const val = BigInt(infoBytes32);
-  const tickLowerRaw = Number((val >> 8n) & 0xFFFFFFn);
-  const tickUpperRaw = Number((val >> 32n) & 0xFFFFFFn);
-  // Sign-extend int24
-  const tickLower = tickLowerRaw >= 0x800000 ? tickLowerRaw - 0x1000000 : tickLowerRaw;
-  const tickUpper = tickUpperRaw >= 0x800000 ? tickUpperRaw - 0x1000000 : tickUpperRaw;
-  // poolId occupies bits [56..255] — the top 200 bits (25 bytes)
-  const poolId = val >> 56n;
-  return { tickLower, tickUpper, poolId };
-}
-
-/**
- * Compute token0/token1 amounts from liquidity and tick range (human-readable, 6 decimals).
- */
-function liquidityToAmounts(liquidity, tickLower, tickUpper, currentTick) {
-  const sqrtPL = safeSqrtPrice(tickLower);
-  const sqrtPU = safeSqrtPrice(tickUpper);
-  const sqrtPC = safeSqrtPrice(currentTick);
-  const L = Number(liquidity);
-
-  let amount0 = 0;
-  let amount1 = 0;
-
-  if (currentTick < tickLower) {
-    // Below range: all token0
-    amount0 = L * (1 / sqrtPL - 1 / sqrtPU);
-  } else if (currentTick >= tickUpper) {
-    // Above range: all token1
-    amount1 = L * (sqrtPU - sqrtPL);
-  } else {
-    // In range: both tokens
-    amount0 = L * (1 / sqrtPC - 1 / sqrtPU);
-    amount1 = L * (sqrtPC - sqrtPL);
-  }
-
-  // Convert from raw (6 decimals) to human
-  return {
-    amount0: amount0 / 1e6,
-    amount1: amount1 / 1e6,
-  };
-}
-
-function computeLiquidity(amount0, amount1, tickLower, tickUpper, currentTick) {
-  const sqrtPL = safeSqrtPrice(tickLower);
-  const sqrtPU = safeSqrtPrice(tickUpper);
-  const sqrtPC = safeSqrtPrice(currentTick);
-
-  const candidates = [];
-
-  if (currentTick < tickLower) {
-    // Only token0 matters
-    if (amount0 > 0) {
-      const denom = 1 / sqrtPL - 1 / sqrtPU;
-      if (denom > 0) candidates.push(amount0 / denom);
-    }
-  } else if (currentTick >= tickUpper) {
-    // Only token1 matters
-    if (amount1 > 0) {
-      const denom = sqrtPU - sqrtPL;
-      if (denom > 0) candidates.push(amount1 / denom);
-    }
-  } else {
-    // Both tokens needed
-    if (amount0 > 0) {
-      const denom = 1 / sqrtPC - 1 / sqrtPU;
-      if (denom > 0) candidates.push(amount0 / denom);
-    }
-    if (amount1 > 0) {
-      const denom = sqrtPC - sqrtPL;
-      if (denom > 0) candidates.push(amount1 / denom);
-    }
-  }
-
-  if (candidates.length === 0) return 0n;
-  const L = Math.min(...candidates);
-  if (!isFinite(L) || L <= 0) return 0n;
-
-  // Cap to uint128 max
-  let result = BigInt(Math.floor(L));
-  if (result > MAX_UINT128) result = MAX_UINT128;
-
-  console.log("[LP] computeLiquidity:", {
-    tickLower, tickUpper, currentTick: Math.round(currentTick),
-    sqrtPL, sqrtPU, sqrtPC,
-    amount0, amount1,
-    liquidity: result.toString(),
-  });
-
-  return result;
-}
 
 // ── Hook ──────────────────────────────────────────────────────────
 
@@ -273,7 +150,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         const active = mapped.find((p) => p.isActive) || mapped[0] || null;
         setActivePosition(active);
         setPositionsLoaded(true);
-        console.log("[LP] Loaded", mapped.length, "positions via GraphQL");
+        debugLog("[LP] Loaded", mapped.length, "positions via GraphQL");
         return;
       }
     } catch (gqlErr) {
@@ -379,7 +256,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
       setActivePosition(active || null);
       setPositionsLoaded(true);
       console.timeEnd("[LP] RPC fallback");
-      console.log("[LP] Found", positions.length, "positions via RPC fallback");
+      debugLog("[LP] Found", positions.length, "positions via RPC fallback");
     } catch (err) {
       console.warn("[LP] Failed to read positions:", err);
       setPositionsLoaded(true);
@@ -449,7 +326,7 @@ export function usePoolLiquidity(brokerAddress, marketInfo, { onRefreshComplete 
         const a0Max = amount0Raw > 0n ? amount0Raw * slippage : ethers.MaxUint256;
         const a1Max = amount1Raw > 0n ? amount1Raw * slippage : ethers.MaxUint256;
 
-        console.log("[LP] addPoolLiquidity params:", {
+        debugLog("[LP] addPoolLiquidity params:", {
           twammHook,
           tickLower,
           tickUpper,

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { ethers } from "ethers";
 import { getSigner } from "../utils/connection";
+import { debugLog } from "../utils/debugLogger";
 
 // ── ABI fragments ────────────────────────────────────────────────
 
@@ -112,7 +113,7 @@ export function useTwammOrder(
         const EXPIRATION_INTERVAL = 3600n; // must match JTM's expirationInterval
         const durationSeconds = BigInt(Math.round(durationHours)) * EXPIRATION_INTERVAL;
 
-        console.log("[TWAMM] submitTwammOrder params:", {
+        debugLog("[TWAMM] submitTwammOrder params:", {
           twapEngine,
           marketId: twammMarketId,
           zeroForOne,
@@ -275,7 +276,7 @@ export function useTwammOrder(
             setExecuting(false);
             return;
           }
-          console.log("[TWAMM] claimWithId params:", {
+          debugLog("[TWAMM] claimWithId params:", {
             twapEngine,
             marketId: twammMarketId,
             orderId,

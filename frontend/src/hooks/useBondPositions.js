@@ -3,6 +3,7 @@ import useSWR from "swr";
 import { SIM_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { queryKeys } from "../api/queryKeys";
+import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 const BONDS_QUERY = `
   query BondPositions($owner: String!) {
@@ -37,7 +38,7 @@ export function useBondPositions(account, entryRate, bondFactoryAddr, pollInterv
     {
       refreshInterval: paused ? 0 : pollInterval, // 0 = no polling while TX executes
       revalidateOnFocus: false,
-      dedupingInterval: 2000,
+      dedupingInterval: REFRESH_INTERVALS.POSITION_DEDUPE_MS,
       keepPreviousData: true,
     },
   );

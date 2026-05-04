@@ -4,6 +4,7 @@ import { ENVIO_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { queryKeys } from "../api/queryKeys";
 import { getPastDate, getToday } from "../utils/helpers";
+import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 const MAX_POINTS = 17520;
 
@@ -51,7 +52,7 @@ export function useMarketData(resolution = "4H") {
       MAX_POINTS,
     ),
     fetchMarketRates,
-    { refreshInterval: 10000, revalidateOnFocus: false },
+    { refreshInterval: REFRESH_INTERVALS.MARKET_DATA_MS, revalidateOnFocus: false },
   );
 
   const stats = useMemo(() => {
