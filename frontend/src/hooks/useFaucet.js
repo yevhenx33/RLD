@@ -1,6 +1,4 @@
 import { useState, useCallback, useEffect } from "react";
-import { ethers } from "ethers";
-import { rpcProvider } from "../utils/provider";
 import { debugLog } from "../utils/debugLogger";
 
 /**
@@ -15,6 +13,18 @@ const WAUSDC_ABI = [
 const ERC20_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
 ];
+
+let ethersModulePromise;
+function loadEthers() {
+  ethersModulePromise ||= import("ethers").then((mod) => mod.ethers);
+  return ethersModulePromise;
+}
+
+let rpcProviderPromise;
+function loadRpcProvider() {
+  rpcProviderPromise ||= import("../utils/provider").then((mod) => mod.rpcProvider);
+  return rpcProviderPromise;
+}
 
 async function faucetReth(apiUrl, user, setStep) {
   debugLog("[faucet] Requesting funds via API...");
@@ -36,7 +46,7 @@ async function faucetReth(apiUrl, user, setStep) {
   return { success: true, ...data };
 }
 
-export function useFaucet(account, waUsdcAddress, externalContracts) {
+export function useFaucet(account, waUsdcAddress, externalContracts, { enabled = true } = {}) {
   const USDC =
     externalContracts?.usdc || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
   const [loading, setLoading] = useState(false);
@@ -51,7 +61,7 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
     async (addr) => {
       if (!addr || !waUsdcAddress) return;
       try {
-        const provider = rpcProvider;
+        const [ethers, provider] = await Promise.all([loadEthers(), loadRpcProvider()]);
 
         const waUsdcContract = new ethers.Contract(
           waUsdcAddress,
@@ -75,8 +85,8 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
   );
 
   useEffect(() => {
-    if (account && waUsdcAddress) fetchBalance(account);
-  }, [account, waUsdcAddress, fetchBalance]);
+    if (enabled && account && waUsdcAddress) fetchBalance(account);
+  }, [enabled, account, waUsdcAddress, fetchBalance]);
 
   // ── Main faucet request ──────────────────────────────────
   const requestFaucet = useCallback(
@@ -96,7 +106,7 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
 
         // Poll until balances actually update on-chain
         setStep("Confirming balances...");
-        const provider = rpcProvider;
+        const [ethers, provider] = await Promise.all([loadEthers(), loadRpcProvider()]);
         const waC = new ethers.Contract(waUsdcAddress, WAUSDC_ABI, provider);
         const uC = new ethers.Contract(USDC, ERC20_ABI, provider);
 

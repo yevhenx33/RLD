@@ -58,6 +58,7 @@ class Broker:
     wausdc_balance: Optional[str]
     wrlp_balance: Optional[str]
     debt_principal: Optional[str]
+    updated_block: Optional[int]
     is_frozen: Optional[bool]
     is_liquidated: Optional[bool]
 
@@ -583,21 +584,37 @@ class Query:
         return [_market(r) for r in rows]
 
     @strawberry.field
-    async def brokers(self, market_id: str) -> List[Broker]:
+    async def brokers(self, market_id: str, owner: Optional[str] = None) -> List[Broker]:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM brokers WHERE market_id=$1 ORDER BY created_block", market_id
-            )
+            if owner:
+                row = await conn.fetchrow("""
+                    SELECT brokers
+                    FROM broker_account_index
+                    WHERE market_id=$1 AND owner=$2
+                """, market_id, owner.lower())
+                payload = row["brokers"] if row else []
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                rows = payload or []
+            else:
+                rows = await conn.fetch("""
+                    SELECT * FROM brokers
+                    WHERE market_id=$1
+                    ORDER BY created_block DESC, address DESC
+                """, market_id)
         return [Broker(
-            address=r["address"], market_id=r["market_id"],
-            owner=r["owner"], created_block=r["created_block"],
-            active_token_id=r["active_lp_token_id"],
-            wausdc_balance=str(r["wausdc_balance"]) if r["wausdc_balance"] is not None else None,
-            wrlp_balance=str(r["wrlp_balance"]) if r["wrlp_balance"] is not None else None,
-            debt_principal=str(r["debt_principal"]) if r["debt_principal"] is not None else None,
-            is_frozen=r.get("is_frozen", False),
-            is_liquidated=r["is_liquidated"],
+            address=r["address"],
+            market_id=r.get("market_id") or r.get("marketId"),
+            owner=r["owner"],
+            created_block=r.get("created_block") or r.get("createdBlock"),
+            active_token_id=r.get("active_lp_token_id") or r.get("activeTokenId"),
+            wausdc_balance=str(r.get("wausdc_balance") if r.get("wausdc_balance") is not None else r.get("wausdcBalance")) if (r.get("wausdc_balance") is not None or r.get("wausdcBalance") is not None) else None,
+            wrlp_balance=str(r.get("wrlp_balance") if r.get("wrlp_balance") is not None else r.get("wrlpBalance")) if (r.get("wrlp_balance") is not None or r.get("wrlpBalance") is not None) else None,
+            debt_principal=str(r.get("debt_principal") if r.get("debt_principal") is not None else r.get("debtPrincipal")) if (r.get("debt_principal") is not None or r.get("debtPrincipal") is not None) else None,
+            updated_block=int(r.get("updated_block") if r.get("updated_block") is not None else r.get("updatedBlock", r.get("created_block", r.get("createdBlock", 0)))) if (r.get("updated_block") is not None or r.get("updatedBlock") is not None or r.get("created_block") is not None or r.get("createdBlock") is not None) else None,
+            is_frozen=r.get("is_frozen", r.get("isFrozen", False)),
+            is_liquidated=r.get("is_liquidated", r.get("isLiquidated", False)),
         ) for r in rows]
 
     @strawberry.field
@@ -767,53 +784,62 @@ class Query:
         ) for r in rows]
 
     @strawberry.field
-    async def broker_operations(self, owner: str, limit: int = 50) -> Optional[JSON]:
-        """Trade operations for a broker, queried by owner address.
-        
-        Reads BrokerRouter events from the
-        events table. Broker address is in topics[1] (indexed param).
-        Returns decoded operations with human-readable amounts.
-        """
+    async def broker_operations(
+        self,
+        owner: str,
+        market_id: str,
+        broker_address: Optional[str] = None,
+        limit: int = 50,
+    ) -> Optional[JSON]:
+        """Trade operations for one broker in the selected market."""
         pool = await get_pool()
         async with pool.acquire() as conn:
-            # Find broker by owner
+            args = [owner.lower(), market_id]
+            broker_filter = ""
+            if broker_address:
+                args.append(broker_address.lower())
+                broker_filter = f" AND address=${len(args)}"
             broker = await conn.fetchrow(
-                "SELECT address FROM brokers WHERE owner = $1",
-                owner.lower()
+                f"""
+                    SELECT address FROM brokers
+                    WHERE owner=$1 AND market_id=$2{broker_filter}
+                    ORDER BY created_block DESC, address DESC
+                    LIMIT 1
+                """,
+                *args,
             )
             if not broker:
                 return []
 
             broker_addr = broker["address"].lower()
-            # Pad to 32-byte topic format: 0x000...address
             broker_topic = "0x" + broker_addr[2:].zfill(64)
 
             rows = await conn.fetch("""
                 SELECT event_name, block_timestamp, block_number, tx_hash, data
                 FROM events
-                WHERE event_name IN (
+                WHERE market_id=$1
+                  AND event_name IN (
                     'RouterSwapExecuted',
                     'ShortPositionUpdated', 'ShortPositionClosed', 'Deposited'
-                )
-                AND data::jsonb->'topics'->>1 = $1
+                  )
+                  AND data::jsonb->'topics'->>1 = $2
                 ORDER BY block_number DESC, log_index DESC
-                LIMIT $2
-            """, broker_topic, limit)
+                LIMIT $3
+            """, market_id, broker_topic, limit)
 
         ops = []
         OP_META = {
             "RouterSwapExecuted": "SWAP",
             "ShortPositionUpdated": "OPEN_SHORT",
             "ShortPositionClosed": "CLOSE_SHORT",
-            "Deposited":     "DEPOSIT",
+            "Deposited": "DEPOSIT",
         }
         for r in rows:
             event_data = json.loads(r["data"]) if isinstance(r["data"], str) else r["data"]
             raw_hex = event_data.get("raw", "") if isinstance(event_data, dict) else ""
-            # Decode (uint256, uint256) from data
             amount1 = 0
             amount2 = 0
-            if raw_hex and len(raw_hex) >= 130:  # 0x + 64 + 64
+            if raw_hex and len(raw_hex) >= 130:
                 try:
                     amount1 = int(raw_hex[2:66], 16)
                     amount2 = int(raw_hex[66:130], 16)
@@ -978,25 +1004,40 @@ class Query:
         return list(reversed(list(positions.values())))
 
     @strawberry.field
-    async def broker_profile(self, owner: str) -> Optional[JSON]:
-        """On-demand broker profile with LP position values and fees.
-        
-        Raw data stored in DB. Values/fees computed at query time
-        using 5N multiplications per LP position. <1ms even with 50 positions.
-        """
+    async def broker_profile(
+        self,
+        owner: str,
+        market_id: str,
+        broker_address: Optional[str] = None,
+    ) -> Optional[JSON]:
+        """On-demand broker profile for one owner broker in one market."""
         pool = await get_pool()
         async with pool.acquire() as conn:
-            # Find broker by owner
+            market_row = await conn.fetchrow(
+                "SELECT pool_id FROM markets WHERE market_id=$1",
+                market_id,
+            )
+            if not market_row:
+                return None
+            pool_id = market_row["pool_id"]
+
+            args = [owner.lower(), market_id]
+            broker_filter = ""
+            if broker_address:
+                args.append(broker_address.lower())
+                broker_filter = f" AND address=${len(args)}"
             broker = await conn.fetchrow(
-                "SELECT * FROM brokers WHERE owner = $1",
-                owner.lower()
+                f"""
+                    SELECT * FROM brokers
+                    WHERE owner=$1 AND market_id=$2{broker_filter}
+                    ORDER BY created_block DESC, address DESC
+                    LIMIT 1
+                """,
+                *args,
             )
             if not broker:
                 return None
 
-            market_id = broker["market_id"]
-
-            # Get latest block state for current prices
             latest = await conn.fetchrow("""
                 SELECT mark_price, tick, fee_growth_global0, fee_growth_global1,
                        index_price
@@ -1009,15 +1050,14 @@ class Query:
 
             mark_price = float(latest["mark_price"] or 0)
             current_tick = int(latest["tick"] or 0)
-            fg0 = int(latest["fee_growth_global0"] or "0")
-            fg1 = int(latest["fee_growth_global1"] or "0")
+            fg0 = int(latest["fee_growth_global0"] or 0)
+            fg1 = int(latest["fee_growth_global1"] or 0)
 
-            # Get LP positions (now keyed by owner, not broker_address)
             positions = await conn.fetch("""
                 SELECT * FROM lp_positions
-                WHERE owner = $1 AND is_burned = FALSE
+                WHERE owner = $1 AND pool_id = $2 AND is_burned = FALSE
                 ORDER BY mint_block DESC
-            """, broker["address"])
+            """, broker["address"], pool_id)
 
             lp_data = []
             Q128 = 2**128
@@ -1027,7 +1067,6 @@ class Query:
                 liquidity = int(pos["liquidity"])
 
                 if tick_lower is not None and tick_upper is not None and liquidity > 0:
-                    # Compute token amounts from liquidity + current tick
                     amt0, amt1 = _liquidity_to_amounts(
                         liquidity, tick_lower, tick_upper, current_tick
                     )
@@ -1039,7 +1078,6 @@ class Query:
                     amt0_human = amt1_human = value_usd = 0
                     in_range = False
 
-                # Fee earnings (simplified: using global fee growth as upper bound)
                 fg_inside0 = fg0
                 fg_inside1 = fg1
                 fees0 = liquidity * fg_inside0 / Q128 / 1e6 if liquidity > 0 else 0
@@ -1061,12 +1099,11 @@ class Query:
                     "poolId": pos.get("pool_id"),
                 })
 
-            # Get TWAMM orders owned by this broker
             twamm_orders = await conn.fetch("""
                 SELECT * FROM twamm_orders
-                WHERE owner = $1
+                WHERE owner = $1 AND pool_id = $2
                 ORDER BY block_number DESC
-            """, broker["address"])
+            """, broker["address"], pool_id)
 
             twamm_data = [
                 {
@@ -1081,29 +1118,28 @@ class Query:
                     "nonce": o.get("nonce"),
                     "status": o["status"],
                     "isRegistered": o["is_registered"],
-                    "buyTokensOut": o.get("buy_tokens_out", "0"),
-                    "sellTokensRefund": o.get("sell_tokens_refund", "0"),
+                    "buyTokensOut": o.get("buy_tokens_out", 0),
+                    "sellTokensRefund": o.get("sell_tokens_refund", 0),
                     "blockNumber": o["block_number"],
                     "txHash": o["tx_hash"],
                 }
                 for o in twamm_orders
             ]
 
-            # Get operators for this broker
             operators = await conn.fetch(
                 "SELECT operator FROM broker_operators WHERE broker_address = $1",
-                broker["address"]
+                broker["address"],
             )
             operator_list = [op["operator"] for op in operators]
 
-            # All values returned as raw strings — frontend handles decimal conversion
             return {
                 "address": broker["address"],
+                "marketId": broker["market_id"],
                 "owner": broker["owner"],
-                "wausdcBalance": broker["wausdc_balance"] or "0",
-                "wrlpBalance": broker["wrlp_balance"] or "0",
-                "debtPrincipal": broker["debt_principal"] or "0",
-                "activeLpTokenId": broker["active_lp_token_id"] or "0",
+                "wausdcBalance": broker["wausdc_balance"] or 0,
+                "wrlpBalance": broker["wrlp_balance"] or 0,
+                "debtPrincipal": broker["debt_principal"] or 0,
+                "activeLpTokenId": broker["active_lp_token_id"] or 0,
                 "activeTwammOrderId": broker["active_twamm_order_id"] or "",
                 "isFrozen": broker["is_frozen"] or False,
                 "isLiquidated": broker["is_liquidated"] or False,

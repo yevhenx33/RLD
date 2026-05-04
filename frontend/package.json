@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "node --test \"src/**/*.test.js\" && node scripts/check-no-production-console.mjs",
+    "test": "node scripts/run-node-tests.mjs && node scripts/check-no-production-console.mjs",
     "preview": "vite preview",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
     "check:boundaries": "node scripts/check-layer-boundaries.mjs",

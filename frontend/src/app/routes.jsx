@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Navigate, Route, Routes, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import AppShell from "./AppShell";
 import LoadingScreen from "./LoadingScreen";
 import { useEnvioStatus } from "../hooks/queries/useEnvioStatus";
@@ -68,8 +68,12 @@ function SimulationRuntimeShellInner() {
 }
 
 function SimulationRuntimeShell() {
+  const { address } = useParams();
+  const location = useLocation();
+  const marketKey = address ? String(address).toLowerCase() : null;
+  const enableChart = !location.pathname.startsWith("/markets/perps/");
   return (
-    <SimulationProvider pollInterval={2000}>
+    <SimulationProvider pollInterval={2000} marketKey={marketKey} enableChart={enableChart}>
       <SimulationRuntimeShellInner />
     </SimulationProvider>
   );

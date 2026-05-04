@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import { getSigner } from "../../utils/connection";
 import { rpcProvider } from "../../utils/provider";
 import { useSimulation } from "../../hooks/useSimulation";
+import { useSim } from "../../context/SimulationContext";
 import {
   Loader2,
   Terminal,
@@ -28,7 +29,7 @@ import { useWallet } from "../../context/WalletContext";
 
 import { useSwapQuote } from "../../hooks/useSwapQuote";
 import { useSwapExecution } from "../../hooks/useSwapExecution";
-import { useBrokerData } from "../../hooks/useBrokerData";
+import { useBrokerData, resolveSelectedBrokerAddress } from "../../hooks/useBrokerData";
 import { useBrokerAccount } from "../../hooks/useBrokerAccount";
 import { useTwammOrder } from "../../hooks/useTwammOrder";
 import { usePoolLiquidity } from "../../hooks/usePoolLiquidity";
@@ -37,6 +38,7 @@ import SwapConfirmModal from "../modals/SwapConfirmModal";
 import ClaimFeesModal from "../modals/ClaimFeesModal";
 import WithdrawModal from "../modals/WithdrawModal";
 import DepositModal from "../modals/DepositModal";
+import CreateBrokerConfirmModal from "../modals/CreateBrokerConfirmModal";
 import BrokerWithdrawModal from "../modals/BrokerWithdrawModal";
 import { ToastContainer } from "../common/Toast";
 import { useToast } from "../../hooks/useToast";
@@ -64,7 +66,7 @@ export default function SimulationTerminal() {
     routeMarket && routeMarket !== ethers.ZeroAddress.toLowerCase()
       ? routeMarket
       : null;
-  const sim = useSimulation({ marketKey });
+  const sim = useSim();
   const {
     connected,
     loading: _loading,
@@ -111,28 +113,70 @@ export default function SimulationTerminal() {
 
   // Wallet & Faucet
   const { account, connectWallet } = useWallet();
+  const [selectedBrokerAddress, setSelectedBrokerAddress] = useState(null);
 
   // ── Broker Data (single GQL + minimal RPC) ─────────────────
   // ONE hook for ALL data. Block-driven: refreshes when block changes.
   // txPauseRef pauses block updates while any TX is executing.
   const txPauseRef = useRef(false);
   const { data, refresh } = useBrokerData(
-    account, marketInfo, sim.blockNumber, sim.market?.blockTimestamp, txPauseRef,
+    account,
+    marketInfo,
+    sim.blockNumber,
+    sim.market?.blockTimestamp,
+    txPauseRef,
+    selectedBrokerAddress,
   );
 
   // Convenience aliases from the data object
-  const hasBroker = data?.hasBroker ?? null;
   const brokerAddress = data?.brokerAddress ?? null;
   const brokerBalance = data?.brokerBalance ?? 0;
+  const brokerAccounts = data?.brokerAccounts ?? [];
   const operations = data?.operations ?? [];
   const twammOrders = data?.twammOrders ?? [];
   const brokerState = data; // data IS the broker state now
 
+  useEffect(() => {
+    if (!account || !marketKey) {
+      setSelectedBrokerAddress(null);
+      return;
+    }
+
+    const resolvedBrokerAddress = resolveSelectedBrokerAddress(
+      brokerAccounts,
+      selectedBrokerAddress,
+    );
+    if (resolvedBrokerAddress !== selectedBrokerAddress) {
+      setSelectedBrokerAddress(resolvedBrokerAddress);
+    }
+  }, [account, brokerAccounts, marketKey, selectedBrokerAddress]);
+
+  const visibleBrokerAddress = data?.activeBrokerAddress || selectedBrokerAddress || brokerAddress;
+  const activeBrokerAddress = visibleBrokerAddress;
+  const hasTradingBroker = data?.hasTradingBroker ?? !!activeBrokerAddress;
+  const brokerBalanceLabel = data?.isBrokerSyncing
+    ? "Syncing..."
+    : brokerBalance != null
+      ? `${parseFloat(brokerBalance).toFixed(1)} ${collateralSymbol}`
+      : hasTradingBroker
+        ? "..."
+        : "—";
+  const selectedBrokerIndex = brokerAccounts.findIndex(
+    (broker) => broker.address?.toLowerCase() === visibleBrokerAddress?.toLowerCase(),
+  );
+  const selectedBrokerLabel = selectedBrokerIndex >= 0
+    ? `Broker ${selectedBrokerIndex + 1}`
+    : "Broker";
+  const truncateAddress = (addr) => addr ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : "-";
+
   // ── Action hooks (TX execution only — no data fetching) ─────
   const {
-    creating: _brokerCreating,
-    createBroker: _createBroker,
-    depositFunds: _depositFunds,
+    creating: brokerCreating,
+    depositing: brokerDepositing,
+    error: brokerActionError,
+    step: brokerActionStep,
+    createBroker,
+    depositFunds,
     fetchBrokerBalance: _fetchBrokerBalance,
     checkBroker,
   } = useBrokerAccount(
@@ -149,7 +193,7 @@ export default function SimulationTerminal() {
     executing: cancellingTwamm,
   } = useTwammOrder(
     account,
-    brokerAddress,
+    activeBrokerAddress,
     marketInfo?.poolId || marketInfo?.pool_id || marketInfo?.marketId || marketInfo?.market_id,
     marketInfo?.infrastructure,
     marketInfo?.collateral?.address,
@@ -163,7 +207,7 @@ export default function SimulationTerminal() {
     executionStep: lpStep,
     executionError: lpError,
     clearError: clearLpError,
-  } = usePoolLiquidity(brokerAddress, marketInfo);
+  } = usePoolLiquidity(activeBrokerAddress, marketInfo);
 
   // Sync all executing flags into the pause ref so useBrokerData
   // skips block-driven fetches while any TX is pending.
@@ -245,7 +289,7 @@ export default function SimulationTerminal() {
   // Broker position-token balance — for close long
   const [brokerWrlpBalance, setBrokerWrlpBalance] = useState(null);
   useEffect(() => {
-    if (!brokerAddress || !enrichedMarketInfo?.position_token?.address) return;
+    if (!activeBrokerAddress || !enrichedMarketInfo?.position_token?.address) return;
     const fetchWrlp = async () => {
       try {
         const provider = rpcProvider;
@@ -254,7 +298,7 @@ export default function SimulationTerminal() {
           ["function balanceOf(address) view returns (uint256)"],
           provider,
         );
-        const bal = await token.balanceOf(brokerAddress);
+        const bal = await token.balanceOf(activeBrokerAddress);
         setBrokerWrlpBalance(parseFloat(ethers.formatUnits(bal, 6)));
       } catch (e) {
         console.warn(`Failed to fetch ${positionSymbol} balance:`, e);
@@ -263,7 +307,7 @@ export default function SimulationTerminal() {
     fetchWrlp();
     const interval = setInterval(fetchWrlp, 12000);
     return () => clearInterval(interval);
-  }, [brokerAddress, enrichedMarketInfo?.position_token?.address, positionSymbol]);
+  }, [activeBrokerAddress, enrichedMarketInfo?.position_token?.address, positionSymbol]);
 
   const closeAmountNum = Number.parseFloat(closeAmount);
   const hasCloseAmount = Number.isFinite(closeAmountNum) && closeAmountNum > 0;
@@ -356,7 +400,7 @@ export default function SimulationTerminal() {
     step: swapStep,
   } = useSwapExecution(
     account,
-    brokerAddress,
+    activeBrokerAddress,
     enrichedMarketInfo?.infrastructure,
     enrichedMarketInfo?.infrastructure?.swap_collateral,
     enrichedMarketInfo?.infrastructure?.swap_position_token,
@@ -366,17 +410,64 @@ export default function SimulationTerminal() {
   // Updates resume automatically when all executing flags clear.
   // The explicit refresh() after TX completion bypasses the pause.
   useEffect(() => {
-    txPauseRef.current = !!(swapExecuting || cancellingTwamm || lpExecuting);
-  }, [swapExecuting, cancellingTwamm, lpExecuting]);
+    txPauseRef.current = !!(swapExecuting || cancellingTwamm || lpExecuting || brokerCreating || brokerDepositing);
+  }, [swapExecuting, cancellingTwamm, lpExecuting, brokerCreating, brokerDepositing]);
 
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [positionDropdown, setPositionDropdown] = useState(null);
   const [accountDropdown, setAccountDropdown] = useState(false);
+  const [createBrokerModalOpen, setCreateBrokerModalOpen] = useState(false);
   const [showSwapConfirm, setShowSwapConfirm] = useState(false);
   const [chartDropdown, setChartDropdown] = useState(null);
 
   // Toast notifications
   const { toasts, addToast, removeToast } = useToast();
+
+  const handleCreateBrokerConfirm = async (initialDepositAmount) => {
+    const trimmedAmount = String(initialDepositAmount || "").trim();
+    const numericAmount = Number(trimmedAmount || 0);
+    txPauseRef.current = true;
+
+    try {
+      const createResult = await createBroker();
+      const createdBroker = createResult?.address || createResult;
+      const createBlock = Number(createResult?.blockNumber || createResult?.receipt?.blockNumber || 0);
+      if (!createdBroker) return;
+
+      setSelectedBrokerAddress(createdBroker);
+      let depositSucceeded = true;
+      let syncBlock = createBlock;
+      if (Number.isFinite(numericAmount) && numericAmount > 0) {
+        const depositReceipt = await depositFunds(trimmedAmount, createdBroker);
+        depositSucceeded = !!depositReceipt;
+        syncBlock = Number(depositReceipt?.blockNumber || syncBlock || 0);
+      }
+
+      await checkBroker();
+      await refresh(createdBroker, syncBlock || null);
+
+      setCreateBrokerModalOpen(false);
+      if (!depositSucceeded) {
+        addToast({
+          type: "error",
+          title: "Deposit Failed",
+          message: "Broker created, but initial deposit was not completed",
+          duration: 7000,
+        });
+        return;
+      }
+
+      addToast({
+        type: "success",
+        title: "Broker Created",
+        message: Number.isFinite(numericAmount) && numericAmount > 0
+          ? `Deposited ${trimmedAmount} ${collateralSymbol}`
+          : "Broker account is ready",
+      });
+    } finally {
+      txPauseRef.current = false;
+    }
+  };
 
   // Track swap errors to fire toast + close modal
   const prevSwapError = useRef(swapError);
@@ -645,13 +736,26 @@ export default function SimulationTerminal() {
     );
   }
 
-  if (!data) {
+  if (!connected || (!market && !pool)) {
     return (
       <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-6 h-6 text-cyan-500 animate-spin" />
           <span className="text-sm uppercase tracking-widest text-gray-500">
-            {!connected ? "Connecting to simulation..." : "Loading positions..."}
+            Connecting to simulation...
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  if (account && !data) {
+    return (
+      <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-6 h-6 text-cyan-500 animate-spin" />
+          <span className="text-sm uppercase tracking-widest text-gray-500">
+            Loading positions...
           </span>
         </div>
       </div>
@@ -1088,7 +1192,7 @@ export default function SimulationTerminal() {
               ]}
               actionButton={{
                 label:
-                  !account || !hasBroker
+                  !account || !hasTradingBroker
                     ? "Create Account"
                     : swapExecuting
                       ? swapStep || "Processing..."
@@ -1100,13 +1204,13 @@ export default function SimulationTerminal() {
                             ? "Open Long"
                             : "Open Short",
                 onClick:
-                  !account || !hasBroker
+                  !account || !hasTradingBroker
                     ? () => setShowAccountModal(true)
                     : tradeSide === "LONG"
                       ? () => setShowSwapConfirm(true)
                       : () => setShowSwapConfirm(true),
                 disabled:
-                  !account || !hasBroker
+                  !account || !hasTradingBroker
                     ? false
                     : swapExecuting ||
                     (tradeSide === "LONG" &&
@@ -1162,7 +1266,7 @@ export default function SimulationTerminal() {
                 <>
                   <InputGroup
                     label="Collateral"
-                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} ${collateralSymbol}` : hasBroker ? "..." : "—"}`}
+                    subLabel={`Broker: ${brokerBalanceLabel}`}
                     value={collateral}
                     onChange={(v) => setCollateral(Number(v))}
                     suffix="USDC"
@@ -1352,7 +1456,7 @@ export default function SimulationTerminal() {
                   {closeShortRepayMode === "waUSDC" && (
                     <InputGroup
                       label="Amount_To_Pay"
-                      subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} ${collateralSymbol}` : hasBroker ? "..." : "—"}`}
+                      subLabel={`Broker: ${brokerBalanceLabel}`}
                       value={closeShortAmount}
                       onChange={(v) => {
                         setCloseShortAmount(v);
@@ -1397,7 +1501,7 @@ export default function SimulationTerminal() {
                 <>
                   <InputGroup
                     label="Collateral"
-                    subLabel={`Broker: ${brokerBalance != null ? `${parseFloat(brokerBalance).toFixed(1)} ${collateralSymbol}` : hasBroker ? "..." : "—"}`}
+                    subLabel={`Broker: ${brokerBalanceLabel}`}
                     value={collateral}
                     onChange={(v) => setCollateral(Number(v))}
                     suffix="USDC"
@@ -1493,32 +1597,45 @@ export default function SimulationTerminal() {
                     <div className="relative">
                       <button
                         onClick={() => setAccountDropdown(!accountDropdown)}
-                        className="flex items-center gap-1.5 text-sm font-mono text-gray-400 hover:text-white transition-colors"
+                        className="flex items-center gap-1.5 text-sm font-mono font-bold text-white uppercase tracking-wider hover:text-cyan-400 transition-colors"
                       >
-                        Select Account
-                        <ChevronDown size={12} className={`transition-transform ${accountDropdown ? "rotate-180" : ""}`} />
+                        <span>{selectedBrokerLabel}</span>
+                        <ChevronDown className={`w-3.5 h-3.5 text-gray-500 transition-transform ${accountDropdown ? 'rotate-180' : ''}`} />
                       </button>
                       {accountDropdown && (
-                        <div className="absolute right-0 top-full mt-2 z-50 border border-white/10 bg-[#0a0a0a] min-w-[200px]">
-                          {[
-                            { label: "Broker #1", addr: "0x1a2b...3c4d", active: true },
-                            { label: "Broker #2", addr: "0x5e6f...7a8b", active: false },
-                          ].map((b) => (
-                            <button
-                              key={b.addr}
-                              onClick={() => setAccountDropdown(false)}
-                              className={`w-full text-left px-4 py-2.5 text-sm font-mono hover:bg-white/5 transition-colors border-b border-white/5 flex items-center justify-between ${b.active ? "text-cyan-400" : "text-gray-400"
-                                }`}
-                            >
-                              <span>{b.label}</span>
-                              <span className="text-xs text-gray-600">{b.addr}</span>
-                            </button>
-                          ))}
+                        <div className="absolute right-0 top-full mt-2 z-50 border border-white/10 bg-[#0a0a0a] min-w-[240px] shadow-xl">
+                          {brokerAccounts.length === 0 ? (
+                            <div className="px-4 py-3 text-sm font-mono text-gray-600 border-b border-white/5">
+                              No brokers for this market
+                            </div>
+                          ) : (
+                            brokerAccounts.map((broker, index) => {
+                              const active = broker.address?.toLowerCase() === visibleBrokerAddress?.toLowerCase();
+                              return (
+                                <button
+                                  key={broker.address}
+                                  onClick={() => {
+                                    setSelectedBrokerAddress(broker.address);
+                                    setAccountDropdown(false);
+                                    refresh(broker.address);
+                                  }}
+                                  className={`w-full px-4 py-3 flex items-center justify-between gap-4 hover:bg-white/5 transition-colors ${active ? 'text-cyan-400' : 'text-gray-400'}`}
+                                >
+                                  <span className="font-mono text-sm font-bold">{`Broker ${index + 1}`}</span>
+                                  <span className="font-mono text-xs text-gray-600">{truncateAddress(broker.address)}</span>
+                                </button>
+                              );
+                            })
+                          )}
                           <button
-                            onClick={() => setAccountDropdown(false)}
-                            className="w-full text-left px-4 py-2.5 text-sm font-mono text-white hover:bg-white/5 transition-colors"
+                            onClick={() => {
+                              setAccountDropdown(false);
+                              setCreateBrokerModalOpen(true);
+                            }}
+                            disabled={brokerCreating || brokerDepositing}
+                            className="w-full px-4 py-3 text-left text-sm font-mono font-bold text-cyan-400 hover:bg-cyan-400/10 border-t border-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            + Create New
+                            {brokerCreating || brokerDepositing ? 'Processing...' : '+ Create New'}
                           </button>
                         </div>
                       )}
@@ -1967,7 +2084,7 @@ export default function SimulationTerminal() {
                           brokerBalance={brokerBalance}
                           brokerWrlpBalance={brokerWrlpBalance}
                           currentRate={currentRate}
-                          brokerAddress={brokerAddress}
+                          brokerAddress={activeBrokerAddress}
                           marketId={market?.marketId}
                           account={account}
                           addToast={addToast}
@@ -2038,11 +2155,12 @@ export default function SimulationTerminal() {
         onClose={() => setShowAccountModal(false)}
         onComplete={(addr) => {
           setShowAccountModal(false);
-          // Re-check broker ownership so hasBroker flips to true
+          // Re-check broker ownership and immediately select the new account.
           checkBroker();
           // Refresh broker state & show toast
           if (addr) {
-            refresh();
+            setSelectedBrokerAddress(addr);
+            refresh(addr);
             addToast({
               type: "success",
               title: "Account Created",
@@ -2069,9 +2187,9 @@ export default function SimulationTerminal() {
         onConfirm={() => {
           if (tradeAction === "CLOSE" && tradeSide === "LONG") {
             // Close Long flow
-            executeCloseLong(parseFloat(closeAmount), () => {
+            executeCloseLong(parseFloat(closeAmount), (receipt) => {
               setShowSwapConfirm(false);
-              refresh();
+              refresh(activeBrokerAddress, receipt?.blockNumber || null);
               addToast({
                 type: "success",
                 title: "Long Closed",
@@ -2084,9 +2202,9 @@ export default function SimulationTerminal() {
             // Close Short flow
             if (closeShortRepayMode === "wRLP") {
               // Direct repay: burn wRLP to reduce debt
-              executeRepayDebt(parseFloat(closeShortDebt), () => {
+              executeRepayDebt(parseFloat(closeShortDebt), (receipt) => {
                 setShowSwapConfirm(false);
-                refresh();
+                refresh(activeBrokerAddress, receipt?.blockNumber || null);
                 addToast({
                   type: "success",
                   title: "Debt Repaid",
@@ -2098,9 +2216,9 @@ export default function SimulationTerminal() {
               });
             } else {
               // waUSDC mode: spend waUSDC to buy wRLP and repay debt
-              executeCloseShort(parseFloat(closeShortAmount), () => {
+              executeCloseShort(parseFloat(closeShortAmount), (receipt) => {
                 setShowSwapConfirm(false);
-                refresh();
+                refresh(activeBrokerAddress, receipt?.blockNumber || null);
                 addToast({
                   type: "success",
                   title: "Short Closed",
@@ -2112,9 +2230,9 @@ export default function SimulationTerminal() {
             }
           } else if (tradeSide === "SHORT" && tradeAction === "OPEN") {
             // Open Short flow — shortAmount is already in wRLP
-            executeShort(collateral, shortAmount, shortOpenMinOut, () => {
+            executeShort(collateral, shortAmount, shortOpenMinOut, (receipt) => {
               setShowSwapConfirm(false);
-              refresh();
+              refresh(activeBrokerAddress, receipt?.blockNumber || null);
               addToast({
                 type: "success",
                 title: "Short Opened",
@@ -2124,9 +2242,9 @@ export default function SimulationTerminal() {
             });
           } else {
             // Open Long flow
-            executeLong(collateral, () => {
+            executeLong(collateral, (receipt) => {
               setShowSwapConfirm(false);
-              refresh();
+              refresh(activeBrokerAddress, receipt?.blockNumber || null);
               addToast({
                 type: "success",
                 title: "Long Opened",
@@ -2192,7 +2310,7 @@ export default function SimulationTerminal() {
             } else if (type === 'track-lp') {
               try {
                 const signer = await getSigner();
-                const broker = new ethers.Contract(brokerAddress, [
+                const broker = new ethers.Contract(activeBrokerAddress, [
                   'function setActiveV4Position(uint256 newTokenId) external',
                 ], signer);
                 const tx = await broker.setActiveV4Position(data.tokenId, { gasLimit: 300_000n });
@@ -2206,7 +2324,7 @@ export default function SimulationTerminal() {
             } else if (type === 'untrack-lp') {
               try {
                 const signer = await getSigner();
-                const broker = new ethers.Contract(brokerAddress, [
+                const broker = new ethers.Contract(activeBrokerAddress, [
                   'function setActiveV4Position(uint256 newTokenId) external',
                 ], signer);
                 const tx = await broker.setActiveV4Position(0, { gasLimit: 300_000n });
@@ -2301,11 +2419,26 @@ export default function SimulationTerminal() {
         executionError={lpError}
       />
 
+      <CreateBrokerConfirmModal
+        isOpen={createBrokerModalOpen}
+        onClose={() => {
+          if (!brokerCreating && !brokerDepositing) {
+            setCreateBrokerModalOpen(false);
+          }
+        }}
+        onConfirm={handleCreateBrokerConfirm}
+        creating={brokerCreating}
+        depositing={brokerDepositing}
+        step={brokerActionStep}
+        error={brokerActionError}
+        collateralSymbol={collateralSymbol}
+      />
+
       {/* Deposit Modal */}
       <DepositModal
         isOpen={!!depositToken}
         onClose={() => setDepositToken(null)}
-        brokerAddress={brokerAddress}
+        brokerAddress={activeBrokerAddress}
         tokenAddress={
           depositToken === collateralSymbol
             ? marketInfo?.collateral?.address
@@ -2314,8 +2447,8 @@ export default function SimulationTerminal() {
         tokenSymbol={depositToken || collateralSymbol}
         tokenDecimals={6}
         txPauseRef={txPauseRef}
-        onSuccess={() => {
-          refresh();
+        onSuccess={(receipt) => {
+          refresh(activeBrokerAddress, receipt?.blockNumber || null);
           addToast({ type: "success", title: `${depositToken} Deposited`, message: "Tokens transferred to broker" });
         }}
       />
@@ -2324,7 +2457,7 @@ export default function SimulationTerminal() {
       <BrokerWithdrawModal
         isOpen={!!withdrawToken}
         onClose={() => setWithdrawToken(null)}
-        brokerAddress={brokerAddress}
+        brokerAddress={activeBrokerAddress}
         tokenSymbol={withdrawToken || collateralSymbol}
         brokerTokenBalance={
           withdrawToken === collateralSymbol
@@ -2332,8 +2465,8 @@ export default function SimulationTerminal() {
             : brokerWrlpBalance ?? 0
         }
         txPauseRef={txPauseRef}
-        onSuccess={() => {
-          refresh();
+        onSuccess={(receipt) => {
+          refresh(activeBrokerAddress, receipt?.blockNumber || null);
           addToast({ type: "success", title: `${withdrawToken} Withdrawn`, message: "Tokens sent to your wallet" });
         }}
       />

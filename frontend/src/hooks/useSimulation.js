@@ -114,6 +114,7 @@ export function useSimulation({
   chartEndTime = null,
   account = null,        // wallet address for Tier 2 user query
   marketKey = null,
+  enableChart = true,
 } = {}) {
   const [connected, setConnected] = useState(false);
   const prevBlock = useRef(null);
@@ -162,7 +163,7 @@ export function useSimulation({
   }), [chartResolution, chartStartTime, chartEndTime, snapshotMarketId]);
 
   const { data: chartGqlData, error: chartError } = useSWR(
-    snapshotMarketId
+    enableChart && snapshotMarketId
       ? queryKeys.simulationCandles(SIM_GRAPHQL_URL, chartVars)
       : null,
     fetchSimulationCandles,
