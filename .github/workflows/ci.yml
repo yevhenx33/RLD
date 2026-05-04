@@ -8,24 +8,89 @@ on:
       - develop
       - feature/**
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PYTHONUNBUFFERED: "1"
 
 jobs:
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v5
       - uses: actions/dependency-review-action@v4
 
-  backend-tests:
-    name: Backend tests
+  repo-contracts:
+    name: Repo and Docker contracts
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create CI env files
+        run: |
+          set -euo pipefail
+          cp docker/.env.example docker/.env
+          cat > backend/analytics/.env <<'ENV'
+          MAINNET_RPC_URL=http://localhost:8545
+          ENVIO_API_TOKEN=ci
+          CLICKHOUSE_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_USER=default
+          CLICKHOUSE_API_USER=default
+          CLICKHOUSE_API_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_WORKER_USER=default
+          CLICKHOUSE_WORKER_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_MIGRATION_USER=default
+          CLICKHOUSE_MIGRATION_PASSWORD=ci_clickhouse_password
+          ENV
+
+      - name: Shell syntax
+        run: bash -n docker/scripts/stack.sh docker/scripts/generate-status.sh docker/reth/restart-reth.sh
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Python syntax
+        run: python -m py_compile docker/dashboard/live_status_server.py docker/reth/simctl.py
+
+      - name: Compose config validation
+        run: |
+          set -euo pipefail
+          docker compose -f docker/docker-compose.clickhouse.yml --env-file docker/.env config >/dev/null
+          docker compose -f backend/analytics/docker-compose.yml --env-file backend/analytics/.env config >/dev/null
+          docker compose -f docker/docker-compose.infra.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/docker-compose.docs.yml --env-file docker/.env config >/dev/null
+
+      - name: Deprecated runtime guard
+        run: |
+          set -euo pipefail
+          ! grep -RIn --exclude-dir=.git --exclude-dir=.next --exclude-dir=out --exclude-dir=node_modules --exclude=status.json --exclude=status-history.json \
+            -E 'rates-indexer|docker-rates-indexer|rates indexer|reth-postgres-1|reth-indexer-1|docker-frontend-1|docker-monitor-bot-1|rld_protocol_docs' \
+            backend docker docs protocol-docs frontend
+
+  backend-tests:
+    name: Backend tests py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     services:
       postgres:
-        image: postgres:16
+        image: postgres:15.17-alpine
         env:
           POSTGRES_USER: rld
           POSTGRES_PASSWORD: rld_dev_password
@@ -44,29 +109,65 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
-          cache: "pip"
+          python-version: ${{ matrix.python-version }}
+          cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
-          pip install pytest ruff pip-audit
+          pip install pytest pytest-cov ruff pip-audit
 
-      - name: Lint backend
-        run: ruff check backend/api backend/config.py backend/indexers backend/services
+      - name: Lint backend and runtime Python
+        run: ruff check backend/indexers backend/services backend/rates_client.py docker/reth/simctl.py docker/dashboard/live_status_server.py
 
-      - name: Run backend tests
-        run: |
-          if find backend -type f \( -name "test_*.py" -o -name "*_test.py" \) | grep -q .; then
-            pytest backend
-          else
-            echo "No backend tests found; skipping pytest."
-          fi
+      - name: Run backend tests with coverage
+        run: pytest backend/tests --cov=backend --cov-config=backend/.coveragerc --cov-report=term-missing --cov-report=xml:coverage-backend.xml --cov-fail-under=12
 
       - name: Audit backend dependencies
         run: pip-audit -r backend/requirements.txt
+
+      - name: Upload backend coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-py${{ matrix.python-version }}
+          path: coverage-backend.xml
+          retention-days: 14
+
+  analytics-tests:
+    name: Analytics tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/analytics/requirements.txt
+
+      - name: Install analytics dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/analytics/requirements.txt
+          pip install pytest pytest-cov ruff pip-audit
+
+      - name: Lint analytics
+        run: ruff check backend/analytics backend/analytics/tests backend/analytics/scripts/test_forward_fill_hourly_compound.py backend/analytics/scripts/test_processor.py backend/analytics/test_rpc.py backend/analytics/test_vault.py
+
+      - name: Run analytics tests with coverage
+        run: pytest backend/analytics/tests backend/analytics/scripts/test_forward_fill_hourly_compound.py backend/analytics/scripts/test_processor.py backend/analytics/test_rpc.py backend/analytics/test_vault.py --cov=backend/analytics --cov-config=backend/analytics/.coveragerc --cov-report=term-missing --cov-report=xml:coverage-analytics.xml --cov-fail-under=24
+
+      - name: Audit analytics dependencies
+        run: pip-audit -r backend/analytics/requirements.txt
+
+      - name: Upload analytics coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: analytics-coverage
+          path: coverage-analytics.xml
+          retention-days: 14
 
   contracts-tests:
     name: Contracts tests
@@ -76,6 +177,8 @@ jobs:
         working-directory: contracts
     steps:
       - uses: actions/checkout@v5
+        with:
+          submodules: recursive
 
       - uses: foundry-rs/foundry-toolchain@v1
         with:
@@ -85,55 +188,30 @@ jobs:
         run: forge --version
 
       - name: Build contracts
-        run: forge build
+        run: forge build --sizes
 
       - name: Run contracts tests
-        run: forge test
+        run: forge test -vvv
 
-  data-pipeline-tests:
-    name: Data pipeline tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
+      - name: Run extended fuzz suite
+        run: forge test --fuzz-runs 1024
 
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: data-pipeline/requirements.txt
-
-      - name: Install data pipeline dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r data-pipeline/requirements.txt
-          pip install pytest ruff pip-audit
-
-      - name: Lint data pipeline
-        run: ruff check data-pipeline/indexer data-pipeline/test_rpc.py data-pipeline/test_vault.py
-
-      - name: Run data pipeline tests
-        run: |
-          if find data-pipeline -type f \( -name "test_*.py" -o -name "*_test.py" \) | grep -q .; then
-            pytest data-pipeline
-          else
-            echo "No data-pipeline tests found; skipping pytest."
-          fi
-
-      - name: Audit data pipeline dependencies
-        run: pip-audit -r data-pipeline/requirements.txt
+      - name: Contract coverage summary
+        run: forge coverage --ir-minimum --report summary
 
   frontend-build:
-    name: Frontend build
+    name: Frontend build and tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v5
+
       - uses: actions/setup-node@v5
         with:
-          node-version: "20"
-          cache: "npm"
+          node-version: "22"
+          cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
@@ -145,11 +223,14 @@ jobs:
       - name: Run frontend unit tests
         run: npm run test
 
-      - name: Build frontend
-        run: npm run build
-
       - name: Check frontend architecture boundaries
         run: npm run check:boundaries
+
+      - name: Check analytics contracts
+        run: npm run check:analytics-contracts
+
+      - name: Build frontend
+        run: npm run build
 
       - name: Check frontend bundle budgets
         run: npm run check:bundle
@@ -159,3 +240,93 @@ jobs:
 
       - name: Audit frontend dependencies
         run: npm audit --audit-level=high
+
+  docs-build:
+    name: Protocol docs build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: protocol-docs
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: protocol-docs/package-lock.json
+
+      - name: Install docs dependencies
+        run: npm ci
+
+      - name: Typecheck docs
+        run: npm run types:check
+
+      - name: Build docs
+        run: npm run build
+
+      - name: Audit docs dependencies
+        run: npm audit --audit-level=high
+
+  docker-builds:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    needs:
+      - repo-contracts
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Create CI env files
+        run: |
+          set -euo pipefail
+          cp docker/.env.example docker/.env
+          cat > backend/analytics/.env <<'ENV'
+          MAINNET_RPC_URL=http://localhost:8545
+          ENVIO_API_TOKEN=ci
+          CLICKHOUSE_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_USER=default
+          CLICKHOUSE_API_USER=default
+          CLICKHOUSE_API_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_WORKER_USER=default
+          CLICKHOUSE_WORKER_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_MIGRATION_USER=default
+          CLICKHOUSE_MIGRATION_PASSWORD=ci_clickhouse_password
+          ENV
+
+      - name: Build canonical app images
+        run: |
+          set -euo pipefail
+          docker compose -f backend/analytics/docker-compose.yml --env-file backend/analytics/.env build
+          docker compose -f docker/docker-compose.infra.yml --env-file docker/.env build
+          docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env build indexer mm-daemon chaos-trader arb-bot faucet
+          docker compose -f docker/docker-compose.docs.yml --env-file docker/.env build
+
+  ci-summary:
+    name: CI summary
+    runs-on: ubuntu-latest
+    needs:
+      - repo-contracts
+      - backend-tests
+      - analytics-tests
+      - contracts-tests
+      - frontend-build
+      - docs-build
+      - docker-builds
+    if: always()
+    steps:
+      - name: Check required jobs
+        run: |
+          set -euo pipefail
+          for result in \
+            '${{ needs.repo-contracts.result }}' \
+            '${{ needs.backend-tests.result }}' \
+            '${{ needs.analytics-tests.result }}' \
+            '${{ needs.contracts-tests.result }}' \
+            '${{ needs.frontend-build.result }}' \
+            '${{ needs.docs-build.result }}' \
+            '${{ needs.docker-builds.result }}'; do
+            if [ "$result" != "success" ]; then
+              echo "::error::Required CI job failed or was skipped: $result"
+              exit 1
+            fi
+          done

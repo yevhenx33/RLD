@@ -1,6 +1,6 @@
 ---
 name: clickhouse-indexer
-description: Work with the RLD ClickHouse analytics indexer. Use when modifying, debugging, deploying, hardening, or explaining the data-pipeline indexer, GraphQL rates API, ClickHouse tables, readiness, workers, source_status, market_timeseries, migrations, or operational runbooks.
+description: Work with the RLD ClickHouse analytics indexer. Use when modifying, debugging, deploying, hardening, or explaining the analytics indexer, GraphQL rates API, ClickHouse tables, readiness, workers, source_status, market_timeseries, migrations, or operational runbooks.
 ---
 
 # RLD ClickHouse Indexer
@@ -9,9 +9,9 @@ description: Work with the RLD ClickHouse analytics indexer. Use when modifying,
 
 Use this skill for the ClickHouse analytics stack only:
 
-- `data-pipeline/indexer/`
-- `data-pipeline/scripts/`
-- `data-pipeline/docker-compose.yml`
+- `backend/analytics/`
+- `backend/analytics/scripts/`
+- `backend/analytics/docker-compose.yml`
 - `docker/docker-compose.infra.yml` only for `rld_graphql_api`
 - ClickHouse tables used by the rates API
 
@@ -49,15 +49,15 @@ Legacy compatibility tables may still exist, but new readiness should prefer `so
 
 ## Important Files
 
-- `data-pipeline/config.toml`: default source/API/ClickHouse config.
-- `data-pipeline/indexer/config.py`: config loader, maps config to environment defaults.
-- `data-pipeline/indexer/state.py`: `source_status` helpers.
-- `data-pipeline/indexer/schema.py`: ClickHouse DDL, serving view definitions, view rebuild helpers.
-- `data-pipeline/indexer/api/graphql.py`: read-only GraphQL/API serving.
-- `data-pipeline/scripts/rld_indexer.py`: unified operator CLI.
-- `data-pipeline/scripts/run_indexer.py`: worker entrypoint.
-- `data-pipeline/scripts/smoke_clickhouse_indexer.py`: smoke test.
-- `data-pipeline/docs/CLICKHOUSE_INDEXER_RUNBOOK.md`: operator runbook.
+- `backend/analytics/config.toml`: default source/API/ClickHouse config.
+- `backend/analytics/config.py`: config loader, maps config to environment defaults.
+- `backend/analytics/state.py`: `source_status` helpers.
+- `backend/analytics/schema.py`: ClickHouse DDL, serving view definitions, view rebuild helpers.
+- `backend/analytics/api/graphql.py`: read-only GraphQL/API serving.
+- `backend/analytics/scripts/rld_indexer.py`: unified operator CLI.
+- `backend/analytics/scripts/run_indexer.py`: worker entrypoint.
+- `backend/analytics/scripts/smoke_clickhouse_indexer.py`: smoke test.
+- `backend/analytics/docs/CLICKHOUSE_INDEXER_RUNBOOK.md`: operator runbook.
 
 ## Operating Commands
 
@@ -65,44 +65,44 @@ Build immutable image:
 
 ```bash
 export RLD_INDEXER_IMAGE=rld_indexer_node:$(git rev-parse --short HEAD)
-docker build -t "$RLD_INDEXER_IMAGE" -f data-pipeline/Dockerfile.indexer data-pipeline
+docker build -t "$RLD_INDEXER_IMAGE" -f backend/analytics/Dockerfile backend/analytics
 ```
 
 Deploy:
 
 ```bash
-docker compose -f data-pipeline/docker-compose.yml --env-file data-pipeline/.env up -d --remove-orphans
+docker compose -f backend/analytics/docker-compose.yml --env-file backend/analytics/.env up -d --remove-orphans
 ```
 
 Run migration:
 
 ```bash
-python data-pipeline/scripts/rld_indexer.py migrate --backfill
+python backend/analytics/scripts/rld_indexer.py migrate --backfill
 ```
 
 Run smoke test:
 
 ```bash
-python data-pipeline/scripts/rld_indexer.py smoke
+python backend/analytics/scripts/rld_indexer.py smoke
 ```
 
 Check status:
 
 ```bash
-python data-pipeline/scripts/rld_indexer.py status --json
+python backend/analytics/scripts/rld_indexer.py status --json
 ```
 
 List/rebuild serving views:
 
 ```bash
-python data-pipeline/scripts/rld_indexer.py views list
-python data-pipeline/scripts/rld_indexer.py views rebuild
+python backend/analytics/scripts/rld_indexer.py views list
+python backend/analytics/scripts/rld_indexer.py views rebuild
 ```
 
 Backup:
 
 ```bash
-python data-pipeline/scripts/rld_indexer.py backup
+python backend/analytics/scripts/rld_indexer.py backup
 ```
 
 ## Health Contract
@@ -122,7 +122,7 @@ Readiness semantics:
 ## Coding Rules
 
 - Keep API startup read-only. Do not add DDL/backfill to `get_clickhouse_client()` or request handlers.
-- Put schema changes in `data-pipeline/indexer/schema.py` and apply via `rld_indexer.py migrate`.
+- Put schema changes in `backend/analytics/schema.py` and apply via `rld_indexer.py migrate`.
 - Workers may write raw/source/serving tables. API should read only.
 - Update `source_status` for every successful collector/processor cycle.
 - Use `market_timeseries` for new API timeseries reads unless a specialized table is clearly required.

@@ -1,0 +1,33 @@
+name: rld-docs
+
+services:
+  docs:
+    container_name: rld-docs
+    image: protocol-docs:latest
+    build:
+      context: ../protocol-docs
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${DOCS_PORT:-3001}:3000"
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "docs"
+      com.rld.service: "docs"
+      com.rld.tier: "edge"
+      com.rld.persistence: "none"
+      com.rld.description: "Protocol documentation site served by the Next.js standalone runtime"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+networks:
+  default:
+    name: rld_shared
+    external: true

@@ -207,8 +207,8 @@ def _derive_stacks(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     envio_db = databases.get("envio_indexer", {}) if isinstance(databases.get("envio_indexer"), dict) else {}
     pool_state = databases.get("pool_state", {}) if isinstance(databases.get("pool_state"), dict) else {}
 
-    legacy = _container_group(containers, ["rates-indexer"])
     frontend_container = _container_group(containers, ["frontend"])
+    docs_container = _container_group(containers, ["docs"])
     mm_container = _container_group(containers, ["mm-daemon"])
     chaos_container = _container_group(containers, ["chaos-trader"])
     faucet_container = _container_group(containers, ["faucet"])
@@ -268,15 +268,17 @@ def _derive_stacks(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     }
     frontend_status = "healthy" if all(frontend_components.values()) else "degraded"
 
-    legacy_running = legacy["running"] > 0
-    legacy_status = "deprecated-running" if legacy_running else "removed"
+    docs_components = {
+        "docs_container": docs_container["running"] > 0,
+    }
+    docs_status = "healthy" if all(docs_components.values()) else "degraded"
 
     gates = {
         "protocol_rates_ready": protocol_status == "healthy",
         "simulation_ready": simulation_status == "healthy",
         "execution_ready": execution_status != "critical",
         "frontend_ready": frontend_status == "healthy",
-        "legacy_removed": not legacy_running,
+        "docs_ready": docs_status == "healthy",
     }
     gates["production_ready"] = all(gates.values())
 
@@ -315,13 +317,197 @@ def _derive_stacks(snapshot: Dict[str, Any]) -> Dict[str, Any]:
             "components": frontend_components,
             "containers": frontend_container,
         },
-        "legacy_rates": {
-            "label": "Legacy Rates Indexer",
-            "status": legacy_status,
-            "running": legacy_running,
-            "containers": legacy,
+        "docs": {
+            "label": "Protocol Docs",
+            "status": docs_status,
+            "components": docs_components,
+            "containers": docs_container,
         },
         "gates": gates,
+    }
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "healthy", "running", "ok", "ready")
+
+
+def _status_from_components(components: Dict[str, bool], *, degraded_ok: bool = False) -> str:
+    total = len(components)
+    ok_count = sum(1 for value in components.values() if value)
+    if total == 0:
+        return "unknown"
+    if ok_count == total:
+        return "healthy"
+    if ok_count > 0 or degraded_ok:
+        return "degraded"
+    return "critical"
+
+
+def _derive_domains(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    services = snapshot.get("services", {}) if isinstance(snapshot.get("services"), dict) else {}
+    databases = snapshot.get("databases", {}) if isinstance(snapshot.get("databases"), dict) else {}
+    containers = snapshot.get("containers", []) if isinstance(snapshot.get("containers"), list) else []
+    system = snapshot.get("system", {}) if isinstance(snapshot.get("system"), dict) else {}
+    docker_info = snapshot.get("docker", {}) if isinstance(snapshot.get("docker"), dict) else {}
+    contracts = snapshot.get("contracts", {}) if isinstance(snapshot.get("contracts"), dict) else {}
+    compose = snapshot.get("compose", []) if isinstance(snapshot.get("compose"), list) else []
+    stacks = snapshot.get("stacks", {}) if isinstance(snapshot.get("stacks"), dict) else {}
+
+    def svc(name: str) -> Dict[str, Any]:
+        value = services.get(name, {})
+        return value if isinstance(value, dict) else {}
+
+    def db(name: str) -> Dict[str, Any]:
+        value = databases.get(name, {})
+        return value if isinstance(value, dict) else {}
+
+    def group(*needles: str) -> Dict[str, Any]:
+        return _container_group(containers, needles)
+
+    analytics_group = group("rld_graphql_api", "aave_worker", "chainlink_worker", "sofr_worker")
+    sim_group = group("rld-indexer", "rld-postgres", "rld-reth", "rld-faucet")
+    backend_group = group("mm-daemon", "arb-bot", "chaos-trader", "monitor-bot")
+    frontend_group = group("frontend")
+    docs_group = group("docs")
+
+    mem = system.get("memory", {}) if isinstance(system.get("memory"), dict) else {}
+    disk = system.get("disk", {}) if isinstance(system.get("disk"), dict) else {}
+    data_disk = system.get("data_disk", {}) if isinstance(system.get("data_disk"), dict) else {}
+    load = system.get("load", []) if isinstance(system.get("load"), list) else []
+    cores = _to_int(system.get("cpu_cores")) or 1
+    mem_total = _to_int(mem.get("total_mb")) or 0
+    mem_used = _to_int(mem.get("used_mb")) or 0
+    mem_pct = round((mem_used / mem_total) * 100, 1) if mem_total else 0
+    disk_pct = _to_int(disk.get("percent")) or 0
+    data_disk_pct = _to_int(data_disk.get("percent")) or 0
+    load_1 = float(load[0]) if load else 0.0
+    max_disk_pct = max(disk_pct, data_disk_pct)
+    errors_today = _to_int(system.get("errors_today")) or 0
+
+    resource_components = {
+        "cpu_load": load_1 <= cores * 0.8,
+        "memory": mem_pct <= 85,
+        "disk": max_disk_pct <= 85,
+        "logs": errors_today < 10,
+    }
+
+    contracts_components = {
+        "deployment_json": bool(contracts.get("deploymentExists")),
+        "core_addresses": (_to_int(contracts.get("coreAddressCount")) or 0) >= 5,
+        "artifacts": (_to_int(contracts.get("artifactCount")) or 0) > 0,
+        "tests": (_to_int(contracts.get("testCount")) or 0) > 0,
+    }
+    contracts_status = contracts.get("status") or _status_from_components(contracts_components)
+
+    compose_names = {str(item.get("Name") or item.get("name") or "") for item in compose if isinstance(item, dict)}
+    expected_compose = {"rld-clickhouse", "rld-analytics", "rld-infra", "rld-reth", "rld-frontend", "rld-docs"}
+    compose_components = {name: name in compose_names for name in expected_compose}
+
+    analytics_components = {
+        "graphql_api": _as_bool(svc("envio_indexer").get("healthy")),
+        "readiness": _as_bool(svc("envio_indexer").get("ready")),
+        "clickhouse": str(db("envio_indexer").get("clickhouse", "")).lower() == "ok",
+        "workers": analytics_group["running"] >= 4,
+    }
+    sim_components = {
+        "indexer_api": _as_bool(svc("indexer").get("healthy")),
+        "postgres_state": _as_bool(db("pool_state").get("healthy")),
+        "reth_rpc": _as_bool(svc("anvil").get("healthy")),
+        "containers": sim_group["running"] >= 4,
+    }
+    backend_components = {
+        "monitor_bot": _as_bool(svc("monitor_bot").get("healthy")),
+        "mm_daemon": backend_group["running"] >= 1,
+        "rates_client_path": _as_bool(svc("envio_indexer").get("healthy")),
+        "execution_bots": group("arb-bot", "chaos-trader")["running"] >= 2,
+    }
+    frontend_components = {
+        "container": frontend_group["running"] >= 1,
+        "edge_nginx": _as_bool(svc("nginx").get("healthy")),
+        "public_https": (_to_int(svc("nginx").get("response_ms")) or -1) > 0,
+    }
+    infra_components = {
+        "compose_projects": all(compose_components.values()) if compose_components else False,
+        "clickhouse": group("clickhouse")["running"] >= 1,
+        "postgres": group("postgres")["running"] >= 1,
+        "reth": group("rld-reth")["running"] >= 1,
+        "backups": str((snapshot.get("backups", {}) if isinstance(snapshot.get("backups"), dict) else {}).get("status", "")).lower() == "success",
+    }
+    docs_components = {
+        "container": docs_group["running"] >= 1,
+    }
+
+    source_status = db("envio_indexer").get("sourceStatus", [])
+    source_count = len(source_status) if isinstance(source_status, list) else 0
+    block_gap = (stacks.get("simulation", {}) if isinstance(stacks.get("simulation"), dict) else {}).get("blockGap")
+
+    return {
+        "backend": {
+            "label": "Backend Services",
+            "owner": "protocol-backend",
+            "status": _status_from_components(backend_components),
+            "components": backend_components,
+            "signal": f"{backend_group['running']}/{max(backend_group['matched'], 1)} containers",
+            "detail": "daemon, bots, monitor API, rates client path",
+        },
+        "frontend": {
+            "label": "Frontend Edge",
+            "owner": "frontend",
+            "status": _status_from_components(frontend_components),
+            "components": frontend_components,
+            "signal": f"{svc('nginx').get('response_ms', '?')}ms public probe",
+            "detail": ", ".join(frontend_group["names"]) or "frontend container unavailable",
+        },
+        "infra": {
+            "label": "Infrastructure",
+            "owner": "devops",
+            "status": _status_from_components(infra_components, degraded_ok=True),
+            "components": infra_components,
+            "signal": f"{len(compose_names)}/{len(expected_compose)} compose projects",
+            "detail": f"docker images {docker_info.get('active', '?')} active, backups {(snapshot.get('backups', {}) if isinstance(snapshot.get('backups'), dict) else {}).get('status', 'unknown')}",
+        },
+        "analytics_indexers": {
+            "label": "Analytics Indexers",
+            "owner": "analytics",
+            "status": _status_from_components(analytics_components),
+            "components": analytics_components,
+            "signal": f"{source_count} source rows",
+            "detail": f"ready HTTP {svc('envio_indexer').get('ready_http', '?')}, max lag {svc('envio_indexer').get('ready_max_lag', '?')}",
+        },
+        "simulation_indexer": {
+            "label": "Simulation Indexer",
+            "owner": "protocol-backend",
+            "status": _status_from_components(sim_components),
+            "components": sim_components,
+            "signal": f"gap {block_gap if block_gap is not None else '?'} blocks",
+            "detail": f"chain {svc('anvil').get('block', '?')} / indexed {db('pool_state').get('last_indexed_block', '?')}",
+        },
+        "contracts": {
+            "label": "Contracts",
+            "owner": "protocol-contracts",
+            "status": str(contracts_status),
+            "components": contracts_components,
+            "signal": f"{contracts.get('coreAddressCount', 0)} deployed addresses",
+            "detail": f"deploy block {contracts.get('deployBlock', '?')}, artifacts {contracts.get('artifactCount', 0)}, tests {contracts.get('testCount', 0)}",
+        },
+        "resources": {
+            "label": "Resource Usage",
+            "owner": "devops",
+            "status": _status_from_components(resource_components),
+            "components": resource_components,
+            "signal": f"load {load_1}/{cores}, mem {mem_pct}%",
+            "detail": f"disk {disk_pct}%, data disk {data_disk_pct}%, errors today {errors_today}",
+        },
+        "docs": {
+            "label": "Protocol Docs",
+            "owner": "docs",
+            "status": _status_from_components(docs_components),
+            "components": docs_components,
+            "signal": f"{docs_group['running']}/{max(docs_group['matched'], 1)} containers",
+            "detail": ", ".join(docs_group["names"]) or "docs container unavailable",
+        },
     }
 
 
@@ -403,6 +589,8 @@ class LiveStatusCache:
         snapshot.setdefault("services", {})
         snapshot.setdefault("databases", {})
         snapshot.setdefault("containers", [])
+        snapshot.setdefault("contracts", {})
+        snapshot.setdefault("compose", [])
 
         try:
             future_to_key = {
@@ -540,6 +728,7 @@ class LiveStatusCache:
         snapshot["services"] = services
         snapshot["databases"] = databases
         snapshot["stacks"] = _derive_stacks(snapshot)
+        snapshot["domains"] = _derive_domains(snapshot)
         snapshot["timestamp"] = utc_now_iso()
         snapshot["live"] = {
             "interval_sec": self.interval_sec,

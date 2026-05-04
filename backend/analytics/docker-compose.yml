@@ -1,0 +1,229 @@
+name: rld-analytics
+
+x-rld-indexer-build: &rld-indexer-build
+  context: .
+  dockerfile: Dockerfile
+
+x-rld-indexer-service: &rld-indexer-service
+  image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+  build: *rld-indexer-build
+  env_file:
+    - .env
+  restart: unless-stopped
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  labels:
+    com.rld.owner: "data-platform"
+    com.rld.tier: "analytics"
+    com.rld.persistence: "clickhouse"
+
+services:
+  migrate_clickhouse:
+    image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+    build: *rld-indexer-build
+    container_name: rld_clickhouse_migrate
+    env_file:
+      - .env
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_MIGRATION_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_MIGRATION_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_MANAGE_USERS=${CLICKHOUSE_MANAGE_USERS:-false}
+      - CLICKHOUSE_API_USER=${CLICKHOUSE_API_USER:-api_readonly}
+      - CLICKHOUSE_API_PASSWORD=${CLICKHOUSE_API_PASSWORD:-}
+      - CLICKHOUSE_WORKER_USER=${CLICKHOUSE_WORKER_USER:-worker}
+      - CLICKHOUSE_WORKER_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-}
+      - CLICKHOUSE_MIGRATION_USER=${CLICKHOUSE_MIGRATION_USER:-migration_admin}
+      - CLICKHOUSE_MIGRATION_PASSWORD=${CLICKHOUSE_MIGRATION_PASSWORD:-}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "migrate", "--backfill", "--rebuild-views"]
+    restart: "no"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "clickhouse-migration"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "One-shot ClickHouse schema/user migration for rates analytics"
+
+  graphql_api:
+    <<: *rld-indexer-service
+    container_name: rld_graphql_api
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_API_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_API_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - ENVIO_CORS_ORIGINS=${ENVIO_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}
+      - INDEXER_READY_PROTOCOLS=${INDEXER_READY_PROTOCOLS:-AAVE_MARKET,CHAINLINK_PRICES,SOFR_RATES}
+      - INDEXER_MAX_READY_LAG_BLOCKS=${INDEXER_MAX_READY_LAG_BLOCKS:-250000}
+      - INDEXER_MAX_READY_SOFR_BUSINESS_DAYS=${INDEXER_MAX_READY_SOFR_BUSINESS_DAYS:-3}
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command:
+      [
+        "uvicorn",
+        "analytics.api.graphql:create_app",
+        "--factory",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5000",
+        "--workers",
+        "2",
+        "--http",
+        "h11",
+        "--timeout-keep-alive",
+        "5",
+        "--limit-max-requests",
+        "20000",
+        "--limit-concurrency",
+        "512"
+      ]
+    ports:
+      - "127.0.0.1:5000:5000"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "rates-analytics-api"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Rates analytics GraphQL API backed by ClickHouse"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:5000/livez', timeout=2)"
+        ]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+  aave_worker:
+    <<: *rld-indexer-service
+    container_name: rld_aave_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "AAVE_MARKET"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "aave-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Aave market rates worker writing processed analytics rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'AAVE_MARKET' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  chainlink_worker:
+    <<: *rld-indexer-service
+    container_name: rld_chainlink_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "CHAINLINK_PRICES"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "chainlink-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Chainlink price worker writing oracle price analytics rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'CHAINLINK_PRICES' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  sofr_worker:
+    <<: *rld-indexer-service
+    container_name: rld_sofr_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "SOFR_RATES"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "sofr-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "SOFR off-chain rates worker writing benchmark analytics rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'SOFR_RATES' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+networks:
+  default:
+    name: rld_shared
+    external: true

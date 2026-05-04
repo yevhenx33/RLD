@@ -1,10 +1,19 @@
-FROM python:3.11-slim
+FROM python:3.11.15-slim
+
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --home-dir /home/app --create-home app
 
 WORKDIR /app
 
 RUN pip install --no-cache-dir web3==7.14.0
 
 COPY faucet_server.py .
+RUN chown -R app:app /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+USER app
 
 EXPOSE 8088
 

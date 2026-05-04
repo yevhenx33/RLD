@@ -1,0 +1,6 @@
+[run]
+omit =
+    backend/analytics/scripts/*
+    backend/analytics/tests/*
+    backend/analytics/test_*.py
+    backend/analytics/verify.py

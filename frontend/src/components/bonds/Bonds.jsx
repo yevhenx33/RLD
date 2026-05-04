@@ -41,7 +41,7 @@ export default function BondsPage() {
   const { account, connectWallet, usdcBalance: _usdcBalance } = useWallet();
   const { toasts, addToast, removeToast } = useToast();
 
-  // Live simulation data — replaces useMarketData (no rates-indexer dependency)
+  // Live simulation data — replaces useMarketData (no legacy rates dependency)
   const sim = useSim();
   const { poolTVL, protocolStats, marketInfo, pool, oracleChange24h } = sim;
   const isLoading = sim.loading;

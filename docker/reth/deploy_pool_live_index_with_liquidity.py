@@ -4,7 +4,7 @@ deploy_pool_live_index_with_liquidity.py
 ========================================
 
 Isolated verification script for the new hookless V4 pool path:
-  1. Fetch current USDC borrow rate from Envio/data-pipeline.
+  1. Fetch current USDC borrow rate from analytics.
   2. Convert to oracle semantics via P = K * r (K=100), then to ray for Mock oracle.
   3. Deploy a fresh MockRLDAaveOracle and two MockERC20 tokens.
   4. Initialize a hookless Uniswap V4 pool at the derived initial price.

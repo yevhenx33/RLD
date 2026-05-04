@@ -1,24 +1,9 @@
-# ═══════════════════════════════════════════════════════════════
-# RLD Frontend (Nginx + Vite SPA)
-# ═══════════════════════════════════════════════════════════════
-# Independently deployable. Proxies to simulation indexer and Envio GraphQL
-# via Docker DNS on the shared rld_shared network.
-#
-#  Usage:
-#    docker compose -f docker/docker-compose.frontend.yml up -d
-#
-#  Deploy new build:
-#    cd frontend && VITE_API_BASE_URL=/api VITE_ANALYTICS_API_BASE=/analytics npx vite build
-#    docker compose -f docker/docker-compose.frontend.yml up -d --force-recreate
-#
-#  Access:
-#    http://localhost:3000 (direct)
-#    https://rld.fi (via Cloudflare → host nginx → :3000)
-# ═══════════════════════════════════════════════════════════════
+name: rld-frontend
 
 services:
   frontend:
-    image: nginx:1.27-alpine
+    container_name: rld-frontend
+    image: nginx:1.27.5-alpine
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:80"
     volumes:
@@ -29,6 +14,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "frontend"
+      com.rld.service: "frontend"
+      com.rld.tier: "edge"
+      com.rld.persistence: "none"
+      com.rld.description: "Nginx container serving the built Vite SPA and internal API proxy routes"
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/ || exit 1"]
       interval: 30s

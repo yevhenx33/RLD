@@ -14,3 +14,12 @@ venv/
 backend_logs.txt
 indexer_logs.txt
 operator_logs.txt
+node_modules/
+frontend/node_modules/
+protocol-docs/node_modules/
+frontend/dist/
+protocol-docs/.next/
+protocol-docs/out/
+logs/
+.pytest_cache/
+docker/dashboard/status-history.json

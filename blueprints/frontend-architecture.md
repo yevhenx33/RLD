@@ -7,16 +7,16 @@ This blueprint defines the RLD frontend architecture standard for future AI agen
 Frontend pages must render backend-produced page models.
 
 ```text
-data-pipeline indexers -> ClickHouse pre-aggregates -> page-level GraphQL -> one page request -> render
+backend analytics indexers -> ClickHouse pre-aggregates -> page-level GraphQL -> one page request -> render
 ```
 
-The frontend should not understand finance data deeply. It should not join raw series, compute weighted APYs, forward-fill histories, classify markets, or merge chart datasets when the data-pipeline can do it once and cache or pre-aggregate it.
+The frontend should not understand finance data deeply. It should not join raw series, compute weighted APYs, forward-fill histories, classify markets, or merge chart datasets when the analytics can do it once and cache or pre-aggregate it.
 
 ## Role Separation
 
-### Data Pipeline
+### Analytics
 
-The data-pipeline owns:
+The analytics owns:
 
 - Raw source ingestion.
 - ClickHouse schema and materialized/pre-aggregated serving tables.
@@ -117,7 +117,7 @@ If a page resolver needs heavy Python loops over large result sets, that is a de
 
 When migrating an analytics page:
 
-1. Add or update a page-level GraphQL field in `data-pipeline/indexer/api/graphql.py`.
+1. Add or update a page-level GraphQL field in `backend/analytics/api/graphql.py`.
 2. Build the payload from ClickHouse pre-aggregates or bounded read-model queries.
 3. Add backend tests for payload math, bounds, malformed values, and sorting.
 4. Replace frontend generic queries with one page-level query.
@@ -139,7 +139,7 @@ npm run check:bundle
 npm run check:perf-smoke
 ```
 
-For backend page-model changes, verify in the indexer image or an environment with the data-pipeline dependencies:
+For backend page-model changes, verify in the indexer image or an environment with the analytics dependencies:
 
 ```bash
 python -m py_compile indexer/api/graphql.py tests/test_page_models.py

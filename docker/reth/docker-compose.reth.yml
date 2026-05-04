@@ -1,24 +1,8 @@
-# ═══════════════════════════════════════════════════════════════
-# RLD Simulation Stack (Reth Mode)
-# ═══════════════════════════════════════════════════════════════
-# Core simulation services only. Rates-indexer and frontend run
-# in separate compose files on the shared rld_shared network.
-#
-#  Usage:
-#    ./docker/reth/restart-reth.sh --fresh --with-users
-#
-#  Services:
-#    reth         — Reth dev-mode node with custom genesis
-#    postgres     — PostgreSQL for simulation indexer
-#    indexer      — On-chain event indexer + REST/GraphQL API
-#    mm-daemon    — Market-maker bot
-#    chaos-trader — Random trading bot
-#    faucet       — Whale faucet for funding users
-# ═══════════════════════════════════════════════════════════════
+name: rld-reth
 
 services:
-  # ─── RETH NODE ──────────────────────────────────────────────
   reth:
+    container_name: rld-reth
     image: ghcr.io/paradigmxyz/reth:v1.11.3
     entrypoint: /usr/local/bin/reth
     command:
@@ -49,6 +33,12 @@ services:
     ports:
       - "127.0.0.1:${RETH_PORT:-8545}:8545"
     restart: unless-stopped
+    labels:
+      com.rld.owner: "protocol-backend"
+      com.rld.service: "reth-dev-node"
+      com.rld.tier: "simulation"
+      com.rld.persistence: "volume:reth-datadir"
+      com.rld.description: "Reth dev-mode execution node for the simulation stack"
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'timeout 2 bash -c \"echo > /dev/tcp/localhost/8545\"' || exit 1"]
       interval: 5s
@@ -56,9 +46,9 @@ services:
       start_period: 30s
       retries: 10
 
-  # ─── POSTGRES ───────────────────────────────────────────────
   postgres:
-    image: postgres:15-alpine
+    container_name: rld-postgres
+    image: postgres:15.17-alpine
     volumes:
       - postgres-data-reth:/var/lib/postgresql/data
     environment:
@@ -67,6 +57,12 @@ services:
       - POSTGRES_DB=rld_indexer
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
+    labels:
+      com.rld.owner: "protocol-backend"
+      com.rld.service: "simulation-postgres"
+      com.rld.tier: "database"
+      com.rld.persistence: "volume:postgres-data-reth"
+      com.rld.description: "PostgreSQL state store for the simulation indexer"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rld -d rld_indexer"]
       interval: 5s
@@ -74,8 +70,9 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ─── INDEXER ─────────────────────────────────────────────────
   indexer:
+    container_name: rld-indexer
+    image: rld-simulation-indexer:latest
     build:
       context: ../..
       dockerfile: docker/indexer/Dockerfile
@@ -101,6 +98,7 @@ services:
       - SIM_CLICKHOUSE_PORT=${SIM_CLICKHOUSE_PORT:-8123}
       - SIM_CLICKHOUSE_DATABASE=${SIM_CLICKHOUSE_DATABASE:-default}
       - SIM_CLICKHOUSE_DUAL_WRITE_STRICT=${SIM_CLICKHOUSE_DUAL_WRITE_STRICT:-false}
+      - PYTHONDONTWRITEBYTECODE=1
     volumes:
       - ../deployment.json:/config/deployment.json:ro
     extra_hosts:
@@ -108,6 +106,16 @@ services:
     ports:
       - "127.0.0.1:${INDEXER_PORT:-8080}:8080"
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "protocol-backend"
+      com.rld.service: "simulation-indexer"
+      com.rld.tier: "simulation"
+      com.rld.persistence: "postgres"
+      com.rld.description: "On-chain event indexer and GraphQL/REST API for simulation state"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz', timeout=2)\""]
       interval: 10s
@@ -115,8 +123,9 @@ services:
       start_period: 30s
       retries: 5
 
-  # ─── MM DAEMON ───────────────────────────────────────────────
   mm-daemon:
+    container_name: rld-mm-daemon
+    image: rld-simulation-daemon:latest
     build:
       context: ../..
       dockerfile: docker/daemons/Dockerfile
@@ -139,9 +148,20 @@ services:
       - MAX_BORROW_APY=${MAX_BORROW_APY:-2.0}
       - MAX_RATE_AGE_SECONDS=${MAX_RATE_AGE_SECONDS:-900}
       - RATES_TIMEOUT=${RATES_TIMEOUT:-2}
+      - PYTHONDONTWRITEBYTECODE=1
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "protocol-backend"
+      com.rld.service: "market-maker-daemon"
+      com.rld.tier: "execution"
+      com.rld.persistence: "none"
+      com.rld.description: "Market-maker and oracle update daemon for simulation execution"
     healthcheck:
       test:
         [
@@ -153,8 +173,9 @@ services:
       start_period: 60s
       retries: 5
 
-  # ─── CHAOS TRADER ────────────────────────────────────────────
   chaos-trader:
+    container_name: rld-chaos-trader
+    image: rld-simulation-chaos-trader:latest
     build:
       context: ../..
       dockerfile: docker/daemons/Dockerfile
@@ -180,10 +201,28 @@ services:
       - CHAOS_MIN_WRLP_FOR_SELL=${CHAOS_MIN_WRLP_FOR_SELL:-1}
       - CHAOS_MIN_BUY_AMOUNT_WAUSDC=${CHAOS_MIN_BUY_AMOUNT_WAUSDC:-50}
       - CHAOS_MIN_SELL_AMOUNT_WRLP=${CHAOS_MIN_SELL_AMOUNT_WRLP:-1}
+      - PYTHONDONTWRITEBYTECODE=1
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "protocol-backend"
+      com.rld.service: "chaos-trader"
+      com.rld.tier: "execution"
+      com.rld.persistence: "none"
+      com.rld.description: "Randomized simulation trader used to keep the market active"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'chaos_daemon.py' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
-  # ─── CROSS-MARKET ARB BOT ────────────────────────────────────
   arb-bot:
+    container_name: rld-arb-bot
+    image: rld-simulation-arb-bot:latest
     build:
       context: ../..
       dockerfile: docker/daemons/Dockerfile
@@ -204,7 +243,18 @@ services:
       - ARB_MIN_USDC=${ARB_MIN_USDC:-10000}
       - ARB_STATUS_FILE=/tmp/cross_market_arb_status.json
       - ARB_MAX_CONSECUTIVE_FAILURES=${ARB_MAX_CONSECUTIVE_FAILURES:-5}
+      - PYTHONDONTWRITEBYTECODE=1
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "protocol-backend"
+      com.rld.service: "cross-market-arb-bot"
+      com.rld.tier: "execution"
+      com.rld.persistence: "tmp-status"
+      com.rld.description: "Cross-market arbitrage bot with status-file health contract"
     healthcheck:
       test:
         [
@@ -216,8 +266,9 @@ services:
       start_period: 30s
       retries: 3
 
-  # ─── FAUCET SERVER ────────────────────────────────────────────
   faucet:
+    container_name: rld-faucet
+    image: rld-simulation-faucet:latest
     build:
       context: .
       dockerfile: Dockerfile.faucet
@@ -231,11 +282,22 @@ services:
       - DEPLOYMENT_FILE=/config/deployment-snapshot.json
       - FAUCET_PORT=8088
       - FAUCET_CORS_ORIGIN=${FAUCET_CORS_ORIGIN:-https://rld.fi}
+      - PYTHONDONTWRITEBYTECODE=1
     ports:
       - "127.0.0.1:8088:8088"
     volumes:
       - ./deployment-snapshot.json:/config/deployment-snapshot.json:ro
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      com.rld.owner: "protocol-backend"
+      com.rld.service: "faucet"
+      com.rld.tier: "execution"
+      com.rld.persistence: "none"
+      com.rld.description: "Simulation faucet for funding test accounts from configured whale key"
     healthcheck:
       test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8088/health', timeout=2)\""]
       interval: 15s
@@ -245,7 +307,11 @@ services:
 
 volumes:
   postgres-data-reth:
+    external: true
+    name: reth_postgres-data-reth
   reth-datadir:
+    external: true
+    name: reth_reth-datadir
 
 networks:
   default:
