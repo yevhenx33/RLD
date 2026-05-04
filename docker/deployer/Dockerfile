@@ -19,9 +19,6 @@ WORKDIR /workspace
 # Copy contracts (Forge project)
 COPY contracts/ /workspace/contracts/
 
-# Copy scripts (actions + scenarios + utils)
-COPY scripts/ /workspace/scripts/
-
 # Copy deploy_swap_router.py
 COPY backend/tools/deploy_swap_router.py /workspace/backend/tools/deploy_swap_router.py
 
