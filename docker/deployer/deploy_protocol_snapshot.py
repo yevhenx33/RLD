@@ -429,7 +429,7 @@ def main() -> None:
     )
     _ok(f"Mock oracle: {mock_oracle}")
 
-    # Live APY sync from Envio/data-pipeline.
+    # Live APY sync from analytics.
     live_rate_fraction = _fetch_live_rate_fraction(api_url)
     if live_rate_fraction is not None:
         rate_ray = _rate_fraction_to_ray(live_rate_fraction)

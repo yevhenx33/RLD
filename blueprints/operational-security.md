@@ -63,8 +63,8 @@ bash docker/scripts/stack.sh smoke --allow-not-ready
 For secret-handling changes, also verify:
 
 ```bash
-git check-ignore -v docker/.env data-pipeline/.env frontend/.env.production docker/mainnet/jwt.hex
-stat -c '%a %U:%G %n' docker/.env data-pipeline/.env /etc/rld/mainnet/jwt.hex
+git check-ignore -v docker/.env backend/analytics/.env frontend/.env.production docker/mainnet/jwt.hex
+stat -c '%a %U:%G %n' docker/.env backend/analytics/.env /etc/rld/mainnet/jwt.hex
 ```
 
 For dashboard changes, verify:

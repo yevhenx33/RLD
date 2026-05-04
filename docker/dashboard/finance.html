@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RLD // SIMULATION</title>
-    <script src="/vendor/react.min.js"></script>
-    <script src="/vendor/react-dom.min.js"></script>
-    <script src="/vendor/babel.min.js"></script>
+    <script src="vendor/react.min.js?v=dashboard-20260504"></script>
+    <script src="vendor/react-dom.min.js?v=dashboard-20260504"></script>
+    <script src="vendor/babel.min.js?v=dashboard-20260504"></script>
     <link
       href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap"
       rel="stylesheet"
@@ -21,24 +21,29 @@
         --bg: #06080a;
         --s1: #0c0e12;
         --s2: #12151a;
+        --s3: #181c22;
         --bdr: #1c2028;
-        --t: #c8ccd4;
-        --tb: #e2e5ea;
-        --td: #4a5060;
-        --tw: #f0f2f5;
+        --bdr2: #252a33;
         --g: #00ff88;
+        --g10: rgba(0, 255, 136, 0.06);
         --g20: rgba(0, 255, 136, 0.12);
-        --r: #ff4466;
-        --r20: rgba(255, 68, 102, 0.12);
-        --a: #ffaa22;
-        --a20: rgba(255, 170, 34, 0.12);
+        --a: #ffb020;
+        --a10: rgba(255, 176, 32, 0.06);
+        --a20: rgba(255, 176, 32, 0.12);
+        --r: #ff4455;
+        --r10: rgba(255, 68, 85, 0.06);
+        --r20: rgba(255, 68, 85, 0.12);
         --c: #38bdf8;
-        --c20: rgba(56, 189, 248, 0.12);
+        --c10: rgba(56, 189, 248, 0.06);
         --p: #a78bfa;
-        --p20: rgba(167, 139, 250, 0.12);
+        --p10: rgba(167, 139, 250, 0.06);
+        --t: #8892a0;
+        --td: #4a5260;
+        --tb: #d0d5dd;
+        --tw: #f0f2f5;
       }
       html {
-        font-size: 15px;
+        font-size: 13px;
       }
       body {
         font-family: "JetBrains Mono", monospace;
@@ -48,8 +53,6 @@
         line-height: 1.5;
         overflow-x: hidden;
       }
-
-      /* ── Scanline overlay ── */
       body::before {
         content: "";
         position: fixed;
@@ -58,27 +61,33 @@
           0deg,
           transparent,
           transparent 2px,
-          rgba(0, 255, 136, 0.003) 2px,
-          rgba(0, 255, 136, 0.003) 4px
+          rgba(0, 255, 136, 0.004) 2px,
+          rgba(0, 255, 136, 0.004) 4px
         );
         pointer-events: none;
         z-index: 9999;
       }
-
-      /* ── Animations ── */
-      @keyframes fadeIn {
+      ::selection {
+        background: var(--g20);
+        color: var(--g);
+      }
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+      @keyframes fadeUp {
         from {
           opacity: 0;
-          transform: translateY(6px);
+          transform: translateY(8px);
         }
         to {
           opacity: 1;
           transform: translateY(0);
-        }
-      }
-      @keyframes blink {
-        50% {
-          opacity: 0;
         }
       }
       @keyframes pulse {
@@ -87,175 +96,245 @@
           opacity: 1;
         }
         50% {
-          opacity: 0.5;
+          opacity: 0.35;
         }
       }
-
-      /* ── Layout ── */
-      .dash {
-        max-width: 1400px;
-        margin: 0 auto;
-        padding: 20px 24px;
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
       }
-
-      /* ── Header ── */
-      .header {
+      .wrap,
+      .dash {
+        max-width: 1440px;
+        margin: 0 auto;
+        padding: 12px 16px;
+      }
+      .empty-state {
+        min-height: 70vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        gap: 8px;
+      }
+      .hdr {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding-bottom: 16px;
+        padding: 10px 0 14px;
         border-bottom: 1px solid var(--bdr);
-        margin-bottom: 20px;
+        margin-bottom: 12px;
       }
-      .header-left {
+      .hdr-l {
         display: flex;
         align-items: baseline;
-        gap: 12px;
+        gap: 8px;
+      }
+      .hdr-r {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 10px;
+        color: var(--td);
       }
       .logo {
-        font-size: 22px;
+        font-size: 16px;
         font-weight: 700;
         color: var(--g);
-        text-shadow: 0 0 16px rgba(0, 255, 136, 0.3);
+        text-shadow: 0 0 12px rgba(0, 255, 136, 0.25);
       }
-      .logo-sub {
-        font-size: 12px;
+      .subtitle {
+        font-size: 10px;
         color: var(--td);
         letter-spacing: 3px;
         text-transform: uppercase;
       }
-      .header-right {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        font-size: 12px;
-        color: var(--td);
-      }
-
-      /* ── Tabs ── */
       .tabs {
         display: flex;
         gap: 0;
-        margin-bottom: 20px;
+        margin-bottom: 12px;
         border-bottom: 1px solid var(--bdr);
       }
       .tab {
-        padding: 8px 20px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 2px;
+        padding: 7px 14px;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 1.8px;
         text-transform: uppercase;
         color: var(--td);
         text-decoration: none;
         border-bottom: 2px solid transparent;
-        transition: all 0.2s;
       }
       .tab:hover {
-        color: var(--t);
+        color: var(--tb);
       }
       .tab.active {
         color: var(--c);
         border-bottom-color: var(--c);
       }
-
-      /* ── Section ── */
-      .section {
-        margin-bottom: 24px;
-        animation: fadeIn 0.4s ease both;
-      }
-      .section-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 12px;
-      }
-      .section-title {
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        color: var(--td);
-      }
-
-      /* ── Hero metrics ── */
-      .hero {
+      .grid {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 2px;
-        margin-bottom: 24px;
+        gap: 1px;
       }
-      @media (max-width: 768px) {
-        .hero {
-          grid-template-columns: repeat(2, 1fr);
+      .g2 {
+        grid-template-columns: 1fr 1fr;
+      }
+      .g3 {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .g4 {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .g5 {
+        grid-template-columns: repeat(5, 1fr);
+      }
+      .g32 {
+        grid-template-columns: 3fr 2fr;
+      }
+      .g23 {
+        grid-template-columns: 2fr 3fr;
+      }
+      @media (max-width: 900px) {
+        .g3,
+        .g4,
+        .g5,
+        .g32,
+        .g23 {
+          grid-template-columns: 1fr;
+        }
+        .hdr {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .hdr-r {
+          flex-wrap: wrap;
         }
       }
-      .metric {
+      .card {
         background: var(--s1);
         border: 1px solid var(--bdr);
-        padding: 20px 24px;
-        animation: fadeIn 0.4s ease both;
+        padding: 12px 14px;
+        animation: fadeUp 0.35s ease both;
       }
-      .metric-label {
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        color: var(--td);
+      .card-hdr {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
         margin-bottom: 8px;
-      }
-      .metric-value {
-        font-size: 32px;
-        font-weight: 600;
-        letter-spacing: -1px;
-        line-height: 1.1;
-      }
-      .metric-sub {
-        font-size: 12px;
+        font-size: 9px;
+        text-transform: uppercase;
+        letter-spacing: 2px;
         color: var(--td);
-        margin-top: 4px;
       }
-
-      /* ── Badge ── */
+      .card-hdr .label {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .section {
+        margin-bottom: 12px;
+      }
       .badge {
         display: inline-flex;
         align-items: center;
-        padding: 2px 8px;
-        font-size: 10px;
-        font-weight: 600;
-        letter-spacing: 1px;
-        text-transform: uppercase;
+        gap: 5px;
+        font-size: 8px;
+        padding: 2px 7px;
         border-radius: 2px;
+        letter-spacing: 1.2px;
+        font-weight: 600;
+        text-transform: uppercase;
+        white-space: nowrap;
       }
       .b-g {
-        background: var(--g20);
+        background: var(--g10);
         color: var(--g);
-        border: 1px solid rgba(0, 255, 136, 0.15);
-      }
-      .b-r {
-        background: var(--r20);
-        color: var(--r);
-        border: 1px solid rgba(255, 68, 102, 0.15);
+        border: 1px solid var(--g20);
       }
       .b-a {
-        background: var(--a20);
+        background: var(--a10);
         color: var(--a);
-        border: 1px solid rgba(255, 170, 34, 0.15);
+        border: 1px solid var(--a20);
+      }
+      .b-r {
+        background: var(--r10);
+        color: var(--r);
+        border: 1px solid var(--r20);
       }
       .b-c {
-        background: var(--c20);
+        background: var(--c10);
         color: var(--c);
         border: 1px solid rgba(56, 189, 248, 0.15);
       }
       .b-p {
-        background: var(--p20);
+        background: var(--p10);
         color: var(--p);
         border: 1px solid rgba(167, 139, 250, 0.15);
       }
-
-      /* ── Chart ── */
+      .dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+      }
+      .dg {
+        background: var(--g);
+        box-shadow: 0 0 5px var(--g);
+      }
+      .da {
+        background: var(--a);
+        box-shadow: 0 0 5px var(--a);
+      }
+      .dr {
+        background: var(--r);
+        box-shadow: 0 0 5px var(--r);
+      }
+      .live {
+        animation: blink 1.4s step-end infinite;
+        color: var(--g);
+      }
+      .mv {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--tw);
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+      .ml {
+        font-size: 10px;
+        color: var(--td);
+        margin-top: 3px;
+        overflow-wrap: anywhere;
+      }
+      .mono {
+        font-family: "JetBrains Mono", monospace;
+      }
+      .muted {
+        color: var(--td);
+      }
+      .good {
+        color: var(--g);
+      }
+      .warn {
+        color: var(--a);
+      }
+      .bad {
+        color: var(--r);
+      }
+      .info {
+        color: var(--c);
+      }
+      .purple {
+        color: var(--p);
+      }
       .chart-wrap {
         position: relative;
-        height: 420px;
+        height: 360px;
         border: 1px solid var(--bdr);
         background: var(--s1);
         overflow: hidden;
@@ -266,9 +345,10 @@
       }
       .legend {
         display: flex;
-        gap: 16px;
-        font-size: 10px;
+        gap: 14px;
+        font-size: 9px;
         color: var(--td);
+        letter-spacing: 1px;
       }
       .legend-dot {
         width: 10px;
@@ -277,148 +357,136 @@
         display: inline-block;
         margin-right: 5px;
       }
-
-      /* ── Table ── */
+      .tbl-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--bdr);
+        background: var(--s1);
+      }
       .tbl {
         width: 100%;
         border-collapse: collapse;
       }
       .tbl th {
-        padding: 10px 12px;
-        font-size: 11px;
-        font-weight: 600;
-        letter-spacing: 1.5px;
+        padding: 8px 10px;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 1.4px;
         text-transform: uppercase;
         color: var(--td);
         text-align: left;
         border-bottom: 1px solid var(--bdr);
+        white-space: nowrap;
       }
-      .tbl th.r {
+      .tbl th.r,
+      .tbl td.r {
         text-align: right;
       }
       .tbl td {
-        padding: 12px 12px;
-        font-size: 14px;
+        padding: 9px 10px;
+        font-size: 11px;
         border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        vertical-align: middle;
         white-space: nowrap;
-      }
-      .tbl td.r {
-        text-align: right;
       }
       .tbl tr:hover td {
         background: rgba(255, 255, 255, 0.02);
       }
-      .tbl-card {
-        background: var(--s1);
-        border: 1px solid var(--bdr);
-        overflow: hidden;
-      }
       .tbl-footer {
         display: flex;
         justify-content: space-between;
-        padding: 12px 12px;
-        font-size: 12px;
+        gap: 12px;
+        padding: 9px 10px;
+        font-size: 10px;
         color: var(--td);
         border-top: 1px solid var(--bdr);
+        flex-wrap: wrap;
       }
-
-      /* ── Events ── */
+      .kv {
+        display: grid;
+        gap: 1px;
+      }
+      .kv-row {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 10px;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.035);
+        font-size: 11px;
+      }
+      .kv-row:last-child {
+        border-bottom: 0;
+      }
+      .kv-k {
+        color: var(--td);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-size: 9px;
+      }
+      .kv-v {
+        color: var(--tb);
+        overflow-wrap: anywhere;
+      }
+      .evt-list {
+        max-height: 330px;
+        overflow: auto;
+      }
       .evt {
+        display: grid;
+        grid-template-columns: 92px 74px 96px 1fr;
+        gap: 9px;
+        align-items: center;
+        padding: 7px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+        font-size: 10px;
+      }
+      .evt:last-child {
+        border-bottom: 0;
+      }
+      @media (max-width: 700px) {
+        .evt {
+          grid-template-columns: 1fr;
+          gap: 3px;
+        }
+      }
+      .banner {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 6px 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-        font-size: 12px;
-        animation: fadeIn 0.3s ease both;
-      }
-      .evt-type {
-        padding: 2px 8px;
-        font-size: 10px;
-        font-weight: 600;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        border-radius: 2px;
-        width: 84px;
-        text-align: center;
-        flex-shrink: 0;
-      }
-      .evt-swap {
-        background: var(--c20);
-        color: var(--c);
-        border: 1px solid rgba(56, 189, 248, 0.15);
-      }
-      .evt-transfer {
-        background: var(--p20);
-        color: var(--p);
-        border: 1px solid rgba(167, 139, 250, 0.15);
-      }
-      .evt-other {
-        background: rgba(255, 255, 255, 0.03);
-        color: var(--td);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-      }
-      .events-card {
-        background: var(--s1);
+        padding: 10px 12px;
+        margin-bottom: 12px;
         border: 1px solid var(--bdr);
-        padding: 16px;
-      }
-
-      /* ── Footer ── */
-      .footer {
-        text-align: center;
-        padding: 16px;
-        font-size: 11px;
-        color: var(--td);
-        border-top: 1px solid var(--bdr);
-        margin-top: 8px;
-      }
-
-      /* ── Reconnecting Banner ── */
-      .reconnect-banner {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 12px;
-        padding: 12px 20px;
-        margin-bottom: 20px;
-        background: var(--r20);
-        border: 1px solid rgba(255, 68, 102, 0.2);
-        color: var(--r);
-        font-size: 12px;
-        font-weight: 600;
+        background: var(--s1);
+        font-size: 10px;
         letter-spacing: 1px;
         text-transform: uppercase;
-        animation: fadeIn 0.3s ease;
       }
-      .reconnect-spinner {
+      .banner.warn {
+        color: var(--a);
+        border-color: var(--a20);
+        background: var(--a10);
+      }
+      .banner.bad {
+        color: var(--r);
+        border-color: var(--r20);
+        background: var(--r10);
+      }
+      .spinner {
         width: 12px;
         height: 12px;
-        border: 2px solid rgba(255, 68, 102, 0.3);
+        border: 2px solid rgba(255, 68, 85, 0.25);
         border-top-color: var(--r);
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
       }
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      .stale-banner {
+      .ftr {
         display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        padding: 10px 20px;
-        margin-bottom: 16px;
-        background: var(--a20);
-        border: 1px solid rgba(255, 170, 34, 0.2);
-        color: var(--a);
-        font-size: 11px;
-        font-weight: 500;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        animation: fadeIn 0.3s ease;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 0 4px;
+        font-size: 9px;
+        color: var(--td);
+        border-top: 1px solid var(--bdr);
+        flex-wrap: wrap;
       }
     </style>
   </head>
@@ -470,6 +538,98 @@
       const fromRaw = (v, decimals = 6) => {
         if (!v && v !== 0) return 0;
         return Number(v) / Math.pow(10, decimals);
+      };
+      const rawWord = (raw, index) => {
+        const body = String(raw || "").replace(/^0x/, "");
+        const start = index * 64;
+        return body.length >= start + 64 ? body.slice(start, start + 64) : null;
+      };
+      const wordToSignedNumber = (word) => {
+        if (!word) return 0;
+        try {
+          const value = BigInt("0x" + word);
+          const signBit = BigInt(2) ** BigInt(255);
+          const mod = BigInt(2) ** BigInt(256);
+          const signed = value >= signBit ? value - mod : value;
+          return Number(signed);
+        } catch {
+          return 0;
+        }
+      };
+      const wordToUnsignedNumber = (word) => {
+        if (!word) return 0;
+        try {
+          return Number(BigInt("0x" + word));
+        } catch {
+          return 0;
+        }
+      };
+      const topicAddr = (topic) => {
+        const t = String(topic || "").replace(/^0x/, "");
+        return t.length >= 40 ? "0x" + t.slice(-40) : "";
+      };
+      const summarizeEvent = (e) => {
+        const name = e.event_name || "";
+        const data = e.event_data || {};
+        const topics = data.topics || [];
+        if (name === "Swap") {
+          const amount0 = wordToSignedNumber(rawWord(data.raw, 0));
+          const amount1 = wordToSignedNumber(rawWord(data.raw, 1));
+          const actor = topicAddr(topics[2]);
+          const side = amount0 > 0 ? "BUY" : "SELL";
+          const quote = Math.abs(amount1) / 1e6;
+          return {
+            label: "Pool Swap",
+            badge: side,
+            type: side === "BUY" ? "g" : "a",
+            tone: "info",
+            detail: `${fmtN(quote)} aUSDC / ${fmtAddr(actor)}`,
+          };
+        }
+        if (name === "SwapExecuted") {
+          const direction = wordToUnsignedNumber(rawWord(data.raw, 0));
+          const amountIn = wordToUnsignedNumber(rawWord(data.raw, 1)) / 1e6;
+          const amountOut = wordToUnsignedNumber(rawWord(data.raw, 2)) / 1e6;
+          const actor = topicAddr(topics[2]);
+          return {
+            label: "Strategy Swap",
+            badge: direction === 1 ? "BUY" : "SELL",
+            type: "c",
+            tone: "info",
+            detail: `${fmtN(amountIn)} -> ${fmtN(amountOut)} / ${fmtAddr(actor)}`,
+          };
+        }
+        if (name === "GhostTaken") {
+          const amount = wordToUnsignedNumber(rawWord(data.raw, 0)) / 1e6;
+          const tickLower = wordToSignedNumber(rawWord(data.raw, 1));
+          const tickUpper = wordToSignedNumber(rawWord(data.raw, 2));
+          return {
+            label: "Ghost Liquidity",
+            badge: "TAKEN",
+            type: "p",
+            tone: "purple",
+            detail: `${fmtN(amount)} claimed / ticks ${tickLower}..${tickUpper}`,
+          };
+        }
+        if (name === "Transfer" || name === "ERC20Transfer") {
+          const from = data.from || topicAddr(topics[1]);
+          const to = data.to || topicAddr(topics[2]);
+          return {
+            label: "Token Transfer",
+            badge: "ERC20",
+            type: "a",
+            tone: "muted",
+            detail: `${fmtAddr(from)} -> ${fmtAddr(to)}`,
+            technical: true,
+          };
+        }
+        return {
+          label: name || "Protocol Event",
+          badge: "EVENT",
+          type: "a",
+          tone: "muted",
+          detail: "Indexed protocol event",
+        };
       };
 
       // ══════════════════ COMPONENTS ══════════════════
@@ -733,7 +893,7 @@
         );
 
         const loadLatest = useCallback(() => {
-          fetch("/graphql?ts=" + Date.now(), {
+          fetch("graphql?ts=" + Date.now(), {
             method: "POST",
             headers: { 
               "Content-Type": "application/json",
@@ -752,7 +912,7 @@
               const m = res.data.markets[0];
               const mId = m.marketId;
               
-              return fetch("/graphql?ts=" + Date.now(), {
+              return fetch("graphql?ts=" + Date.now(), {
                 method: "POST",
                 headers: { 
                   "Content-Type": "application/json",
@@ -853,7 +1013,7 @@
         }, [detectRestart, errCount]);
 
         const loadChart = useCallback(() => {
-          fetch("/graphql?ts=" + Date.now(), {
+          fetch("graphql?ts=" + Date.now(), {
             method: "POST", 
             headers: { 
               "Content-Type": "application/json",
@@ -867,7 +1027,7 @@
           }).then(r => r.json()).then(res => {
              if (!res.data.markets.length) return;
              const mId = res.data.markets[0].marketId;
-             return fetch("/graphql?ts=" + Date.now(), {
+             return fetch("graphql?ts=" + Date.now(), {
                method: "POST", 
                headers: { 
                  "Content-Type": "application/json",
@@ -893,7 +1053,7 @@
                }
 
                // Fallback for sparse deployments: chart directly from block_states.
-               return fetch("/api/price-history?limit=1000")
+               return fetch("api/price-history?limit=1000")
                  .then(r => (r.ok ? r.json() : null))
                  .then(hist => {
                    const points = (hist?.points || [])
@@ -912,7 +1072,7 @@
         }, []);
 
         const loadEvents = useCallback(() => {
-          fetch("/graphql?ts=" + Date.now(), {
+          fetch("graphql?ts=" + Date.now(), {
             method: "POST", 
             headers: { 
               "Content-Type": "application/json",
@@ -943,7 +1103,7 @@
         }, []);
 
         const loadMarketInfo = useCallback(() => {
-          fetch("/api/market-info?ts=" + Date.now())
+          fetch("api/market-info?ts=" + Date.now())
             .then((r) => (r.ok ? r.json() : null))
             .then((data) => {
               if (data && !data.status) setMarketInfo(data);
@@ -952,7 +1112,7 @@
         }, []);
 
         const loadStatus = useCallback(() => {
-          fetch("/api/status?ts=" + Date.now())
+          fetch("api/status?ts=" + Date.now())
             .then((r) => (r.ok ? r.json() : null))
             .then((data) => {
               if (data && data.status === "ok") setStatusInfo(data);
@@ -1077,39 +1237,108 @@
           hasIndexPrice ? ((markPrice - indexPrice) / indexPrice) * 100 : 0;
 
         const swaps = events.filter((e) => e.event_name === "Swap");
+        const protocolEvents = events.filter(
+          (e) => !["ERC20Transfer", "Transfer"].includes(e.event_name),
+        );
+        const displayEvents = (protocolEvents.length ? protocolEvents : events).slice(0, 50);
         const totalVol = swaps.reduce(
           (a, e) => a + Math.abs(fromRaw(e.event_data?.amount1 || "0", 6)),
           0,
         );
+        const blockNumber = Number(latest.block_number || 0);
+        const apiOk = statusInfo?.status === "ok";
+        const hasSnapshot = blockNumber > 0;
+        const hasHistory = (chartData?.length || 0) >= 2;
+        const marketConfigured = Boolean(
+          marketInfo?.marketId || marketInfo?.market_id,
+        );
+        const activeBrokers = bps.filter(
+          (b) => Number(b.collateral || 0) > 0 || Number(b.debt || 0) > 0,
+        ).length;
+        const zeroAddress = "0x0000000000000000000000000000000000000000";
+        const hookAddress = marketInfo?.twammHook || marketInfo?.twamm_hook;
+        const hookless = !hookAddress || hookAddress === zeroAddress;
+        const riskType =
+          overCollat === Infinity || overCollat === 0 || overCollat >= 1.5
+            ? "g"
+            : overCollat >= 1.2
+              ? "a"
+              : "r";
+        const riskLabel =
+          overCollat === Infinity || overCollat === 0
+            ? "NO DEBT"
+            : overCollat >= 1.5
+              ? "SAFE"
+              : overCollat >= 1.2
+                ? "WATCH"
+                : "DANGER";
+        const pegType =
+          !hasIndexPrice || Math.abs(pegDev) < 1
+            ? "g"
+            : Math.abs(pegDev) < 5
+              ? "a"
+              : "r";
+        const syncType =
+          disconnected || err
+            ? "r"
+            : apiOk && hasSnapshot
+              ? "g"
+              : "a";
+        const syncLabel =
+          disconnected || err
+            ? "DEGRADED"
+            : apiOk && hasSnapshot
+              ? "LIVE"
+              : "WARMING";
+        const nfText = Number.isFinite(normFactor)
+          ? normFactor.toFixed(6)
+          : "0.000000";
+        const poolRows = [
+          ["Active Liquidity", ps.liquidity ? fmtN(Number(ps.liquidity)) : "-"],
+          ["Token0 Balance", ps.token0_balance != null ? `${fmtN(Number(ps.token0_balance))} wRLP` : "-"],
+          ["Token1 Balance", ps.token1_balance != null ? `${fmtN(Number(ps.token1_balance))} waUSDC` : "-"],
+          ["Current Tick", ps.tick ?? "-"],
+          ["Fee Growth G0", ps.fee_growth_global0 ? fmtN(Number(ps.fee_growth_global0) / 2 ** 128, 8) : "-"],
+          ["Fee Growth G1", ps.fee_growth_global1 ? fmtN(Number(ps.fee_growth_global1) / 2 ** 128, 8) : "-"],
+        ];
+        const marketRows = [
+          ["Market ID", fmtAddr(marketInfo?.marketId || marketInfo?.market_id)],
+          ["Pool ID", fmtAddr(marketInfo?.poolId || marketInfo?.pool_id)],
+          [
+            "Pool Params",
+            `${marketInfo?.poolFee ?? marketInfo?.pool_fee ?? "-"} fee / ${marketInfo?.tickSpacing ?? marketInfo?.tick_spacing ?? "-"} tick`,
+          ],
+          ["Mock Oracle", fmtAddr(marketInfo?.mockOracle || marketInfo?.mock_oracle)],
+          ["Ghost Router", fmtAddr(marketInfo?.ghostRouter || marketInfo?.ghost_router)],
+          ["TWAP Engine", fmtAddr(marketInfo?.twapEngine || marketInfo?.twap_engine)],
+          ["TWAP Lens", fmtAddr(marketInfo?.twapEngineLens || marketInfo?.twap_engine_lens)],
+          ["TWAMM Hook", fmtAddr(hookAddress)],
+        ];
+        const readinessRows = [
+          ["Indexer API", apiOk, statusInfo?.status || "no response"],
+          ["GraphQL Snapshot", hasSnapshot, blockNumber ? `block ${blockNumber.toLocaleString()}` : "no block"],
+          ["Price History", hasHistory, `${chartData?.length || 0} points`],
+          ["Event Stream", Array.isArray(events), `${events.length} events`],
+          ["Market Config", marketConfigured, marketConfigured ? "loaded" : "missing"],
+        ];
 
         return (
-          <div className="dash">
-            {/* ═══ HEADER ═══ */}
-            <div className="header">
-              <div className="header-left">
+          <div className="wrap">
+            <div className="hdr">
+              <div className="hdr-l">
                 <span className="logo">RLD</span>
-                <span className="logo-sub">simulation monitor</span>
+                <span className="subtitle">simulation monitor</span>
               </div>
-              <div className="header-right">
+              <div className="hdr-r">
+                <Badge text={syncLabel} type={syncType} />
                 <span>
-                  block{" "}
-                  <span style={{ color: "var(--c)" }}>
-                    {latest.block_number?.toLocaleString()}
-                  </span>
+                  block <span className="info">{blockNumber.toLocaleString()}</span>
                 </span>
                 <span>{now.toLocaleTimeString("en-GB")}</span>
-                <span
-                  style={{
-                    color: "var(--g)",
-                    animation: "blink 1.2s step-end infinite",
-                  }}
-                >
-                  ▌
-                </span>
+                <span className="live">|</span>
               </div>
             </div>
 
-            {/* ═══ TABS ═══ */}
             <div className="tabs">
               <a className="tab" href="index.html">
                 INFRA STATUS
@@ -1119,261 +1348,155 @@
               </a>
             </div>
 
-            {/* ═══ RECONNECTING BANNER ═══ */}
             {disconnected && latest && (
-              <div className="reconnect-banner">
-                <div className="reconnect-spinner" />
-                SIM INDEXER DISCONNECTED — Reconnecting… (attempt {errCount})
-                <span style={{ fontWeight: 400, opacity: 0.7 }}>
-                  Data below may be stale
-                </span>
+              <div className="banner bad">
+                <div className="spinner" />
+                SIM INDEXER DISCONNECTED - reconnecting, data may be stale
               </div>
             )}
-
-            {/* ═══ SIM RESTARTED BANNER ═══ */}
             {simRestarted && (
-              <div className="stale-banner">
-                ⟳ SIMULATION RESTARTED — Chart and events cleared, loading fresh
-                data…
+              <div className="banner warn">
+                SIMULATION RESTARTED - chart and event buffers are refreshing
               </div>
             )}
 
-            {/* ═══ SECTION 1: HERO METRICS ═══ */}
-            <div className="hero">
-              <div className="metric" style={{ animationDelay: "0ms" }}>
-                <div className="metric-label">Mark Price</div>
-                <div className="metric-value" style={{ color: "var(--c)" }}>
-                  {fmt(markPrice, 4)}
-                </div>
-                <div className="metric-sub">wRLP / aUSDC</div>
-              </div>
-              <div className="metric" style={{ animationDelay: "40ms" }}>
-                <div className="metric-label">
-                  Index Price
-                  <span style={{ marginLeft: 8 }}>
-                    <Badge
-                      text={hasIndexPrice ? fmtPct(pegDev) : "—"}
-                      type={
-                        !hasIndexPrice
-                          ? "a"
-                          : Math.abs(pegDev) < 1
-                          ? "g"
-                          : Math.abs(pegDev) < 5
-                            ? "a"
-                            : "r"
-                      }
-                    />
+            <div className="section grid g5">
+              <div className="card">
+                <div className="card-hdr">
+                  <span className="label">
+                    <span className={`dot d${syncType}`} /> Runtime
                   </span>
+                  <Badge text={syncLabel} type={syncType} />
                 </div>
-                <div className="metric-value" style={{ color: "var(--p)" }}>
-                  {hasIndexPrice ? fmt(indexPrice, 4) : "—"}
+                <div className={`mv ${syncType === "g" ? "good" : syncType === "a" ? "warn" : "bad"}`}>
+                  {syncLabel}
                 </div>
-                <div className="metric-sub">oracle · peg deviation</div>
+                <div className="ml">refresh in {10 - (tick % 10)}s</div>
               </div>
-              <div className="metric" style={{ animationDelay: "80ms" }}>
-                <div className="metric-label">Total Debt</div>
-                <div
-                  className="metric-value"
-                  style={{ color: totalDebt > 0 ? "var(--a)" : "var(--tb)" }}
-                >
-                  {fmtN(totalDebt)}{" "}
-                  <span
-                    style={{
-                      fontSize: 16,
-                      fontWeight: 400,
-                      color: "var(--td)",
-                    }}
-                  >
-                    wRLP
-                  </span>
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Mark Price</span>
+                  <Badge text="POOL" type="c" />
                 </div>
-                {totalDebtValue > 0 && (
-                  <div className="metric-sub">≈ {fmt(totalDebtValue)}</div>
-                )}
+                <div className="mv info">{fmt(markPrice, 4)}</div>
+                <div className="ml">wRLP / aUSDC</div>
               </div>
-              <div className="metric" style={{ animationDelay: "120ms" }}>
-                <div className="metric-label">
-                  System Health
-                  <span style={{ marginLeft: 8 }}>
-                    <Badge
-                      text={
-                        overCollat === Infinity || overCollat === 0
-                          ? "NO DEBT"
-                          : overCollat >= 1.5
-                            ? "SAFE"
-                            : overCollat >= 1.2
-                              ? "WATCH"
-                              : "DANGER"
-                      }
-                      type={
-                        overCollat === Infinity ||
-                        overCollat === 0 ||
-                        overCollat >= 1.5
-                          ? "g"
-                          : overCollat >= 1.2
-                            ? "a"
-                            : "r"
-                      }
-                    />
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Index Price</span>
+                  <Badge text={hasIndexPrice ? fmtPct(pegDev) : "-"} type={pegType} />
+                </div>
+                <div className="mv purple">{hasIndexPrice ? fmt(indexPrice, 4) : "-"}</div>
+                <div className="ml">oracle peg deviation</div>
+              </div>
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Total Debt</span>
+                  <Badge text="wRLP" type={totalDebt > 0 ? "a" : "g"} />
+                </div>
+                <div className={`mv ${totalDebt > 0 ? "warn" : ""}`}>{fmtN(totalDebt)}</div>
+                <div className="ml">{totalDebtValue > 0 ? `approx ${fmt(totalDebtValue)}` : "no open debt value"}</div>
+              </div>
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Risk</span>
+                  <Badge text={riskLabel} type={riskType} />
+                </div>
+                <div className={`mv ${riskType === "g" ? "good" : riskType === "a" ? "warn" : "bad"}`}>
+                  {overCollat === Infinity ? "INF" : overCollatDisplay}
+                </div>
+                <div className="ml">TVL {fmt(totalCollateralValue)}</div>
+              </div>
+            </div>
+
+            <div className="section grid g32">
+              <div className="card" style={{ padding: 0 }}>
+                <div className="card-hdr" style={{ padding: "12px 14px 0" }}>
+                  <span className="label">
+                    <span className="dot dg" /> Mark vs Index Price
                   </span>
+                  <Badge text={`${chartData?.length || 0} POINTS`} type={hasHistory ? "c" : "a"} />
                 </div>
-                <div
-                  className="metric-value"
-                  style={{
-                    color:
-                      overCollat >= 1.5 || overCollat === Infinity
-                        ? "var(--g)"
-                        : overCollat >= 1.2
-                          ? "var(--a)"
-                          : "var(--r)",
-                  }}
-                >
-                  {overCollatDisplay}
+                <PriceChart data={chartData} />
+              </div>
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Simulation Readiness</span>
+                  <Badge text={readinessRows.every((r) => r[1]) ? "PASS" : "CHECK"} type={readinessRows.every((r) => r[1]) ? "g" : "a"} />
                 </div>
-                <div className="metric-sub">
-                  TVL {fmt(totalCollateralValue)} · O/C ratio
+                <table className="tbl">
+                  <tbody>
+                    {readinessRows.map(([name, ok, detail]) => (
+                      <tr key={name}>
+                        <td>
+                          <span className={`dot ${ok ? "dg" : "da"}`} />{" "}
+                          {name}
+                        </td>
+                        <td className="r muted">{detail}</td>
+                        <td className="r">
+                          <Badge text={ok ? "OK" : "WARN"} type={ok ? "g" : "a"} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="tbl-footer">
+                  <span>normalization factor: <span className="info">{nfText}</span></span>
+                  <span>active brokers: <span className="good">{activeBrokers}</span> / {bps.length}</span>
                 </div>
               </div>
             </div>
 
-            {/* ═══ SECTION 1.5: MARKET ARCHITECTURE ═══ */}
-            {marketInfo && (
-              <div className="section">
-                <div className="section-header">
-                  <span className="section-title">Market Architecture</span>
-                  <Badge
-                    text={
-                      !marketInfo.twammHook ||
-                      marketInfo.twammHook === "0x0000000000000000000000000000000000000000"
-                        ? "HOOKLESS V4"
-                        : "HOOKED POOL"
-                    }
-                    type={
-                      !marketInfo.twammHook ||
-                      marketInfo.twammHook === "0x0000000000000000000000000000000000000000"
-                        ? "g"
-                        : "a"
-                    }
-                  />
+            <div className="section grid g23">
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Market Architecture</span>
+                  <Badge text={hookless ? "HOOKLESS V4" : "HOOKED POOL"} type={hookless ? "g" : "a"} />
                 </div>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                    gap: 2,
-                  }}
-                >
-                  {[
-                    { label: "Market ID", value: fmtAddr(marketInfo.marketId || marketInfo.market_id), color: "var(--tb)" },
-                    { label: "Pool ID", value: fmtAddr(marketInfo.poolId || marketInfo.pool_id), color: "var(--tb)" },
-                    { label: "Pool Params", value: `${marketInfo.poolFee ?? marketInfo.pool_fee ?? "—"} fee / ${marketInfo.tickSpacing ?? marketInfo.tick_spacing ?? "—"} tick`, color: "var(--c)" },
-                    { label: "Mock Oracle", value: fmtAddr(marketInfo.mockOracle || marketInfo.mock_oracle), color: "var(--p)" },
-                    { label: "Ghost Router", value: fmtAddr(marketInfo.ghostRouter || marketInfo.ghost_router), color: "var(--g)" },
-                    { label: "TWAP Engine", value: fmtAddr(marketInfo.twapEngine || marketInfo.twap_engine), color: "var(--g)" },
-                    { label: "TWAP Lens", value: fmtAddr(marketInfo.twapEngineLens || marketInfo.twap_engine_lens), color: "var(--g)" },
-                    { label: "TWAMM Hook", value: fmtAddr(marketInfo.twammHook || marketInfo.twamm_hook), color: "var(--a)" },
-                  ].map((item, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        background: "var(--s1)",
-                        border: "1px solid var(--bdr)",
-                        padding: "14px 16px",
-                        animation: `fadeIn 0.4s ease ${i * 30}ms both`,
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 600,
-                          letterSpacing: "1.5px",
-                          textTransform: "uppercase",
-                          color: "var(--td)",
-                          marginBottom: 5,
-                        }}
-                      >
-                        {item.label}
+                <div className="kv">
+                  {marketRows.map(([key, value]) => (
+                    <div className="kv-row" key={key}>
+                      <div className="kv-k">{key}</div>
+                      <div className="kv-v">{value || "-"}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Pool State</span>
+                  <Badge text={ps.liquidity ? "ACTIVE" : "NO DATA"} type={ps.liquidity ? "g" : "a"} />
+                </div>
+                <div className="grid g3">
+                  {poolRows.map(([label, value]) => (
+                    <div className="card" key={label}>
+                      <div className="card-hdr">
+                        <span>{label}</span>
                       </div>
-                      <div
-                        style={{
-                          fontSize: 14,
-                          color: item.color,
-                          fontFamily: "JetBrains Mono",
-                        }}
-                      >
-                        {item.value || "—"}
+                      <div className="mv" style={{ fontSize: 18 }}>
+                        {value}
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-            )}
-
-            {/* ═══ SECTION 2: PRICE CHART ═══ */}
-            <div className="section">
-              <div className="section-header">
-                <span className="section-title">Mark vs Index Price</span>
-                {chartData && (
-                  <Badge text={`${chartData.length} BLOCKS`} type="c" />
-                )}
-              </div>
-              <PriceChart data={chartData} />
             </div>
 
-            {/* ═══ SECTION 2b: POOL LIQUIDITY ═══ */}
-            <div className="section">
-              <div className="section-header">
-                <span className="section-title">Pool Liquidity</span>
-                <Badge text={ps.liquidity ? "ACTIVE" : "NO DATA"} type={ps.liquidity ? "g" : "a"} />
-              </div>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                gap: 2,
-              }}>
-                {[
-                  { label: "Active Liquidity", value: ps.liquidity ? fmtN(Number(ps.liquidity)) : "—", color: "var(--c)" },
-                  { label: "Token0 Balance (wRLP)", value: ps.token0_balance != null ? fmtN(Number(ps.token0_balance)) : "—", color: "var(--g)" },
-                  { label: "Token1 Balance (waUSDC)", value: ps.token1_balance != null ? fmtN(Number(ps.token1_balance)) : "—", color: "var(--p)" },
-                  { label: "Current Tick", value: ps.tick ?? "—", color: "var(--tb)" },
-                  { label: "Fee Growth G0", value: ps.fee_growth_global0 ? fmtN(Number(ps.fee_growth_global0) / 2**128, 8) : "—", color: "var(--a)" },
-                  { label: "Fee Growth G1", value: ps.fee_growth_global1 ? fmtN(Number(ps.fee_growth_global1) / 2**128, 8) : "—", color: "var(--a)" },
-                ].map((item, i) => (
-                  <div key={i} style={{
-                    background: "var(--s1)",
-                    border: "1px solid var(--bdr)",
-                    padding: "16px 20px",
-                    animation: `fadeIn 0.4s ease ${i * 40}ms both`,
-                  }}>
-                    <div style={{
-                      fontSize: 10, fontWeight: 600, letterSpacing: "1.5px",
-                      textTransform: "uppercase", color: "var(--td)", marginBottom: 6,
-                    }}>{item.label}</div>
-                    <div style={{
-                      fontSize: 20, fontWeight: 600, color: item.color,
-                      letterSpacing: "-0.5px",
-                    }}>{item.value}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* ═══ SECTION 3: BROKER POSITIONS ═══ */}
-            <div className="section">
-              <div className="section-header">
-                <span className="section-title">Broker Positions</span>
+            <div className="section card" style={{ padding: 0 }}>
+              <div className="card-hdr" style={{ padding: "12px 14px 0" }}>
+                <span>Broker Positions</span>
                 <Badge text={`${bps.length} BROKERS`} type="p" />
               </div>
-              <div className="tbl-card">
+              <div className="tbl-wrap">
                 <table className="tbl">
                   <thead>
                     <tr>
                       <th>Broker</th>
                       <th className="r">Collateral</th>
-                      <th className="r">Debt (wRLP)</th>
+                      <th className="r">Debt</th>
                       <th className="r">Debt Value</th>
-                      <th className="r">Health Factor</th>
-                      <th>Status</th>
+                      <th className="r">Health</th>
+                      <th className="r">State</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1381,76 +1504,36 @@
                       const coll = Number(b.collateral || 0);
                       const debt = Number(b.debt || 0);
                       const debtVal = Number(b.debt_value || 0);
-                      const hf = b.health_factor;
+                      const hf = Number(b.health_factor || 0);
                       const hasDebt = debt > 0 || debtVal > 0;
-                      const status = !hasDebt
-                        ? "idle"
+                      const state = !hasDebt
+                        ? "IDLE"
                         : hf > 2
-                          ? "safe"
+                          ? "SAFE"
                           : hf > 1.2
-                            ? "watch"
-                            : "danger";
+                            ? "WATCH"
+                            : "DANGER";
+                      const type =
+                        state === "SAFE" || state === "IDLE"
+                          ? "g"
+                          : state === "WATCH"
+                            ? "a"
+                            : "r";
                       return (
                         <tr key={i}>
-                          <td
-                            style={{
-                              color: "var(--c)",
-                              fontFamily: "JetBrains Mono",
-                              fontSize: 12,
-                            }}
-                          >
-                            {fmtAddr(b.broker_address)}
+                          <td className="info mono">{fmtAddr(b.broker_address)}</td>
+                          <td className="r">{fmt(coll)}</td>
+                          <td className={`r ${hasDebt ? "warn" : "muted"}`}>
+                            {hasDebt ? `${fmtN(debt)} wRLP` : "-"}
                           </td>
-                          <td
-                            className="r"
-                            style={{ color: "var(--tb)", fontWeight: 500 }}
-                          >
-                            {fmt(coll)}
+                          <td className={`r ${debtVal > 0 ? "warn" : "muted"}`}>
+                            {debtVal > 0 ? fmt(debtVal) : "-"}
                           </td>
-                          <td
-                            className="r"
-                            style={{
-                              color: hasDebt ? "var(--a)" : "var(--td)",
-                            }}
-                          >
-                            {hasDebt ? fmtN(debt) + " wRLP" : "—"}
+                          <td className={`r ${type === "g" ? "good" : type === "a" ? "warn" : "bad"}`}>
+                            {!hasDebt ? "INF" : hf.toFixed(2)}
                           </td>
-                          <td
-                            className="r"
-                            style={{
-                              color: debtVal > 0 ? "var(--a)" : "var(--td)",
-                              fontSize: 12,
-                            }}
-                          >
-                            {debtVal > 0 ? fmt(debtVal) : "—"}
-                          </td>
-                          <td
-                            className="r"
-                            style={{
-                              color: !hasDebt
-                                ? "var(--td)"
-                                : hf > 2
-                                  ? "var(--g)"
-                                  : hf > 1.2
-                                    ? "var(--a)"
-                                    : "var(--r)",
-                              fontWeight: 600,
-                              fontSize: 16,
-                            }}
-                          >
-                            {!hasDebt ? "∞" : hf.toFixed(2)}
-                          </td>
-                          <td>
-                            <Badge
-                              text={status.toUpperCase()}
-                              type={
-                                status === "safe" || status === "idle"
-                                  ? "g"
-                                  : status === "watch"
-                                    ? "a"
-                                    : "r"
-                              }
-                            />
+                          <td className="r">
+                            <Badge text={state} type={type} />
                           </td>
                         </tr>
                       );
@@ -1458,148 +1541,77 @@
                   </tbody>
                 </table>
                 <div className="tbl-footer">
-                  <span>
-                    total collateral:{" "}
-                    <span style={{ color: "var(--g)" }}>
-                      {fmt(totalCollateral)}
-                    </span>
-                  </span>
-                  <span>
-                    total debt:{" "}
-                    <span
-                      style={{
-                        color: totalBrokerDebt > 0 ? "var(--a)" : "var(--td)",
-                      }}
-                    >
-                      {fmtN(totalBrokerDebt)} wRLP
-                    </span>
-                    {totalDebtValue > 0 && (
-                      <span style={{ color: "var(--td)", marginLeft: 6 }}>
-                        ({fmt(totalDebtValue)})
-                      </span>
-                    )}
-                  </span>
-                  <span>
-                    over-collat:{" "}
-                    <span style={{ color: "var(--g)" }}>
-                      {overCollatDisplay}
-                    </span>
-                  </span>
+                  <span>collateral: <span className="good">{fmt(totalCollateral)}</span></span>
+                  <span>broker debt: <span className={totalBrokerDebt > 0 ? "warn" : "muted"}>{fmtN(totalBrokerDebt)} wRLP</span></span>
+                  <span>over-collat: <span className={riskType === "g" ? "good" : riskType === "a" ? "warn" : "bad"}>{overCollat === Infinity ? "INF" : overCollatDisplay}</span></span>
                 </div>
               </div>
             </div>
 
-            {/* ═══ SECTION 4: EVENTS ═══ */}
-            <div className="section">
-              <div className="section-header">
-                <span className="section-title">Recent Events</span>
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: "var(--td)" }}>
-                    vol {fmt(totalVol)} · {swaps.length} swaps
-                  </span>
-                  <Badge text={`${events.length} TOTAL`} type="c" />
+            <div className="section grid g2">
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Execution Activity</span>
+                  <Badge text={`${swaps.length} SWAPS`} type="c" />
+                </div>
+                <div className="grid g3">
+                  <div>
+                    <div className="mv info">{fmt(totalVol)}</div>
+                    <div className="ml">swap volume</div>
+                  </div>
+                  <div>
+                    <div className="mv">{protocolEvents.length}</div>
+                    <div className="ml">protocol events</div>
+                  </div>
+                  <div>
+                    <div className="mv good">{activeBrokers}</div>
+                    <div className="ml">active brokers</div>
+                  </div>
                 </div>
               </div>
-              <div className="events-card">
-                <div style={{ maxHeight: 360, overflowY: "auto" }}>
-                  {events.map((e, i) => {
-                    const isSwap = e.event_name === "Swap";
-                    const isTransfer = e.event_name === "Transfer";
+              <div className="card">
+                <div className="card-hdr">
+                  <span>Recent Events</span>
+                  <Badge text={`${displayEvents.length} SHOWN`} type="c" />
+                </div>
+                <div className="evt-list">
+                  {displayEvents.map((e, i) => {
+                    const summary = summarizeEvent(e);
                     return (
-                      <div
-                        key={i}
-                        className="evt"
-                        style={{ animationDelay: `${Math.min(i, 20) * 12}ms` }}
-                      >
-                        <span
-                          className={`evt-type ${isSwap ? "evt-swap" : isTransfer ? "evt-transfer" : "evt-other"}`}
-                        >
-                          {e.event_name}
+                      <div className="evt" key={i}>
+                        <span>
+                          <Badge text={summary.badge} type={summary.type} />
                         </span>
-                        <span
-                          style={{
-                            color: "var(--td)",
-                            fontSize: 11,
-                            minWidth: 60,
-                          }}
-                        >
-                          {fmtTs(e.block_timestamp)}
+                        <span className="muted">{fmtTs(e.block_timestamp)}</span>
+                        <span className="muted">blk {e.block_number?.toLocaleString()}</span>
+                        <span className={summary.tone}>
+                          {summary.label}: {summary.detail}
                         </span>
-                        <span
-                          style={{
-                            color: "var(--td)",
-                            fontSize: 11,
-                            minWidth: 90,
-                          }}
-                        >
-                          blk {e.block_number?.toLocaleString()}
-                        </span>
-                        {isSwap && (
-                          <>
-                            <span
-                              style={{
-                                color:
-                                  Number(e.event_data?.amount0) > 0
-                                    ? "var(--g)"
-                                    : "var(--r)",
-                                fontWeight: 600,
-                                fontSize: 12,
-                                minWidth: 36,
-                              }}
-                            >
-                              {Number(e.event_data?.amount0) > 0
-                                ? "BUY"
-                                : "SELL"}
-                            </span>
-                            <span style={{ fontSize: 12, color: "var(--tb)" }}>
-                              {fmtN(
-                                Math.abs(
-                                  fromRaw(e.event_data?.amount1 || "0", 6),
-                                ),
-                              )}{" "}
-                              aUSDC
-                            </span>
-                          </>
-                        )}
-                        {isTransfer && (
-                          <>
-                            <span style={{ fontSize: 11, color: "var(--td)" }}>
-                              {fmtAddr(e.event_data?.from)} →{" "}
-                              {fmtAddr(e.event_data?.to)}
-                            </span>
-                            <span style={{ fontSize: 12, color: "var(--tb)" }}>
-                              {fmtN(
-                                Math.abs(
-                                  fromRaw(e.event_data?.value || "0", 18),
-                                ),
-                                4,
-                              )}
-                            </span>
-                          </>
-                        )}
-                        {!isSwap && !isTransfer && (
-                          <span style={{ fontSize: 11, color: "var(--td)" }}>
-                            {(JSON.stringify(e.event_data || {}) || "{}").slice(0, 80)}…
-                          </span>
-                        )}
                       </div>
                     );
                   })}
+                  {displayEvents.length === 0 && (
+                    <div className="muted" style={{ padding: "16px 0" }}>
+                      No simulation events indexed yet.
+                    </div>
+                  )}
+                  {protocolEvents.length < events.length && (
+                    <div className="muted" style={{ padding: "10px 0 0" }}>
+                      {events.length - protocolEvents.length} low-level token transfer logs hidden.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* ═══ FOOTER ═══ */}
-            <div className="footer">
-              RLD Protocol · Simulation Monitor v3.0 · auto-refresh 10s · NF{" "}
-              {normFactor.toFixed(6)} · next update in{" "}
-              <span style={{ color: "var(--c)" }}>{10 - (tick % 10)}s</span>
+            <div className="ftr">
+              <span>RLD Protocol / Simulation Monitor v4.0</span>
+              <span>auto-refresh 10s / NF {nfText}</span>
             </div>
           </div>
         );
       }
 
-      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-    </script>
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);    </script>
   </body>
 </html>

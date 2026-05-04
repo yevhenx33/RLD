@@ -1,0 +1,22 @@
+FROM python:3.12.13-slim
+
+WORKDIR /app
+
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --home-dir /home/app --create-home app
+
+RUN pip install --no-cache-dir \
+    clickhouse-connect==0.15.1 \
+    pandas==3.0.2 \
+    numpy==2.4.4 \
+    requests==2.33.1
+
+COPY scripts/fluid_realtime_indexer.py /app/fluid_realtime_indexer.py
+RUN chown -R app:app /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+USER app
+
+CMD ["python", "/app/fluid_realtime_indexer.py"]

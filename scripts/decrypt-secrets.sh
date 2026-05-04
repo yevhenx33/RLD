@@ -11,10 +11,10 @@ if [ -f "$PROJECT_DIR/docker/.env.enc" ]; then
   echo "  ✓ docker/.env"
 fi
 
-if [ -f "$PROJECT_DIR/data-pipeline/.env.enc" ]; then
-  sops --decrypt --input-type dotenv --output-type dotenv "$PROJECT_DIR/data-pipeline/.env.enc" > "$PROJECT_DIR/data-pipeline/.env"
-  chmod 600 "$PROJECT_DIR/data-pipeline/.env"
-  echo "  ✓ data-pipeline/.env"
+if [ -f "$PROJECT_DIR/backend/analytics/.env.enc" ]; then
+  sops --decrypt --input-type dotenv --output-type dotenv "$PROJECT_DIR/backend/analytics/.env.enc" > "$PROJECT_DIR/backend/analytics/.env"
+  chmod 600 "$PROJECT_DIR/backend/analytics/.env"
+  echo "  ✓ backend/analytics/.env"
 fi
 
 echo "Done."

@@ -12,11 +12,11 @@ import pandas as pd
 ROOT = Path("/home/ubuntu/RLD")
 ARTIFACT_DIR = ROOT / "scripts" / "artifacts"
 
-DATA_PIPELINE_PATH = ROOT / "data-pipeline"
-if str(DATA_PIPELINE_PATH) not in sys.path:
-    sys.path.insert(0, str(DATA_PIPELINE_PATH))
+ANALYTICS_PATH = ROOT / "backend" / "analytics"
+if str(ANALYTICS_PATH) not in sys.path:
+    sys.path.insert(0, str(ANALYTICS_PATH))
 
-from indexer.tokens import BTC_ASSETS, ETH_ASSETS, STABLES, TOKENS  # noqa: E402
+from analytics.tokens import BTC_ASSETS, ETH_ASSETS, STABLES, TOKENS  # noqa: E402
 
 
 TOPIC_SUPPLY = "0x2b627736bca15cd5381dcf80b0bf11fd197d01a037c52b927a881a10fb73ba61"

@@ -8,14 +8,11 @@ tests/
 scripts/
 tools/
 services/
-rates/
 bin/
 *.db
 .dockerignore
 Dockerfile
-Dockerfile.rates
 Dockerfile.indexer
 start_prod.sh
-start_rates.sh
 config.py
 .env.example

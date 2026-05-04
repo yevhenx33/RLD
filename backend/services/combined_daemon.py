@@ -22,7 +22,7 @@ Environment:
     TWAMM_HOOK        - TWAMM/V4 hook address
     PRIVATE_KEY       - Operator private key
     RPC_URL           - Anvil RPC
-    API_URL           - Envio/data-pipeline API base URL
+    API_URL           - analytics API base URL
 """
 
 import json

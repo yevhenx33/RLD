@@ -7,7 +7,6 @@ Python services used by the RLD simulation and monitoring stack.
 | Service | Entry point | Dockerfile | Internal port | Typical host port | Launch critical |
 |---|---|---|---|---|---|
 | Simulation indexer | `indexers/main.py` | `docker/indexer/Dockerfile` | `8080` | `8080` | Yes |
-| Rates API/indexer | `start_rates.sh` | `backend/Dockerfile.rates` | `8080` | `8081` | Yes |
 | Telegram monitor bot | `services/monitor_bot.py` | `backend/Dockerfile.bot` | `8080` | `8083` | Yes |
 
 ## Simulation Indexer API Contract
@@ -32,7 +31,7 @@ Admin/reset endpoint:
 - `INDEXER_ADMIN_INTERNAL_ONLY=true` keeps reset limited to `INDEXER_ADMIN_ALLOWED_CLIENTS`; avoid broad private subnet allowlists.
 - `INDEXER_EXPOSE_INTERNAL_ERRORS=false` suppresses raw exception leakage in API responses.
 
-Rates/analytics API contract (served by `data-pipeline`):
+Rates/analytics API contract (served by `backend/analytics`):
 - GraphQL: `POST /graphql` (canonical)
 - GraphQL alias: `POST /envio-graphql` (temporary compatibility path)
 - Alias responses include `Deprecation`, `Link`, `Sunset`, and `Warning` headers for rollout signaling.
@@ -43,14 +42,16 @@ See `docs/api-surface.md` for the full public and internal routing map.
 
 ## Canonical Deployment Context
 
-Backend services are launched through compose files in `docker/`:
+Backend services are launched through canonical compose files:
 - `docker/reth/docker-compose.reth.yml` (simulation indexer)
-- `docker/docker-compose.infra.yml` (rates + monitor bot)
+- `backend/analytics/docker-compose.yml` (rates analytics API and workers)
+- `docker/docker-compose.infra.yml` (monitor bot)
 
 Recommended full launch flow:
 
 ```bash
 docker network create rld_shared 2>/dev/null || true
+docker compose -f backend/analytics/docker-compose.yml --env-file backend/analytics/.env up -d
 docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
 bash docker/reth/restart-reth.sh --fresh --with-users
 docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -d
@@ -67,18 +68,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run rates API locally:
-
-```bash
-MAINNET_RPC_URL=... PORT=8080 python3 start_rates.sh
-```
-
 Run monitor bot locally:
 
 ```bash
 TELEGRAM_BOT_TOKEN=... RATES_API_BASE_URL=http://localhost:5000 python3 services/monitor_bot.py
 ```
 
+Run rates/analytics services from `backend/analytics`; the legacy backend rates container has been removed.
+
 ## Scope Note
 
-`data-pipeline` analytics services are intentionally out of the launch-critical path for the Reth V2 baseline.
+`backend/analytics` owns the rates/analytics API and worker runtime for the Reth V2 baseline.
