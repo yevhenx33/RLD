@@ -128,7 +128,7 @@ while IFS='|' read -r name cpu mem netio; do
   net_clean=$(echo "$netio" | xargs | sed 's/"/\\"/g')
   
   # Get status + restart count
-  status_line=$(docker ps -a --filter "name=$name_clean" --format "{{.Status}}" 2>/dev/null | head -1)
+  status_line=$(docker ps -a --filter "name=^/${name_clean}$" --format "{{.Status}}" 2>/dev/null | head -1)
   restart_count=$(docker inspect --format '{{.RestartCount}}' "$name_clean" 2>/dev/null || echo "0")
   started_at=$(docker inspect --format '{{.State.StartedAt}}' "$name_clean" 2>/dev/null | cut -d'.' -f1 || echo "")
   
@@ -138,7 +138,7 @@ while IFS='|' read -r name cpu mem netio; do
   elif echo "$status_line" | grep -q "Exited"; then health="stopped"; fi
   
   uptime_str=$(echo "$status_line" | sed 's/ (healthy)//' | sed 's/ (unhealthy)//')
-  ports=$(docker ps --filter "name=$name_clean" --format "{{.Ports}}" 2>/dev/null | head -1 | sed 's/"/\\"/g')
+  ports=$(docker ps --filter "name=^/${name_clean}$" --format "{{.Ports}}" 2>/dev/null | head -1 | sed 's/"/\\"/g')
 
   if [ "$first" = true ]; then first=false; else containers_json+=","; fi
   containers_json+="{\"name\":\"$name_clean\",\"status\":\"$health\",\"uptime\":\"$uptime_str\",\"cpu\":$cpu_clean,\"memory\":\"$mem_clean\",\"network\":\"$net_clean\",\"restarts\":$restart_count,\"started\":\"$started_at\",\"ports\":\"$ports\"}"
@@ -492,8 +492,8 @@ db = json.loads('''$DB_JSON''') if '''$DB_JSON'''.strip() else {}
 envio = db.get('envio_indexer', {}) if isinstance(db.get('envio_indexer'), dict) else {}
 pool = db.get('pool_state', {}) if isinstance(db.get('pool_state'), dict) else {}
 
-legacy = group_state(containers, ['rates-indexer'])
 frontend_container = group_state(containers, ['frontend'])
+docs_container = group_state(containers, ['docs'])
 mm_container = group_state(containers, ['mm-daemon'])
 chaos_container = group_state(containers, ['chaos-trader'])
 faucet_container = group_state(containers, ['faucet'])
@@ -550,15 +550,17 @@ frontend_components = {
 }
 frontend_status = 'healthy' if all(frontend_components.values()) else 'degraded'
 
-legacy_running = legacy['running'] > 0
-legacy_status = 'deprecated-running' if legacy_running else 'removed'
+docs_components = {
+    'docs_container': docs_container['running'] > 0,
+}
+docs_status = 'healthy' if all(docs_components.values()) else 'degraded'
 
 gates = {
     'protocol_rates_ready': protocol_status == 'healthy',
     'simulation_ready': simulation_status == 'healthy',
     'execution_ready': execution_status != 'critical',
     'frontend_ready': frontend_status == 'healthy',
-    'legacy_removed': not legacy_running,
+    'docs_ready': docs_status == 'healthy',
 }
 gates['production_ready'] = all(gates.values())
 
@@ -597,11 +599,11 @@ stacks = {
         'components': frontend_components,
         'containers': frontend_container,
     },
-    'legacy_rates': {
-        'label': 'Legacy Rates Indexer',
-        'status': legacy_status,
-        'running': legacy_running,
-        'containers': legacy,
+    'docs': {
+        'label': 'Protocol Docs',
+        'status': docs_status,
+        'components': docs_components,
+        'containers': docs_container,
     },
     'gates': gates,
 }
@@ -630,6 +632,100 @@ echo "$HIST" > "$HISTORY"
 
 # ── Node Metrics (Reth Mainnet / Lighthouse) ──
 NODE_METRICS_JSON=$(python3 /home/ubuntu/RLD/docker/scripts/fetch_node_metrics.py 2>/dev/null) || NODE_METRICS_JSON='{}'
+
+# ?? Compose Projects ??
+COMPOSE_JSON=$(docker compose ls --format json 2>/dev/null | python3 -c '
+import json, sys
+raw = sys.stdin.read().strip()
+try:
+    data = json.loads(raw) if raw else []
+    if isinstance(data, dict):
+        data = [data]
+    cleaned = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        cleaned.append({
+            "Name": item.get("Name") or item.get("name") or "",
+            "Status": item.get("Status") or item.get("status") or "",
+            "ConfigFiles": item.get("ConfigFiles") or item.get("configFiles") or "",
+        })
+    print(json.dumps(cleaned, separators=(",", ":")))
+except Exception:
+    print("[]")
+' 2>/dev/null || echo '[]')
+
+# ?? Contracts / Deployment State ??
+CONTRACTS_JSON=$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+root = Path('/home/ubuntu/RLD')
+deployment_path = root / 'docker' / 'deployment.json'
+contracts_root = root / 'contracts'
+core_keys = [
+    'rld_core', 'broker_router', 'broker_executor', 'ghost_router',
+    'swap_router', 'twap_engine', 'twap_engine_lens', 'mock_oracle',
+    'cds_settlement_module', 'cds_funding_model', 'cds_broker_factory',
+    'cds_coverage_factory', 'position_token', 'pool_manager',
+]
+market_keys = ['market_id', 'pool_id', 'cds_market_id', 'cds_pool_id', 'token0', 'token1', 'wausdc']
+
+def is_addr(value):
+    return isinstance(value, str) and value.startswith('0x') and len(value) >= 42
+
+def short(value):
+    return value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
+
+try:
+    deployment = json.loads(deployment_path.read_text()) if deployment_path.exists() else {}
+except Exception:
+    deployment = {}
+
+core = {key: deployment.get(key) for key in core_keys if deployment.get(key)}
+market = {key: deployment.get(key) for key in market_keys if deployment.get(key)}
+address_count = sum(1 for value in deployment.values() if is_addr(value))
+sol_files = list((contracts_root / 'src').rglob('*.sol')) if (contracts_root / 'src').exists() else []
+test_files = list((contracts_root / 'test').rglob('*.sol')) if (contracts_root / 'test').exists() else []
+artifact_files = list((contracts_root / 'out').rglob('*.json')) if (contracts_root / 'out').exists() else []
+lib_dirs = [p.name for p in (contracts_root / 'lib').iterdir() if p.is_dir()] if (contracts_root / 'lib').exists() else []
+components = {
+    'deployment_json': deployment_path.exists(),
+    'foundry_toml': (contracts_root / 'foundry.toml').exists(),
+    'remappings': (contracts_root / 'remappings.txt').exists(),
+    'source': len(sol_files) > 0,
+    'tests': len(test_files) > 0,
+    'artifacts': len(artifact_files) > 0,
+}
+if all(components.values()) and len(core) >= 5:
+    status = 'healthy'
+elif components['deployment_json'] and components['source']:
+    status = 'degraded'
+else:
+    status = 'critical'
+
+out = {
+    'status': status,
+    'deploymentExists': deployment_path.exists(),
+    'deployBlock': short(deployment.get('deploy_block')),
+    'deployTimestamp': short(deployment.get('deploy_timestamp')),
+    'forkBlock': short(deployment.get('fork_block')),
+    'sessionStartBlock': short(deployment.get('session_start_block')),
+    'coreAddressCount': len(core),
+    'deploymentAddressCount': address_count,
+    'sourceCount': len(sol_files),
+    'testCount': len(test_files),
+    'artifactCount': len(artifact_files),
+    'libraryCount': len(lib_dirs),
+    'libraries': sorted(lib_dirs)[:12],
+    'components': components,
+    'core': core,
+    'market': market,
+}
+print(json.dumps(out, separators=(',', ':')))
+PY
+)
+
 
 # ── Write JSON (atomic) ──
 TMPOUT=$(mktemp "${OUTPUT}.XXXXXX")
@@ -668,6 +764,8 @@ cat > "$TMPOUT" << ENDJSON
   "ssl": {"expiry":"$SSL_EXPIRY","days_remaining":${SSL_DAYS:-0}},
   "git": {"commit":"$GIT_COMMIT","message":"$GIT_MSG","time":"$GIT_TIME","author":"$GIT_AUTHOR"},
   "docker": {"dangling_images":$DANGLING,"images_size":"$IMG_SIZE","active":$IMG_ACTIVE,"total":$IMG_TOTAL},
+  "compose": $COMPOSE_JSON,
+  "contracts": $CONTRACTS_JSON,
   "databases": $DB_JSON,
   "market": $MARKET_INFO_JSON,
   "nodes": $NODE_METRICS_JSON,

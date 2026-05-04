@@ -1,27 +1,72 @@
 name: Build & Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches: [main]
-    paths:
-      - "frontend/**"
-      - "backend/**"
-      - "docker/**"
+    types: [completed]
   workflow_dispatch:
 
-jobs:
-  # ──────────────────────────────────────────────
-  # 1. Build & test frontend
-  # ──────────────────────────────────────────────
-  frontend:
-    runs-on: ubuntu-latest
+permissions:
+  contents: read
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  preflight:
+    name: Deploy preflight
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Create CI env files
+        run: |
+          set -euo pipefail
+          cp docker/.env.example docker/.env
+          cat > backend/analytics/.env <<'ENV'
+          MAINNET_RPC_URL=http://localhost:8545
+          ENVIO_API_TOKEN=ci
+          CLICKHOUSE_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_USER=default
+          CLICKHOUSE_API_USER=default
+          CLICKHOUSE_API_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_WORKER_USER=default
+          CLICKHOUSE_WORKER_PASSWORD=ci_clickhouse_password
+          CLICKHOUSE_MIGRATION_USER=default
+          CLICKHOUSE_MIGRATION_PASSWORD=ci_clickhouse_password
+          ENV
+
+      - name: Validate deployable runtime contracts
+        run: |
+          set -euo pipefail
+          bash -n docker/scripts/stack.sh docker/scripts/generate-status.sh docker/reth/restart-reth.sh
+          docker compose -f docker/docker-compose.clickhouse.yml --env-file docker/.env config >/dev/null
+          docker compose -f backend/analytics/docker-compose.yml --env-file backend/analytics/.env config >/dev/null
+          docker compose -f docker/docker-compose.infra.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/docker-compose.docs.yml --env-file docker/.env config >/dev/null
+
+  frontend:
+    name: Build frontend artifact
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -32,6 +77,10 @@ jobs:
       - name: Lint
         working-directory: frontend
         run: npm run lint
+
+      - name: Test
+        working-directory: frontend
+        run: npm run test
 
       - name: Build
         working-directory: frontend
@@ -47,13 +96,14 @@ jobs:
           path: frontend/dist
           retention-days: 7
 
-  # ──────────────────────────────────────────────
-  # 2. Deploy to server
-  # ──────────────────────────────────────────────
   deploy:
-    needs: frontend
+    name: Deploy canonical stack
+    needs:
+      - preflight
+      - frontend
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    environment: production
 
     steps:
       - name: Download build artifact
@@ -71,17 +121,14 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
         run: |
           set -euo pipefail
-
           missing=()
           if [ -z "${DEPLOY_HOST:-}" ]; then missing+=("DEPLOY_HOST"); fi
           if [ -z "${DEPLOY_USER:-}" ]; then missing+=("DEPLOY_USER"); fi
           if [ -z "${DEPLOY_SSH_KEY:-}" ]; then missing+=("DEPLOY_SSH_KEY"); fi
-
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Missing required deploy secrets: ${missing[*]}"
             exit 1
           fi
-
           host="$(printf '%s' "${DEPLOY_HOST}" | tr -d '\r\n' | xargs)"
           user="$(printf '%s' "${DEPLOY_USER}" | tr -d '\r\n' | xargs)"
           if [ -z "$host" ] || [ -z "$user" ]; then
@@ -90,12 +137,8 @@ jobs:
           fi
           echo "DEPLOY_HOST=$host" >> "$GITHUB_ENV"
           echo "DEPLOY_USER=$user" >> "$GITHUB_ENV"
-
-          if [ -n "${DEPLOY_PORT:-}" ]; then
-            port="$(printf '%s' "${DEPLOY_PORT}" | tr -d '\r\n' | xargs)"
-          else
-            port="22"
-          fi
+          port="${DEPLOY_PORT:-22}"
+          port="$(printf '%s' "$port" | tr -d '\r\n' | xargs)"
           if ! [[ "$port" =~ ^[0-9]+$ ]]; then
             echo "::error::DEPLOY_PORT must be numeric (got: '$port')"
             exit 1
@@ -108,19 +151,15 @@ jobs:
           DEPLOY_SSH_PASSPHRASE: ${{ secrets.DEPLOY_SSH_PASSPHRASE }}
         run: |
           set -euo pipefail
-
           key_file="$RUNNER_TEMP/deploy_ssh_key"
-          # Normalize multiline key secret (especially CRLF) before auth actions consume it.
           printf '%s\n' "$DEPLOY_SSH_KEY" | sed 's/\r$//' > "$key_file"
           chmod 600 "$key_file"
           echo "DEPLOY_SSH_KEY_PATH=$key_file" >> "$GITHUB_ENV"
-
           if [ -n "${DEPLOY_SSH_PASSPHRASE:-}" ]; then
             ssh-keygen -y -P "$DEPLOY_SSH_PASSPHRASE" -f "$key_file" >/dev/null
           else
             ssh-keygen -y -f "$key_file" >/dev/null
           fi
-          echo "Using deploy key fingerprint:"
           ssh-keygen -lf "$key_file" -E sha256
 
       - name: Add deploy host to known_hosts
@@ -133,66 +172,52 @@ jobs:
       - name: SSH preflight
         run: |
           set -euo pipefail
+          ssh -i "$DEPLOY_SSH_KEY_PATH" -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o PreferredAuthentications=publickey "$DEPLOY_USER@$DEPLOY_HOST" "echo 'SSH auth OK (key)'"
 
-          ssh \
-            -i "$DEPLOY_SSH_KEY_PATH" \
-            -p "$DEPLOY_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o PreferredAuthentications=publickey \
-            "$DEPLOY_USER@$DEPLOY_HOST" \
-            "echo 'SSH auth OK (key)'"
-
-      - name: Deploy frontend to server
+      - name: Upload frontend artifact
         run: |
           set -euo pipefail
-          scp \
-            -i "$DEPLOY_SSH_KEY_PATH" \
-            -P "$DEPLOY_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o PreferredAuthentications=publickey \
-            -r dist/* \
-            "$DEPLOY_USER@$DEPLOY_HOST:/home/ubuntu/RLD/frontend/dist/"
+          scp -i "$DEPLOY_SSH_KEY_PATH" -P "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -r dist/* "$DEPLOY_USER@$DEPLOY_HOST:/home/ubuntu/RLD/frontend/dist/"
 
-      - name: Restart services
+      - name: Deploy changed canonical stacks
         run: |
           set -euo pipefail
-          ssh \
-            -i "$DEPLOY_SSH_KEY_PATH" \
-            -p "$DEPLOY_PORT" \
-            -o BatchMode=yes \
-            -o IdentitiesOnly=yes \
-            -o PreferredAuthentications=publickey \
-            "$DEPLOY_USER@$DEPLOY_HOST" <<'EOF'
+          ssh -i "$DEPLOY_SSH_KEY_PATH" -p "$DEPLOY_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o PreferredAuthentications=publickey "$DEPLOY_USER@$DEPLOY_HOST" <<'EOF'
           set -euo pipefail
           cd /home/ubuntu/RLD
-
-          # Sync ALL config files first (docker-compose, nginx.conf, etc.)
           git fetch origin main
+          changed_files="$(git diff --name-only HEAD origin/main || true)"
           git reset --hard origin/main
-
-          # Force fonts.css and font files from git into dist/ (SCP unreliable for root files)
-          mkdir -p /home/ubuntu/RLD/frontend/dist/fonts
-          cp /home/ubuntu/RLD/frontend/public/fonts.css /home/ubuntu/RLD/frontend/dist/fonts.css
-          cp /home/ubuntu/RLD/frontend/public/fonts/*.woff2 /home/ubuntu/RLD/frontend/dist/fonts/
-          echo "✅ fonts.css: $(wc -c < /home/ubuntu/RLD/frontend/dist/fonts.css) bytes, has JBM: $(grep -c 'JetBrains Mono' /home/ubuntu/RLD/frontend/dist/fonts.css || echo 0)"
-
-          # Force-recreate the frontend container with the new dist/
-          # docker-compose.frontend.yml now uses volume mounts — no image rebuild
-          echo "🔄 Restarting frontend container..."
-          docker compose -f docker/docker-compose.frontend.yml up -d --no-deps --force-recreate frontend
-          echo "✅ Frontend live"
-
-          # Rebuild canonical backend services if backend changed
-          if git diff HEAD~1 --name-only | grep -q "^backend/"; then
-            echo "🔄 Backend changed — rebuilding simulation indexer + monitor-bot..."
-            docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env build indexer
-            docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env up -d --no-deps indexer
-            docker compose -f docker/docker-compose.infra.yml --env-file docker/.env build monitor-bot
-            docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d --no-deps --force-recreate monitor-bot
+          docker network create rld_shared >/dev/null 2>&1 || true
+          docker compose -f docker/docker-compose.clickhouse.yml --env-file docker/.env config >/dev/null
+          docker compose -f backend/analytics/docker-compose.yml --env-file backend/analytics/.env config >/dev/null
+          docker compose -f docker/docker-compose.infra.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env config >/dev/null
+          docker compose -f docker/docker-compose.docs.yml --env-file docker/.env config >/dev/null
+          mkdir -p frontend/dist/fonts
+          cp frontend/public/fonts.css frontend/dist/fonts.css
+          cp frontend/public/fonts/*.woff2 frontend/dist/fonts/
+          docker compose -f docker/docker-compose.clickhouse.yml --env-file docker/.env up -d
+          if echo "$changed_files" | grep -Eq '^(backend/analytics/|docker/docker-compose.clickhouse.yml|docker/SERVICES.md)'; then
+            docker compose -f backend/analytics/docker-compose.yml --env-file backend/analytics/.env up -d --build
           fi
-
-          echo "✅ Deploy complete"
+          if echo "$changed_files" | grep -Eq '^(backend/|contracts/|docker/reth/|docker/indexer/|docker/daemons/)'; then
+            docker compose -f docker/reth/docker-compose.reth.yml --env-file docker/.env up -d --build
+          fi
+          if echo "$changed_files" | grep -Eq '^(backend/|docker/docker-compose.infra.yml|docker/SERVICES.md)'; then
+            docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d --build
+          fi
+          docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -d --no-deps --force-recreate frontend
+          if echo "$changed_files" | grep -Eq '^(protocol-docs/|docker/docker-compose.docs.yml|docker/SERVICES.md)'; then
+            docker compose -f docker/docker-compose.docs.yml --env-file docker/.env up -d --build
+          else
+            docker compose -f docker/docker-compose.docs.yml --env-file docker/.env up -d
+          fi
+          if echo "$changed_files" | grep -Eq '^(docker/dashboard/|docker/scripts/generate-status.sh)'; then
+            sudo systemctl restart rld-dashboard-live.service || true
+          fi
+          bash docker/scripts/generate-status.sh >/dev/null
+          bash docker/scripts/stack.sh smoke
+          echo "Deploy complete"
           EOF
-

@@ -1,0 +1,20 @@
+[Unit]
+Description=RLD Protocol Worker (isolated source/role)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/RLD/backend/analytics
+EnvironmentFile=-/home/ubuntu/RLD/backend/analytics/.env
+Environment=INDEXER_SOURCE=AAVE_MARKET
+Environment=INDEXER_ROLE=collector
+ExecStart=/bin/bash -lc '/home/ubuntu/RLD/backend/analytics/.venv/bin/python scripts/run_indexer.py --source "${INDEXER_SOURCE}" --role "${INDEXER_ROLE}" --poll-interval "${POLL_INTERVAL}"'
+Restart=always
+RestartSec=30
+Environment=CLICKHOUSE_HOST=localhost
+Environment=CLICKHOUSE_PORT=8123
+Environment=POLL_INTERVAL=300
+
+[Install]
+WantedBy=multi-user.target

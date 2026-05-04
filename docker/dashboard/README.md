@@ -18,12 +18,14 @@ Infrastructure status dashboard served from `docker/dashboard`.
 - `GET /live-status/stream` (SSE stream, ~1s cadence)
 
 Collected signals include:
-- system health (cpu/memory/disk/load)
-- docker container status/health
-- launch-critical service probes (`8080`, `8081`, `8083`, `rld.fi`)
-- reth RPC status and node metrics
-- indexer-driven simulation market metrics (`/api/status`, `/api/market-info`)
-- rates + simulation DB integrity checks
+- system health (cpu/memory/disk/load, root disk, data disk, connections, log error count)
+- Docker container status/health, resource usage, restarts, ports, and Compose project coverage
+- system domain coverage for backend, frontend, infra, analytics indexers, simulation indexer, contracts, resources, and docs
+- launch-critical service probes (`8080`, `8083`, `5000`, `8545`, `rld.fi`)
+- Reth RPC status, txpool, gas, block age, and optional node metrics
+- analytics API readiness, ClickHouse health, source lags, and source-status matrix
+- simulation indexer state (`/api/status`, `/api/market-info`) and Postgres pool state
+- contract deployment state from `docker/deployment.json` plus Foundry source/test/artifact counts
 - backup status (`backups/last_backup.json`)
 - restore validation status (`backups/last_restore_check.json`)
 - automation flags (`status_job_scheduled`, `backup_job_scheduled`)
@@ -40,7 +42,7 @@ Collected signals include:
 
 ## Non-Launch Pipeline Metrics
 
-`gen_pipeline_stats.py` is a compatibility shim for legacy cron paths and marks data-pipeline metrics as non-launch-critical.
+`gen_pipeline_stats.py` is a compatibility shim for legacy cron paths and marks analytics metrics as non-launch-critical.
 
 ## Nginx Setup
 

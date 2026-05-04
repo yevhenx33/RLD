@@ -511,7 +511,7 @@ Expected:
 ### Indexed Swaps
 
 ```bash
-docker exec reth-postgres-1 psql -U rld -d rld_indexer -c "
+docker exec rld-postgres psql -U rld -d rld_indexer -c "
 SELECT market_id, resolution, SUM(volume_usd) AS volume, SUM(swap_count) AS swaps
 FROM candles
 GROUP BY market_id, resolution
@@ -624,13 +624,6 @@ Bots:
 - `backend/services/combined_daemon.py`
 - `docker/reth/docker-compose.reth.yml`
 
-Economic verification:
-
-- `backend/rates/cds_economic_verification.py`
-- `backend/rates/cds_underwriter_verification.py`
-- `backend/rates/artifacts/cds_economic_verification.md`
-- `backend/rates/artifacts/cds_underwriter_verification.md`
-
 ## Immediate Agent Checklist
 
 When joining an active CDS session:
@@ -662,7 +655,7 @@ PY
 4. Verify CDS liquidity.
 
 ```bash
-docker exec reth-postgres-1 psql -U rld -d rld_indexer -c "
+docker exec rld-postgres psql -U rld -d rld_indexer -c "
 SELECT market_id, snapshot IS NOT NULL AS has_snapshot, total_broker_wausdc, total_broker_wrlp
 FROM markets ORDER BY deploy_block;
 "

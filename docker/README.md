@@ -9,9 +9,12 @@ API ingress contract and internal exposure boundaries are defined in:
 
 Use only:
 
-1. `docker/reth/docker-compose.reth.yml` - simulation runtime (reth, postgres, indexer, bots, faucet)
-2. `docker/docker-compose.infra.yml` - always-on infra (Envio GraphQL + monitor-bot)
-3. `docker/docker-compose.frontend.yml` - frontend nginx container
+1. `docker/docker-compose.clickhouse.yml` - persistent ClickHouse analytics database
+2. `backend/analytics/docker-compose.yml` - rates analytics API and workers
+3. `docker/docker-compose.infra.yml` - always-on infra (monitor-bot)
+4. `docker/reth/docker-compose.reth.yml` - simulation runtime (reth, postgres, indexer, bots, faucet)
+5. `docker/docker-compose.frontend.yml` - frontend nginx container
+6. `docker/docker-compose.docs.yml` - protocol docs container
 
 ## Launch-Critical Services
 
@@ -19,8 +22,9 @@ Use only:
 |---|---|---|
 | Frontend | `docker-compose.frontend.yml` | `3000` |
 | Simulation indexer | `reth/docker-compose.reth.yml` | `8080` |
-| Envio GraphQL API | `docker-compose.infra.yml` | `5000` |
+| Rates analytics GraphQL API | `backend/analytics/docker-compose.yml` | `5000` |
 | Monitor bot | `docker-compose.infra.yml` | `8083` |
+| Protocol docs | `docker-compose.docs.yml` | `3001` |
 | Reth RPC | `reth/docker-compose.reth.yml` | `8545` |
 | Faucet | `reth/docker-compose.reth.yml` | `8088` |
 
@@ -28,10 +32,11 @@ All launch services share `rld_shared`.
 
 ## Indexer Architecture Reference
 
-For the current rates/indexer architecture and planned hardening roadmap, see:
+For service ownership and the current rates/indexer architecture, see:
 
-- `data-pipeline/docs/INDEXER_ARCHITECTURE.md`
-- `data-pipeline/docs/AAVE_INDEXER.md`
+- `docker/SERVICES.md`
+- `backend/analytics/docs/INDEXER_ARCHITECTURE.md`
+- `backend/analytics/docs/AAVE_INDEXER.md`
 
 ### Envio Health Contract
 
@@ -46,9 +51,8 @@ For the current rates/indexer architecture and planned hardening roadmap, see:
 
 ```bash
 docker network create rld_shared 2>/dev/null || true
-docker compose -f docker/docker-compose.infra.yml --env-file docker/.env up -d
+bash docker/scripts/stack.sh up
 bash docker/reth/restart-reth.sh --fresh --with-users
-docker compose -f docker/docker-compose.frontend.yml --env-file docker/.env up -d
 # equivalent steady-state control after bootstrap:
 bash docker/scripts/stack.sh ps
 ```
@@ -123,7 +127,7 @@ Canonical user cron entries:
 
 Notes:
 - `anvil-rotate.sh` is legacy and intentionally skipped when Reth runtime is detected.
-- `generate-status.sh` now reports whether status/backup cron jobs are scheduled.
+- `generate-status.sh` reports runtime stack health, including protocol docs, and whether status/backup cron jobs are scheduled.
 - `validate-backup-restore.sh` performs a non-destructive restore drill on latest backup.
 - `emit-alerts.py` emits change-based alerts for critical/degraded stack states and recovery.
 
@@ -132,6 +136,5 @@ Notes:
 Kept for compatibility only; not part of launch runbooks:
 
 - `docker/docker-compose.yml` (legacy Anvil path, used internally by genesis bootstrap)
-- `docker/docker-compose.rates.yml` (legacy analytics path)
 - `docker/docker-compose.bot.yml` (bot-only compatibility path)
 - `frontend/docker-compose.yml` (legacy frontend compose)

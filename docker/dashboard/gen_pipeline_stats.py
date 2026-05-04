@@ -3,7 +3,7 @@
 Legacy cron compatibility shim.
 
 Keeps old pipeline cron entries non-failing while V2 launch runs with
-data-pipeline services out of the critical path.
+analytics services out of the critical path.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ def main() -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "disabled",
         "launch_critical": False,
-        "message": "data-pipeline is excluded from the Reth-only launch baseline",
+        "message": "analytics is excluded from the Reth-only launch baseline",
     }
 
     os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
