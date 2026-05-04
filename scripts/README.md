@@ -1,218 +1,75 @@
-# RLD Protocol Scripts
+# RLD Scripts
 
-Shell scripts for deploying, testing, and simulating the RLD protocol.
+This folder is for operator-adjacent helpers and local protocol simulations.
+Production services do not import or execute these scripts at runtime.
 
-## Quick Start
+## Production-Adjacent Helpers
+
+### `decrypt-secrets.sh`
+
+Decrypts encrypted environment files into local `.env` files:
 
 ```bash
-# Full lifecycle simulation (recommended first run)
-./scripts/lifecycle_test.sh
+./scripts/decrypt-secrets.sh
+```
 
-# Then run stress tests on the existing pool
+### `check-mainnet-sync.sh`
+
+Checks Reth and Lighthouse sync status on the host:
+
+```bash
+./scripts/check-mainnet-sync.sh
+watch -n 30 ./scripts/check-mainnet-sync.sh
+```
+
+## Local Simulation Harness
+
+These scripts are developer tools for Anvil/fork simulation and manual protocol
+flows. They are not part of the Docker production runtime.
+
+```bash
+./scripts/lifecycle_test.sh
 ./scripts/stress_test.sh
 ./scripts/chaos_test.sh
 ```
 
----
+The lower-level action/scenario helpers are kept because they compose the local
+simulation flows:
 
-## Core Scripts
+- `scripts/actions/*`
+- `scripts/scenarios/*`
+- `scripts/utils/*`
 
-### `lifecycle_test.sh` ⭐ Main Entry Point
-
-Complete end-to-end protocol simulation.
-
-**What it does:**
-
-1. Restarts Anvil fork at block 21698573
-2. Deploys RLD protocol (TWAMM Hook + Factory)
-3. Deploys wrapped market (waUSDC/wRLP)
-4. User A: Deposits 100M collateral, mints wRLP, provides LP
-5. User B: Swaps 100k waUSDC → wRLP
-6. User C: Submits 100k TWAMM order
-
-**Usage:**
+## Common Simulation Flows
 
 ```bash
-./scripts/lifecycle_test.sh
-```
-
-**Output:**
-
-- Exports environment variables for further testing
-- Creates `wrapped_market.json` in contracts/
-- LP Position NFT Token ID
-
-**Expected duration:** ~3 minutes
-
----
-
-### `stress_test.sh`
-
-100 alternating swaps with pattern: BUY/SELL × EXACT_IN/EXACT_OUT
-
-**Prerequisites:** Run `lifecycle_test.sh` first (or set `WAUSDC`, `POSITION_TOKEN`, `TWAMM_HOOK`)
-
-**What it does:**
-
-- Funds trader with waUSDC if needed
-- Executes 100 pattern swaps
-- Reports tick change and net P&L
-
-**Usage:**
-
-```bash
-./scripts/stress_test.sh
-```
-
-**Expected output:**
-
-```
-=== SUMMARY ===
-Tick change: 0
-Net waUSDC: -25000
-Net wRLP: -2400
-```
-
----
-
-### `chaos_test.sh` 🔥
-
-Random stress test with varying sizes, whale swaps, and time warps.
-
-**Prerequisites:** Run `lifecycle_test.sh` first
-
-**What it does:**
-
-- Random swap sizes (10-1000 tokens)
-- 10% chance of whale swaps (5x size)
-- 5% chance of dust swaps (1 token)
-- Time warps between swaps
-
-**Usage:**
-
-```bash
-./scripts/chaos_test.sh
-```
-
-**Expected output:**
-
-```
-=== CHAOS RESULTS ===
-Success: 98
-Failed: 2
-=== TICK VOLATILITY ===
-Range: 279 ticks
-```
-
----
-
-## Deployment Scripts
-
-### `deploy_local.sh`
-
-Deploys core RLD protocol to local Anvil.
-
-```bash
-./scripts/deploy_local.sh
-```
-
-### `deploy_wrapped_market.sh`
-
-Deploys waUSDC/wRLP market after protocol is deployed.
-
-```bash
+# Deploy local wrapped market state
 ./scripts/deploy_wrapped_market.sh
+
+# Trade and LP helpers
+./scripts/go_long.sh
+./scripts/go_short.sh
+./scripts/test_twamm_order.sh
+./scripts/mint_and_lp_wrapped.sh
+./scripts/mint_and_lp_executor.sh
 ```
 
----
-
-## Trading Scripts
-
-### `go_long.sh`
-
-Swap waUSDC → wRLP (go long on wRLP).
-
-**Environment required:**
+Scripts read from `.env` at the repository root via `scripts/utils/load_env.sh`.
+Required values vary by flow, but usually include:
 
 ```bash
-export WAUSDC=0x...
-export POSITION_TOKEN=0x...
-export TWAMM_HOOK=0x...
-export SWAP_AMOUNT=100000000  # 100 tokens
+WAUSDC=0x...
+POSITION_TOKEN=0x...
+TWAMM_HOOK=0x...
+MARKET_ID=0x...
+BROKER_FACTORY=0x...
+PRIVATE_KEY=0x...
+ETH_RPC_URL=http://127.0.0.1:8545
 ```
 
-### `go_short.sh`
+## Removed From This Folder
 
-Swap wRLP → waUSDC (go short / exit position).
-
-### `test_twamm_order.sh`
-
-Submit a TWAMM time-weighted order.
-
----
-
-## LP Scripts
-
-### `mint_and_lp_wrapped.sh`
-
-Mint wRLP and provide liquidity using wrapped tokens.
-
-### `mint_and_lp_executor.sh`
-
-Full LP flow using executor pattern.
-
----
-
-## Environment Variables
-
-Scripts read from `contracts/.env`:
-
-```bash
-WAUSDC=0x...              # Wrapped aUSDC address
-POSITION_TOKEN=0x...      # wRLP token address
-TWAMM_HOOK=0x...          # TWAMM hook address
-MARKET_ID=0x...           # Market identifier
-BROKER_FACTORY=0x...      # Broker factory
-PRIVATE_KEY=0x...         # Deployer key
-```
-
-After running `lifecycle_test.sh`, export these to continue testing:
-
-```bash
-export WAUSDC=0x2fe19128A8257182fdD77f90eA96D27cA342897A
-export POSITION_TOKEN=0xcF6c6272E9e353fc1F3e9A747A7B7AADE3c83389
-export TWAMM_HOOK=0x7e0C07EEabb2459D70dba5b8d100Dca44c652aC0
-```
-
----
-
-## Anvil Accounts
-
-| Account   | Address                                      | Role              |
-| --------- | -------------------------------------------- | ----------------- |
-| Account 0 | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` | Deployer / User A |
-| Account 1 | `0x70997970C51812dc3A010C7d01b50e0d17dc79C8` | User B (Trader)   |
-| Account 2 | `0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC` | User C (TWAMM)    |
-
----
-
-## Troubleshooting
-
-### "WAUSDC not set"
-
-Run `lifecycle_test.sh` first or set environment variables.
-
-### Swap fails with overflow
-
-Check currency ordering. The LifecycleSwap script handles this automatically.
-
-### TWAMM order fails
-
-Ensure user has approved tokens and has sufficient balance.
-
-### Anvil connection refused
-
-```bash
-pkill anvil
-anvil --fork-url $ETH_RPC_URL --fork-block-number 21698573
-```
+Generated research artifacts, one-off Aave/IRM analysis scripts, the old
+Postgres indexer prototype, and one-shot event scraper scripts were removed
+because they are not production runtime surfaces. Production indexing is owned
+by `backend/indexers` and `backend/analytics`.

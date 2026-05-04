@@ -21,5 +21,8 @@ omit = [
     "backend/analytics/verify.py",
 ]
 
+[tool.pytest.ini_options]
+pythonpath = [".."]
+
 [tool.ruff.lint.per-file-ignores]
 "scripts/*.py" = ["E401", "E402", "E701", "E702", "E722", "F401", "F541", "F841"]
