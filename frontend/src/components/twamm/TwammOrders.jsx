@@ -5,6 +5,7 @@ import React, {
   useRef,
   useCallback,
 } from "react";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 import { useSim } from "../../context/SimulationContext";
 import { useTwammDashboard } from "../../hooks/useTwammDashboard";
 import {
@@ -728,7 +729,7 @@ function ClearBotLogs() {
 
   useEffect(() => {
     fetchLogs(); // eslint-disable-line react-hooks/set-state-in-effect
-    const iv = setInterval(fetchLogs, 5000);
+    const iv = setInterval(fetchLogs, REFRESH_INTERVALS.TWAMM_LOGS_MS);
     return () => clearInterval(iv);
   }, [fetchLogs]);
 

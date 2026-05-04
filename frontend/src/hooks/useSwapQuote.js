@@ -7,6 +7,7 @@ import {
   buildHooklessPoolKey,
   buildQuoterExactInputSingleParams,
 } from "../lib/peripheryIntegration";
+import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 // Mainnet V4 Quoter ABI — quoteExactInputSingle(QuoteExactSingleParams)
 // Uses struct-wrapped params matching the deployed Quoter at 0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203
@@ -178,8 +179,8 @@ export function useSwapQuote(
     error: swrError,
     mutate,
   } = useSWR(swrKey, fetchQuote, {
-    refreshInterval: 12000,
-    dedupingInterval: 400,
+    refreshInterval: REFRESH_INTERVALS.SWAP_QUOTE_MS,
+    dedupingInterval: REFRESH_INTERVALS.SWAP_QUOTE_DEDUPE_MS,
     revalidateOnFocus: false,
     keepPreviousData: true,
   });

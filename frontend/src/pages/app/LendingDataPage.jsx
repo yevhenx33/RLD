@@ -3,10 +3,11 @@ import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
 import { Activity, PieChart, Layers, Users, Check, Loader2 } from "lucide-react";
-import RLDPerformanceChart from "../../components/charts/RLDChart";
+import RLDPerformanceChart from "../../charts/primitives/RLDPerformanceChart";
 import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
 import { getTokenIcon } from "../../utils/tokenIcons";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 
 const LENDING_DATA_QUERY = `
   query LendingDataHub($displayIn: String!) {
@@ -95,7 +96,7 @@ export default function LendingDataPage() {
         query: LENDING_DATA_QUERY,
         variables: { displayIn: displayUnit },
       }),
-    { refreshInterval: 30000, dedupingInterval: 5000 }
+    { refreshInterval: REFRESH_INTERVALS.ANALYTICS_PAGE_MS, dedupingInterval: REFRESH_INTERVALS.ANALYTICS_DEDUPE_MS }
   );
 
   const { stats, chartData, marketsData } = useMemo(() => {

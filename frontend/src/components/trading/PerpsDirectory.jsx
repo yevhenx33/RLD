@@ -4,6 +4,7 @@ import { TrendingUp, ChevronDown, ChevronUp, ArrowUpDown, Loader2 } from "lucide
 import useSWR from "swr";
 import { SIM_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 
 const formatUSD = (val) => {
   if (val == null || isNaN(val)) return "—";
@@ -62,7 +63,7 @@ export default function PerpsDirectory() {
   const { data, error, isLoading } = useSWR(
     [SIM_GRAPHQL_URL, "perps.repository.markets.v1"],
     fetchMarkets,
-    { refreshInterval: 2000, revalidateOnFocus: false, keepPreviousData: true },
+    { refreshInterval: REFRESH_INTERVALS.SIMULATION_SNAPSHOT_MS, revalidateOnFocus: false, keepPreviousData: true },
   );
 
   // ── Build markets array from real data ───────────────────────

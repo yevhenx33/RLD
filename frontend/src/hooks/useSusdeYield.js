@@ -1,4 +1,5 @@
 import useSWR from "swr";
+import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 import { ENVIO_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
@@ -19,8 +20,8 @@ export function useSusdeYield() {
     queryKeys.envioSusdeLatest(ENVIO_GRAPHQL_URL),
     gqlFetcher,
     {
-    refreshInterval: 60000,
-    dedupingInterval: 30000,
+    refreshInterval: REFRESH_INTERVALS.SUSDE_YIELD_MS,
+    dedupingInterval: REFRESH_INTERVALS.SUSDE_YIELD_DEDUPE_MS,
     revalidateOnFocus: false,
     },
   );

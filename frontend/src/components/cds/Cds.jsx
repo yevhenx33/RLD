@@ -17,6 +17,7 @@ import CreateCdsCoverageModal from "../modals/CreateCdsCoverageModal";
 import CloseCdsCoverageModal from "../modals/CloseCdsCoverageModal";
 import CdsBrandingPanel from "./CdsBrandingPanel";
 import CdsDataModule from "./CdsDataModule";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 
 const formatCurrency = (value, decimals = 2) => {
   const num = Number(value);
@@ -98,7 +99,7 @@ export default function CdsMarketPage() {
   useEffect(() => {
     if (!account || !collateralAddress) return;
     refreshWalletBalance();
-    const id = setInterval(() => refreshWalletBalance(), 10000);
+    const id = setInterval(() => refreshWalletBalance(), REFRESH_INTERVALS.WALLET_BALANCE_MS);
     return () => clearInterval(id);
   }, [account, collateralAddress, refreshWalletBalance]);
 

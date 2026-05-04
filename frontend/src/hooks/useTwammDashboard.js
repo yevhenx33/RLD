@@ -6,6 +6,7 @@ import { SIM_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { queryKeys } from "../api/queryKeys";
 import { rpcProvider } from "../utils/provider";
+import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 // ── ABI: only view functions needed for enrichment (no event scanning) ──
 
@@ -104,7 +105,7 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
     {
       refreshInterval: pollInterval,
       revalidateOnFocus: false,
-      dedupingInterval: 2000,
+      dedupingInterval: REFRESH_INTERVALS.POSITION_DEDUPE_MS,
       keepPreviousData: true,
     },
   );

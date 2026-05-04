@@ -28,7 +28,6 @@ import { useWallet } from "../../context/WalletContext";
 
 import { useSwapQuote } from "../../hooks/useSwapQuote";
 import { useSwapExecution } from "../../hooks/useSwapExecution";
-import { formatOpAmount } from "../../hooks/useOperations";
 import { useBrokerData } from "../../hooks/useBrokerData";
 import { useBrokerAccount } from "../../hooks/useBrokerAccount";
 import { useTwammOrder } from "../../hooks/useTwammOrder";
@@ -53,102 +52,9 @@ import StatItem from "../common/StatItem";
 import TradingTerminal, { InputGroup, SummaryRow } from "./TradingTerminal";
 import SettingsButton from "../shared/SettingsButton";
 import ActionForm from "./ActionForm";
+import { CollateralConfirmModal, ClaimConfirmModal } from "./SimulationConfirmModals";
 
-// ── Sub-components ────────────────────────────────────────────
-
-// eslint-disable-next-line no-unused-vars
-function SimMetricBox({ label, value, sub, Icon = Activity, dimmed }) {
-  return (
-    <div
-      className={`p-4 md:p-6 flex flex-col justify-between h-full min-h-[120px] md:min-h-[180px] ${dimmed ? "opacity-30" : ""
-        }`}
-    >
-      <div className="text-sm text-gray-500 uppercase tracking-widest mb-2 flex justify-between">
-        {label} <Icon size={15} className="opacity-90" />
-      </div>
-      <div>
-        <div className="text-2xl md:text-3xl font-light text-white mb-1 md:mb-2 tracking-tight">
-          {value}
-        </div>
-        <div className="text-sm text-gray-500 uppercase tracking-widest">
-          {sub}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function OperationsFeed({
-  operations = [],
-  loading = false,
-  connected = false,
-  collateralSymbol = "waUSDC",
-  positionSymbol = "wRLP",
-}) {
-  if (!connected) {
-    return (
-      <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-4">
-        —
-      </div>
-    );
-  }
-
-  if (loading && operations.length === 0) {
-    return (
-      <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-4">
-        Loading...
-      </div>
-    );
-  }
-
-  if (operations.length === 0) {
-    return (
-      <div className="text-sm text-gray-600 uppercase tracking-widest text-center py-4">
-        No operations yet
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-0 divide-y divide-white/5 max-h-[280px] overflow-y-auto custom-scrollbar">
-      {operations.slice(0, 15).map((op) => {
-        // Format amounts based on event type
-        let detail = "";
-        if (op.type === "SwapExecuted" && Number(op.args.action) === 1) {
-          detail = `${formatOpAmount(op.args.amountIn)} ${collateralSymbol} → ${formatOpAmount(op.args.amountOut)} ${positionSymbol}`;
-        } else if (op.type === "SwapExecuted" && Number(op.args.action) === 2) {
-          detail = `${formatOpAmount(op.args.amountIn)} ${positionSymbol} → ${formatOpAmount(op.args.amountOut)} ${collateralSymbol}`;
-        } else if (op.type === "ShortPositionUpdated") {
-          detail = `${formatOpAmount(op.args[1])} debt · ${formatOpAmount(op.args[2])} proceeds`;
-        } else if (op.type === "ShortPositionClosed") {
-          detail = `${formatOpAmount(op.args[1])} repaid · ${formatOpAmount(op.args[2])} spent`;
-        } else if (op.type === "Deposited") {
-          detail = `${formatOpAmount(op.args[1])} → ${formatOpAmount(op.args[2])} ${collateralSymbol}`;
-        }
-
-        return (
-          <div key={op.id} className="py-2.5 flex items-center gap-3">
-            {/* Left: Action badge (centered) */}
-            <span
-              className={`text-xs font-bold font-mono px-2 py-1 tracking-wider text-center shrink-0 w-[90px] ${op.color}`}
-            >
-              {op.label}
-            </span>
-            {/* Right: Detail */}
-            <div className="flex-1 min-w-0 text-right">
-              {detail && (
-                <div className="text-sm font-mono text-gray-300 truncate">
-                  {detail}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
+import { OperationsFeed, SimMetricBox } from "./SimulationMetrics";
 // ── Main Component ────────────────────────────────────────────
 
 export default function SimulationTerminal() {
@@ -494,6 +400,14 @@ export default function SimulationTerminal() {
     defaultResolution: "5M",
   });
   const { resolution, appliedStart, appliedEnd } = controls;
+  const CHART_WINDOW_POINTS = 1000;
+  const CHART_RESOLUTION_SECONDS = {
+    "5M": 5 * 60,
+    "1H": 60 * 60,
+    "4H": 4 * 60 * 60,
+    "1D": 24 * 60 * 60,
+    "1W": 7 * 24 * 60 * 60,
+  };
 
   // Sim block timestamp for chart time anchoring (same as pools page)
   const [simBlockTs, setSimBlockTs] = useState(null);
@@ -517,12 +431,40 @@ export default function SimulationTerminal() {
     return simBlockTs - (wallNow - wallEnd);
   }, [appliedEnd, simBlockTs]);
 
+  const chartResolutionSeconds = CHART_RESOLUTION_SECONDS[resolution] || CHART_RESOLUTION_SECONDS["1H"];
+  const [chartWindowEndTime, setChartWindowEndTime] = useState(null);
+
+  useEffect(() => {
+    setChartWindowEndTime(null);
+  }, [appliedEnd, appliedStart, marketKey, resolution]);
+
+  const effectiveChartEndTime = chartWindowEndTime || chartEndTime;
+
+  const effectiveChartStartTime = useMemo(() => {
+    if (!chartStartTime || !effectiveChartEndTime) return chartStartTime;
+    const latestWindowStart = effectiveChartEndTime - (CHART_WINDOW_POINTS - 1) * chartResolutionSeconds;
+    return Math.max(chartStartTime, latestWindowStart);
+  }, [chartResolutionSeconds, chartStartTime, effectiveChartEndTime]);
+
+  const handleChartWindowRequest = React.useCallback((direction) => {
+    if (!chartStartTime || !chartEndTime || !effectiveChartStartTime || !effectiveChartEndTime) return;
+    if (direction === "older") {
+      if (effectiveChartStartTime <= chartStartTime) return;
+      setChartWindowEndTime(Math.max(chartStartTime, effectiveChartStartTime - chartResolutionSeconds));
+      return;
+    }
+    if (direction === "newer") {
+      if (effectiveChartEndTime >= chartEndTime) return;
+      setChartWindowEndTime(Math.min(chartEndTime, effectiveChartEndTime + CHART_WINDOW_POINTS * chartResolutionSeconds));
+    }
+  }, [chartEndTime, chartResolutionSeconds, chartStartTime, effectiveChartEndTime, effectiveChartStartTime]);
+
   // Separate useSimulation for chart data (resolution/timeframe-specific)
   const simChart = useSimulation({
     pollInterval: 2000,
     chartResolution: resolution,
-    chartStartTime,
-    chartEndTime,
+    chartStartTime: effectiveChartStartTime,
+    chartEndTime: effectiveChartEndTime,
     marketKey,
   });
   const { chartData } = simChart;
@@ -1070,6 +1012,7 @@ export default function SimulationTerminal() {
                           data={volumeHistory}
                           areas={activeChartConfig.areas}
                           resolution={resolution}
+                          onRequestDataWindow={handleChartWindowRequest}
                         />
                       )
                     ) : chartData.length === 0 ? (
@@ -1081,6 +1024,7 @@ export default function SimulationTerminal() {
                         data={chartData}
                         areas={areas}
                         resolution={resolution}
+                        onRequestDataWindow={handleChartWindowRequest}
                       />
                     )}
                   </Suspense>
@@ -2395,134 +2339,4 @@ export default function SimulationTerminal() {
       />
     </>
   );
-}
-
-// ── Collateral Registration Confirmation Modal ────────────────
-
-function CollateralConfirmModal({ label, sub, onConfirm, onCancel }) {
-  const [busy, setBusy] = useState(false);
-  return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onCancel}>
-      <div
-        className="bg-[#0a0b0d] border border-white/10 shadow-2xl w-full max-w-sm mx-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-5 py-4 border-b border-white/5">
-          <div className="text-sm font-mono text-white font-bold">{label}</div>
-          {sub && <div className="text-xs font-mono text-gray-500 mt-1">{sub}</div>}
-        </div>
-        <div className="px-5 py-4 text-xs text-gray-500 font-mono">
-          This will send a transaction to update which position is counted toward your collateral ratio. A solvency check will be performed.
-        </div>
-        <div className="flex border-t border-white/5">
-          <button
-            onClick={onCancel}
-            disabled={busy}
-            className="flex-1 px-4 py-3 text-sm font-mono text-gray-400 hover:bg-white/5 transition-colors border-r border-white/5"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={async () => {
-              setBusy(true);
-              try { await onConfirm(); } finally { setBusy(false); }
-            }}
-            disabled={busy}
-            className="flex-1 px-4 py-3 text-sm font-mono text-cyan-400 hover:bg-cyan-500/5 transition-colors font-bold"
-          >
-            {busy ? "Sending..." : "Confirm"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ClaimConfirmModal({ order, executing, onConfirm, onCancel }) {
-  return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/70 backdrop-blur-sm" onClick={onCancel}>
-      <div
-        className="bg-[#0a0b0d] border border-white/10 shadow-2xl w-full max-w-sm mx-4"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="px-5 py-4 border-b border-white/5">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
-            <span className="text-sm font-mono text-white font-bold">Claim Expired Order</span>
-          </div>
-        </div>
-
-        {/* Order details */}
-        <div className="px-5 py-4 space-y-2 text-xs font-mono">
-          <div className="flex justify-between">
-            <span className="text-gray-500">Direction</span>
-            <span className="text-white">{order.direction}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Deposit</span>
-            <span className="text-gray-400">{order.amountIn.toFixed(2)} {order.sellToken}</span>
-          </div>
-          {order.earned > 0 && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Earned</span>
-              <span className="text-green-400">{order.earned.toFixed(4)} {order.buyToken}</span>
-            </div>
-          )}
-          {order.sellRefund > 0 && (
-            <div className="flex justify-between">
-              <span className="text-gray-500">Unsold Refund</span>
-              <span className="text-gray-400">{order.sellRefund.toFixed(2)} {order.sellToken}</span>
-            </div>
-          )}
-          <div className="flex justify-between border-t border-white/5 pt-2">
-            <span className="text-gray-500">Total Value</span>
-            <span className="text-white">${order.valueUsd.toFixed(2)}</span>
-          </div>
-        </div>
-
-        {/* Description */}
-        <div className="px-5 pb-4 text-xs text-gray-500 font-mono">
-          Tokens will be returned to your broker account.
-        </div>
-
-        {/* Actions */}
-        <div className="flex border-t border-white/5">
-          <button
-            onClick={onCancel}
-            disabled={executing}
-            className="flex-1 px-4 py-3 text-sm font-mono text-gray-400 hover:bg-white/5 transition-colors border-r border-white/5"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={executing}
-            className="flex-1 px-4 py-3 text-sm font-mono text-green-400 hover:bg-green-500/5 transition-colors font-bold"
-          >
-            {executing ? "Claiming..." : "Confirm Claim"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Helpers ───────────────────────────────────────────────────
-
-function _formatLiquidity(val) {
-  if (val >= 1e18) return `${(val / 1e18).toFixed(1)}E`;
-  if (val >= 1e15) return `${(val / 1e15).toFixed(1)}P`;
-  if (val >= 1e12) return `${(val / 1e12).toFixed(1)}T`;
-  if (val >= 1e9) return `${(val / 1e9).toFixed(1)}B`;
-  if (val >= 1e6) return `${(val / 1e6).toFixed(1)}M`;
-  if (val >= 1e3) return `${(val / 1e3).toFixed(1)}K`;
-  return val.toLocaleString();
-}
-
-function _formatDebt(val) {
-  if (val >= 1e9) return `$${(val / 1e9).toFixed(2)}B`;
-  if (val >= 1e6) return `$${(val / 1e6).toFixed(2)}M`;
-  if (val >= 1e3) return `$${(val / 1e3).toFixed(1)}K`;
-  return `$${val.toFixed(0)}`;
 }

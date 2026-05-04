@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 import { rpcProvider } from "../utils/provider";
+import { debugLog } from "../utils/debugLogger";
 
 /**
  * Faucet: POST /api/faucet → faucet_server.py → SimFunder.fund() (atomic on-chain tx).
@@ -16,7 +17,7 @@ const ERC20_ABI = [
 ];
 
 async function faucetReth(apiUrl, user, setStep) {
-  console.log("[faucet] Requesting funds via API...");
+  debugLog("[faucet] Requesting funds via API...");
 
   setStep("Sending transaction...");
   const res = await fetch(apiUrl, {
@@ -31,7 +32,7 @@ async function faucetReth(apiUrl, user, setStep) {
   }
   setStep("Transaction confirmed!");
 
-  console.log("[faucet] ✓ Funded user", data);
+  debugLog("[faucet] ✓ Funded user", data);
   return { success: true, ...data };
 }
 
@@ -88,7 +89,7 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
 
       try {
         const user = userAddress.toLowerCase();
-        console.log(`[faucet] Starting for ${user}`);
+        debugLog(`[faucet] Starting for ${user}`);
 
         setStep("Funding via backend...");
         await faucetReth(FAUCET_API, user, setStep);
@@ -117,7 +118,7 @@ export function useFaucet(account, waUsdcAddress, externalContracts) {
         setEthBalance(formattedEth);
         setStep("Done!");
 
-        console.log(`[faucet] ✓ Complete: waUSDC=${formattedWa}, USDC=${formattedUsdc}, ETH=${formattedEth}`);
+        debugLog(`[faucet] ✓ Complete: waUSDC=${formattedWa}, USDC=${formattedUsdc}, ETH=${formattedEth}`);
         return { success: true, waUsdcBalance: formattedWa, usdcBalance: formattedUsdc, ethBalance: formattedEth };
       } catch (err) {
         console.error("Faucet error:", err);

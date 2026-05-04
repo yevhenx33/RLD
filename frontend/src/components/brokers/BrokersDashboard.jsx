@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import useSWR from "swr";
 import { SIM_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 
 const MARKET_ID =
   "0x3de6baf71424c800a4c01e4a7b114737736e311611a7298b946609eeb0b4f0f6";
@@ -58,8 +59,8 @@ export default function BrokersDashboard() {
     ([url, , variables]) =>
       postGraphQL(url, { query: ALL_BROKERS_QUERY, variables }),
     {
-      refreshInterval: 3000,
-      dedupingInterval: 1000,
+      refreshInterval: REFRESH_INTERVALS.FAST_CHAIN_MS,
+      dedupingInterval: REFRESH_INTERVALS.FAST_DEDUPE_MS,
       revalidateOnFocus: false,
       keepPreviousData: true,
     },

@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { ethers } from "ethers";
 import useSWR from "swr";
 import { rpcProvider } from "../utils/provider";
+import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 // BrokerRouter event ABIs
 const EVENTS_ABI = [
@@ -140,7 +141,7 @@ export function useOperations(
     : null;
   const { data, isLoading, mutate } = useSWR(swrKey, fetchOps, {
     refreshInterval: pollInterval,
-    dedupingInterval: 1000,
+    dedupingInterval: REFRESH_INTERVALS.FAST_DEDUPE_MS,
     revalidateOnFocus: false,
     keepPreviousData: true,
   });

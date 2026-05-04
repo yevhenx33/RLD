@@ -2,6 +2,7 @@ import useSWR from "swr";
 import { SIM_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { queryKeys } from "../api/queryKeys";
+import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 const COVERAGE_POSITIONS_QUERY = `
   query CoveragePositions($owner: String!, $market: String) {
@@ -21,8 +22,8 @@ export function useCdsCoveragePositions(owner, market, paused = false) {
     key,
     fetchCoveragePositions,
     {
-      refreshInterval: 10000,
-      dedupingInterval: 1500,
+      refreshInterval: REFRESH_INTERVALS.COVERAGE_POSITION_MS,
+      dedupingInterval: REFRESH_INTERVALS.COVERAGE_POSITION_DEDUPE_MS,
       revalidateOnFocus: false,
       keepPreviousData: true,
     },

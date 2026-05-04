@@ -1,5 +1,4 @@
 import React, { Suspense, lazy, useState, useMemo, useEffect, useCallback } from "react";
-import { ethers } from "ethers";
 import {
   Droplets,
   Activity,
@@ -24,9 +23,7 @@ import WithdrawModal from "../modals/WithdrawModal";
 import AddLiquidityModal from "../modals/AddLiquidityModal";
 import AccountModal from "../modals/AccountModal";
 import { ToastContainer } from "../common/Toast";
-
-import { rpcProvider } from "../../utils/provider";
-const ERC20_BALANCE_ABI = ["function balanceOf(address) view returns (uint256)"];
+import { useTokenBalances } from "./useTokenBalances";
 
 
 // ── Combo: Uniswap-style Dual-Color Mountain Chart ────────────────────────
@@ -115,38 +112,13 @@ export default function PoolLP() {
   const activeAddress = selectedAccount === "broker" && brokerAddress ? brokerAddress : account;
 
   // ── Token balances for selected account ─────────────────────
-  const [token0Balance, setToken0Balance] = useState(null); // wRLP
-  const [token1Balance, setToken1Balance] = useState(null); // waUSDC
-
   const token0Addr = marketInfo?.position_token?.address;
   const token1Addr = marketInfo?.collateral?.address;
-
-  const fetchBalances = useCallback(async () => {
-    if (!activeAddress || !token0Addr || !token1Addr) {
-      setToken0Balance(null);
-      setToken1Balance(null);
-      return;
-    }
-    try {
-      const provider = rpcProvider;
-      const t0 = new ethers.Contract(token0Addr, ERC20_BALANCE_ABI, provider);
-      const t1 = new ethers.Contract(token1Addr, ERC20_BALANCE_ABI, provider);
-      const [b0, b1] = await Promise.all([
-        t0.balanceOf(activeAddress),
-        t1.balanceOf(activeAddress),
-      ]);
-      setToken0Balance(parseFloat(ethers.formatUnits(b0, 6)));
-      setToken1Balance(parseFloat(ethers.formatUnits(b1, 6)));
-    } catch (e) {
-      console.warn("Balance fetch failed:", e);
-    }
-  }, [activeAddress, token0Addr, token1Addr]);
-
-  useEffect(() => {
-    fetchBalances();
-    const id = setInterval(fetchBalances, 5000);
-    return () => clearInterval(id);
-  }, [fetchBalances]);
+  const { token0Balance, token1Balance, refreshBalances: fetchBalances } = useTokenBalances({
+    activeAddress,
+    token0Addr,
+    token1Addr,
+  });
 
   // ── V4 paired amount calculation ────────────────────────────
   // When user enters one token amount, auto-compute the other

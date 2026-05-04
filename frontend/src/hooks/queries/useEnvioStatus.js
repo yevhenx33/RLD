@@ -2,6 +2,7 @@ import useSWR from "swr";
 import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
 import { queryKeys } from "../../api/queryKeys";
 import { postGraphQL } from "../../api/graphqlClient";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 
 const ENVIO_STATUS_QUERY = `
   query EnvioStatus {
@@ -20,8 +21,8 @@ export function useEnvioStatus() {
     queryKeys.envioStatus(ENVIO_GRAPHQL_URL),
     fetchEnvioStatus,
     {
-      refreshInterval: 15000,
-      dedupingInterval: 5000,
+      refreshInterval: REFRESH_INTERVALS.ANALYTICS_STATUS_MS,
+      dedupingInterval: REFRESH_INTERVALS.ANALYTICS_STATUS_DEDUPE_MS,
       revalidateOnFocus: false,
     },
   );
