@@ -26,6 +26,7 @@ export default function AccountModal({
   onComplete,
   brokerFactoryAddr,
   waUsdcAddr,
+  collateralSymbol = "waUSDC",
   externalContracts,
 }) {
   const { account, connectWallet } = useWallet();
@@ -44,20 +45,26 @@ export default function AccountModal({
     requestFaucet,
     loading: faucetLoading,
     error: faucetError,
-    waUsdcBalance,
+    waUsdcBalance: collateralBalance,
   } = useFaucet(account, waUsdcAddr, externalContracts);
 
   const [depositAmount, setDepositAmount] = useState("10000");
   const [faucetDone, setFaucetDone] = useState(false);
+  const runtimeConfigReady = Boolean(waUsdcAddr);
+  const tokenSymbol = collateralSymbol || "Collateral";
+  const hasCollateralBalance =
+    Number.isFinite(parseFloat(collateralBalance)) &&
+    parseFloat(collateralBalance) > 0;
 
   // ── Determine current step ───────────────────────────────────
   // 1: Connect Wallet → 2: Request Funds → 3: Create Account → 4: Deposit
   const currentStep = useMemo(() => {
     if (!account) return 1;
-    if (!faucetDone && !waUsdcBalance) return 2;
+    if (!runtimeConfigReady) return 2;
+    if (!faucetDone && !hasCollateralBalance) return 2;
     if (!hasBroker) return 3;
     return 4;
-  }, [account, hasBroker, faucetDone, waUsdcBalance]);
+  }, [account, hasBroker, faucetDone, hasCollateralBalance, runtimeConfigReady]);
 
   const [completedDeposit, setCompletedDeposit] = useState(false);
 
@@ -70,13 +77,19 @@ export default function AccountModal({
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFaucetDone(false);
+    setCompletedDeposit(false);
+  }, [account, waUsdcAddr]);
+
   // Auto-advance past faucet step once balance arrives
   useEffect(() => {
-    if (waUsdcBalance && parseFloat(waUsdcBalance) > 0) {
+    if (hasCollateralBalance) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setFaucetDone(true);
     }
-  }, [waUsdcBalance]);
+  }, [hasCollateralBalance]);
 
   if (!isOpen) return null;
 
@@ -95,9 +108,11 @@ export default function AccountModal({
       label: "Request_Funds",
       icon: Droplets,
       description:
-        faucetDone || (waUsdcBalance && parseFloat(waUsdcBalance) > 0)
-          ? `${parseFloat(waUsdcBalance || 0).toLocaleString()} waUSDC received`
-          : "Get testnet ETH + waUSDC",
+        !runtimeConfigReady
+          ? "Loading market configuration"
+          : faucetDone || hasCollateralBalance
+            ? `${parseFloat(collateralBalance || 0).toLocaleString()} ${tokenSymbol} received`
+            : `Get testnet ETH + ${tokenSymbol}`,
     },
     {
       num: 3,
@@ -112,8 +127,8 @@ export default function AccountModal({
       label: "Deposit_Funds",
       icon: CircleDollarSign,
       description: completedDeposit
-        ? `${Number(depositAmount).toLocaleString()} waUSDC deposited`
-        : "Fund account with waUSDC",
+        ? `${Number(depositAmount).toLocaleString()} ${tokenSymbol} deposited`
+        : `Fund account with ${tokenSymbol}`,
     },
   ];
 
@@ -148,11 +163,12 @@ export default function AccountModal({
         };
       case 2:
         return {
-          label: faucetLoading ? "Requesting..." : "Request_Funds",
+          label: !runtimeConfigReady ? "Loading_Config" : faucetLoading ? "Requesting..." : "Request_Funds",
           onClick: async () => {
+            if (!runtimeConfigReady) return;
             await requestFaucet(account);
           },
-          disabled: faucetLoading,
+          disabled: faucetLoading || !runtimeConfigReady,
           variant: "cyan",
         };
       case 3:
@@ -319,7 +335,7 @@ export default function AccountModal({
                           className="w-full bg-white/[0.03] border border-white/10 px-3 py-2 text-xs font-mono text-white focus:border-cyan-500/50 focus:outline-none rounded-none"
                         />
                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500 uppercase tracking-widest">
-                          waUSDC
+                          {tokenSymbol}
                         </span>
                       </div>
                     </div>

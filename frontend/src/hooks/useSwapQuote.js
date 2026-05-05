@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import useSWR from "swr";
 import { rpcProvider } from "../utils/provider";
 import {
+  BROKER_ROUTER_ABI,
   HOOKLESS_POOL,
   buildHooklessPoolKey,
   buildQuoterExactInputSingleParams,
@@ -45,6 +46,70 @@ const QUOTER_ABI = [
   },
 ];
 
+const ROUTE_PREVIEW_IFACE = new ethers.Interface(BROKER_ROUTER_ABI);
+const NOT_AUTHORIZED_SELECTOR = "0xea8e4eb5";
+
+function extractRevertData(error) {
+  const candidates = [
+    error?.data,
+    error?.error?.data,
+    error?.info?.error?.data,
+    error?.info?.error?.error?.data,
+    error?.revert?.data,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.startsWith("0x")) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function parseRoutePreviewAmount(error) {
+  if (error?.revert?.name === "RoutePreview") {
+    return BigInt(error.revert.args?.[0] ?? 0);
+  }
+  const data = extractRevertData(error);
+  if (!data) return null;
+  try {
+    const parsed = ROUTE_PREVIEW_IFACE.parseError(data);
+    if (parsed?.name === "RoutePreview") {
+      return BigInt(parsed.args[0]);
+    }
+  } catch {
+    // Not a BrokerRouter preview payload.
+  }
+  return null;
+}
+
+function isRouteAuthorizationError(error) {
+  if (error?.revert?.name === "NotAuthorized") return true;
+  const data = extractRevertData(error)?.toLowerCase();
+  return typeof data === "string" && data.startsWith(NOT_AUTHORIZED_SELECTOR);
+}
+
+function routeAuthorizationError() {
+  const error = new Error("BrokerRouter approval required");
+  error.code = "ROUTE_OPERATOR_APPROVAL_REQUIRED";
+  return error;
+}
+
+function runtimeBlockReason(infrastructure) {
+  if (
+    infrastructure?.runtime_ready !== false &&
+    infrastructure?.runtimeReady !== false
+  ) {
+    return null;
+  }
+  const reasons =
+    infrastructure?.runtimeReadiness?.reasons ||
+    infrastructure?.runtime_readiness?.reasons ||
+    [];
+  return reasons.length
+    ? `Runtime not ready: ${reasons.join(", ")}`
+    : "Runtime manifest is not ready";
+}
+
 /**
  * useSwapQuote — Fetch a precise V4 swap quote using the on-chain V4Quoter.
  *
@@ -61,8 +126,12 @@ export function useSwapQuote(
   positionAddr,
   amountIn,
   direction = "BUY",
-  debounceMs = 500,
+  options = {},
 ) {
+  const normalizedOptions =
+    typeof options === "number" ? { debounceMs: options } : options || {};
+  const debounceMs = normalizedOptions.debounceMs ?? 500;
+  const route = normalizedOptions.route || {};
   const debounceRef = useRef(null);
   const [debouncedAmount, setDebouncedAmount] = useState(amountIn);
 
@@ -77,18 +146,140 @@ export function useSwapQuote(
   }, [amountIn, debounceMs]);
 
   const fetchQuote = useCallback(async () => {
+    const blocked = runtimeBlockReason(infrastructure);
+    if (blocked) {
+      throw new Error(blocked);
+    }
+
+    const routeAction = route.action;
+    const routeBroker = route.brokerAddress;
+    const routeCaller = route.caller;
+    const canRoutePreview =
+      routeAction &&
+      routeBroker &&
+      routeCaller &&
+      infrastructure?.broker_router &&
+      collateralAddr &&
+      positionAddr &&
+      debouncedAmount > 0;
+
     if (
-      !infrastructure?.v4_quoter ||
-      !collateralAddr ||
-      !positionAddr ||
-      !debouncedAmount ||
-      debouncedAmount <= 0
+      !canRoutePreview &&
+      (
+        !infrastructure?.v4_quoter ||
+        !collateralAddr ||
+        !positionAddr ||
+        !debouncedAmount ||
+        debouncedAmount <= 0
+      )
     ) {
       return null;
     }
 
     try {
       const provider = rpcProvider;
+      const exactAmount = ethers.parseUnits(String(debouncedAmount), 6);
+
+      if (canRoutePreview) {
+        const router = new ethers.Contract(
+          infrastructure.broker_router,
+          BROKER_ROUTER_ABI,
+          provider,
+        );
+        const callOverrides = { from: routeCaller };
+        const poolKey = buildHooklessPoolKey(
+          infrastructure,
+          collateralAddr,
+          positionAddr,
+        );
+        let amountOutRaw;
+        const readPreview = async (callPreview) => {
+          try {
+            await callPreview();
+          } catch (error) {
+            const parsed = parseRoutePreviewAmount(error);
+            if (parsed != null) return parsed;
+            if (isRouteAuthorizationError(error)) {
+              throw routeAuthorizationError();
+            }
+            throw error;
+          }
+          throw new Error("Route preview did not return a preview payload");
+        };
+
+        if (routeAction === "OPEN_LONG") {
+          amountOutRaw = await readPreview(() =>
+            router.previewExecuteLong.staticCall(
+              routeBroker,
+              exactAmount,
+              poolKey,
+              callOverrides,
+            ),
+          );
+        } else if (routeAction === "CLOSE_LONG") {
+          amountOutRaw = await readPreview(() =>
+            router.previewCloseLong.staticCall(
+              routeBroker,
+              exactAmount,
+              poolKey,
+              callOverrides,
+            ),
+          );
+        } else if (routeAction === "OPEN_SHORT") {
+          const initialCollateral = Number(route.initialCollateral || 0);
+          if (!Number.isFinite(initialCollateral) || initialCollateral <= 0) {
+            return null;
+          }
+          const collateralWei = ethers.parseUnits(String(initialCollateral), 6);
+          amountOutRaw = await readPreview(() =>
+            router.previewExecuteShort.staticCall(
+              routeBroker,
+              collateralWei,
+              exactAmount,
+              poolKey,
+              callOverrides,
+            ),
+          );
+        } else if (routeAction === "CLOSE_SHORT") {
+          amountOutRaw = await readPreview(() =>
+            router.previewCloseShort.staticCall(
+              routeBroker,
+              exactAmount,
+              poolKey,
+              callOverrides,
+            ),
+          );
+        } else {
+          return null;
+        }
+
+        const amountOutFormatted = parseFloat(
+          ethers.formatUnits(amountOutRaw, 6),
+        );
+        const rate =
+          direction === "SELL"
+            ? amountOutFormatted > 0
+              ? amountOutFormatted / debouncedAmount
+              : 0
+            : amountOutFormatted > 0
+              ? debouncedAmount / amountOutFormatted
+              : 0;
+        const notional =
+          direction === "SELL" ? amountOutFormatted : debouncedAmount;
+
+        return {
+          amountOut: amountOutFormatted,
+          entryRate: rate,
+          exitRate: rate,
+          notional,
+          estFee: 0,
+          gasEstimate: 0,
+          amountOutRaw: amountOutRaw.toString(),
+          direction,
+          source: "route-preview",
+        };
+      }
+
       const quoter = new ethers.Contract(
         infrastructure.v4_quoter,
         QUOTER_ABI,
@@ -96,7 +287,6 @@ export function useSwapQuote(
       );
 
       // Both waUSDC and wRLP have 6 decimals
-      const exactAmount = ethers.parseUnits(String(debouncedAmount), 6);
       const params = buildQuoterExactInputSingleParams(
         infrastructure,
         collateralAddr,
@@ -144,16 +334,27 @@ export function useSwapQuote(
         gasEstimate: Number(gasEstimateRaw),
         amountOutRaw: amountOutRaw.toString(),
         direction,
+        source: "v4-quoter",
       };
     } catch (e) {
       console.warn("Quote failed:", e);
       throw e;
     }
-  }, [infrastructure, collateralAddr, positionAddr, debouncedAmount, direction]);
+  }, [
+    infrastructure,
+    collateralAddr,
+    positionAddr,
+    debouncedAmount,
+    direction,
+    route.action,
+    route.brokerAddress,
+    route.caller,
+    route.initialCollateral,
+  ]);
 
   const swrKey = useMemo(() => {
     if (
-      !infrastructure?.v4_quoter ||
+      (!infrastructure?.v4_quoter && !infrastructure?.broker_router) ||
       !collateralAddr ||
       !positionAddr ||
       !(debouncedAmount > 0)
@@ -162,16 +363,30 @@ export function useSwapQuote(
     }
     return [
       "swap.quote.v1",
-      infrastructure.v4_quoter.toLowerCase(),
+      (infrastructure.broker_router || infrastructure.v4_quoter).toLowerCase(),
       collateralAddr.toLowerCase(),
       positionAddr.toLowerCase(),
       Number(debouncedAmount),
       direction,
+      route.action || "v4",
+      route.brokerAddress?.toLowerCase?.() || "",
+      route.caller?.toLowerCase?.() || "",
+      Number(route.initialCollateral || 0),
       buildHooklessPoolKey(infrastructure, collateralAddr, positionAddr)?.fee || 500,
       buildHooklessPoolKey(infrastructure, collateralAddr, positionAddr)?.tickSpacing || 5,
       HOOKLESS_POOL,
     ];
-  }, [infrastructure, collateralAddr, positionAddr, debouncedAmount, direction]);
+  }, [
+    infrastructure,
+    collateralAddr,
+    positionAddr,
+    debouncedAmount,
+    direction,
+    route.action,
+    route.brokerAddress,
+    route.caller,
+    route.initialCollateral,
+  ]);
 
   const {
     data: quote,
@@ -191,6 +406,7 @@ export function useSwapQuote(
     quote: quote ?? null,
     loading: isLoading,
     error: swrError?.message || null,
+    errorCode: swrError?.code || null,
     refresh,
   };
 }

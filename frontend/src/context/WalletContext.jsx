@@ -1,11 +1,73 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { ethers } from "ethers";
+import { RUNTIME_MANIFEST_URL } from "../api/endpoints";
+import {
+  CHAIN_HEX,
+  CHAIN_ID,
+  RPC_URL,
+  createBrowserProvider,
+  ensureRldChain,
+  getWalletErrorMessage,
+} from "../utils/connection";
 
 const WalletContext = createContext();
 
-let ethersModulePromise;
-function loadEthers() {
-  ethersModulePromise ||= import("ethers").then((mod) => mod.ethers);
-  return ethersModulePromise;
+// USDC Addresses by Chain ID.
+const USDC_ADDRESSES = {
+  1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  31337: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  11155111: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+};
+
+const USDC_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+];
+
+function parseWalletChainId(value) {
+  if (value == null) return null;
+  try {
+    if (typeof value === "number") return String(value);
+    const text = String(value);
+    return text.startsWith("0x")
+      ? String(Number.parseInt(text, 16))
+      : text;
+  } catch {
+    return null;
+  }
+}
+
+async function readWalletChainId(ethereum) {
+  if (!ethereum?.request) return null;
+  const value = await ethereum.request({ method: "eth_chainId" });
+  return parseWalletChainId(value);
+}
+
+function getEthereum() {
+  return typeof window !== "undefined" ? window.ethereum : null;
+}
+
+async function refreshRuntimeManifest() {
+  if (typeof fetch !== "function") return null;
+  const response = await fetch(RUNTIME_MANIFEST_URL, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Runtime manifest unavailable (HTTP ${response.status})`);
+  }
+  return response.json();
+}
+
+async function readLatestBlock(provider) {
+  try {
+    return await provider.getBlockNumber();
+  } catch {
+    return null;
+  }
 }
 
 export function WalletProvider({ children }) {
@@ -15,190 +77,210 @@ export function WalletProvider({ children }) {
   const [usdcBalance, setUsdcBalance] = useState("0");
   const [chainId, setChainId] = useState(null);
   const [debugInfo, setDebugInfo] = useState("");
+  const [walletError, setWalletError] = useState(null);
 
-  // USDC Addresses by Chain ID
-  const USDC_ADDRESSES = {
-    1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // Mainnet
-    31337: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // Anvil (Mainnet Fork)
-    11155111: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // Sepolia (Native USDC)
-    // Add Aave Sepolia USDC if needed: 0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8
-  };
+  const resetBalances = useCallback(() => {
+    setBalance("0");
+    setUsdcBalance("0");
+  }, []);
 
-  const USDC_ABI = [
-    "function balanceOf(address owner) view returns (uint256)",
-    "function decimals() view returns (uint8)",
-  ];
-
-  const fetchBalances = async (acc, prov) => {
+  const fetchBalances = useCallback(async (acc, prov) => {
     if (!acc || !prov) return;
-    const ethers = await loadEthers();
 
-    // Get Network info for debug
-    const net = await prov.getNetwork();
-    setChainId(net.chainId.toString());
+    let net;
+    try {
+      net = await prov.getNetwork();
+      setChainId(net.chainId.toString());
+    } catch (err) {
+      setDebugInfo(`Network error: ${err.message}`);
+      resetBalances();
+      return;
+    }
 
-    // 1. Fetch ETH
     try {
       const bal = await prov.getBalance(acc);
       setBalance(ethers.formatEther(bal));
     } catch (err) {
-      console.error("Failed to fetch ETH balance:", err);
+      setDebugInfo(`ETH balance error: ${err.message}`);
+      setBalance("0");
     }
 
-    // 2. Fetch USDC
     try {
-      const currentChainId = net.chainId.toString(); // Ensure we use the freshly fetched ID
+      const currentChainId = net.chainId.toString();
       const usdcAddr = USDC_ADDRESSES[currentChainId];
 
       if (!usdcAddr) {
-        setDebugInfo(`No USDC Config for Chain ${currentChainId}`);
-        console.warn(`No USDC address configured for chain ${currentChainId}`);
+        setDebugInfo(`No USDC config for chain ${currentChainId}`);
         setUsdcBalance("0.00");
         return;
       }
 
       const usdcContract = new ethers.Contract(usdcAddr, USDC_ABI, prov);
-      // Verify contract exists
       const code = await prov.getCode(usdcAddr);
       if (code === "0x") {
-        setDebugInfo(`USDC Contract Missing on ${currentChainId}`);
-        console.warn("USDC Contract not found on this network!");
+        setDebugInfo(`USDC contract missing on chain ${currentChainId}`);
+        setUsdcBalance("0.00");
         return;
       }
 
       const usdcBal = await usdcContract.balanceOf(acc);
-      setDebugInfo(`Connected: ${currentChainId}. Bal: ${usdcBal.toString()}`);
-
-      // Decimals might vary on testnets, but usually 6.
-      // For safety we could fetch it, but let's stick to 6 for now or fetch if needed.
-      // const decimals = await usdcContract.decimals();
+      setDebugInfo(`Connected: ${currentChainId}. USDC: ${usdcBal.toString()}`);
       setUsdcBalance(ethers.formatUnits(usdcBal, 6));
     } catch (error) {
-      console.error("Error fetching USDC balance:", error);
-      setDebugInfo(`Error: ${error.message}`);
+      setDebugInfo(`USDC balance error: ${error.message}`);
       setUsdcBalance("0.00");
     }
-  };
+  }, [resetBalances]);
 
-  // Check if wallet is already connected
+  const activateWallet = useCallback(async (accounts, { requireDemoChain = false } = {}) => {
+    const ethereum = getEthereum();
+    if (!ethereum) {
+      const message = "No Ethereum wallet found. Please install MetaMask.";
+      setWalletError(message);
+      return { success: false, error: message };
+    }
+
+    if (!accounts?.length) {
+      setAccount(null);
+      resetBalances();
+      return { success: false, error: "No wallet account selected" };
+    }
+
+    try {
+      if (requireDemoChain) {
+        await ensureRldChain(ethereum);
+      }
+      const nextChainId = await readWalletChainId(ethereum);
+      setChainId(nextChainId);
+
+      const tempProvider = createBrowserProvider(ethereum);
+      setProvider(tempProvider);
+      setAccount(accounts[0]);
+      setWalletError(null);
+
+      if (nextChainId === String(CHAIN_ID)) {
+        await readLatestBlock(tempProvider);
+        if (requireDemoChain) {
+          await refreshRuntimeManifest().catch((err) => {
+            setDebugInfo(err.message);
+          });
+        }
+        await fetchBalances(accounts[0], tempProvider);
+      } else {
+        resetBalances();
+        setDebugInfo(`Wrong network: ${nextChainId || "unknown"}`);
+      }
+
+      return { success: true, account: accounts[0] };
+    } catch (error) {
+      const message = getWalletErrorMessage(error, "Connection failed");
+      setWalletError(message);
+      setDebugInfo(message);
+      return { success: false, error: message };
+    }
+  }, [fetchBalances, resetBalances]);
+
   useEffect(() => {
-    if (!window.ethereum) return undefined;
+    const ethereum = getEthereum();
+    if (!ethereum) return undefined;
 
-    window.ethereum
+    ethereum
       .request({ method: "eth_accounts" })
-      .then((accounts) => {
-        if (accounts.length === 0) return;
-        loadEthers().then((ethers) => {
-          const tempProvider = new ethers.BrowserProvider(window.ethereum);
-          setProvider(tempProvider);
-          setAccount(accounts[0]);
-          fetchBalances(accounts[0], tempProvider);
-        });
-      })
-      .catch(console.error);
+      .then((accounts) => activateWallet(accounts, { requireDemoChain: false }))
+      .catch((error) => {
+        setWalletError(getWalletErrorMessage(error, "Failed to read wallet accounts"));
+      });
+
+    readWalletChainId(ethereum)
+      .then(setChainId)
+      .catch(() => setChainId(null));
 
     const handleAccountsChanged = (accounts) => {
-      const newAccount = accounts.length > 0 ? accounts[0] : null;
-      setAccount(newAccount);
-      if (newAccount) {
-        loadEthers().then((ethers) => {
-          const tempProvider = new ethers.BrowserProvider(window.ethereum);
-          setProvider(tempProvider);
-          fetchBalances(newAccount, tempProvider);
-        });
-      } else {
-        setBalance("0");
-        setUsdcBalance("0");
+      activateWallet(accounts, { requireDemoChain: false });
+    };
+
+    const handleChainChanged = (nextChainHex) => {
+      const nextChainId = parseWalletChainId(nextChainHex);
+      setChainId(nextChainId);
+      if (nextChainId !== String(CHAIN_ID)) {
+        resetBalances();
+        setDebugInfo(`Wrong network: ${nextChainId || "unknown"}`);
+        return;
+      }
+      const currentAccount = account;
+      if (currentAccount) {
+        const tempProvider = createBrowserProvider(ethereum);
+        setProvider(tempProvider);
+        fetchBalances(currentAccount, tempProvider);
       }
     };
 
-    window.ethereum.on("accountsChanged", handleAccountsChanged);
+    ethereum.on?.("accountsChanged", handleAccountsChanged);
+    ethereum.on?.("chainChanged", handleChainChanged);
 
     return () => {
-      window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
+      ethereum.removeListener?.("accountsChanged", handleAccountsChanged);
+      ethereum.removeListener?.("chainChanged", handleChainChanged);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [account, activateWallet, fetchBalances, resetBalances]);
 
-  const connectWallet = async () => {
-    if (!provider) {
-      if (window.ethereum) {
-        const ethers = await loadEthers();
-        const tempProvider = new ethers.BrowserProvider(window.ethereum);
-        setProvider(tempProvider);
-        try {
-          const accounts = await tempProvider.send("eth_requestAccounts", []);
-          setAccount(accounts[0]);
-          fetchBalances(accounts[0], tempProvider);
-        } catch (error) {
-          console.error("Connection failed", error);
-        }
-      } else {
-        alert("No Ethereum wallet found. Please install MetaMask.");
-      }
-      return;
+  const connectWallet = useCallback(async () => {
+    const ethereum = getEthereum();
+    if (!ethereum) {
+      const message = "No Ethereum wallet found. Please install MetaMask.";
+      setWalletError(message);
+      return { success: false, error: message };
     }
 
     try {
-      const accounts = await provider.send("eth_requestAccounts", []);
-      setAccount(accounts[0]);
-      fetchBalances(accounts[0], provider);
+      const accounts = await ethereum.request({ method: "eth_requestAccounts" });
+      return await activateWallet(accounts, { requireDemoChain: true });
     } catch (error) {
-      console.error("Connection failed", error);
+      const message = getWalletErrorMessage(error, "Connection failed");
+      setWalletError(message);
+      setDebugInfo(message);
+      return { success: false, error: message };
     }
-  };
+  }, [activateWallet]);
 
-  const switchNetwork = async () => {
-    if (!provider) return;
-
-    const ANVIL_CHAIN_ID_HEX = "0x7a69"; // 31337
-    const MAINNET_CHAIN_ID_HEX = "0x1"; // 1
-
-    const targetChainId =
-      chainId === "31337" ? MAINNET_CHAIN_ID_HEX : ANVIL_CHAIN_ID_HEX;
+  const switchNetwork = useCallback(async () => {
+    const ethereum = getEthereum();
+    if (!ethereum) {
+      const message = "No Ethereum wallet found. Please install MetaMask.";
+      setWalletError(message);
+      return { success: false, error: message };
+    }
 
     try {
-      await provider.send("wallet_switchEthereumChain", [
-        { chainId: targetChainId },
-      ]);
-    } catch (switchError) {
-      // This error code indicates that the chain has not been added to MetaMask.
-      if (switchError.code === 4902 || switchError.error?.code === 4902) {
-        if (targetChainId === ANVIL_CHAIN_ID_HEX) {
-          try {
-            await provider.send("wallet_addEthereumChain", [
-              {
-                chainId: ANVIL_CHAIN_ID_HEX,
-                chainName: "Anvil Localhost",
-                rpcUrls: [`${window.location.origin}/rpc`],
-                nativeCurrency: {
-                  name: "ETH",
-                  symbol: "ETH",
-                  decimals: 18,
-                },
-              },
-            ]);
-          } catch (addError) {
-            console.error("Failed to add Anvil network:", addError);
-          }
-        } else {
-          console.error(
-            "Target chain not found in wallet and cannot be auto-added (Mainnet typically pre-added).",
-          );
-        }
-      } else {
-        console.error("Failed to switch network:", switchError);
+      await ensureRldChain(ethereum);
+      const nextChainId = await readWalletChainId(ethereum);
+      setChainId(nextChainId);
+      setWalletError(null);
+      if (account) {
+        const tempProvider = createBrowserProvider(ethereum);
+        setProvider(tempProvider);
+        await readLatestBlock(tempProvider);
+        await refreshRuntimeManifest().catch((err) => {
+          setDebugInfo(err.message);
+        });
+        await fetchBalances(account, tempProvider);
       }
+      return { success: true };
+    } catch (error) {
+      const message = getWalletErrorMessage(error, "Failed to switch network");
+      setWalletError(message);
+      setDebugInfo(message);
+      return { success: false, error: message };
     }
-  };
+  }, [account, fetchBalances]);
 
-  const disconnect = () => {
+  const disconnect = useCallback(() => {
     setAccount(null);
-    setBalance("0");
-    setUsdcBalance("0");
+    resetBalances();
     setChainId(null);
     setDebugInfo("");
-  };
+    setWalletError(null);
+  }, [resetBalances]);
 
   return (
     <WalletContext.Provider
@@ -209,6 +291,10 @@ export function WalletProvider({ children }) {
         usdcBalance,
         chainId,
         debugInfo,
+        walletError,
+        expectedChainId: String(CHAIN_ID),
+        expectedChainHex: CHAIN_HEX,
+        rpcUrl: RPC_URL,
         connectWallet,
         disconnect,
         switchNetwork,

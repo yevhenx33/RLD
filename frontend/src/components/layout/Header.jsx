@@ -24,6 +24,7 @@ export default function Header({
   const { toasts, addToast, removeToast } = useToast();
 
   const waUsdcAddr = marketInfo?.collateral?.address;
+  const faucetReady = faucetEnabled && Boolean(waUsdcAddr);
   const { 
     requestFaucet, 
     loading: faucetLoading,
@@ -39,6 +40,15 @@ export default function Header({
   );
 
   const handleFaucetClick = async () => {
+    if (!faucetReady) {
+      addToast({
+        type: "error",
+        title: "Faucet Not Ready",
+        message: "Runtime market config is still loading. Try again in a moment.",
+      });
+      return;
+    }
+
     try {
       const result = await requestFaucet(account);
       if (result?.success) {
@@ -214,7 +224,7 @@ export default function Header({
             {account && faucetEnabled && (
               <button
                 onClick={handleFaucetClick}
-                disabled={faucetLoading}
+                disabled={faucetLoading || !faucetReady}
                 className="hidden lg:flex items-center gap-2 border border-cyan-500/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all px-3 py-2 text-xs font-bold uppercase tracking-widest text-cyan-400 disabled:opacity-50 disabled:cursor-wait"
               >
                 {faucetLoading ? (
@@ -222,7 +232,7 @@ export default function Header({
                 ) : (
                   <Droplets size={12} />
                 )}
-                {faucetLoading ? "Funding..." : "Faucet"}
+                {faucetLoading ? "Funding..." : faucetReady ? "Faucet" : "Loading..."}
               </button>
             )}
 
@@ -333,7 +343,7 @@ export default function Header({
               <div className="pt-4 border-t border-white/5">
                 <button
                   onClick={handleFaucetClick}
-                  disabled={faucetLoading}
+                  disabled={faucetLoading || !faucetReady}
                   className="w-full flex items-center justify-center gap-2 border border-cyan-500/20 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all px-3 py-3 text-sm font-bold uppercase tracking-widest text-cyan-400 disabled:opacity-50 disabled:cursor-wait"
                 >
                   {faucetLoading ? (
@@ -341,7 +351,7 @@ export default function Header({
                   ) : (
                     <Droplets size={14} />
                   )}
-                  {faucetLoading ? "Funding Wallet..." : "Request Faucet Funds"}
+                  {faucetLoading ? "Funding Wallet..." : faucetReady ? "Request Faucet Funds" : "Loading Faucet..."}
                 </button>
               </div>
             )}
@@ -356,7 +366,7 @@ export default function Header({
             account={account}
             usdcBalance={usdcBalance}
             waUsdcBalance={waUsdcBalance}
-            onFaucet={faucetEnabled ? handleFaucetClick : null}
+            onFaucet={faucetReady ? handleFaucetClick : null}
             faucetLoading={faucetLoading}
             faucetStep={faucetStep}
             ethBalance={faucetEthBalance}

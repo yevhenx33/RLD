@@ -15,6 +15,7 @@ export const POOL_KEY_TUPLE = {
 };
 
 export const BROKER_ROUTER_ABI = [
+  "error RoutePreview(uint256 amountOut)",
   {
     name: "executeLong",
     type: "function",
@@ -64,9 +65,54 @@ export const BROKER_ROUTER_ABI = [
     ],
     outputs: [{ name: "debtRepaid", type: "uint256" }],
   },
+  {
+    name: "previewExecuteLong",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "broker", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      POOL_KEY_TUPLE,
+    ],
+    outputs: [],
+  },
+  {
+    name: "previewCloseLong",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "broker", type: "address" },
+      { name: "amountIn", type: "uint256" },
+      POOL_KEY_TUPLE,
+    ],
+    outputs: [],
+  },
+  {
+    name: "previewExecuteShort",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "broker", type: "address" },
+      { name: "initialCollateral", type: "uint256" },
+      { name: "targetDebtAmount", type: "uint256" },
+      POOL_KEY_TUPLE,
+    ],
+    outputs: [],
+  },
+  {
+    name: "previewCloseShort",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "broker", type: "address" },
+      { name: "collateralToSpend", type: "uint256" },
+      POOL_KEY_TUPLE,
+    ],
+    outputs: [],
+  },
 ];
 
-export const BROKER_ROUTER_LONG_ABI = [BROKER_ROUTER_ABI[0]];
+export const BROKER_ROUTER_LONG_ABI = [BROKER_ROUTER_ABI[0], BROKER_ROUTER_ABI[1]];
 
 export function sortTokenPair(tokenA, tokenB) {
   return tokenA.toLowerCase() < tokenB.toLowerCase()

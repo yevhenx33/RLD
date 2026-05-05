@@ -10,6 +10,7 @@ import { calcHedgeSize, calcInitialLTV } from "../../utils/hedgeCalc";
 import { useToast } from "../../hooks/useToast";
 import { ToastContainer } from "../common/Toast";
 import { debugLog } from "../../utils/debugLogger";
+import { useFaucet } from "../../hooks/useFaucet";
 
 // Hooks
 import { useTradeLogic } from "../../hooks/useTradeLogic";
@@ -45,6 +46,16 @@ export default function BondsPage() {
   // Live simulation data — replaces useMarketData (no legacy rates dependency)
   const sim = useSim();
   const { poolTVL, protocolStats, marketInfo, pool, oracleChange24h } = sim;
+  const {
+    waUsdcBalance: sharedWaUsdcBalance,
+    usdcBalance: sharedUsdcBalance,
+    refreshBalance: refreshSharedWalletBalance,
+  } = useFaucet(
+    account,
+    marketInfo?.collateral?.address,
+    marketInfo?.external_contracts,
+    { enabled: Boolean(account && marketInfo?.collateral?.address) },
+  );
   const isLoading = sim.loading;
   const error = !sim.connected && !sim.loading ? "disconnected" : null;
   const latest = { apy: pool?.markPrice || 0 };
@@ -57,7 +68,7 @@ export default function BondsPage() {
   const [usdcWalletBalance, setUsdcWalletBalance] = useState(null);
   const [waUsdcAllowance, setWaUsdcAllowance] = useState(0);
   const [usdcAllowance, setUsdcAllowance] = useState(0);
-  const [maxSlippage, setMaxSlippage] = useState("0.1");
+  const [maxSlippage, setMaxSlippage] = useState("5");
   // Track whether a bond TX is executing (declared later but ref'd here)
   const bondExecutingRef = useRef(false);
 
@@ -223,6 +234,14 @@ export default function BondsPage() {
   const totalRequired = notionalAmount;
   const currentAllowance = selectedToken === "USDC" ? usdcAllowance : waUsdcAllowance;
   const needsApproval = currentAllowance < totalRequired;
+  const displayedWaUsdcBalance =
+    sharedWaUsdcBalance !== null && sharedWaUsdcBalance !== undefined
+      ? Number(sharedWaUsdcBalance)
+      : walletBalance;
+  const displayedUsdcBalance =
+    sharedUsdcBalance !== null && sharedUsdcBalance !== undefined
+      ? Number(sharedUsdcBalance)
+      : usdcWalletBalance;
 
   if (error)
     return (
@@ -329,8 +348,8 @@ export default function BondsPage() {
                   subLabel={
                     <span className="flex items-center gap-1">
                       Bal: {selectedToken === "USDC"
-                        ? (usdcWalletBalance !== null ? usdcWalletBalance.toFixed(2) : "0.00")
-                        : (walletBalance !== null ? walletBalance.toFixed(2) : "0.00")
+                        ? (displayedUsdcBalance !== null ? displayedUsdcBalance.toFixed(2) : "0.00")
+                        : (displayedWaUsdcBalance !== null ? displayedWaUsdcBalance.toFixed(2) : "0.00")
                       }
                       <span className="relative" ref={tokenDropdownRef}>
                         <button
@@ -742,8 +761,12 @@ export default function BondsPage() {
             } else {
               refreshBonds();
             }
-            refreshBalances(true); // Update wallet balance atomically with toast
-          }, { useUnderlying: selectedToken === "USDC" });
+            refreshBalances(true); // Update page-local allowance/balance state.
+            refreshSharedWalletBalance?.(); // Keep wallet modal/header balance state in sync.
+          }, {
+            useUnderlying: selectedToken === "USDC",
+            maxSlippage,
+          });
         }}
         notional={notional}
         maturityDays={maturityDays}
@@ -772,8 +795,12 @@ export default function BondsPage() {
             });
             // Optimistic: remove closed bond instantly from UI
             optimisticClose(bond.brokerAddress);
-            refreshBalances(true); // Update wallet balance atomically with toast
-          }, { useUnderlying: selectedToken === "USDC" });
+            refreshBalances(true); // Update page-local allowance/balance state.
+            refreshSharedWalletBalance?.(); // Keep wallet modal/header balance state in sync.
+          }, {
+            useUnderlying: selectedToken === "USDC",
+            maxSlippage,
+          });
         }}
         bond={selectedBond ? userBonds.find(b => b.id === selectedBond) : null}
         executing={bondExecuting}

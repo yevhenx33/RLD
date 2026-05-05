@@ -11,8 +11,12 @@ import { debugLog } from "../utils/debugLogger";
 // ── ABI fragments ─────────────────────────────────────────────────
 
 const BOND_FACTORY_ABI = [
-  "function mintBond(uint256 notional, uint256 hedgeAmount, uint256 duration, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying) returns (address broker)",
-  "function closeBond(address broker, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying)",
+  "error BondMintPreview(uint256 hedgeProceeds)",
+  "error BondClosePreview(uint256 debtRepayCollateralIn, uint256 collateralReturned)",
+  "function mintBond(uint256 notional, uint256 hedgeAmount, uint256 duration, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying, uint256 minHedgeProceeds) returns (address broker)",
+  "function previewMintBond(uint256 notional, uint256 hedgeAmount, uint256 duration, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying)",
+  "function closeBond(address broker, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying, uint256 maxDebtRepayCollateralIn, uint256 minCollateralReturned)",
+  "function previewCloseBond(address broker, tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool useUnderlying)",
   "event BondMinted(address indexed user, address indexed broker, uint256 notional, uint256 hedge, uint256 duration)",
   "event BondClosed(address indexed user, address indexed broker, uint256 collateralReturned, uint256 positionReturned)",
 ];
@@ -30,6 +34,107 @@ const ERC20_ABI = [
   "function allowance(address owner, address spender) view returns (uint256)",
   "function balanceOf(address owner) view returns (uint256)",
 ];
+
+const BOND_FACTORY_IFACE = new ethers.Interface(BOND_FACTORY_ABI);
+
+function extractRevertData(error) {
+  const candidates = [
+    error?.data,
+    error?.error?.data,
+    error?.info?.error?.data,
+    error?.info?.error?.error?.data,
+    error?.revert?.data,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.startsWith("0x")) return value;
+  }
+  return null;
+}
+
+function parseKnownBondError(error) {
+  const data = extractRevertData(error);
+  if (!data) return null;
+  try {
+    return BOND_FACTORY_IFACE.parseError(data)?.name || null;
+  } catch {
+    return null;
+  }
+}
+
+function formatRaw6(rawAmount) {
+  return Number(ethers.formatUnits(BigInt(rawAmount || 0), 6)).toLocaleString(
+    undefined,
+    { maximumFractionDigits: 6 },
+  );
+}
+
+function mintSlippageMessage(previewAmount, minAmount) {
+  const preview = formatRaw6(previewAmount);
+  const minimum = formatRaw6(minAmount);
+  return `Bond hedge route slippage exceeded. Previewed ${preview} waUSDC with minimum ${minimum} waUSDC. Increase Max_Slippage and retry.`;
+}
+
+function parseBondPreview(error, expectedName) {
+  if (error?.revert?.name === expectedName) {
+    return error.revert.args;
+  }
+  const data = extractRevertData(error);
+  if (!data) return null;
+  try {
+    const parsed = BOND_FACTORY_IFACE.parseError(data);
+    if (parsed?.name === expectedName) return parsed.args;
+  } catch {
+    // Not a BondFactory preview payload.
+  }
+  return null;
+}
+
+async function readBondPreview(callPreview, expectedName) {
+  try {
+    await callPreview();
+  } catch (error) {
+    const parsed = parseBondPreview(error, expectedName);
+    if (parsed) return parsed;
+    throw error;
+  }
+  throw new Error("Bond preview did not return a preview payload");
+}
+
+function slippageBps(maxSlippage) {
+  const parsed = Number(maxSlippage);
+  if (!Number.isFinite(parsed) || parsed < 0) return 10;
+  return Math.min(5000, Math.round(parsed * 100));
+}
+
+function minWithSlippage(rawAmount, maxSlippage) {
+  const bps = BigInt(slippageBps(maxSlippage));
+  return (BigInt(rawAmount) * (10_000n - bps)) / 10_000n;
+}
+
+function maxWithSlippage(rawAmount, maxSlippage) {
+  const raw = BigInt(rawAmount);
+  if (raw === 0n) return 0n;
+  const bps = BigInt(slippageBps(maxSlippage));
+  return (raw * (10_000n + bps) + 9_999n) / 10_000n;
+}
+
+function assertRuntimeReady(infrastructure) {
+  if (
+    infrastructure?.runtime_ready !== false &&
+    infrastructure?.runtimeReady !== false
+  ) {
+    return;
+  }
+  const reasons =
+    infrastructure?.runtimeReadiness?.reasons ||
+    infrastructure?.runtime_readiness?.reasons ||
+    [];
+  throw new Error(
+    reasons.length
+      ? `Runtime not ready: ${reasons.join(", ")}`
+      : "Runtime manifest is not ready",
+  );
+}
 
 // ── Hook ──────────────────────────────────────────────────────────
 
@@ -78,7 +183,13 @@ export function useBondExecution(
    * @param {Function} onSuccess    Called with { receipt, brokerAddress }
    */
   const createBond = useCallback(
-    async (notionalUSD, durationHours, ratePercent, onSuccess, { useUnderlying = true } = {}) => {
+    async (
+      notionalUSD,
+      durationHours,
+	      ratePercent,
+	      onSuccess,
+	      { useUnderlying = true, maxSlippage = 5 } = {},
+	    ) => {
       if (
         !account ||
         !collateralAddr ||
@@ -101,10 +212,14 @@ export function useBondExecution(
       setError(null);
       setStep("Preparing...");
 
-      try {
+	      let previewHedgeProceeds = null;
+	      let minHedgeProceeds = null;
+
+	      try {
         // ── Direct RPC provider for read-only calls ─────────────
         // Uses the Vite-proxied RPC (/rpc → Anvil) to avoid MetaMask
         // RPC issues after simulation restarts.
+        assertRuntimeReady(infrastructure);
         const readProvider = rpcProvider;
 
         // ── Build pool key ──────────────────────────────────────
@@ -195,6 +310,13 @@ export function useBondExecution(
         );
 
         const durationSec = Math.floor(durationHours * 3600);
+        const poolKeyArr = [
+          poolKey.currency0,
+          poolKey.currency1,
+          poolKey.fee,
+          poolKey.tickSpacing,
+          poolKey.hooks,
+        ];
 
         debugLog("[Bond] mintBond params:", {
           notionalWei: notionalWei.toString(),
@@ -203,18 +325,30 @@ export function useBondExecution(
           poolKey,
         });
 
+        setStep("Previewing bond route...");
+        const mintPreview = await readBondPreview(
+          () => bondFactory.previewMintBond.staticCall(
+            notionalWei,
+            debtWei,
+            durationSec,
+            poolKeyArr,
+            useUnderlying,
+          ),
+          "BondMintPreview",
+        );
+	        previewHedgeProceeds = BigInt(mintPreview[0]);
+	        minHedgeProceeds = minWithSlippage(
+	          previewHedgeProceeds,
+	          maxSlippage,
+	        );
+
         const tx = await bondFactory.mintBond(
           notionalWei,
           debtWei,
           durationSec,
-          [
-            poolKey.currency0,
-            poolKey.currency1,
-            poolKey.fee,
-            poolKey.tickSpacing,
-            poolKey.hooks,
-          ],
+          poolKeyArr,
           useUnderlying,
+          minHedgeProceeds,
           { gasLimit: 30_000_000 },
         );
         setTxHash(tx.hash);
@@ -274,8 +408,13 @@ export function useBondExecution(
       } catch (e) {
         console.error("[Bond] createBond failed:", e);
         let msg = "Bond creation failed";
-        if (e.reason) msg = e.reason;
-        else if (e.message?.includes("user rejected")) msg = "User rejected";
+	        const parsedError = parseKnownBondError(e);
+	        if (parsedError === "SlippageExceeded" && previewHedgeProceeds !== null) {
+	          msg = mintSlippageMessage(previewHedgeProceeds, minHedgeProceeds);
+	        } else if (e.receipt?.status === 0 && previewHedgeProceeds !== null) {
+	          msg = mintSlippageMessage(previewHedgeProceeds, minHedgeProceeds);
+	        } else if (e.reason) msg = e.reason;
+	        else if (e.message?.includes("user rejected")) msg = "User rejected";
         else if (e.data) {
           try {
             msg = ethers.toUtf8String("0x" + e.data.slice(138));
@@ -302,7 +441,11 @@ export function useBondExecution(
    * @param {Function} onSuccess      Called with { brokerAddress } on completion
    */
   const closeBond = useCallback(
-    async (brokerAddress, onSuccess, { useUnderlying = true } = {}) => {
+    async (
+	      brokerAddress,
+	      onSuccess,
+	      { useUnderlying = true, maxSlippage = 5 } = {},
+	    ) => {
       if (!account || !brokerAddress) {
         setError("Missing parameters");
         return;
@@ -322,6 +465,7 @@ export function useBondExecution(
       setStep("Preparing...");
 
       try {
+        assertRuntimeReady(infrastructure);
         const signer = await getSigner();
 
         // ── 1. Build pool key ─────────────────────────────────────
@@ -339,9 +483,34 @@ export function useBondExecution(
           signer,
         );
 
-        const tx = await bondFactory.closeBond(brokerAddress, poolKeyArr, useUnderlying, {
-          gasLimit: 25_000_000,
-        });
+        setStep("Previewing close route...");
+        const closePreview = await readBondPreview(
+          () => bondFactory.previewCloseBond.staticCall(
+            brokerAddress,
+            poolKeyArr,
+            useUnderlying,
+          ),
+          "BondClosePreview",
+        );
+        const maxDebtRepayCollateralIn = maxWithSlippage(
+          closePreview[0],
+          maxSlippage,
+        );
+        const minCollateralReturned = minWithSlippage(
+          closePreview[1],
+          maxSlippage,
+        );
+
+        const tx = await bondFactory.closeBond(
+          brokerAddress,
+          poolKeyArr,
+          useUnderlying,
+          maxDebtRepayCollateralIn,
+          minCollateralReturned,
+          {
+            gasLimit: 25_000_000,
+          },
+        );
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -410,4 +579,3 @@ export function useBondExecution(
     txHash,
   };
 }
-

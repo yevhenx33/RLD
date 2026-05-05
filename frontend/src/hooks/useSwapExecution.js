@@ -77,7 +77,40 @@ function formatRepayDebtError(error) {
   return reason || "Debt repay failed";
 }
 
+function normalizeCallbackArgs(minOut, onSuccess) {
+  if (typeof minOut === "function") {
+    return { minOut: 0, onSuccess: minOut };
+  }
+  return { minOut, onSuccess };
+}
+
+function parseRequiredMinOut(value, label) {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`${label} unavailable. Refresh the route quote before confirming.`);
+  }
+  return ethers.parseUnits(String(amount), 6);
+}
+
 // ── Shared helpers ────────────────────────────────────────────────
+
+function assertRuntimeReady(infrastructure) {
+  if (
+    infrastructure?.runtime_ready !== false &&
+    infrastructure?.runtimeReady !== false
+  ) {
+    return;
+  }
+  const reasons =
+    infrastructure?.runtimeReadiness?.reasons ||
+    infrastructure?.runtime_readiness?.reasons ||
+    [];
+  throw new Error(
+    reasons.length
+      ? `Runtime not ready: ${reasons.join(", ")}`
+      : "Runtime manifest is not ready",
+  );
+}
 
 function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
   return buildHooklessPoolKey(infrastructure, collateralAddr, positionAddr);
@@ -126,10 +159,10 @@ async function estimateGasLimit(estimateFn, fallbackGasLimit) {
  * useSwapExecution — Execute trades via BrokerRouter with MetaMask signing.
  *
  * Provides:
- * - executeLong(amountIn, onSuccess)  — open long: waUSDC → wRLP
- * - executeCloseLong(amountIn, onSuccess) — close long: wRLP → waUSDC
+ * - executeLong(amountIn, minAmountOut, onSuccess)  — open long: waUSDC → wRLP
+ * - executeCloseLong(amountIn, minAmountOut, onSuccess) — close long: wRLP → waUSDC
  * - executeShort(collateral, debt, minProceeds, onSuccess) — open short with min-out guard
- * - executeCloseShort(amountIn, onSuccess) — close short: buy wRLP + repay debt
+ * - executeCloseShort(amountIn, minDebtBought, onSuccess) — close short: buy wRLP + repay debt
  * - executeRepayDebt(wrlpAmount, onSuccess) — direct repay: burn wRLP to reduce debt
  */
 export function useSwapExecution(
@@ -154,8 +187,48 @@ export function useSwapExecution(
     if (onSuccess) onSuccess(receipt);
   }, [onRefreshComplete]);
 
+  const approveRouter = useCallback(
+    async (onSuccess) => {
+      if (!account || !brokerAddress || !infrastructure?.broker_router) {
+        setError("Missing required addresses");
+        return;
+      }
+      if (!window.ethereum) {
+        setError("MetaMask not found");
+        return;
+      }
+
+      setExecuting(true);
+      setError(null);
+      setTxHash(null);
+      setStep("Checking router approval...");
+
+      try {
+        assertRuntimeReady(infrastructure);
+        await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
+        setStep("Router approved ✓");
+        if (onSuccess) onSuccess();
+      } catch (e) {
+        console.error("Router approval failed:", e);
+        const msg =
+          e.code === "ACTION_REJECTED"
+            ? "Transaction rejected"
+            : e.shortMessage || e.message || "Router approval failed";
+        setError(msg);
+        setStep("");
+      } finally {
+        setExecuting(false);
+      }
+    },
+    [account, brokerAddress, infrastructure],
+  );
+
   const executeLong = useCallback(
-    async (amountIn, onSuccess) => {
+    async (amountIn, minAmountOut, onSuccessArg) => {
+      const { minOut, onSuccess } = normalizeCallbackArgs(
+        minAmountOut,
+        onSuccessArg,
+      );
       if (
         !account ||
         !brokerAddress ||
@@ -178,6 +251,7 @@ export function useSwapExecution(
       setStep("Checking operator status...");
 
       try {
+        assertRuntimeReady(infrastructure);
         // 1. Ensure operator
         await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
@@ -193,15 +267,28 @@ export function useSwapExecution(
 
         const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
         const amountInWei = ethers.parseUnits(String(amountIn), 6);
-
-        setStep("Confirm swap in wallet...");
-        const tx = await router.executeLong(
+        const minAmountOutWei = parseRequiredMinOut(
+          minOut,
+          "Minimum received",
+        );
+        const longArgs = [
           brokerAddress,
           amountInWei,
           poolKey,
-          0n,
-          { gasLimit: 1_000_000 },
+          minAmountOutWei,
+        ];
+
+        setStep("Preflighting swap...");
+        await router.executeLong.staticCall(...longArgs);
+
+        setStep("Estimating gas...");
+        const gasLimit = await estimateGasLimit(
+          () => router.executeLong.estimateGas(...longArgs),
+          1_000_000,
         );
+
+        setStep("Confirm swap in wallet...");
+        const tx = await router.executeLong(...longArgs, { gasLimit });
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -233,7 +320,11 @@ export function useSwapExecution(
    * @param {number} amountIn — wRLP amount (human-readable, 6 decimals)
    */
   const executeCloseLong = useCallback(
-    async (amountIn, onSuccess) => {
+    async (amountIn, minAmountOut, onSuccessArg) => {
+      const { minOut, onSuccess } = normalizeCallbackArgs(
+        minAmountOut,
+        onSuccessArg,
+      );
       if (
         !account ||
         !brokerAddress ||
@@ -250,6 +341,7 @@ export function useSwapExecution(
       setStep("Checking operator status...");
 
       try {
+        assertRuntimeReady(infrastructure);
         const amountInNum = Number(amountIn);
         if (!Number.isFinite(amountInNum) || amountInNum <= 0) {
           setError("Enter a valid wRLP amount");
@@ -289,15 +381,28 @@ export function useSwapExecution(
         );
 
         const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
-
-        setStep("Confirm close in wallet...");
-        const tx = await router.closeLong(
+        const minAmountOutWei = parseRequiredMinOut(
+          minOut,
+          "Minimum received",
+        );
+        const closeArgs = [
           brokerAddress,
           amountInWei,
           poolKey,
-          0n,
-          { gasLimit: 1_000_000 },
+          minAmountOutWei,
+        ];
+
+        setStep("Preflighting close...");
+        await router.closeLong.staticCall(...closeArgs);
+
+        setStep("Estimating gas...");
+        const gasLimit = await estimateGasLimit(
+          () => router.closeLong.estimateGas(...closeArgs),
+          1_000_000,
         );
+
+        setStep("Confirm close in wallet...");
+        const tx = await router.closeLong(...closeArgs, { gasLimit });
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -360,6 +465,7 @@ export function useSwapExecution(
       setStep("Checking operator status...");
 
       try {
+        assertRuntimeReady(infrastructure);
         await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
         setStep("Preparing short...");
@@ -374,13 +480,10 @@ export function useSwapExecution(
         const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
         const collateralWei = ethers.parseUnits(String(initialCollateral), 6);
         const debtWei = ethers.parseUnits(String(targetDebtAmount), 6);
-        const minProceedsNum = Number(minProceeds ?? 0);
-        if (!Number.isFinite(minProceedsNum) || minProceedsNum < 0) {
-          setError("Invalid minimum proceeds");
-          setStep("");
-          return;
-        }
-        const minProceedsWei = ethers.parseUnits(String(minProceedsNum), 6);
+        const minProceedsWei = parseRequiredMinOut(
+          minProceeds,
+          "Minimum proceeds",
+        );
         const shortArgs = [
           brokerAddress,
           collateralWei,
@@ -434,7 +537,11 @@ export function useSwapExecution(
    * @param {number} amountIn — waUSDC amount to spend (human-readable, 6 decimals)
    */
   const executeCloseShort = useCallback(
-    async (amountIn, onSuccess) => {
+    async (amountIn, minDebtBought, onSuccessArg) => {
+      const { minOut, onSuccess } = normalizeCallbackArgs(
+        minDebtBought,
+        onSuccessArg,
+      );
       if (
         !account ||
         !brokerAddress ||
@@ -451,6 +558,7 @@ export function useSwapExecution(
       setStep("Checking operator status...");
 
       try {
+        assertRuntimeReady(infrastructure);
         await ensureOperator(brokerAddress, infrastructure.broker_router, setStep);
 
         setStep("Preparing close short...");
@@ -464,17 +572,28 @@ export function useSwapExecution(
 
         const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
         const amountInWei = ethers.parseUnits(String(amountIn), 6);
-
-        setStep("Confirm close short in wallet...");
-        const tx = await router.closeShort(
+        const minDebtBoughtWei = parseRequiredMinOut(
+          minOut,
+          "Minimum debt bought",
+        );
+        const closeShortArgs = [
           brokerAddress,
           amountInWei,
           poolKey,
-          0n,
-          {
-            gasLimit: 1_500_000,
-          },
+          minDebtBoughtWei,
+        ];
+
+        setStep("Preflighting close short...");
+        await router.closeShort.staticCall(...closeShortArgs);
+
+        setStep("Estimating gas...");
+        const gasLimit = await estimateGasLimit(
+          () => router.closeShort.estimateGas(...closeShortArgs),
+          1_500_000,
         );
+
+        setStep("Confirm close short in wallet...");
+        const tx = await router.closeShort(...closeShortArgs, { gasLimit });
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -602,6 +721,7 @@ export function useSwapExecution(
   );
 
   return {
+    approveRouter,
     executeLong,
     executeCloseLong,
     executeShort,
