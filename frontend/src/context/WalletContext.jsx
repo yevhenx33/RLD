@@ -15,6 +15,7 @@ import {
   ensureRldChain,
   getWalletErrorMessage,
 } from "../utils/connection";
+import { rpcProvider } from "../utils/provider";
 
 const WalletContext = createContext();
 
@@ -84,12 +85,12 @@ export function WalletProvider({ children }) {
     setUsdcBalance("0");
   }, []);
 
-  const fetchBalances = useCallback(async (acc, prov) => {
-    if (!acc || !prov) return;
+  const fetchBalances = useCallback(async (acc) => {
+    if (!acc) return;
 
     let net;
     try {
-      net = await prov.getNetwork();
+      net = await rpcProvider.getNetwork();
       setChainId(net.chainId.toString());
     } catch (err) {
       setDebugInfo(`Network error: ${err.message}`);
@@ -98,7 +99,7 @@ export function WalletProvider({ children }) {
     }
 
     try {
-      const bal = await prov.getBalance(acc);
+      const bal = await rpcProvider.getBalance(acc);
       setBalance(ethers.formatEther(bal));
     } catch (err) {
       setDebugInfo(`ETH balance error: ${err.message}`);
@@ -115,8 +116,8 @@ export function WalletProvider({ children }) {
         return;
       }
 
-      const usdcContract = new ethers.Contract(usdcAddr, USDC_ABI, prov);
-      const code = await prov.getCode(usdcAddr);
+      const usdcContract = new ethers.Contract(usdcAddr, USDC_ABI, rpcProvider);
+      const code = await rpcProvider.getCode(usdcAddr);
       if (code === "0x") {
         setDebugInfo(`USDC contract missing on chain ${currentChainId}`);
         setUsdcBalance("0.00");
@@ -159,13 +160,13 @@ export function WalletProvider({ children }) {
       setWalletError(null);
 
       if (nextChainId === String(CHAIN_ID)) {
-        await readLatestBlock(tempProvider);
+        await readLatestBlock(rpcProvider);
         if (requireDemoChain) {
           await refreshRuntimeManifest().catch((err) => {
             setDebugInfo(err.message);
           });
         }
-        await fetchBalances(accounts[0], tempProvider);
+        await fetchBalances(accounts[0]);
       } else {
         resetBalances();
         setDebugInfo(`Wrong network: ${nextChainId || "unknown"}`);
@@ -211,7 +212,7 @@ export function WalletProvider({ children }) {
       if (currentAccount) {
         const tempProvider = createBrowserProvider(ethereum);
         setProvider(tempProvider);
-        fetchBalances(currentAccount, tempProvider);
+        fetchBalances(currentAccount);
       }
     };
 
@@ -259,11 +260,11 @@ export function WalletProvider({ children }) {
       if (account) {
         const tempProvider = createBrowserProvider(ethereum);
         setProvider(tempProvider);
-        await readLatestBlock(tempProvider);
+        await readLatestBlock(rpcProvider);
         await refreshRuntimeManifest().catch((err) => {
           setDebugInfo(err.message);
         });
-        await fetchBalances(account, tempProvider);
+        await fetchBalances(account);
       }
       return { success: true };
     } catch (error) {
