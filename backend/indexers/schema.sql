@@ -128,10 +128,62 @@ CREATE TABLE IF NOT EXISTS brokers (
   is_liquidated       BOOLEAN DEFAULT false,
   -- Provenance
   created_block       BIGINT NOT NULL,
-  created_tx          TEXT NOT NULL
+  created_tx          TEXT NOT NULL,
+  updated_block       BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_brokers_market ON brokers(market_id);
 CREATE INDEX IF NOT EXISTS idx_brokers_owner  ON brokers(owner);
+ALTER TABLE brokers ADD COLUMN IF NOT EXISTS updated_block BIGINT NOT NULL DEFAULT 0;
+UPDATE brokers SET updated_block = created_block WHERE updated_block = 0;
+
+-- Materialized broker account lookup keyed by current market + wallet owner.
+-- GraphQL account-selector reads are one PRIMARY KEY lookup, while indexer writes
+-- rebuild this small owner-market projection when broker state changes.
+CREATE TABLE IF NOT EXISTS broker_account_index (
+  market_id              TEXT NOT NULL REFERENCES markets(market_id),
+  owner                  TEXT NOT NULL,
+  brokers                JSONB NOT NULL DEFAULT '[]'::jsonb,
+  newest_broker_address  TEXT,
+  broker_count           INT NOT NULL DEFAULT 0,
+  updated_block          BIGINT NOT NULL DEFAULT 0,
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (market_id, owner)
+);
+
+-- Backfill/repair projection for already initialized databases.
+INSERT INTO broker_account_index (
+  market_id, owner, brokers, newest_broker_address, broker_count, updated_block, updated_at
+)
+SELECT
+  market_id,
+  owner,
+  jsonb_agg(
+    jsonb_build_object(
+      'address', address,
+      'marketId', market_id,
+      'owner', owner,
+      'createdBlock', created_block,
+      'activeTokenId', active_lp_token_id,
+      'wausdcBalance', wausdc_balance,
+      'wrlpBalance', wrlp_balance,
+      'debtPrincipal', debt_principal,
+      'updatedBlock', GREATEST(COALESCE(updated_block, 0), created_block),
+      'isFrozen', is_frozen,
+      'isLiquidated', is_liquidated
+    ) ORDER BY created_block DESC, address DESC
+  ) AS brokers,
+  (array_agg(address ORDER BY created_block DESC, address DESC))[1] AS newest_broker_address,
+  COUNT(*)::INT AS broker_count,
+  GREATEST(COALESCE(MAX(updated_block), 0), COALESCE(MAX(created_block), 0), 0) AS updated_block,
+  NOW() AS updated_at
+FROM brokers
+GROUP BY market_id, owner
+ON CONFLICT (market_id, owner) DO UPDATE SET
+  brokers = EXCLUDED.brokers,
+  newest_broker_address = EXCLUDED.newest_broker_address,
+  broker_count = EXCLUDED.broker_count,
+  updated_block = EXCLUDED.updated_block,
+  updated_at = EXCLUDED.updated_at;
 
 -- ── BROKER OPERATORS ────────────────────────────────────────────────────────
 -- Tracks operator addresses per broker. Updated by OperatorUpdated events.

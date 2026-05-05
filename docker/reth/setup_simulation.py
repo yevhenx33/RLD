@@ -61,6 +61,8 @@ CHAOS_FUND =  50_000_000 * 10**6   # $50M
 TOTAL_FUND = LP_FUND + MM_FUND + CHAOS_FUND
 FAUCET_RESERVE = 1_000_000_000 * 10**6  # $1B for faucet SimFunder
 TX_DELAY_SECONDS = float(os.getenv("TX_DELAY_SECONDS", "1"))  # Reth pacing to avoid nonce races
+GHOST_ORACLE_PRIME_SECONDS = int(os.getenv("GHOST_ORACLE_PRIME_SECONDS", "60"))
+GHOST_ORACLE_PRIME_RETRY_DELAY_SECONDS = float(os.getenv("GHOST_ORACLE_PRIME_RETRY_DELAY_SECONDS", "2"))
 
 # MM debt target restored to main-branch value.
 MM_MINT = 1_000_000 * 10**6
@@ -233,6 +235,72 @@ def send_tx(w3: Web3, to: str, calldata: str, private_key: str,
         # Small pacing gap helps avoid nonce contention on very fast local Reth.
         time.sleep(TX_DELAY_SECONDS)
     return receipt
+
+
+def ghost_router_pool_id(deploy: dict) -> str:
+    pool_id = deploy.get("pool_id")
+    if not pool_id:
+        pool_id = ((deploy.get("markets") or {}).get("perp") or {}).get("pool_id")
+    if not pool_id:
+        fail("Missing GhostRouter pool_id in deployment.json")
+    return pool_id
+
+
+def ghost_oracle_ready(deploy: dict, seconds: int) -> tuple[bool, str]:
+    ghost_router = deploy.get("ghost_router")
+    if is_zero_address(ghost_router):
+        return False, "missing ghost_router"
+
+    try:
+        cast_call(
+            ghost_router,
+            "observe(bytes32,uint32[])(uint256[])",
+            ghost_router_pool_id(deploy),
+            f"[{seconds},0]",
+        )
+        return True, ""
+    except subprocess.CalledProcessError as e:
+        reason = (e.stderr or b"").decode(errors="replace").strip()
+        if not reason:
+            reason = str(e)
+        return False, reason[-220:]
+
+
+def poke_ghost_oracle(w3: Web3, deploy: dict, private_key: str, label: str):
+    ghost_router = deploy.get("ghost_router")
+    if is_zero_address(ghost_router):
+        fail("Missing GhostRouter address in deployment.json")
+
+    calldata = cast_calldata("pokeOracle(bytes32)", ghost_router_pool_id(deploy))
+    send_tx(w3, ghost_router, calldata, private_key, label, gas=250_000)
+
+
+def prime_ghost_oracle(w3: Web3, deploy: dict, private_key: str, label: str, force_wait: bool = False):
+    seconds = GHOST_ORACLE_PRIME_SECONDS
+    ready, reason = ghost_oracle_ready(deploy, seconds)
+    if ready and not force_wait:
+        poke_ghost_oracle(w3, deploy, private_key, f"{label} oracle heartbeat")
+        ok(f"{label} oracle ready ({seconds}s TWAP)")
+        return
+
+    if reason:
+        info(f"{label} oracle not ready yet: {reason}")
+    info(f"{label}: writing initial GhostRouter observation")
+    poke_ghost_oracle(w3, deploy, private_key, f"{label} oracle poke start")
+    info(f"{label}: waiting {seconds}s for GhostRouter TWAP history")
+    time.sleep(seconds)
+    poke_ghost_oracle(w3, deploy, private_key, f"{label} oracle poke end")
+
+    for attempt in range(1, 4):
+        ready, reason = ghost_oracle_ready(deploy, seconds)
+        if ready:
+            ok(f"{label} oracle primed ({seconds}s TWAP ready)")
+            return
+        info(f"{label} oracle verify attempt {attempt} failed: {reason}")
+        time.sleep(GHOST_ORACLE_PRIME_RETRY_DELAY_SECONDS)
+        poke_ghost_oracle(w3, deploy, private_key, f"{label} oracle retry {attempt}")
+
+    fail(f"{label} oracle did not become ready for {seconds}s TWAP")
 
 # ═══════════════════════════════════════════════════════════════
 # VERIFICATION HELPERS
@@ -486,7 +554,6 @@ def setup_lp(w3, deploy, keys):
     lp_key = keys["USER_A_KEY"]
     lp_addr = Account.from_key(lp_key).address
     deployer_key = keys["DEPLOYER_KEY"]
-    deployer_addr = Account.from_key(deployer_key).address
     wausdc = deploy["wausdc"]
     pos_token = deploy["position_token"]
     market_id = deploy["market_id"]
@@ -512,16 +579,9 @@ def setup_lp(w3, deploy, keys):
     send_tx(w3, wausdc, calldata, lp_key, "LP deposit")
     assert_balance_gte(wausdc, broker, lp_bal - 1_000_000, "LP Broker waUSDC")
 
-    # 3.3 Prime oracle
-    step("3.3", "Priming oracle (advancing blocks)...")
-    for i in range(15):
-        try:
-            send_tx(w3, deployer_addr, "0x", deployer_key,
-                    f"block {i+1}", gas=21_000, value=0)
-        except SystemExit:
-            pass  # some may fail, that's ok
-    time.sleep(3)
-    ok("Oracle primed (15 blocks advanced)")
+    # 3.3 Prime GhostRouter oracle for the configured demo TWAP window.
+    step("3.3", f"Priming oracle (waiting {GHOST_ORACLE_PRIME_SECONDS}s)...")
+    prime_ghost_oracle(w3, deploy, deployer_key, "LP", force_wait=True)
 
     # 3.4 Mint $5.5M wRLP
     mint_amount = 5_500_000 * 10**6
@@ -640,7 +700,6 @@ def setup_mm(w3, deploy, keys):
     mm_key = keys["MM_KEY"]
     mm_addr = Account.from_key(mm_key).address
     deployer_key = keys["DEPLOYER_KEY"]
-    deployer_addr = Account.from_key(deployer_key).address
     wausdc = deploy["wausdc"]
     pos_token = deploy["position_token"]
     market_id = deploy["market_id"]
@@ -662,15 +721,9 @@ def setup_mm(w3, deploy, keys):
     send_tx(w3, wausdc, calldata, mm_key, "MM deposit")
     assert_balance_gte(wausdc, broker, deposit - 10**6, "MM Broker waUSDC")
 
-    # 4.3 Prime oracle
-    step("4.3", "MM: Priming oracle...")
-    for i in range(10):
-        try:
-            send_tx(w3, deployer_addr, "0x", deployer_key,
-                    f"block {i+1}", gas=21_000, value=0)
-        except SystemExit:
-            pass
-    time.sleep(3)
+    # 4.3 Refresh GhostRouter oracle before core mint.
+    step("4.3", "MM: Refreshing oracle...")
+    prime_ghost_oracle(w3, deploy, deployer_key, "MM")
 
     # 4.4 Mint wRLP (bounded for solvency under live index)
     mint = MM_MINT
@@ -700,7 +753,6 @@ def setup_chaos(w3, deploy, keys):
     chaos_key = keys["CHAOS_KEY"]
     chaos_addr = Account.from_key(chaos_key).address
     deployer_key = keys["DEPLOYER_KEY"]
-    deployer_addr = Account.from_key(deployer_key).address
     wausdc = deploy["wausdc"]
     pos_token = deploy["position_token"]
     market_id = deploy["market_id"]
@@ -722,15 +774,9 @@ def setup_chaos(w3, deploy, keys):
     send_tx(w3, wausdc, calldata, chaos_key, "Chaos deposit")
     assert_balance_gte(wausdc, broker, deposit - 10**6, "Chaos Broker waUSDC")
 
-    # 5.3 Prime oracle
-    step("5.3", "Chaos: Priming oracle...")
-    for i in range(10):
-        try:
-            send_tx(w3, deployer_addr, "0x", deployer_key,
-                    f"block {i+1}", gas=21_000, value=0)
-        except SystemExit:
-            pass
-    time.sleep(3)
+    # 5.3 Refresh GhostRouter oracle before core mint.
+    step("5.3", "Chaos: Refreshing oracle...")
+    prime_ghost_oracle(w3, deploy, deployer_key, "Chaos")
 
     # 5.4 Mint wRLP (bounded for solvency under live index)
     mint = CHAOS_MINT

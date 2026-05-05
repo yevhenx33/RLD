@@ -352,7 +352,7 @@ export default function PoolLP() {
             stack is running.
           </div>
           <div className="text-sm text-gray-700 font-mono">
-            Expected at: http://localhost:8080
+            Expected through: /graphql
           </div>
         </div>
       </div>
@@ -1381,6 +1381,7 @@ export default function PoolLP() {
         }}
         brokerFactoryAddr={marketInfo?.broker_factory}
         waUsdcAddr={marketInfo?.collateral?.address}
+        collateralSymbol={marketInfo?.collateral?.symbol || "waUSDC"}
         externalContracts={marketInfo?.external_contracts}
       />
 

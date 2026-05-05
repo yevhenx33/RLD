@@ -14,6 +14,7 @@ export default function SwapConfirmModal({
   tradeAction = "OPEN",
   collateral,
   amountOut,
+  minAmountOut,
   entryRate,
   liqRate,
   notional,
@@ -88,6 +89,13 @@ export default function SwapConfirmModal({
         {
           label: "Est._Fee",
           value: fee ? `$${Number(fee).toFixed(2)}` : "$0.00",
+        },
+        {
+          label: "Min_Received",
+          value: minAmountOut
+            ? `${Number(minAmountOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} waUSDC`
+            : "вЂ”",
+          color: "text-yellow-400",
         },
       ]
     : [
@@ -308,6 +316,13 @@ export default function SwapConfirmModal({
                     value: isClose ? "CLOSE SHORT" : "OPEN SHORT",
                     color: "text-pink-400",
                   },
+                  {
+                    label: "Min_Received",
+                    value: minAmountOut
+                      ? `${Number(minAmountOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} waUSDC`
+                      : "вЂ”",
+                    color: "text-yellow-400",
+                  },
                 ].map((row) => (
                   <div
                     key={row.label}
@@ -393,6 +408,13 @@ export default function SwapConfirmModal({
                   {
                     label: "Est._Fee",
                     value: fee ? `$${Number(fee).toFixed(2)}` : "$0.00",
+                  },
+                  {
+                    label: "Min_Received",
+                    value: minAmountOut
+                      ? `${Number(minAmountOut).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${receiveLabel}`
+                      : "вЂ”",
+                    color: "text-yellow-400",
                   },
                   {
                     label: "Side",

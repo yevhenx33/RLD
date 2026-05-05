@@ -7,6 +7,7 @@ on:
       - main
       - develop
       - feature/**
+      - codex/**
 
 permissions:
   contents: read
@@ -62,7 +63,15 @@ jobs:
           python-version: "3.12"
 
       - name: Python syntax
-        run: python -m py_compile docker/dashboard/live_status_server.py docker/reth/simctl.py
+        run: >
+          python -m py_compile
+          backend/indexers/api/graphql.py
+          backend/indexers/bootstrap.py
+          docker/dashboard/live_status_server.py
+          docker/reth/simctl.py
+          docker/reth/deploy_cds_market_live.py
+          docker/reth/deploy_cds_router_live.py
+          docker/reth/setup_cds_simulation.py
 
       - name: Compose config validation
         run: |
@@ -123,7 +132,16 @@ jobs:
         run: ruff check backend/indexers backend/services backend/rates_client.py docker/reth/simctl.py docker/dashboard/live_status_server.py
 
       - name: Run backend tests with coverage
-        run: pytest backend/tests --cov=backend --cov-config=backend/.coveragerc --cov-report=term-missing --cov-report=xml:coverage-backend.xml --cov-fail-under=12
+        run: >
+          pytest
+          backend/tests
+          backend/indexers/api/test_broker_market_scope.py
+          backend/indexers/api/test_runtime_manifest.py
+          --cov=backend
+          --cov-config=backend/.coveragerc
+          --cov-report=term-missing
+          --cov-report=xml:coverage-backend.xml
+          --cov-fail-under=12
 
       - name: Audit backend dependencies
         run: pip-audit -r backend/requirements.txt

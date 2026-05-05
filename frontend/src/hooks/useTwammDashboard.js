@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { ethers } from "ethers";
-import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
 import { SIM_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { queryKeys } from "../api/queryKeys";
@@ -10,35 +9,17 @@ import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 // ── ABI: only view functions needed for enrichment (no event scanning) ──
 
-const JTM_VIEW_ABI = [
-  "function getOrder((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 sellRate, uint256 earningsFactorLast)",
-  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
-  "function getStreamState((address,address,uint24,int24,address) key) view returns (uint256 accrued0, uint256 accrued1, uint256 discountBps, uint256 timeSinceClear)",
-  "function getStreamPool((address,address,uint24,int24,address) key, bool zeroForOne) view returns (uint256 sellRate, uint256 earningsFactor)",
+const TWAP_ENGINE_VIEW_ABI = [
+  "function streamOrders(bytes32 marketId, bytes32 orderId) view returns (address owner, uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch, uint256 expiration, bool zeroForOne)",
+  "function getCancelOrderState(bytes32 marketId, bytes32 orderId) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
+  "function states(bytes32 marketId) view returns (uint256 streamGhostT0, uint256 streamGhostT1, uint256 lastUpdateTime, uint256 lastClearTime, uint256 epochInterval)",
+  "function streamPools(bytes32 marketId, bool zeroForOne) view returns (uint256 sellRateCurrent, uint256 earningsFactorCurrent)",
   "function discountRateScaled() view returns (uint256)",
   "function maxDiscountBps() view returns (uint256)",
   "function expirationInterval() view returns (uint256)",
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
-  const token0 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? collateralAddr
-      : positionAddr;
-  const token1 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? positionAddr
-      : collateralAddr;
-  return [
-    token0,
-    token1,
-    infrastructure.pool_fee || 500,
-    infrastructure.tick_spacing || 5,
-    infrastructure.twamm_hook,
-  ];
-}
 
 function formatTimeLeft(seconds) {
   if (seconds <= 0) return "Expired";
@@ -57,6 +38,23 @@ function formatTimeLeft(seconds) {
 function shortenAddress(addr) {
   if (!addr) return "—";
   return `${addr.substring(0, 6)}…${addr.substring(addr.length - 4)}`;
+}
+
+function resolveBuyPositionZeroForOne(marketInfo) {
+  const infrastructure = marketInfo?.infrastructure || {};
+  if (typeof marketInfo?.twamm?.buyPositionZeroForOne === "boolean") {
+    return marketInfo.twamm.buyPositionZeroForOne;
+  }
+  if (typeof infrastructure.buyPositionZeroForOne === "boolean") {
+    return infrastructure.buyPositionZeroForOne;
+  }
+  if (typeof marketInfo?.zeroForOneLong === "boolean") {
+    return marketInfo.zeroForOneLong;
+  }
+  if (typeof marketInfo?.zero_for_one_long === "boolean") {
+    return marketInfo.zero_for_one_long;
+  }
+  return false;
 }
 
 // ── GraphQL query replaces getLogs scanning ─────────────────────────
@@ -94,9 +92,25 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
   const mountedRef = useRef(true);
   const configCacheRef = useRef(null); // cache hook config across refreshes
 
-  const hookAddr = marketInfo?.infrastructure?.twamm_hook;
+  const twapEngineAddr =
+    marketInfo?.twamm?.engine ||
+    marketInfo?.infrastructure?.twapEngine ||
+    marketInfo?.infrastructure?.twap_engine;
+  const twammMarketId =
+    marketInfo?.twamm?.marketId ||
+    marketInfo?.infrastructure?.twammMarketId ||
+    marketInfo?.infrastructure?.twamm_market_id ||
+    marketInfo?.poolId ||
+    marketInfo?.pool_id ||
+    marketInfo?.marketId;
   const collateralAddr = marketInfo?.collateral?.address;
-  const positionAddr = marketInfo?.position_token?.address;
+  const positionAddr = marketInfo?.positionToken?.address || marketInfo?.position_token?.address;
+  const collateralSymbol = marketInfo?.collateral?.symbol || "waUSDC";
+  const positionSymbol =
+    marketInfo?.positionToken?.symbol ||
+    marketInfo?.position_token?.symbol ||
+    "wRLP";
+  const buyPositionZeroForOne = resolveBuyPositionZeroForOne(marketInfo);
 
   // ── Fetch base orders via GraphQL (SWR with dedup) ──────────────
   const { data: gqlData, mutate: refreshGql } = useSWR(
@@ -113,7 +127,8 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
   // ── Enrich orders with on-chain state (stream + per-order) ──────
   const enrichOrders = useCallback(async () => {
     if (
-      !hookAddr ||
+      !twapEngineAddr ||
+      !twammMarketId ||
       !collateralAddr ||
       !positionAddr ||
       !marketInfo?.infrastructure ||
@@ -141,25 +156,21 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
       }
 
       // Fetch stream state (3 RPC calls — down from 2 getLogs + N×2 event parsing)
-      const poolKey = buildPoolKey(
-        marketInfo.infrastructure,
-        collateralAddr,
-        positionAddr,
-      );
-      const hook = new ethers.Contract(hookAddr, JTM_VIEW_ABI, provider);
+      const twapEngine = new ethers.Contract(twapEngineAddr, TWAP_ENGINE_VIEW_ABI, provider);
 
       let stream = null;
       try {
         const [state, pool0For1, pool1For0] = await Promise.all([
-          hook.getStreamState(poolKey),
-          hook.getStreamPool(poolKey, true),
-          hook.getStreamPool(poolKey, false),
+          twapEngine.states(twammMarketId),
+          twapEngine.streamPools(twammMarketId, true),
+          twapEngine.streamPools(twammMarketId, false),
         ]);
+        const lastClear = Number(state[3]);
         stream = {
           accrued0: Number(state[0]),
           accrued1: Number(state[1]),
-          discountBps: Number(state[2]),
-          timeSinceClear: Number(state[3]),
+          discountBps: 0,
+          timeSinceClear: lastClear > 0 ? Math.max(0, now - lastClear) : 0,
           sellRate0For1: Number(pool0For1[0]),
           sellRate1For0: Number(pool1For0[0]),
           earningsFactor0For1: pool0For1[1],
@@ -174,9 +185,9 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
       if (!hookConfig) {
         try {
           const [discountRate, maxDiscount, interval] = await Promise.all([
-            hook.discountRateScaled(),
-            hook.maxDiscountBps(),
-            hook.expirationInterval(),
+            twapEngine.discountRateScaled(),
+            twapEngine.maxDiscountBps(),
+            twapEngine.expirationInterval(),
           ]);
           hookConfig = {
             discountRateScaled: Number(discountRate),
@@ -192,26 +203,20 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
       // Enrich each order with value preservation analysis
       const enriched = await Promise.all(
         activeOrders.map(async (evt) => {
-          const orderKeyTuple = [
-            evt.owner,
-            parseInt(evt.expiration),
-            evt.zeroForOne,
-            parseInt(evt.nonce || "0"),
-          ];
-
           let sellRate = 0n;
           let buyTokensOwed = 0n;
           let sellTokensRefund = 0n;
+          const orderId = evt.orderId?.startsWith("0x") ? evt.orderId : `0x${evt.orderId}`;
 
           try {
-            const r = await hook.getOrder(poolKey, orderKeyTuple);
-            sellRate = r[0];
+            const r = await twapEngine.streamOrders(twammMarketId, orderId);
+            sellRate = r.sellRate ?? r[1];
           } catch {
             /* skip */
           }
 
           try {
-            const r = await hook.getCancelOrderState(poolKey, orderKeyTuple);
+            const r = await twapEngine.getCancelOrderState(twammMarketId, orderId);
             buyTokensOwed = r[0];
             sellTokensRefund = r[1];
           } catch {
@@ -234,8 +239,10 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
           const isExpired = timeLeftSec === 0;
           const isDone = isExpired || sellRate === 0n;
 
-          const isBuy = evt.zeroForOne === ZERO_FOR_ONE_LONG;
-          const direction = isBuy ? "waUSDC → wRLP" : "wRLP → waUSDC";
+          const isBuy = evt.zeroForOne === buyPositionZeroForOne;
+          const direction = isBuy
+            ? `${collateralSymbol} → ${positionSymbol}`
+            : `${positionSymbol} → ${collateralSymbol}`;
 
           const buyTokensRaw = Number(buyTokensOwed) / 1e6;
           const sellRefundRaw = refundNum / 1e6;
@@ -307,8 +314,8 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
                 )
               : 0;
 
-          const sellToken = isBuy ? "waUSDC" : "wRLP";
-          const buyToken = isBuy ? "wRLP" : "waUSDC";
+          const sellToken = isBuy ? collateralSymbol : positionSymbol;
+          const buyToken = isBuy ? positionSymbol : collateralSymbol;
 
           return {
             orderId: evt.orderId,
@@ -374,7 +381,17 @@ export function useTwammDashboard(marketInfo, pollInterval = 5000) {
       console.warn("[TWAMM Dashboard] enrich failed:", e);
       if (mountedRef.current) setLoading(false);
     }
-  }, [hookAddr, collateralAddr, positionAddr, marketInfo, gqlData]);
+  }, [
+    twapEngineAddr,
+    twammMarketId,
+    collateralAddr,
+    positionAddr,
+    collateralSymbol,
+    positionSymbol,
+    buyPositionZeroForOne,
+    marketInfo,
+    gqlData,
+  ]);
 
   // Re-enrich whenever GraphQL data updates
   useEffect(() => {

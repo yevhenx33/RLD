@@ -591,7 +591,7 @@ def main() -> None:
 
     pool_fee = int(os.getenv("POOL_FEE", "500"))
     tick_spacing = int(os.getenv("TICK_SPACING", "5"))
-    oracle_period = int(os.getenv("ORACLE_PERIOD", "3600"))
+    oracle_period = int(os.getenv("ORACLE_PERIOD", "60"))
 
     # Packed Dutch liquidation params:
     # [0..15] baseDiscountBps | [16..31] maxDiscountBps | [32..47] slope
@@ -878,4 +878,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

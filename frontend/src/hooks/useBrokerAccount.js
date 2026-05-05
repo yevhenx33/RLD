@@ -224,7 +224,7 @@ export function useBrokerAccount(account, brokerFactoryAddr, waUsdcAddr) {
 
       setHasBroker(true);
       setStep("Broker deployed ✓");
-      return createdBroker;
+      return { address: createdBroker, receipt, blockNumber: Number(receipt.blockNumber || 0) };
     } catch (e) {
       console.error("Broker creation failed:", e);
       // User rejected or tx failed

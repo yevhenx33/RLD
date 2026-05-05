@@ -690,10 +690,10 @@ async def dispatch(
             log.warning("[dispatch] OrderCancelled decode failed: %s", e)
 
     elif event_name == "BrokerFrozen":
-        await broker_handler.handle_broker_frozen(conn, contract)
+        await broker_handler.handle_broker_frozen(conn, contract, block_number)
 
     elif event_name == "BrokerUnfrozen":
-        await broker_handler.handle_broker_unfrozen(conn, contract)
+        await broker_handler.handle_broker_unfrozen(conn, contract, block_number)
 
     elif event_name == "OperatorUpdated":
         # OperatorUpdated(address indexed operator, bool active)
@@ -831,15 +831,15 @@ async def dispatch(
             # Step 6: Atomic UPDATE arithmetic — no SELECT round-trips
             # Sender: subtract (floor at 0)
             from_result = await conn.execute(
-                f"UPDATE brokers SET {col} = CAST(GREATEST(0, CAST({col} AS NUMERIC) - $1) AS TEXT) WHERE address = $2",
-                amount, from_addr
+                f"UPDATE brokers SET {col} = CAST(GREATEST(0, CAST({col} AS NUMERIC) - $1) AS TEXT), updated_block = GREATEST(updated_block, $3::BIGINT) WHERE address = $2",
+                amount, from_addr, block_number
             )
             sender_is_broker = from_result and from_result != "UPDATE 0"
 
             # Recipient: add
             to_result = await conn.execute(
-                f"UPDATE brokers SET {col} = CAST(CAST({col} AS NUMERIC) + $1 AS TEXT) WHERE address = $2",
-                amount, to_addr
+                f"UPDATE brokers SET {col} = CAST(CAST({col} AS NUMERIC) + $1 AS TEXT), updated_block = GREATEST(updated_block, $3::BIGINT) WHERE address = $2",
+                amount, to_addr, block_number
             )
             recipient_is_broker = to_result and to_result != "UPDATE 0"
 
@@ -854,6 +854,15 @@ async def dispatch(
                 await conn.execute(
                     f"UPDATE markets SET {mkt_col} = COALESCE({mkt_col}, 0) + $1 WHERE market_id = $2",
                     delta, mkt_id
+                )
+
+            if sender_is_broker:
+                await broker_handler.refresh_broker_account_index_for_broker(
+                    conn, from_addr, block_number
+                )
+            if recipient_is_broker:
+                await broker_handler.refresh_broker_account_index_for_broker(
+                    conn, to_addr, block_number
                 )
 
             log.debug("[ERC20Transfer] %s from=%s to=%s amount=%d col=%s",

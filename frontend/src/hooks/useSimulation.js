@@ -1,10 +1,15 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import useSWR from "swr";
-import { SIM_GRAPHQL_URL } from "../api/endpoints";
+import { RUNTIME_MANIFEST_URL, SIM_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { queryKeys } from "../api/queryKeys";
 import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 import { buildSimulationChartData } from "../lib/simulationChartData";
+import {
+  getRuntimeReadiness,
+  normalizeRuntimeManifest,
+  runtimeMarketToMarketInfo,
+} from "../lib/runtimeManifest";
 
 // Broker labels by deployment order (deployer always creates in this sequence)
 const BROKER_LABELS = ["User A", "MM Daemon", "Chaos Trader"];
@@ -20,6 +25,14 @@ const fetchSimulationCandles = ([url, , variables]) =>
   postGraphQL(url, { query: CHART_QUERY, variables });
 
 // ── Single GraphQL query — indexer returns JSON scalars ───────
+const fetchRuntimeManifest = async ([url]) => {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Runtime manifest unavailable (HTTP ${response.status})`);
+  }
+  return normalizeRuntimeManifest(await response.json());
+};
+
 const SIM_QUERY = `
   query SimSnapshot($market: String) {
     snapshot(market: $market)
@@ -114,9 +127,25 @@ export function useSimulation({
   chartEndTime = null,
   account = null,        // wallet address for Tier 2 user query
   marketKey = null,
+  enableChart = true,
 } = {}) {
   const [connected, setConnected] = useState(false);
   const prevBlock = useRef(null);
+
+  const {
+    data: runtimeManifest,
+    error: runtimeError,
+    isLoading: runtimeLoading,
+  } = useSWR(
+    queryKeys.runtimeManifest(RUNTIME_MANIFEST_URL),
+    fetchRuntimeManifest,
+    {
+      refreshInterval: pollInterval,
+      revalidateOnFocus: true,
+      dedupingInterval: REFRESH_INTERVALS.FAST_DEDUPE_MS,
+      keepPreviousData: true,
+    },
+  );
 
   // ── Tier 1: Global SWR (no wallet needed) ──────────────────────
   const {
@@ -162,7 +191,7 @@ export function useSimulation({
   }), [chartResolution, chartStartTime, chartEndTime, snapshotMarketId]);
 
   const { data: chartGqlData, error: chartError } = useSWR(
-    snapshotMarketId
+    enableChart && snapshotMarketId
       ? queryKeys.simulationCandles(SIM_GRAPHQL_URL, chartVars)
       : null,
     fetchSimulationCandles,
@@ -177,7 +206,15 @@ export function useSimulation({
   const snapshot = gqlData?.snapshot;
   const eventsRaw = gqlData?.events;
   const volumeRaw = useMemo(() => snapshot?.derived ? { volumeUsd: snapshot.derived.volume24hUsd || 0, swapCount: snapshot.derived.swapCount24h || 0 } : null, [snapshot]);
-  const marketInfo = useMemo(() => _remapMarketInfo(gqlData?.marketInfo), [gqlData?.marketInfo]);
+  const runtimeReadiness = useMemo(
+    () => getRuntimeReadiness(runtimeManifest),
+    [runtimeManifest],
+  );
+  const marketInfo = useMemo(
+    () => runtimeMarketToMarketInfo(runtimeManifest, marketKey || "perp"),
+    [runtimeManifest, marketKey],
+  );
+  const legacyMarketInfo = useMemo(() => _remapMarketInfo(gqlData?.marketInfo), [gqlData?.marketInfo]);
 
   const statusData = useMemo(() => {
     const s = gqlData?.indexerStatus;
@@ -414,8 +451,12 @@ export function useSimulation({
   return {
     // Connection
     connected,
-    loading: gqlLoading && !gqlData,
-    error: gqlError || chartError,
+    loading: (runtimeLoading && !runtimeManifest) || (gqlLoading && !gqlData),
+    error: runtimeError || gqlError || chartError,
+    readOnly: runtimeReadiness.ready !== true,
+    degraded: runtimeReadiness.ready !== true,
+    runtimeManifest,
+    runtimeReadiness,
 
     // Raw (for backward compat with components that access snapshot directly)
     latest: snapshot
@@ -467,6 +508,7 @@ export function useSimulation({
     volumeData,
     protocolStats,
     marketInfo,
+    legacyMarketInfo,
     brokers,
     chartData,
     volumeHistory: chartData.map((c) => ({
