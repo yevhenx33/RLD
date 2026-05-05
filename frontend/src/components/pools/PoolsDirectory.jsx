@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from "react";
+import useSWR from "swr";
 import { useNavigate } from "react-router-dom";
 import {
   Droplets,
@@ -7,77 +8,37 @@ import {
   ArrowUpDown,
   Loader2,
 } from "lucide-react";
-import { useSim } from "../../context/SimulationContext";
+import { SIM_GRAPHQL_URL } from "../../api/endpoints";
+import { postGraphQL } from "../../api/graphqlClient";
+import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
+import {
+  POOLS_QUERY,
+  buildPoolsDirectoryRows,
+  formatUSD,
+} from "./poolsDirectoryData";
 
-// ── Helpers ──────────────────────────────────────────────────
-const formatUSD = (val) => {
-  if (val == null || isNaN(val)) return "—";
-  if (val >= 1e9) return `$${(val / 1e9).toFixed(2)}B`;
-  if (val >= 1e6) return `$${(val / 1e6).toFixed(2)}M`;
-  if (val >= 1e3) return `$${(val / 1e3).toFixed(1)}K`;
-  return `$${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-};
-
-const SORT_KEYS = ["pair", "tvl", "volume24h", "fees24h", "apr7d", "apr30d"];
+const fetchPools = ([url]) => postGraphQL(url, { query: POOLS_QUERY });
 
 export default function PoolsDirectory() {
   const navigate = useNavigate();
   const [sortKey, setSortKey] = useState("tvl");
   const [sortDir, setSortDir] = useState("desc");
 
-  const sim = useSim();
-  const { connected, loading, market, pool, poolTVL, volumeData, marketInfo } = sim;
+  const {
+    data,
+    error,
+    isLoading,
+  } = useSWR([SIM_GRAPHQL_URL, "pools-directory"], fetchPools, {
+    refreshInterval: REFRESH_INTERVALS.SIMULATION_SNAPSHOT_MS,
+    revalidateOnFocus: false,
+    dedupingInterval: REFRESH_INTERVALS.FAST_DEDUPE_MS,
+    keepPreviousData: true,
+  });
 
-  // ── Build live pool row from simulation data ────────────────
-  const pools = useMemo(() => {
-    if (!market || !marketInfo) return [];
+  const connected = !error;
 
-    const token0Symbol = marketInfo?.position_token?.symbol || "wRLP";
-    const token1Symbol = marketInfo?.collateral?.symbol || "waUSDC";
-    const pair = `${token0Symbol} / ${token1Symbol}`;
-    const feePct = pool?.fee != null ? `${(pool.fee / 10000).toFixed(2)}%` : "0.05%";
+  const pools = useMemo(() => buildPoolsDirectoryRows(data), [data]);
 
-    // TVL from indexed token balances in PoolManager
-    const tvl = poolTVL || 0;
-
-    // Volume & fees from /api/volume
-    const volume24h = volumeData?.volume_usd || 0;
-    const fees24h = volume24h * 0.0005; // 0.05% fee tier
-    const swapCount = volumeData?.swap_count || 0;
-
-    // APR estimate: annualized fee yield on TVL
-    const apr7d = tvl > 0 ? (fees24h * 365 / tvl) * 100 : 0;
-    const apr30d = apr7d * 0.9; // Slight discount for 30d smoothing
-
-    // Route by stable pool id. Hookless pools have a zero hook address, which
-    // must not become the route key.
-    const poolAddress =
-      marketInfo?.poolId ||
-      marketInfo?.pool_id ||
-      marketInfo?.infrastructure?.poolId ||
-      marketInfo?.infrastructure?.pool_id ||
-      marketInfo?.marketId ||
-      "pool";
-
-    return [
-      {
-        address: poolAddress,
-        pair,
-        token0: token0Symbol,
-        token1: token1Symbol,
-        protocol: "Uniswap V4",
-        feeTier: feePct,
-        tvl,
-        volume24h,
-        fees24h,
-        apr7d: Math.min(apr7d, 999), // Cap display
-        apr30d: Math.min(apr30d, 999),
-        swapCount,
-      },
-    ];
-  }, [market, pool, volumeData, marketInfo, poolTVL]);
-
-  // ── Sort ─────────────────────────────────────────────────────
   const toggleSort = (key) => {
     if (sortKey === key) {
       setSortDir(sortDir === "desc" ? "asc" : "desc");
@@ -111,8 +72,7 @@ export default function PoolsDirectory() {
     return list;
   }, [pools, sortKey, sortDir]);
 
-  // ── Loading / Disconnected ──────────────────────────────────
-  if (loading && pools.length === 0) {
+  if (isLoading && pools.length === 0) {
     return (
       <div className="min-h-screen bg-[#050505] text-gray-300 font-mono flex items-center justify-center">
         <Loader2 className="animate-spin text-gray-700" size={24} />
@@ -134,9 +94,9 @@ export default function PoolsDirectory() {
               </h1>
             </div>
             <p className="text-sm text-gray-500 tracking-widest uppercase">
-              {pools.length} active pool{pools.length !== 1 ? "s" : ""} · Uniswap V4
+              {pools.length} active pool{pools.length !== 1 ? "s" : ""} - Uniswap V4
               {!connected && (
-                <span className="ml-2 text-yellow-600">· Disconnected</span>
+                <span className="ml-2 text-yellow-600">- Disconnected</span>
               )}
             </p>
           </div>
@@ -242,11 +202,11 @@ export default function PoolsDirectory() {
           ) : (
             filteredPools.map((pool) => (
               <div
-                key={pool.address}
+                key={pool.id}
                 onClick={() => navigate(`/markets/pools/${pool.address}`)}
                 className="border-b border-white/5 last:border-b-0 cursor-pointer group hover:bg-white/[0.02] transition-colors"
               >
-                {/* ── Desktop Row (lg+) ── */}
+                {/* Desktop Row (lg+) */}
                 <div className="hidden lg:grid grid-cols-12 gap-4 px-6 py-4 items-center">
                   {/* Pool */}
                   <div className="col-span-3">
@@ -255,13 +215,6 @@ export default function PoolsDirectory() {
                       <div>
                         <div className="text-sm font-mono text-white group-hover:text-cyan-400 transition-colors">
                           {pool.pair}
-                        </div>
-                        <div className="text-sm text-gray-600 flex items-center gap-2">
-                          {pool.feeTier}
-                          <span className="text-gray-700">·</span>
-                          <span className="text-gray-700">
-                            {pool.address.slice(0, 6)}...{pool.address.slice(-4)}
-                          </span>
                         </div>
                       </div>
                     </div>
@@ -288,16 +241,12 @@ export default function PoolsDirectory() {
                   </div>
                 </div>
 
-                {/* ── Mobile Card (<lg) ── */}
+                {/* Mobile Card (<lg) */}
                 <div className="lg:hidden flex flex-col">
                   {/* Card Header: cyan accent bar */}
                   <div className="flex items-center justify-between px-4 py-3 bg-cyan-500/[0.06] border-b border-cyan-500/10">
                     <div className="text-base font-mono text-cyan-400 font-bold tracking-tight">
                       {pool.pair}
-                      <span className="text-cyan-600 ml-1.5 font-normal text-sm">{pool.feeTier}</span>
-                    </div>
-                    <div className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest">
-                      {pool.protocol}
                     </div>
                   </div>
                   {/* Card Metrics */}

@@ -1,11 +1,9 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 import { InputGroup, SummaryRow } from "./TradingTerminal";
 import { getSigner } from "../../utils/connection";
 import { useTwammOrder } from "../../hooks/useTwammOrder";
 import { usePoolLiquidity, liquidityToAmounts, computeLiquidity } from "../../hooks/usePoolLiquidity";
-import { ZERO_FOR_ONE_LONG } from "../../config/simulationConfig";
-import { ChevronDown } from "lucide-react";
 import {
   BROKER_ROUTER_LONG_ABI,
   buildHooklessPoolKey,
@@ -174,21 +172,39 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh
   const [direction, setDirection] = useState("BUY");
 
   const infrastructure = marketInfo?.infrastructure;
-  // GhostRouter/TwapEngine use poolId as market key (not Core marketId).
+  const collateralSymbol = marketInfo?.collateral?.symbol || "waUSDC";
+  const positionSymbol =
+    marketInfo?.positionToken?.symbol ||
+    marketInfo?.position_token?.symbol ||
+    "wRLP";
   const twammMarketId =
+    marketInfo?.twamm?.marketId ||
+    infrastructure?.twammMarketId ||
+    infrastructure?.twamm_market_id ||
     marketInfo?.poolId ||
     marketInfo?.pool_id ||
     marketInfo?.marketId ||
     marketInfo?.market_id ||
     "";
   const twapEngineAddr =
+    marketInfo?.twamm?.engine ||
     infrastructure?.twapEngine ||
     infrastructure?.twap_engine ||
     marketInfo?.twapEngine ||
     marketInfo?.twap_engine ||
     "";
   const collateralAddr = marketInfo?.collateral?.address;
-  const positionAddr = marketInfo?.position_token?.address;
+  const positionAddr =
+    marketInfo?.positionToken?.address ||
+    marketInfo?.position_token?.address;
+  const buyPositionZeroForOne =
+    typeof marketInfo?.twamm?.buyPositionZeroForOne === "boolean"
+      ? marketInfo.twamm.buyPositionZeroForOne
+      : typeof infrastructure?.buyPositionZeroForOne === "boolean"
+        ? infrastructure.buyPositionZeroForOne
+        : typeof marketInfo?.zeroForOneLong === "boolean"
+          ? marketInfo.zeroForOneLong
+          : false;
   const twammInfra = {
     ...infrastructure,
     twapEngine: twapEngineAddr,
@@ -214,9 +230,9 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh
     if (txPauseRef) txPauseRef.current = !!executing;
   }, [executing, txPauseRef]);
 
-  // BUY wRLP = sell waUSDC → zeroForOne matches ZERO_FOR_ONE_LONG
-  // SELL wRLP = sell wRLP → zeroForOne is opposite
-  const zeroForOne = direction === "BUY" ? ZERO_FOR_ONE_LONG : !ZERO_FOR_ONE_LONG;
+  const zeroForOne = direction === "BUY" ? buyPositionZeroForOne : !buyPositionZeroForOne;
+  const sellSymbol = direction === "BUY" ? collateralSymbol : positionSymbol;
+  const buySymbol = direction === "BUY" ? positionSymbol : collateralSymbol;
 
   const durationNum = Number(durationHours) || 0;
   const amountNum = Number(amount) || 0;
@@ -277,10 +293,10 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh
 
       <InputGroup
         label="Amount"
-        subLabel={direction === "BUY" ? "waUSDC to sell" : "wRLP to sell"}
+        subLabel={`${sellSymbol} to sell`}
         value={amount}
         onChange={setAmount}
-        suffix={direction === "BUY" ? "waUSDC" : "wRLP"}
+        suffix={sellSymbol}
         placeholder="0.00"
       />
 
@@ -327,7 +343,7 @@ function TwapForm({ brokerAddress, marketInfo, account, addToast, onTwammRefresh
         />
         <SummaryRow
           label="Direction"
-          value={direction === "BUY" ? "waUSDC → wRLP" : "wRLP → waUSDC"}
+          value={`${sellSymbol} → ${buySymbol}`}
           valueColor={direction === "BUY" ? "text-cyan-400" : "text-pink-400"}
         />
       </div>
@@ -436,27 +452,22 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [depositAmount, setDepositAmount] = useState("");
-  const [depositMode, setDepositMode] = useState("USDC"); // "USDC" or "wRLP"
+  const depositMode = "USDC";
   const [_removePercent, _setRemovePercent] = useState(100);
   const [lpExecuting, setLpExecuting] = useState(false);
   const [lpStep, setLpStep] = useState("");
   const [lpError, setLpError] = useState(null);
-  const [lpDropdownOpen, setLpDropdownOpen] = useState(false);
-  const lpDropdownRef = useRef(null);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    const handler = (e) => {
-      if (lpDropdownRef.current && !lpDropdownRef.current.contains(e.target)) setLpDropdownOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
 
   const price = currentRate || 0;
   const positionToken = marketInfo?.position_token;
   const collateralToken = marketInfo?.collateral;
   const infrastructure = marketInfo?.infrastructure;
+  const collateralSymbol = collateralToken?.symbol || "waUSDC";
+  const positionSymbol =
+    marketInfo?.positionToken?.symbol ||
+    positionToken?.symbol ||
+    "wRLP";
+  const depositTokenSymbol = collateralSymbol;
 
   const {
     executeAddLiquidity,
@@ -472,11 +483,11 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
     ? positionToken.address.toLowerCase() < collateralToken.address.toLowerCase()
     : true;
   const _token0 = token0IsPosition
-    ? { symbol: "wRLP", decimals: 6 }
-    : { symbol: "waUSDC", decimals: 6 };
+    ? { symbol: positionSymbol, decimals: 6 }
+    : { symbol: collateralSymbol, decimals: 6 };
   const _token1 = token0IsPosition
-    ? { symbol: "waUSDC", decimals: 6 }
-    : { symbol: "wRLP", decimals: 6 };
+    ? { symbol: collateralSymbol, decimals: 6 }
+    : { symbol: positionSymbol, decimals: 6 };
 
   const applyPreset = (factor) => {
     if (price <= 0) return;
@@ -548,11 +559,12 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       const swapAmount_raw = ethers.parseUnits(split.swapAmount.toFixed(6), 6);
 
       if (swapAmount_raw > 0n && depositMode !== "USDC") {
-        throw new Error("Atomic LP for wRLP input is not implemented yet");
+        throw new Error(`Atomic LP for ${positionSymbol} input is not implemented yet`);
       }
 
       // Size LP from a conservative swap quote to avoid over-asking wRLP.
       let positionForLp_raw = wRLP_raw;
+      let swapMinOut_raw = 0n;
       if (swapAmount_raw > 0n) {
         setLpStep("Quoting swap output...");
         try {
@@ -565,12 +577,14 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
           );
           const bufferedOut = (quotedOut * SWAP_QUOTE_BUFFER_BPS) / 10_000n;
           if (bufferedOut <= 0n) throw new Error("Swap quote returned zero output");
+          swapMinOut_raw = bufferedOut;
           if (bufferedOut < positionForLp_raw) {
             positionForLp_raw = bufferedOut;
           }
         } catch (quoteErr) {
           console.warn("[LP] Swap quote failed, applying fallback haircut:", quoteErr);
           positionForLp_raw = (positionForLp_raw * SWAP_QUOTE_BUFFER_BPS) / 10_000n;
+          swapMinOut_raw = positionForLp_raw;
         }
       }
 
@@ -594,11 +608,11 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
             brokerAddress,
             swapAmount_raw,
             poolKey,
-            0n,
+            swapMinOut_raw,
           );
           calls.push({ target: routerAddr, data: swapData });
         } else {
-          throw new Error("Atomic LP for wRLP input is not implemented yet");
+          throw new Error(`Atomic LP for ${positionSymbol} input is not implemented yet`);
         }
       }
 
@@ -671,7 +685,7 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
       setLpExecuting(false);
       if (txPauseRef) txPauseRef.current = false;
     }
-  }, [canAdd, infrastructure, brokerAddress, collateralToken, positionToken, minPrice, maxPrice, split, price, token0IsPosition, depositMode, addToast, refreshPosition, onStateChange, txPauseRef]);
+  }, [canAdd, infrastructure, brokerAddress, collateralToken, positionToken, minPrice, maxPrice, split, price, token0IsPosition, depositMode, addToast, refreshPosition, onStateChange, txPauseRef, positionSymbol]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -707,61 +721,23 @@ function LpForm({ brokerAddress, marketInfo, account, addToast, currentRate, onS
         ))}
       </div>
 
-      {/* Deposit input with token dropdown */}
+      {/* Deposit input with market collateral token */}
       <div className="flex items-center justify-between text-sm uppercase tracking-widest font-bold text-gray-500">
         <span>Deposit_In</span>
-        <div className="relative" ref={lpDropdownRef}>
-          <button
-            type="button"
-            onClick={() => setLpDropdownOpen(!lpDropdownOpen)}
-            className={`
-              h-[28px] border border-white/10 bg-[#0a0a0a] flex items-center justify-between px-2 gap-2
-              text-sm font-mono text-white focus:outline-none uppercase tracking-widest
-              hover:border-white/30 transition-colors
-              ${lpDropdownOpen ? "border-white/30" : ""}
-            `}
-          >
-            <span>{depositMode === "USDC" ? "waUSDC" : "wRLP"}</span>
-            <ChevronDown
-              size={12}
-              className={`transition-transform duration-200 flex-shrink-0 ${lpDropdownOpen ? "rotate-180" : ""}`}
-            />
-          </button>
-          {lpDropdownOpen && (
-            <div className="absolute top-full right-0 mt-1 bg-[#0a0a0a] border border-white/10 z-50 flex flex-col shadow-xl whitespace-nowrap">
-              {[
-                { value: "USDC", label: "waUSDC" },
-                { value: "wRLP", label: "wRLP" },
-              ].map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => {
-                    setDepositMode(opt.value);
-                    setDepositAmount("");
-                    setLpDropdownOpen(false);
-                  }}
-                  className={`
-                    w-full flex items-center px-3 py-2 text-sm text-left uppercase tracking-widest transition-colors
-                    ${
-                      depositMode === opt.value
-                        ? "bg-cyan-500/10 text-cyan-400"
-                        : "text-gray-500 hover:bg-white/5 hover:text-gray-300"
-                    }
-                  `}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          )}
+        <div
+          className="
+            h-[28px] border border-white/10 bg-[#0a0a0a] flex items-center px-2
+            text-sm font-mono text-white uppercase tracking-widest
+          "
+        >
+          {depositTokenSymbol}
         </div>
       </div>
       <InputGroup
-        label={depositMode === "USDC" ? "waUSDC" : "wRLP"}
+        label={depositTokenSymbol}
         value={depositAmount}
         onChange={setDepositAmount}
-        suffix={depositMode === "USDC" ? "waUSDC" : "wRLP"}
+        suffix={depositTokenSymbol}
         placeholder="0.00"
       />
 

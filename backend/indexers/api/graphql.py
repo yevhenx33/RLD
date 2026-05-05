@@ -7,9 +7,12 @@ Health at: /healthz
 """
 import os
 import json
+import hashlib
 import math
 import ipaddress
 import logging
+import urllib.error
+import urllib.request
 from typing import Optional, List, Dict, Any
 import strawberry
 from strawberry.fastapi import GraphQLRouter
@@ -58,6 +61,7 @@ class Broker:
     wausdc_balance: Optional[str]
     wrlp_balance: Optional[str]
     debt_principal: Optional[str]
+    updated_block: Optional[int]
     is_frozen: Optional[bool]
     is_liquidated: Optional[bool]
 
@@ -430,11 +434,15 @@ def _overlay_deployment_config(payload: Dict[str, Any]) -> Dict[str, Any]:
     for key in (
         "token0", "token1", "zero_for_one_long", "funding_model",
         "settlement_module", "decay_rate_wad", "collateral_symbol",
-        "position_symbol", "type", "deposit_adapter", "cds_coverage_factory",
+        "position_symbol", "type", "broker_router", "deposit_adapter",
+        "cds_coverage_factory",
     ):
-        if key in market_entry and not payload.get(key):
+        if key in market_entry and (
+            not payload.get(key) or key in ("broker_router", "deposit_adapter")
+        ):
             payload[key] = market_entry[key]
 
+    market_type = str(market_entry.get("type") or payload.get("type") or "").lower()
     for key in (
         "rpc_url", "rld_core", "pool_manager",
         "swap_router", "bond_factory",
@@ -442,6 +450,8 @@ def _overlay_deployment_config(payload: Dict[str, Any]) -> Dict[str, Any]:
         "v4_quoter", "v4_position_manager", "ghost_router",
         "twap_engine", "twap_engine_lens", "cds_coverage_factory",
     ):
+        if key in ("broker_router", "deposit_adapter") and market_type not in ("", "perp"):
+            continue
         if key in deploy_cfg and not payload.get(key):
             payload[key] = deploy_cfg[key]
 
@@ -570,6 +580,350 @@ def _market_info_payload(row: asyncpg.Record) -> Dict[str, Any]:
     return payload
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        if value in (None, ""):
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "y", "on"):
+        return True
+    if text in ("0", "false", "no", "n", "off"):
+        return False
+    return default
+
+
+def _zero_address() -> str:
+    return "0x0000000000000000000000000000000000000000"
+
+
+def _sort_token_pair(token_a: str, token_b: str) -> tuple[str, str]:
+    if token_a and token_b and token_a.lower() > token_b.lower():
+        return token_b, token_a
+    return token_a, token_b
+
+
+def _clean_endpoint(value: Any, default: str) -> str:
+    text = str(value or "").strip()
+    return text.rstrip("/") if text else default
+
+
+def _deployment_markets_by_type(deploy_cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    markets = deploy_cfg.get("markets")
+    if isinstance(markets, dict) and markets:
+        return {
+            str(key): value
+            for key, value in markets.items()
+            if isinstance(value, dict)
+        }
+    if deploy_cfg.get("market_id"):
+        return {"perp": deploy_cfg}
+    return {}
+
+
+def _deployment_market_by_id(deploy_cfg: dict[str, Any], market_id: str) -> tuple[str, dict[str, Any]]:
+    for market_type, entry in _deployment_markets_by_type(deploy_cfg).items():
+        if entry.get("market_id") == market_id:
+            return market_type, entry
+    return "perp", {}
+
+
+def _feature_flags(market_type: str, market: dict[str, Any]) -> dict[str, bool]:
+    return {
+        "perps": market_type == "perp",
+        "bonds": bool(market.get("bondFactory") or market.get("bond_factory")),
+        "cdsCoverage": bool(market.get("cdsCoverageFactory") or market.get("cds_coverage_factory")),
+        "twamm": bool(market.get("twapEngine") or market.get("twap_engine")),
+        "liquidity": bool(market.get("v4PositionManager") or market.get("v4_position_manager")),
+    }
+
+
+def _runtime_market_payload(
+    deploy_cfg: dict[str, Any],
+    row_payload: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    market_id = row_payload.get("marketId") or row_payload.get("market_id") or ""
+    market_type, entry = _deployment_market_by_id(deploy_cfg, market_id)
+    market_type = str(entry.get("type") or row_payload.get("type") or market_type or "perp")
+
+    infrastructure = row_payload.get("infrastructure") or {}
+    collateral = row_payload.get("collateral") or {}
+    position = row_payload.get("position_token") or row_payload.get("positionToken") or {}
+    twamm_hook = (
+        infrastructure.get("twammHook")
+        or infrastructure.get("twamm_hook")
+        or row_payload.get("twammHook")
+        or row_payload.get("twamm_hook")
+        or entry.get("twamm_hook")
+        or deploy_cfg.get("twamm_hook")
+        or "0x0000000000000000000000000000000000000000"
+    )
+    cds_factory = (
+        infrastructure.get("cdsCoverageFactory")
+        or infrastructure.get("cds_coverage_factory")
+        or row_payload.get("cdsCoverageFactory")
+        or row_payload.get("cds_coverage_factory")
+        or entry.get("cds_coverage_factory")
+        or ""
+    )
+    pool_id = row_payload.get("poolId") or row_payload.get("pool_id") or entry.get("pool_id", "")
+    collateral_token = collateral.get("address") or entry.get("collateral_token") or row_payload.get("wausdc", "")
+    collateral_symbol = collateral.get("symbol") or entry.get("collateral_symbol") or row_payload.get("wausdcSymbol", "")
+    position_token = position.get("address") or entry.get("position_token") or row_payload.get("wrlp", "")
+    position_symbol = position.get("symbol") or entry.get("position_symbol") or row_payload.get("wrlpSymbol", "")
+    token0 = entry.get("token0") or row_payload.get("token0") or ""
+    token1 = entry.get("token1") or row_payload.get("token1") or ""
+    if not token0 or not token1:
+        token0, token1 = _sort_token_pair(collateral_token, position_token)
+    pool_fee = _as_int(row_payload.get("poolFee", entry.get("pool_fee")), 500)
+    tick_spacing = _as_int(row_payload.get("tickSpacing", entry.get("tick_spacing")), 5)
+    zero_for_one_long = _as_bool(
+        entry.get("zero_for_one_long", row_payload.get("zeroForOneLong", False))
+    )
+    broker_factory = entry.get("broker_factory") or row_payload.get("brokerFactory") or row_payload.get("broker_factory") or ""
+    broker_router = entry.get("broker_router") or infrastructure.get("brokerRouter") or row_payload.get("brokerRouter") or ""
+    broker_executor = infrastructure.get("brokerExecutor") or row_payload.get("brokerExecutor") or entry.get("broker_executor", "")
+    deposit_adapter = entry.get("deposit_adapter") or infrastructure.get("depositAdapter") or row_payload.get("depositAdapter") or ""
+    bond_factory = infrastructure.get("bondFactory") or row_payload.get("bondFactory") or entry.get("bond_factory", "")
+    ghost_router = infrastructure.get("ghostRouter") or row_payload.get("ghostRouter") or entry.get("ghost_router", deploy_cfg.get("ghost_router", ""))
+    twap_engine = infrastructure.get("twapEngine") or row_payload.get("twapEngine") or entry.get("twap_engine", "")
+    twap_engine_lens = infrastructure.get("twapEngineLens") or row_payload.get("twapEngineLens") or entry.get("twap_engine_lens", "")
+    pool_manager = infrastructure.get("poolManager") or row_payload.get("poolManager") or entry.get("pool_manager", deploy_cfg.get("pool_manager", deploy_cfg.get("v4_pool_manager", "")))
+    v4_quoter = infrastructure.get("v4Quoter") or row_payload.get("v4Quoter") or entry.get("v4_quoter", deploy_cfg.get("v4_quoter", ""))
+    v4_position_manager = infrastructure.get("v4PositionManager") or row_payload.get("v4PositionManager") or entry.get("v4_position_manager", deploy_cfg.get("v4_position_manager", ""))
+    v4_state_view = infrastructure.get("v4StateView") or row_payload.get("v4StateView") or entry.get("v4_state_view", deploy_cfg.get("v4_state_view", ""))
+    funding_model = row_payload.get("funding_model") or row_payload.get("fundingModel") or entry.get("funding_model", "")
+    settlement_module = row_payload.get("settlement_module") or row_payload.get("settlementModule") or entry.get("settlement_module", "")
+    pool_key = {
+        "currency0": token0,
+        "currency1": token1,
+        "fee": pool_fee,
+        "tickSpacing": tick_spacing,
+        "hooks": twamm_hook or _zero_address(),
+    }
+
+    market = {
+        "type": market_type,
+        "marketId": market_id,
+        "market_id": market_id,
+        "poolId": pool_id,
+        "pool_id": pool_id,
+        "deployBlock": _as_int(entry.get("deploy_block", row_payload.get("deploy_block"))),
+        "deployTimestamp": _as_int(entry.get("deploy_timestamp", row_payload.get("deploy_timestamp"))),
+        "oraclePeriod": _as_int(entry.get("oracle_period", entry.get("oraclePeriod")), 60),
+        "zeroForOneLong": zero_for_one_long,
+        "zero_for_one_long": zero_for_one_long,
+        "collateral": {
+            "address": collateral_token,
+            "symbol": collateral_symbol,
+        },
+        "positionToken": {
+            "address": position_token,
+            "symbol": position_symbol,
+        },
+        "brokerFactory": broker_factory,
+        "brokerRouter": broker_router,
+        "brokerExecutor": broker_executor,
+        "depositAdapter": deposit_adapter,
+        "bondFactory": bond_factory,
+        "cdsCoverageFactory": cds_factory,
+        "ghostRouter": ghost_router,
+        "twammHook": twamm_hook,
+        "twamm_hook": twamm_hook,
+        "twapEngine": twap_engine,
+        "twapEngineLens": twap_engine_lens,
+        "poolManager": pool_manager,
+        "v4Quoter": v4_quoter,
+        "v4PositionManager": v4_position_manager,
+        "v4StateView": v4_state_view,
+        "poolFee": pool_fee,
+        "tickSpacing": tick_spacing,
+        "fundingModel": funding_model,
+        "settlementModule": settlement_module,
+        "riskParams": row_payload.get("risk_params") or row_payload.get("riskParams") or {},
+        "risk_params": row_payload.get("risk_params") or row_payload.get("riskParams") or {},
+    }
+    market["contracts"] = {
+        "brokerFactory": broker_factory,
+        "brokerRouter": broker_router,
+        "brokerExecutor": broker_executor,
+        "depositAdapter": deposit_adapter,
+        "bondFactory": bond_factory,
+        "cdsCoverageFactory": cds_factory,
+        "fundingModel": funding_model,
+        "settlementModule": settlement_module,
+    }
+    market["pool"] = {
+        "id": pool_id,
+        "poolId": pool_id,
+        "token0": token0,
+        "token1": token1,
+        "fee": pool_fee,
+        "tickSpacing": tick_spacing,
+        "key": pool_key,
+        "zeroForOneLong": zero_for_one_long,
+    }
+    market["execution"] = {
+        "marketId": market_id,
+        "poolId": pool_id,
+        "brokerFactory": broker_factory,
+        "brokerRouter": broker_router,
+        "brokerExecutor": broker_executor,
+        "depositAdapter": deposit_adapter,
+        "collateralToken": collateral_token,
+        "collateralSymbol": collateral_symbol,
+        "positionToken": position_token,
+        "positionSymbol": position_symbol,
+        "poolKey": pool_key,
+        "buyPositionZeroForOne": zero_for_one_long,
+        "sellPositionZeroForOne": not zero_for_one_long,
+    }
+    market["twamm"] = {
+        "enabled": bool(twap_engine),
+        "engine": twap_engine,
+        "lens": twap_engine_lens,
+        "marketId": pool_id,
+        "poolId": pool_id,
+        "hook": twamm_hook or _zero_address(),
+        "zeroForOneLong": zero_for_one_long,
+        "buyPositionZeroForOne": zero_for_one_long,
+        "sellPositionZeroForOne": not zero_for_one_long,
+        "sellCollateralZeroForOne": zero_for_one_long,
+        "sellPositionTokenZeroForOne": not zero_for_one_long,
+    }
+    market["featureFlags"] = _feature_flags(market_type, {**market, **row_payload})
+    return market_type, market
+
+
+def _runtime_deployment_id(deploy_cfg: dict[str, Any], markets: dict[str, Any]) -> str:
+    digest_input = {
+        "rld_core": deploy_cfg.get("rld_core"),
+        "ghost_router": deploy_cfg.get("ghost_router"),
+        "broker_router": deploy_cfg.get("broker_router"),
+        "markets": {
+            key: {
+                "marketId": value.get("marketId"),
+                "poolId": value.get("poolId"),
+                "positionToken": value.get("positionToken", {}).get("address"),
+                "brokerRouter": value.get("contracts", {}).get("brokerRouter") or value.get("brokerRouter"),
+                "depositAdapter": value.get("contracts", {}).get("depositAdapter") or value.get("depositAdapter"),
+                "zeroForOneLong": value.get("twamm", {}).get("zeroForOneLong", value.get("zeroForOneLong")),
+            }
+            for key, value in sorted(markets.items())
+        },
+    }
+    return hashlib.sha256(json.dumps(digest_input, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def _rpc_hex_int(method: str) -> Optional[int]:
+    rpc_url = os.getenv("RPC_URL", "").strip()
+    if not rpc_url:
+        return None
+    body = json.dumps({"jsonrpc": "2.0", "method": method, "params": [], "id": 1}).encode()
+    request = urllib.request.Request(
+        rpc_url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            payload = json.loads(response.read().decode())
+    except (OSError, urllib.error.URLError, json.JSONDecodeError):
+        return None
+    result = payload.get("result")
+    if isinstance(result, str) and result.startswith("0x"):
+        try:
+            return int(result, 16)
+        except ValueError:
+            return None
+    return _as_int(result) if result is not None else None
+
+
+def _build_runtime_manifest(
+    deploy_cfg: dict[str, Any],
+    market_payloads: list[dict[str, Any]],
+    *,
+    indexer_block: int,
+    chain_block: Optional[int],
+    chain_id: Optional[int],
+) -> dict[str, Any]:
+    required = ["rld_core", "ghost_router"]
+    missing = [key for key in required if not deploy_cfg.get(key)]
+    if missing:
+        raise ValueError(f"deployment.json missing runtime manifest fields: {', '.join(missing)}")
+
+    markets: dict[str, Any] = {}
+    for payload in market_payloads:
+        market_type, market = _runtime_market_payload(deploy_cfg, payload)
+        markets[market_type] = market
+
+    if not markets:
+        raise ValueError("runtime manifest has no indexed markets")
+
+    effective_chain_id = chain_id or _as_int(deploy_cfg.get("chain_id") or deploy_cfg.get("chainId"), 31337)
+    global_contracts = {
+        "rldCore": deploy_cfg.get("rld_core", ""),
+        "ghostRouter": deploy_cfg.get("ghost_router", ""),
+        "twapEngine": deploy_cfg.get("twap_engine", ""),
+        "twapEngineLens": deploy_cfg.get("twap_engine_lens", ""),
+        "brokerExecutor": deploy_cfg.get("broker_executor", ""),
+        "poolManager": deploy_cfg.get("pool_manager") or deploy_cfg.get("v4_pool_manager", ""),
+        "v4Quoter": deploy_cfg.get("v4_quoter", ""),
+        "v4PositionManager": deploy_cfg.get("v4_position_manager", ""),
+        "v4StateView": deploy_cfg.get("v4_state_view", ""),
+        "permit2": deploy_cfg.get("permit2", ""),
+    }
+    lag_blocks = None if chain_block is None else max(0, int(chain_block) - int(indexer_block or 0))
+    lag_limit = _as_int(os.getenv("INDEXER_READY_MAX_LAG_BLOCKS"), 12)
+    reasons: list[str] = []
+    if chain_block is None:
+        reasons.append("rpc_unavailable")
+    if lag_blocks is not None and lag_blocks > lag_limit:
+        reasons.append("indexer_lag")
+    for required_market in ("perp", "cds"):
+        if required_market not in markets:
+            reasons.append(f"missing_{required_market}_market")
+
+    ready = not reasons
+    return {
+        "schemaVersion": 1,
+        "deploymentId": _runtime_deployment_id(deploy_cfg, markets),
+        "chainId": effective_chain_id,
+        "rpcUrl": _clean_endpoint(os.getenv("INDEXER_PUBLIC_RPC_URL") or os.getenv("PUBLIC_RPC_URL"), "/rpc"),
+        "faucetUrl": _clean_endpoint(os.getenv("INDEXER_PUBLIC_FAUCET_URL") or os.getenv("PUBLIC_FAUCET_URL"), "/api/faucet"),
+        "indexerBlock": int(indexer_block or 0),
+        "chainBlock": chain_block,
+        "readiness": {
+            "ready": ready,
+            "status": "ready" if ready else "degraded",
+            "reasons": reasons,
+            "indexerLagBlocks": lag_blocks,
+            "maxIndexerLagBlocks": lag_limit,
+        },
+        "globalContracts": global_contracts,
+        "contracts": {
+            **global_contracts,
+            # Legacy/default-market aliases. Frontend execution should prefer
+            # markets.<market>.contracts or markets.<market>.execution.
+            "brokerRouter": deploy_cfg.get("broker_router", ""),
+            "bondFactory": deploy_cfg.get("bond_factory", ""),
+        },
+        "markets": markets,
+    }
+
+
 # ── Query ──────────────────────────────────────────────────────────────────
 
 @strawberry.type
@@ -583,21 +937,37 @@ class Query:
         return [_market(r) for r in rows]
 
     @strawberry.field
-    async def brokers(self, market_id: str) -> List[Broker]:
+    async def brokers(self, market_id: str, owner: Optional[str] = None) -> List[Broker]:
         pool = await get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM brokers WHERE market_id=$1 ORDER BY created_block", market_id
-            )
+            if owner:
+                row = await conn.fetchrow("""
+                    SELECT brokers
+                    FROM broker_account_index
+                    WHERE market_id=$1 AND owner=$2
+                """, market_id, owner.lower())
+                payload = row["brokers"] if row else []
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                rows = payload or []
+            else:
+                rows = await conn.fetch("""
+                    SELECT * FROM brokers
+                    WHERE market_id=$1
+                    ORDER BY created_block DESC, address DESC
+                """, market_id)
         return [Broker(
-            address=r["address"], market_id=r["market_id"],
-            owner=r["owner"], created_block=r["created_block"],
-            active_token_id=r["active_lp_token_id"],
-            wausdc_balance=str(r["wausdc_balance"]) if r["wausdc_balance"] is not None else None,
-            wrlp_balance=str(r["wrlp_balance"]) if r["wrlp_balance"] is not None else None,
-            debt_principal=str(r["debt_principal"]) if r["debt_principal"] is not None else None,
-            is_frozen=r.get("is_frozen", False),
-            is_liquidated=r["is_liquidated"],
+            address=r["address"],
+            market_id=r.get("market_id") or r.get("marketId"),
+            owner=r["owner"],
+            created_block=r.get("created_block") or r.get("createdBlock"),
+            active_token_id=r.get("active_lp_token_id") or r.get("activeTokenId"),
+            wausdc_balance=str(r.get("wausdc_balance") if r.get("wausdc_balance") is not None else r.get("wausdcBalance")) if (r.get("wausdc_balance") is not None or r.get("wausdcBalance") is not None) else None,
+            wrlp_balance=str(r.get("wrlp_balance") if r.get("wrlp_balance") is not None else r.get("wrlpBalance")) if (r.get("wrlp_balance") is not None or r.get("wrlpBalance") is not None) else None,
+            debt_principal=str(r.get("debt_principal") if r.get("debt_principal") is not None else r.get("debtPrincipal")) if (r.get("debt_principal") is not None or r.get("debtPrincipal") is not None) else None,
+            updated_block=int(r.get("updated_block") if r.get("updated_block") is not None else r.get("updatedBlock", r.get("created_block", r.get("createdBlock", 0)))) if (r.get("updated_block") is not None or r.get("updatedBlock") is not None or r.get("created_block") is not None or r.get("createdBlock") is not None) else None,
+            is_frozen=r.get("is_frozen", r.get("isFrozen", False)),
+            is_liquidated=r.get("is_liquidated", r.get("isLiquidated", False)),
         ) for r in rows]
 
     @strawberry.field
@@ -710,12 +1080,23 @@ class Query:
 
     @strawberry.field
     async def twamm_orders(
-        self, owner: str | None = None, active_only: bool = True
+        self,
+        market_id: str | None = None,
+        owner: str | None = None,
+        active_only: bool = True,
     ) -> List[TwammOrder]:
         pool = await get_pool()
         async with pool.acquire() as conn:
             q = "SELECT * FROM twamm_orders WHERE 1=1"
             args: list = []
+            if market_id:
+                market_row = await conn.fetchrow(
+                    "SELECT pool_id FROM markets WHERE market_id=$1 OR pool_id=$1",
+                    market_id,
+                )
+                pool_id = market_row["pool_id"] if market_row else market_id
+                args.append(pool_id)
+                q += f" AND pool_id=${len(args)}"
             if owner:
                 args.append(owner.lower())
                 q += f" AND owner=${len(args)}"
@@ -767,53 +1148,62 @@ class Query:
         ) for r in rows]
 
     @strawberry.field
-    async def broker_operations(self, owner: str, limit: int = 50) -> Optional[JSON]:
-        """Trade operations for a broker, queried by owner address.
-        
-        Reads BrokerRouter events from the
-        events table. Broker address is in topics[1] (indexed param).
-        Returns decoded operations with human-readable amounts.
-        """
+    async def broker_operations(
+        self,
+        owner: str,
+        market_id: str,
+        broker_address: Optional[str] = None,
+        limit: int = 50,
+    ) -> Optional[JSON]:
+        """Trade operations for one broker in the selected market."""
         pool = await get_pool()
         async with pool.acquire() as conn:
-            # Find broker by owner
+            args = [owner.lower(), market_id]
+            broker_filter = ""
+            if broker_address:
+                args.append(broker_address.lower())
+                broker_filter = f" AND address=${len(args)}"
             broker = await conn.fetchrow(
-                "SELECT address FROM brokers WHERE owner = $1",
-                owner.lower()
+                f"""
+                    SELECT address FROM brokers
+                    WHERE owner=$1 AND market_id=$2{broker_filter}
+                    ORDER BY created_block DESC, address DESC
+                    LIMIT 1
+                """,
+                *args,
             )
             if not broker:
                 return []
 
             broker_addr = broker["address"].lower()
-            # Pad to 32-byte topic format: 0x000...address
             broker_topic = "0x" + broker_addr[2:].zfill(64)
 
             rows = await conn.fetch("""
                 SELECT event_name, block_timestamp, block_number, tx_hash, data
                 FROM events
-                WHERE event_name IN (
+                WHERE market_id=$1
+                  AND event_name IN (
                     'RouterSwapExecuted',
                     'ShortPositionUpdated', 'ShortPositionClosed', 'Deposited'
-                )
-                AND data::jsonb->'topics'->>1 = $1
+                  )
+                  AND data::jsonb->'topics'->>1 = $2
                 ORDER BY block_number DESC, log_index DESC
-                LIMIT $2
-            """, broker_topic, limit)
+                LIMIT $3
+            """, market_id, broker_topic, limit)
 
         ops = []
         OP_META = {
             "RouterSwapExecuted": "SWAP",
             "ShortPositionUpdated": "OPEN_SHORT",
             "ShortPositionClosed": "CLOSE_SHORT",
-            "Deposited":     "DEPOSIT",
+            "Deposited": "DEPOSIT",
         }
         for r in rows:
             event_data = json.loads(r["data"]) if isinstance(r["data"], str) else r["data"]
             raw_hex = event_data.get("raw", "") if isinstance(event_data, dict) else ""
-            # Decode (uint256, uint256) from data
             amount1 = 0
             amount2 = 0
-            if raw_hex and len(raw_hex) >= 130:  # 0x + 64 + 64
+            if raw_hex and len(raw_hex) >= 130:
                 try:
                     amount1 = int(raw_hex[2:66], 16)
                     amount2 = int(raw_hex[66:130], 16)
@@ -978,25 +1368,40 @@ class Query:
         return list(reversed(list(positions.values())))
 
     @strawberry.field
-    async def broker_profile(self, owner: str) -> Optional[JSON]:
-        """On-demand broker profile with LP position values and fees.
-        
-        Raw data stored in DB. Values/fees computed at query time
-        using 5N multiplications per LP position. <1ms even with 50 positions.
-        """
+    async def broker_profile(
+        self,
+        owner: str,
+        market_id: str,
+        broker_address: Optional[str] = None,
+    ) -> Optional[JSON]:
+        """On-demand broker profile for one owner broker in one market."""
         pool = await get_pool()
         async with pool.acquire() as conn:
-            # Find broker by owner
+            market_row = await conn.fetchrow(
+                "SELECT pool_id FROM markets WHERE market_id=$1",
+                market_id,
+            )
+            if not market_row:
+                return None
+            pool_id = market_row["pool_id"]
+
+            args = [owner.lower(), market_id]
+            broker_filter = ""
+            if broker_address:
+                args.append(broker_address.lower())
+                broker_filter = f" AND address=${len(args)}"
             broker = await conn.fetchrow(
-                "SELECT * FROM brokers WHERE owner = $1",
-                owner.lower()
+                f"""
+                    SELECT * FROM brokers
+                    WHERE owner=$1 AND market_id=$2{broker_filter}
+                    ORDER BY created_block DESC, address DESC
+                    LIMIT 1
+                """,
+                *args,
             )
             if not broker:
                 return None
 
-            market_id = broker["market_id"]
-
-            # Get latest block state for current prices
             latest = await conn.fetchrow("""
                 SELECT mark_price, tick, fee_growth_global0, fee_growth_global1,
                        index_price
@@ -1009,15 +1414,14 @@ class Query:
 
             mark_price = float(latest["mark_price"] or 0)
             current_tick = int(latest["tick"] or 0)
-            fg0 = int(latest["fee_growth_global0"] or "0")
-            fg1 = int(latest["fee_growth_global1"] or "0")
+            fg0 = int(latest["fee_growth_global0"] or 0)
+            fg1 = int(latest["fee_growth_global1"] or 0)
 
-            # Get LP positions (now keyed by owner, not broker_address)
             positions = await conn.fetch("""
                 SELECT * FROM lp_positions
-                WHERE owner = $1 AND is_burned = FALSE
+                WHERE owner = $1 AND pool_id = $2 AND is_burned = FALSE
                 ORDER BY mint_block DESC
-            """, broker["address"])
+            """, broker["address"], pool_id)
 
             lp_data = []
             Q128 = 2**128
@@ -1027,7 +1431,6 @@ class Query:
                 liquidity = int(pos["liquidity"])
 
                 if tick_lower is not None and tick_upper is not None and liquidity > 0:
-                    # Compute token amounts from liquidity + current tick
                     amt0, amt1 = _liquidity_to_amounts(
                         liquidity, tick_lower, tick_upper, current_tick
                     )
@@ -1039,7 +1442,6 @@ class Query:
                     amt0_human = amt1_human = value_usd = 0
                     in_range = False
 
-                # Fee earnings (simplified: using global fee growth as upper bound)
                 fg_inside0 = fg0
                 fg_inside1 = fg1
                 fees0 = liquidity * fg_inside0 / Q128 / 1e6 if liquidity > 0 else 0
@@ -1061,12 +1463,11 @@ class Query:
                     "poolId": pos.get("pool_id"),
                 })
 
-            # Get TWAMM orders owned by this broker
             twamm_orders = await conn.fetch("""
                 SELECT * FROM twamm_orders
-                WHERE owner = $1
+                WHERE owner = $1 AND pool_id = $2
                 ORDER BY block_number DESC
-            """, broker["address"])
+            """, broker["address"], pool_id)
 
             twamm_data = [
                 {
@@ -1081,29 +1482,28 @@ class Query:
                     "nonce": o.get("nonce"),
                     "status": o["status"],
                     "isRegistered": o["is_registered"],
-                    "buyTokensOut": o.get("buy_tokens_out", "0"),
-                    "sellTokensRefund": o.get("sell_tokens_refund", "0"),
+                    "buyTokensOut": o.get("buy_tokens_out", 0),
+                    "sellTokensRefund": o.get("sell_tokens_refund", 0),
                     "blockNumber": o["block_number"],
                     "txHash": o["tx_hash"],
                 }
                 for o in twamm_orders
             ]
 
-            # Get operators for this broker
             operators = await conn.fetch(
                 "SELECT operator FROM broker_operators WHERE broker_address = $1",
-                broker["address"]
+                broker["address"],
             )
             operator_list = [op["operator"] for op in operators]
 
-            # All values returned as raw strings — frontend handles decimal conversion
             return {
                 "address": broker["address"],
+                "marketId": broker["market_id"],
                 "owner": broker["owner"],
-                "wausdcBalance": broker["wausdc_balance"] or "0",
-                "wrlpBalance": broker["wrlp_balance"] or "0",
-                "debtPrincipal": broker["debt_principal"] or "0",
-                "activeLpTokenId": broker["active_lp_token_id"] or "0",
+                "wausdcBalance": broker["wausdc_balance"] or 0,
+                "wrlpBalance": broker["wrlp_balance"] or 0,
+                "debtPrincipal": broker["debt_principal"] or 0,
+                "activeLpTokenId": broker["active_lp_token_id"] or 0,
                 "activeTwammOrderId": broker["active_twamm_order_id"] or "",
                 "isFrozen": broker["is_frozen"] or False,
                 "isLiquidated": broker["is_liquidated"] or False,
@@ -1294,6 +1694,10 @@ def create_app() -> FastAPI:
                 exc=e,
                 expose_errors=expose_internal_errors,
             )
+
+    @app.get("/readyz")
+    async def readyz():
+        return await healthz()
 
     @app.post("/admin/reset")
     async def admin_reset(
@@ -1498,6 +1902,40 @@ def create_app() -> FastAPI:
                 expose_errors=expose_internal_errors,
             )
 
+    @app.get("/api/runtime-manifest")
+    async def api_runtime_manifest():
+        """Canonical runtime manifest for frontend contract/config integration."""
+        import bootstrap
+
+        try:
+            deploy_cfg = bootstrap.load_deployment_json()
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    MARKET_CONFIG_SELECT + " ORDER BY deploy_timestamp ASC, market_id ASC"
+                )
+                status_row = await conn.fetchrow(
+                    "SELECT COALESCE(MAX(last_indexed_block), 0) AS last_indexed_block FROM indexer_state"
+                )
+            market_payloads = [_market_info_payload(row) for row in rows]
+            indexer_block = int(status_row["last_indexed_block"] or 0) if status_row else 0
+            manifest = _build_runtime_manifest(
+                deploy_cfg,
+                market_payloads,
+                indexer_block=indexer_block,
+                chain_block=_rpc_hex_int("eth_blockNumber"),
+                chain_id=_rpc_hex_int("eth_chainId"),
+            )
+            return manifest
+        except Exception as e:
+            status = 503 if isinstance(e, (FileNotFoundError, ValueError)) else 500
+            return _error_response(
+                status,
+                "runtime manifest unavailable",
+                exc=e,
+                expose_errors=expose_internal_errors,
+            )
+
     @app.get("/api/status")
     async def api_status():
         try:
@@ -1515,13 +1953,84 @@ def create_app() -> FastAPI:
                         (SELECT index_price FROM block_states
                          WHERE index_price IS NOT NULL
                          ORDER BY block_number DESC
-                         LIMIT 1) AS index_price
+                        LIMIT 1) AS index_price
                     FROM indexer_state
+                """)
+                market_rows = await conn.fetch("""
+                    SELECT
+                        m.market_id,
+                        m.market_type,
+                        m.deploy_block,
+                        COALESCE(s.last_indexed_block, m.deploy_block, 0) AS last_indexed_block,
+                        COALESCE(s.total_events, 0) AS total_events
+                    FROM markets m
+                    LEFT JOIN indexer_state s ON s.market_id = m.market_id
+                    ORDER BY m.deploy_block ASC, m.market_id ASC
+                """)
+                source_rows = await conn.fetch("""
+                    SELECT
+                        source,
+                        kind,
+                        market_id,
+                        market_type,
+                        last_scanned_block,
+                        last_event_block,
+                        last_processed_block,
+                        source_head_block,
+                        last_success_at,
+                        last_error,
+                        updated_at
+                    FROM source_status
+                    WHERE market_id IS NOT NULL
+                    ORDER BY market_id, source, kind
                 """)
             mark_price = float(row["mark_price"]) if row["mark_price"] is not None else None
             index_price = float(row["index_price"]) if row["index_price"] is not None else None
             if index_price is None:
                 index_price = _deployment_index_price_fallback()
+            source_status_by_market: dict[str, list[dict[str, Any]]] = {}
+            for r in source_rows:
+                market_id = r["market_id"]
+                source_status_by_market.setdefault(market_id, []).append({
+                    "source": r["source"],
+                    "kind": r["kind"],
+                    "market_id": market_id,
+                    "marketId": market_id,
+                    "market_type": r["market_type"],
+                    "marketType": r["market_type"],
+                    "last_scanned_block": int(r["last_scanned_block"] or 0),
+                    "lastScannedBlock": int(r["last_scanned_block"] or 0),
+                    "last_event_block": int(r["last_event_block"] or 0),
+                    "lastEventBlock": int(r["last_event_block"] or 0),
+                    "last_processed_block": int(r["last_processed_block"] or 0),
+                    "lastProcessedBlock": int(r["last_processed_block"] or 0),
+                    "source_head_block": int(r["source_head_block"] or 0),
+                    "sourceHeadBlock": int(r["source_head_block"] or 0),
+                    "last_success_at": r["last_success_at"].isoformat() if r["last_success_at"] else None,
+                    "lastSuccessAt": r["last_success_at"].isoformat() if r["last_success_at"] else None,
+                    "last_error": r["last_error"] or "",
+                    "lastError": r["last_error"] or "",
+                    "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
+                    "updatedAt": r["updated_at"].isoformat() if r["updated_at"] else None,
+                })
+            markets = [
+                {
+                    "market_id": r["market_id"],
+                    "marketId": r["market_id"],
+                    "market_type": r["market_type"],
+                    "marketType": r["market_type"],
+                    "deploy_block": int(r["deploy_block"] or 0),
+                    "deployBlock": int(r["deploy_block"] or 0),
+                    "last_indexed_block": int(r["last_indexed_block"] or 0),
+                    "lastIndexedBlock": int(r["last_indexed_block"] or 0),
+                    "total_events": int(r["total_events"] or 0),
+                    "totalEvents": int(r["total_events"] or 0),
+                    "routeAnomalies": 0,
+                    "indexerLagBlocks": 0,
+                    "sourceStatus": source_status_by_market.get(r["market_id"], []),
+                }
+                for r in market_rows
+            ]
             return {
                 "status": "ok",
                 "last_indexed_block": int(row["last_indexed_block"] or 0),
@@ -1529,6 +2038,7 @@ def create_app() -> FastAPI:
                 "total_block_states": int(row["total_block_states"] or 0),
                 "mark_price": mark_price,
                 "index_price": index_price,
+                "markets": markets,
             }
         except Exception as e:
             return _error_response(

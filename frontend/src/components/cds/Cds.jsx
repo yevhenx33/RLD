@@ -69,6 +69,7 @@ export default function CdsMarketPage() {
   const openInterest = (protocolStats?.totalCollateral || 0) + (protocolStats?.totalDebtUsd || 0);
   const collateralSymbol = marketInfo?.collateral?.symbol || "USDC";
   const [walletCollateralBalance, setWalletCollateralBalance] = useState(null);
+  const [maxSlippage, setMaxSlippage] = useState("0.1");
 
   const tradeLogic = useTradeLogic(latest.apy);
   const { activeTab, notional, maturityHours, maturityDays } = tradeLogic.state;
@@ -218,7 +219,7 @@ export default function CdsMarketPage() {
         setActiveTab("CLOSE");
         refreshCoveragePositions?.();
         refreshWalletBalance(true);
-      });
+      }, { maxSlippage });
     } finally {
       txPauseRef.current = false;
     }
@@ -226,6 +227,7 @@ export default function CdsMarketPage() {
     addToast,
     expectedReclaim,
     maturityHours,
+    maxSlippage,
     notionalAmount,
     openCoverage,
     premiumStream,
@@ -269,11 +271,11 @@ export default function CdsMarketPage() {
         });
         refreshCoveragePositions?.();
         refreshWalletBalance(true);
-      });
+      }, { maxSlippage });
     } finally {
       txPauseRef.current = false;
     }
-  }, [addToast, closeCoverage, refreshCoveragePositions, refreshWalletBalance, selectedPosition]);
+  }, [addToast, closeCoverage, maxSlippage, refreshCoveragePositions, refreshWalletBalance, selectedPosition]);
 
   const actionLabel = !account
     ? "Connect Wallet"
@@ -458,6 +460,22 @@ export default function CdsMarketPage() {
                     value={formatCurrency(totalToPost, 2)}
                     valueColor="text-white"
                   />
+                  <SummaryRow
+                    label="Max_Slippage"
+                    value={(
+                      <>
+                        <input
+                          type="number"
+                          value={maxSlippage}
+                          onChange={(e) => setMaxSlippage(e.target.value)}
+                          className="w-10 bg-transparent text-right outline-none text-white border-b border-white/30 transition-colors"
+                          step="0.1"
+                          min="0"
+                        />
+                        <span className="text-gray-500 ml-1">%</span>
+                      </>
+                    )}
+                  />
                   <div className="text-[10px] text-gray-600 leading-relaxed uppercase tracking-widest pt-1">
                     Premium is the insurance cost. Reclaim amount is used to
                     maintain constant coverage and returns after expiration.
@@ -495,6 +513,24 @@ export default function CdsMarketPage() {
                     </button>
                   ))
                 )}
+                <div className="border border-white/10 p-4 space-y-2 bg-white/[0.02]">
+                  <SummaryRow
+                    label="Max_Slippage"
+                    value={(
+                      <>
+                        <input
+                          type="number"
+                          value={maxSlippage}
+                          onChange={(e) => setMaxSlippage(e.target.value)}
+                          className="w-10 bg-transparent text-right outline-none text-white border-b border-white/30 transition-colors"
+                          step="0.1"
+                          min="0"
+                        />
+                        <span className="text-gray-500 ml-1">%</span>
+                      </>
+                    )}
+                  />
+                </div>
               </div>
             )}
           </TradingTerminal>

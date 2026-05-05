@@ -71,11 +71,11 @@ export default function DepositModal({
       });
 
       setExecutionStep("Waiting for confirmation...");
-      await tx.wait();
+      const receipt = await tx.wait();
 
       // Atomic: refresh state THEN close modal
       setAmount("");
-      onSuccess?.();
+      onSuccess?.(receipt);
       onClose();
     } catch (e) {
       console.error("[Deposit] failed:", e);

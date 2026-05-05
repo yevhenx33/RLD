@@ -258,7 +258,7 @@ def test_graphql_broker_operations_decodes_router_events(monkeypatch):
 
         monkeypatch.setattr(gql, "get_pool", test_pool)
         try:
-            ops = await gql.Query().broker_operations(OWNER, limit=10)
+            ops = await gql.Query().broker_operations(OWNER, MARKET_ID, limit=10)
             by_type = {op["type"]: op for op in ops}
             assert set(by_type) == {"OPEN_LONG", "CLOSE_LONG", "SWAP", "OPEN_SHORT", "CLOSE_SHORT", "DEPOSIT"}
             assert by_type["OPEN_LONG"]["amount1"] == 100

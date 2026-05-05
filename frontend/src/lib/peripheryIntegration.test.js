@@ -66,6 +66,19 @@ test("BrokerRouter calldata keeps current min-out signatures", () => {
   const decodedCloseShort = iface.decodeFunctionData("closeShort", closeShort);
   assert.equal(decodedCloseShort.collateralToSpend, 5_000_000n);
   assert.equal(decodedCloseShort.minDebtBought, 4_900_000n);
+
+  const previewLong = iface.encodeFunctionData("previewExecuteLong", [
+    broker,
+    1_000_000n,
+    poolKey,
+  ]);
+  const decodedPreviewLong = iface.decodeFunctionData("previewExecuteLong", previewLong);
+  assert.equal(decodedPreviewLong.amountIn, 1_000_000n);
+
+  const previewPayload = iface.encodeErrorResult("RoutePreview", [900_000n]);
+  const decodedPreview = iface.parseError(previewPayload);
+  assert.equal(decodedPreview.name, "RoutePreview");
+  assert.equal(decodedPreview.args.amountOut, 900_000n);
 });
 
 test("quoter params use hookless keys and expected directions", () => {
