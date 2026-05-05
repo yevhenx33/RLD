@@ -11,6 +11,7 @@ import {UniswapV4BrokerModule} from "../../src/rld/modules/broker/UniswapV4Broke
 import {AaveAdapter} from "../../src/rld/modules/adapters/AaveAdapter.sol";
 import {BrokerRouter} from "../../src/periphery/BrokerRouter.sol";
 import {BondFactory} from "../../src/periphery/BondFactory.sol";
+import {CDSCoverageFactory} from "../../src/periphery/CDSCoverageFactory.sol";
 import {PeripheryGhostLib} from "../../src/periphery/lib/PeripheryGhostLib.sol";
 import {GhostRouter} from "../../src/dex/GhostRouter.sol";
 import {WrappedAToken} from "../../src/shared/wrappers/WrappedAToken.sol";
@@ -305,6 +306,22 @@ contract ApprovedAuditFixesTest is Test {
             bytes4(keccak256("closeShort(address,uint256,(address,address,uint24,int24,address),uint256)"))
         );
         assertEq(
+            BrokerRouter.previewExecuteLong.selector,
+            bytes4(keccak256("previewExecuteLong(address,uint256,(address,address,uint24,int24,address))"))
+        );
+        assertEq(
+            BrokerRouter.previewCloseLong.selector,
+            bytes4(keccak256("previewCloseLong(address,uint256,(address,address,uint24,int24,address))"))
+        );
+        assertEq(
+            BrokerRouter.previewExecuteShort.selector,
+            bytes4(keccak256("previewExecuteShort(address,uint256,uint256,(address,address,uint24,int24,address))"))
+        );
+        assertEq(
+            BrokerRouter.previewCloseShort.selector,
+            bytes4(keccak256("previewCloseShort(address,uint256,(address,address,uint24,int24,address))"))
+        );
+        assertEq(
             BrokerRouter.depositWithApproval.selector,
             bytes4(keccak256("depositWithApproval(address,uint256,uint256)"))
         );
@@ -314,6 +331,7 @@ contract ApprovedAuditFixesTest is Test {
         );
 
         assertEq(BrokerRouter.SwapExecuted.selector, keccak256("SwapExecuted(address,uint8,uint256,uint256)"));
+        assertEq(BrokerRouter.RoutePreview.selector, bytes4(keccak256("RoutePreview(uint256)")));
         assertEq(
             BrokerRouter.ShortPositionUpdated.selector,
             keccak256("ShortPositionUpdated(address,uint256,uint256)")
@@ -323,6 +341,53 @@ contract ApprovedAuditFixesTest is Test {
             keccak256("ShortPositionClosed(address,uint256,uint256)")
         );
         assertEq(BrokerRouter.Deposited.selector, keccak256("Deposited(address,uint256,uint256)"));
+
+        assertEq(
+            BondFactory.mintBond.selector,
+            bytes4(keccak256("mintBond(uint256,uint256,uint256,(address,address,uint24,int24,address),bool,uint256)"))
+        );
+        assertEq(
+            BondFactory.previewMintBond.selector,
+            bytes4(keccak256("previewMintBond(uint256,uint256,uint256,(address,address,uint24,int24,address),bool)"))
+        );
+        assertEq(
+            BondFactory.closeBond.selector,
+            bytes4(keccak256("closeBond(address,(address,address,uint24,int24,address),bool,uint256,uint256)"))
+        );
+        assertEq(
+            BondFactory.previewCloseBond.selector,
+            bytes4(keccak256("previewCloseBond(address,(address,address,uint24,int24,address),bool)"))
+        );
+        assertEq(BondFactory.BondMintPreview.selector, bytes4(keccak256("BondMintPreview(uint256)")));
+        assertEq(
+            BondFactory.BondClosePreview.selector,
+            bytes4(keccak256("BondClosePreview(uint256,uint256)"))
+        );
+
+        assertEq(
+            CDSCoverageFactory.openCoverage.selector,
+            bytes4(keccak256("openCoverage(uint256,uint256,(address,address,uint24,int24,address),uint256)"))
+        );
+        assertEq(
+            CDSCoverageFactory.previewOpenCoverage.selector,
+            bytes4(keccak256("previewOpenCoverage(uint256,uint256,(address,address,uint24,int24,address))"))
+        );
+        assertEq(
+            CDSCoverageFactory.closeCoverage.selector,
+            bytes4(keccak256("closeCoverage(address,(address,address,uint24,int24,address),uint256)"))
+        );
+        assertEq(
+            CDSCoverageFactory.previewCloseCoverage.selector,
+            bytes4(keccak256("previewCloseCoverage(address,(address,address,uint24,int24,address))"))
+        );
+        assertEq(
+            CDSCoverageFactory.CoverageOpenPreview.selector,
+            bytes4(keccak256("CoverageOpenPreview(uint256,uint256)"))
+        );
+        assertEq(
+            CDSCoverageFactory.CoverageClosePreview.selector,
+            bytes4(keccak256("CoverageClosePreview(uint256)"))
+        );
     }
 
     function test_peripheryGhostPoolIdMatchesGhostRouterMarketId() external {
@@ -484,4 +549,3 @@ contract ApprovedAuditFixesTest is Test {
         });
     }
 }
-

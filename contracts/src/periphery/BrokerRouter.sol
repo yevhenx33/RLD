@@ -168,6 +168,7 @@ contract BrokerRouter is ReentrancyGuard {
     error InvalidRoute();
     error PermitTokenMismatch();
     error InvalidBroker();
+    error RoutePreview(uint256 amountOut);
 
     /* ============================================================================================ */
     /*                                          MODIFIERS                                           */
@@ -310,6 +311,26 @@ contract BrokerRouter is ReentrancyGuard {
         emit SwapExecuted(broker, ACTION_EXECUTE_LONG, amountIn, amountOut);
     }
 
+    /// @notice Exact executable route preview for open-long swaps.
+    /// @dev Intended for eth_call only. Always reverts with RoutePreview(amountOut)
+    ///      after executing the same route as executeLong, so no accidental tx can mutate state.
+    function previewExecuteLong(
+        address broker,
+        uint256 amountIn,
+        PoolKey calldata poolKey
+    ) external onlyBrokerAuthorized(broker) nonReentrant {
+        uint256 amountOut = BrokerRouterLib.swapBrokerExactInput(
+            broker,
+            ghostRouter,
+            poolKey,
+            collateralToken,
+            positionToken,
+            amountIn,
+            0
+        );
+        revert RoutePreview(amountOut);
+    }
+
     /* ============================================================================================ */
     /*                                       CLOSE LONG                                             */
     /* ============================================================================================ */
@@ -342,6 +363,25 @@ contract BrokerRouter is ReentrancyGuard {
             minAmountOut
         );
         emit SwapExecuted(broker, ACTION_CLOSE_LONG, amountIn, amountOut);
+    }
+
+    /// @notice Exact executable route preview for close-long swaps.
+    /// @dev Intended for eth_call only. Always reverts with RoutePreview(amountOut).
+    function previewCloseLong(
+        address broker,
+        uint256 amountIn,
+        PoolKey calldata poolKey
+    ) external onlyBrokerAuthorized(broker) nonReentrant {
+        uint256 amountOut = BrokerRouterLib.swapBrokerExactInput(
+            broker,
+            ghostRouter,
+            poolKey,
+            positionToken,
+            collateralToken,
+            amountIn,
+            0
+        );
+        revert RoutePreview(amountOut);
     }
 
     /* ============================================================================================ */
@@ -383,6 +423,28 @@ contract BrokerRouter is ReentrancyGuard {
         emit ShortPositionUpdated(broker, targetDebtAmount, proceeds);
     }
 
+    /// @notice Exact executable route preview for open-short swaps.
+    /// @dev Intended for eth_call only. Always reverts with RoutePreview(proceeds).
+    function previewExecuteShort(
+        address broker,
+        uint256 initialCollateral,
+        uint256 targetDebtAmount,
+        PoolKey calldata poolKey
+    ) external onlyBrokerAuthorized(broker) nonReentrant {
+        uint256 proceeds = BrokerRouterLib.executeShort(
+            broker,
+            initialCollateral,
+            targetDebtAmount,
+            poolKey,
+            0,
+            ghostRouter,
+            marketId,
+            collateralToken,
+            positionToken
+        );
+        revert RoutePreview(proceeds);
+    }
+
     /* ============================================================================================ */
     /*                                       CLOSE SHORT                                            */
     /* ============================================================================================ */
@@ -417,6 +479,26 @@ contract BrokerRouter is ReentrancyGuard {
             positionToken
         );
         emit ShortPositionClosed(broker, debtRepaid, collateralToSpend);
+    }
+
+    /// @notice Exact executable route preview for close-short swaps.
+    /// @dev Intended for eth_call only. Always reverts with RoutePreview(debtRepaid).
+    function previewCloseShort(
+        address broker,
+        uint256 collateralToSpend,
+        PoolKey calldata poolKey
+    ) external onlyBrokerAuthorized(broker) nonReentrant {
+        uint256 debtRepaid = BrokerRouterLib.closeShort(
+            broker,
+            collateralToSpend,
+            poolKey,
+            0,
+            ghostRouter,
+            marketId,
+            collateralToken,
+            positionToken
+        );
+        revert RoutePreview(debtRepaid);
     }
 
     /// @notice Validates that the pool's currencies match the broker's token pair

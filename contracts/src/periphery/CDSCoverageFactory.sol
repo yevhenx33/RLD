@@ -40,6 +40,13 @@ contract CDSCoverageFactory is ReentrancyGuard {
     uint256 public nonce;
     mapping(address => address) public coverageOwner;
 
+    error SlippageExceeded();
+    error CoverageOpenPreview(
+        uint256 positionReceived,
+        uint256 totalRequired
+    );
+    error CoverageClosePreview(uint256 collateralReturned);
+
     event CoverageOpened(
         address indexed user,
         address indexed broker,
@@ -106,8 +113,42 @@ contract CDSCoverageFactory is ReentrancyGuard {
     function openCoverage(
         uint256 coverage,
         uint256 duration,
-        PoolKey calldata poolKey
+        PoolKey calldata poolKey,
+        uint256 minInitialPositionReceived
     ) external nonReentrant returns (address broker) {
+        (broker, , ) = _openCoverage(
+            coverage,
+            duration,
+            poolKey,
+            minInitialPositionReceived
+        );
+    }
+
+    /// @notice Exact executable preview for opening fixed CDS coverage.
+    /// @dev Intended for eth_call only. Always reverts with CoverageOpenPreview.
+    function previewOpenCoverage(
+        uint256 coverage,
+        uint256 duration,
+        PoolKey calldata poolKey
+    ) external nonReentrant {
+        (
+            ,
+            uint256 positionReceived,
+            uint256 totalRequired
+        ) = _openCoverage(coverage, duration, poolKey, 0);
+        revert CoverageOpenPreview(positionReceived, totalRequired);
+    }
+
+    function _openCoverage(
+        uint256 coverage,
+        uint256 duration,
+        PoolKey calldata poolKey,
+        uint256 minInitialPositionReceived
+    ) internal returns (
+        address broker,
+        uint256 positionReceived,
+        uint256 totalRequired
+    ) {
         require(coverage > 0, "Zero coverage");
         require(duration > 0, "Zero duration");
 
@@ -122,6 +163,7 @@ contract CDSCoverageFactory is ReentrancyGuard {
         );
         vars.premiumBudget = premiumBudgetForCoverage(coverage, duration);
         vars.totalRequired = vars.initialCost + vars.premiumBudget;
+        totalRequired = vars.totalRequired;
 
         broker = BROKER_FACTORY.createBroker(
             keccak256(abi.encodePacked(address(this), msg.sender, nonce++))
@@ -135,8 +177,9 @@ contract CDSCoverageFactory is ReentrancyGuard {
             COLLATERAL,
             vars.positionToken,
             vars.initialCost,
-            0
+            minInitialPositionReceived
         );
+        positionReceived = vars.positionReceived;
         IERC20(vars.positionToken).transfer(broker, vars.positionReceived);
 
         IERC20(COLLATERAL).transfer(broker, vars.premiumBudget);
@@ -168,7 +211,26 @@ contract CDSCoverageFactory is ReentrancyGuard {
     /// @dev Cancels/claims TWAMM, liquidates remaining position tokens to
     ///      collateral, and returns all collateral. Settlement payout flows are
     ///      intentionally handled by the market settlement module.
-    function closeCoverage(address broker, PoolKey calldata poolKey) external nonReentrant {
+    function closeCoverage(
+        address broker,
+        PoolKey calldata poolKey,
+        uint256 minCollateralReturned
+    ) external nonReentrant {
+        _closeCoverage(broker, poolKey, minCollateralReturned);
+    }
+
+    /// @notice Exact executable preview for closing fixed CDS coverage.
+    /// @dev Intended for eth_call only. Always reverts with CoverageClosePreview.
+    function previewCloseCoverage(address broker, PoolKey calldata poolKey) external nonReentrant {
+        uint256 collateralReturned = _closeCoverage(broker, poolKey, 0);
+        revert CoverageClosePreview(collateralReturned);
+    }
+
+    function _closeCoverage(
+        address broker,
+        PoolKey calldata poolKey,
+        uint256 minCollateralReturned
+    ) internal returns (uint256 collateralReturned) {
         PrimeBroker pb = PrimeBroker(payable(broker));
         uint256 tokenId = uint256(uint160(broker));
 
@@ -202,6 +264,10 @@ contract CDSCoverageFactory is ReentrancyGuard {
         }
 
         uint256 collateralBalance = ERC20(pb.collateralToken()).balanceOf(broker);
+        if (collateralBalance < minCollateralReturned) {
+            revert SlippageExceeded();
+        }
+        collateralReturned = collateralBalance;
         if (collateralBalance > 0) {
             pb.withdrawToken(pb.collateralToken(), msg.sender, collateralBalance);
         }

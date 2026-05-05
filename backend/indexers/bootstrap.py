@@ -140,8 +140,15 @@ def _market_entries(cfg: dict) -> list[dict]:
     }]
 
 
+_PER_MARKET_PERIPHERY_KEYS = {"broker_router", "deposit_adapter"}
+
+
 def _entry_value(entry: dict, cfg: dict, key: str, default=""):
-    return entry.get(key, cfg.get(key, default))
+    if key in entry:
+        return entry.get(key) or default
+    if entry.get("type") not in (None, "", "perp") and key in _PER_MARKET_PERIPHERY_KEYS:
+        return default
+    return cfg.get(key, default)
 
 
 async def apply_schema(conn: asyncpg.Connection) -> None:
@@ -360,4 +367,3 @@ async def bootstrap_market(pool: asyncpg.Pool) -> dict:
                      (entry.get("rate_oracle") or cfg.get("mock_oracle", ""))[:16],
                      entry.get("pool_id", "")[:16])
     return cfg
-

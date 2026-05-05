@@ -451,6 +451,11 @@ def volume_name(short_name: str) -> str:
     return f"{RETH_PROJECT}_{short_name}"
 
 
+def ensure_reth_volumes() -> None:
+    for short_name in ["reth-datadir", "postgres-data-reth"]:
+        run(["docker", "volume", "create", volume_name(short_name)], capture=True)
+
+
 def ensure_commands(commands: Sequence[str]) -> None:
     missing = [cmd for cmd in commands if shutil.which(cmd) is None]
     if missing:
@@ -509,8 +514,11 @@ def teardown(*, fresh: bool) -> None:
     DEPLOY_JSON.write_text("{}\n")
     if fresh:
         run(["docker", "volume", "rm", volume_name("reth-datadir"), volume_name("postgres-data-reth")], check=False, capture=True)
+        ensure_reth_volumes()
         GENESIS_FILE.unlink(missing_ok=True)
         DEPLOY_SNAPSHOT.unlink(missing_ok=True)
+    else:
+        ensure_reth_volumes()
     ok("Simulation stack stopped; infra/frontend left untouched")
     write_state(phase="teardown")
 
@@ -856,6 +864,7 @@ def start_core(opts: Options) -> None:
     header("Start Core Services")
     if opts.fresh:
         run(["docker", "volume", "rm", volume_name("reth-datadir")], check=False, capture=True)
+        ensure_reth_volumes()
     docker_compose(COMPOSE_RETH, "up", "-d", "reth")
     for _ in range(60):
         if run(["cast", "block-number", "--rpc-url", RETH_RPC], capture=True, check=False).returncode == 0:
@@ -1152,6 +1161,72 @@ def restart(args: argparse.Namespace) -> None:
         lock.close()
 
 
+def sync_indexer_config(opts: Options) -> None:
+    header("Sync Indexer Config")
+    indexer_url = f"http://localhost:{opts.env.get('INDEXER_PORT', '8080')}"
+    headers = {}
+    if opts.env.get("INDEXER_ADMIN_TOKEN"):
+        headers["X-Admin-Token"] = opts.env["INDEXER_ADMIN_TOKEN"]
+    last_status = 0
+    for i in range(1, 31):
+        last_status = http_status(
+            f"{indexer_url}/admin/sync-config",
+            method="POST",
+            timeout=5,
+            headers=headers,
+        )
+        if last_status == 200:
+            ok("Indexer config synced via /admin/sync-config")
+            return
+        if i % 10 == 0:
+            info(f"Indexer sync-config returned {last_status}; retrying")
+        time.sleep(2)
+    docker_compose(COMPOSE_RETH, "logs", "indexer", "--tail", "60", check=False)
+    fail(f"Indexer sync-config failed after retries (status={last_status})")
+
+
+def demo_cutover(args: argparse.Namespace) -> None:
+    if not args.replace_chain:
+        fail("demo-cutover refuses to replace a persistent demo chain without --replace-chain")
+
+    restart_args = argparse.Namespace(
+        no_build=args.no_build,
+        fresh=True,
+        with_users=True,
+        with_bots=True,
+        skip_e2e=False,
+        skip_genesis=False,
+        from_snapshot=False,
+    )
+    restart(restart_args)
+
+    opts = Options(
+        no_build=bool(getattr(args, "no_build", False)),
+        fresh=True,
+        with_users=True,
+        with_bots=True,
+        env=load_env_file(),
+    )
+    env = merged_env({"RPC_URL": RETH_RPC}, base=opts.env)
+
+    header("Deploy CDS Market")
+    run(["python3", str(SCRIPT_DIR / "deploy_cds_market_live.py")], env=env, timeout=300)
+
+    sync_indexer_config(opts)
+
+    header("Verify CDS Market")
+    run(["python3", str(SCRIPT_DIR / "verify_cds_market_live.py"), "--skip-indexer"], env=env, timeout=120)
+    run(["python3", str(SCRIPT_DIR / "verify_cds_market_live.py")], env=env, timeout=120)
+
+    header("Seed CDS Demo Liquidity")
+    run(["python3", str(SCRIPT_DIR / "setup_cds_simulation.py"), "--dry-run"], env=env, timeout=120)
+    run(["python3", str(SCRIPT_DIR / "setup_cds_simulation.py")], env=env, timeout=240)
+
+    verify_runtime(opts)
+    smoke_indexer(opts)
+    ok("Demo cutover complete")
+
+
 def add_common_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--no-build", action="store_true", help="Skip Docker image rebuilds")
     parser.add_argument("--fresh", action="store_true", help="Wipe Reth/Postgres volumes and regenerate genesis")
@@ -1192,6 +1267,10 @@ def main() -> None:
     restart_parser = sub.add_parser("restart")
     add_common_flags(restart_parser)
 
+    demo = sub.add_parser("demo-cutover")
+    demo.add_argument("--replace-chain", action="store_true", help="Allow replacing the persistent demo chain")
+    demo.add_argument("--no-build", action="store_true", help="Skip Docker image rebuilds")
+
     status = sub.add_parser("status")
     status.add_argument("--json", action="store_true")
 
@@ -1229,6 +1308,8 @@ def main() -> None:
             smoke_indexer(opts)
         elif args.command == "restart":
             restart(args)
+        elif args.command == "demo-cutover":
+            demo_cutover(args)
         elif args.command == "status":
             print_status(as_json=args.json)
     except SimctlError as exc:

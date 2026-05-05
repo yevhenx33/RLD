@@ -17,6 +17,8 @@ const POOL_KEY_TUPLE = {
 };
 
 const CDS_COVERAGE_FACTORY_ABI = [
+  "error CoverageOpenPreview(uint256 positionReceived, uint256 totalRequired)",
+  "error CoverageClosePreview(uint256 collateralReturned)",
   {
     name: "quoteOpenCoverage",
     type: "function",
@@ -41,11 +43,34 @@ const CDS_COVERAGE_FACTORY_ABI = [
       { name: "coverage", type: "uint256" },
       { name: "duration", type: "uint256" },
       POOL_KEY_TUPLE,
+      { name: "minInitialPositionReceived", type: "uint256" },
     ],
     outputs: [{ name: "broker", type: "address" }],
   },
   {
+    name: "previewOpenCoverage",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "coverage", type: "uint256" },
+      { name: "duration", type: "uint256" },
+      POOL_KEY_TUPLE,
+    ],
+    outputs: [],
+  },
+  {
     name: "closeCoverage",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "broker", type: "address" },
+      POOL_KEY_TUPLE,
+      { name: "minCollateralReturned", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    name: "previewCloseCoverage",
     type: "function",
     stateMutability: "nonpayable",
     inputs: [
@@ -75,6 +100,77 @@ function getCoverageFactory(infrastructure) {
 
 function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
   return buildHooklessPoolKeyArray(infrastructure, collateralAddr, positionAddr);
+}
+
+const CDS_COVERAGE_IFACE = new ethers.Interface(CDS_COVERAGE_FACTORY_ABI);
+
+function extractRevertData(error) {
+  const candidates = [
+    error?.data,
+    error?.error?.data,
+    error?.info?.error?.data,
+    error?.info?.error?.error?.data,
+    error?.revert?.data,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.startsWith("0x")) return value;
+  }
+  return null;
+}
+
+function parseCoveragePreview(error, expectedName) {
+  if (error?.revert?.name === expectedName) {
+    return error.revert.args;
+  }
+  const data = extractRevertData(error);
+  if (!data) return null;
+  try {
+    const parsed = CDS_COVERAGE_IFACE.parseError(data);
+    if (parsed?.name === expectedName) return parsed.args;
+  } catch {
+    // Not a CDS coverage preview payload.
+  }
+  return null;
+}
+
+async function readCoveragePreview(callPreview, expectedName) {
+  try {
+    await callPreview();
+  } catch (error) {
+    const parsed = parseCoveragePreview(error, expectedName);
+    if (parsed) return parsed;
+    throw error;
+  }
+  throw new Error("Coverage preview did not return a preview payload");
+}
+
+function slippageBps(maxSlippage) {
+  const parsed = Number(maxSlippage);
+  if (!Number.isFinite(parsed) || parsed < 0) return 10;
+  return Math.min(5000, Math.round(parsed * 100));
+}
+
+function minWithSlippage(rawAmount, maxSlippage) {
+  const bps = BigInt(slippageBps(maxSlippage));
+  return (BigInt(rawAmount) * (10_000n - bps)) / 10_000n;
+}
+
+function assertRuntimeReady(infrastructure) {
+  if (
+    infrastructure?.runtime_ready !== false &&
+    infrastructure?.runtimeReady !== false
+  ) {
+    return;
+  }
+  const reasons =
+    infrastructure?.runtimeReadiness?.reasons ||
+    infrastructure?.runtime_readiness?.reasons ||
+    [];
+  throw new Error(
+    reasons.length
+      ? `Runtime not ready: ${reasons.join(", ")}`
+      : "Runtime manifest is not ready",
+  );
 }
 
 function extractBroker(receipt) {
@@ -116,6 +212,7 @@ export function useCdsCoverageExecution(
   const quoteCoverage = useCallback(
     async (coverageUsd, durationHours) => {
       if (!factoryAddr || !collateralAddr || !positionAddr) return null;
+      assertRuntimeReady(infrastructure);
       const poolKey = buildPoolKey(infrastructure, collateralAddr, positionAddr);
       if (!poolKey) return null;
 
@@ -143,7 +240,7 @@ export function useCdsCoverageExecution(
   );
 
   const openCoverage = useCallback(
-    async (coverageUsd, durationHours, onSuccess) => {
+    async (coverageUsd, durationHours, onSuccess, { maxSlippage = 0.1 } = {}) => {
       if (!account || !factoryAddr || !collateralAddr || !positionAddr) {
         setError("Coverage factory not available — waiting for config");
         return;
@@ -167,6 +264,7 @@ export function useCdsCoverageExecution(
       setStep("Preparing coverage...");
 
       try {
+        assertRuntimeReady(infrastructure);
         const coverageWei = ethers.parseUnits(String(coverageUsd), 6);
         const durationSec = BigInt(Math.max(1, Math.round(durationHours))) * 3600n;
 
@@ -210,10 +308,30 @@ export function useCdsCoverageExecution(
           signer,
         );
 
+        setStep("Previewing coverage route...");
+        const openPreview = await readCoveragePreview(
+          () => factory.previewOpenCoverage.staticCall(
+            coverageWei,
+            durationSec,
+            poolKey,
+          ),
+          "CoverageOpenPreview",
+        );
+        const minInitialPositionReceived = minWithSlippage(
+          openPreview[0],
+          maxSlippage,
+        );
+
         setStep("Open fixed coverage...");
-        const tx = await factory.openCoverage(coverageWei, durationSec, poolKey, {
-          gasLimit: 5_000_000,
-        });
+        const tx = await factory.openCoverage(
+          coverageWei,
+          durationSec,
+          poolKey,
+          minInitialPositionReceived,
+          {
+            gasLimit: 5_000_000,
+          },
+        );
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");
@@ -254,7 +372,7 @@ export function useCdsCoverageExecution(
   );
 
   const closeCoverage = useCallback(
-    async (brokerAddress, onSuccess) => {
+    async (brokerAddress, onSuccess, { maxSlippage = 0.1 } = {}) => {
       if (!account || !factoryAddr || !brokerAddress || !collateralAddr || !positionAddr) {
         setError("Coverage factory not available — waiting for config");
         return;
@@ -278,6 +396,7 @@ export function useCdsCoverageExecution(
       setStep("Preparing close...");
 
       try {
+        assertRuntimeReady(infrastructure);
         const signer = await getSigner();
         const factory = new ethers.Contract(
           factoryAddr,
@@ -285,10 +404,25 @@ export function useCdsCoverageExecution(
           signer,
         );
 
+        setStep("Previewing close route...");
+        const closePreview = await readCoveragePreview(
+          () => factory.previewCloseCoverage.staticCall(brokerAddress, poolKey),
+          "CoverageClosePreview",
+        );
+        const minCollateralReturned = minWithSlippage(
+          closePreview[0],
+          maxSlippage,
+        );
+
         setStep("Close fixed coverage...");
-        const tx = await factory.closeCoverage(brokerAddress, poolKey, {
-          gasLimit: 5_000_000,
-        });
+        const tx = await factory.closeCoverage(
+          brokerAddress,
+          poolKey,
+          minCollateralReturned,
+          {
+            gasLimit: 5_000_000,
+          },
+        );
         setTxHash(tx.hash);
 
         setStep("Waiting for confirmation...");

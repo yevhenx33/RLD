@@ -131,7 +131,7 @@ export default function SimulationTerminal() {
   // Convenience aliases from the data object
   const brokerAddress = data?.brokerAddress ?? null;
   const brokerBalance = data?.brokerBalance ?? 0;
-  const brokerAccounts = data?.brokerAccounts ?? [];
+  const brokerAccounts = useMemo(() => data?.brokerAccounts ?? [], [data?.brokerAccounts]);
   const operations = data?.operations ?? [];
   const twammOrders = data?.twammOrders ?? [];
   const brokerState = data; // data IS the broker state now
@@ -355,11 +355,31 @@ export default function SimulationTerminal() {
         : tradeSide === "SHORT"
           ? shortAmount
           : 0;
+  const quoteRouteAction = useMemo(() => {
+    if (tradeAction === "OPEN" && tradeSide === "LONG") return "OPEN_LONG";
+    if (tradeAction === "CLOSE" && tradeSide === "LONG") return "CLOSE_LONG";
+    if (tradeAction === "OPEN" && tradeSide === "SHORT") return "OPEN_SHORT";
+    if (
+      tradeAction === "CLOSE" &&
+      tradeSide === "SHORT" &&
+      closeShortRepayMode === "waUSDC"
+    ) {
+      return "CLOSE_SHORT";
+    }
+    return null;
+  }, [tradeAction, tradeSide, closeShortRepayMode]);
+  const quoteRoute = useMemo(() => ({
+    action: quoteRouteAction,
+    brokerAddress: activeBrokerAddress,
+    caller: account,
+    initialCollateral: collateral,
+  }), [quoteRouteAction, activeBrokerAddress, account, collateral]);
 
-  // Swap quote (V4Quoter on-chain)
+  // Swap quote (executable BrokerRouter route preview; V4Quoter only as fallback)
   const {
     quote: swapQuote,
     loading: quoteLoading,
+    errorCode: quoteErrorCode,
     refresh: refreshQuote,
   } = useSwapQuote(
     enrichedMarketInfo?.infrastructure,
@@ -367,29 +387,39 @@ export default function SimulationTerminal() {
     enrichedMarketInfo?.infrastructure?.swap_position_token,
     quoteAmountIn,
     quoteDirection,
+    { route: quoteRoute },
   );
 
-  const shortOpenSlippageBps = useMemo(() => {
+  const slippageBps = useMemo(() => {
     const parsed = Number(maxSlippage);
     if (!Number.isFinite(parsed) || parsed < 0) return 100; // default 1.00%
     return Math.min(5000, Math.round(parsed * 100)); // cap at 50%
   }, [maxSlippage]);
-  const shortOpenQuotedOut =
-    tradeSide === "SHORT" && tradeAction === "OPEN"
-      ? Number(swapQuote?.amountOut || 0)
-      : 0;
-  const hasShortOpenQuote = shortOpenQuotedOut > 0;
-  const shortOpenMinOut = hasShortOpenQuote
+  const routeQuotedOut = Number(swapQuote?.amountOut || 0);
+  const hasRouteQuote =
+    Boolean(quoteRouteAction) &&
+    swapQuote?.source === "route-preview" &&
+    routeQuotedOut > 0;
+  const routeMinOut = hasRouteQuote
     ? Number(
       (
-        (shortOpenQuotedOut * (10_000 - shortOpenSlippageBps)) /
+        (routeQuotedOut * (10_000 - slippageBps)) /
         10_000
       ).toFixed(6),
     )
     : 0;
+  const hasShortOpenQuote =
+    tradeSide === "SHORT" && tradeAction === "OPEN" && hasRouteQuote;
+  const shortOpenMinOut = hasShortOpenQuote ? routeMinOut : 0;
+  const needsRouterApproval =
+    quoteErrorCode === "ROUTE_OPERATOR_APPROVAL_REQUIRED" &&
+    Boolean(account) &&
+    hasTradingBroker &&
+    Boolean(quoteRouteAction);
 
   // Swap execution (MetaMask-signed)
   const {
+    approveRouter,
     executeLong,
     executeCloseLong,
     executeShort,
@@ -729,7 +759,7 @@ export default function SimulationTerminal() {
             stack is running.
           </div>
           <div className="text-sm text-gray-700 font-mono">
-            Expected at: http://localhost:8080
+            Expected through: /graphql
           </div>
         </div>
       </div>
@@ -1196,6 +1226,8 @@ export default function SimulationTerminal() {
                     ? "Create Account"
                     : swapExecuting
                       ? swapStep || "Processing..."
+                      : needsRouterApproval
+                        ? "Approve Router"
                       : tradeAction === "CLOSE" && tradeSide === "LONG"
                         ? "Close Long"
                         : tradeAction === "CLOSE" && tradeSide === "SHORT"
@@ -1206,19 +1238,26 @@ export default function SimulationTerminal() {
                 onClick:
                   !account || !hasTradingBroker
                     ? () => setShowAccountModal(true)
+                    : needsRouterApproval
+                      ? () => approveRouter(() => refreshQuote())
                     : tradeSide === "LONG"
                       ? () => setShowSwapConfirm(true)
                       : () => setShowSwapConfirm(true),
                 disabled:
                   !account || !hasTradingBroker
                     ? false
+                    : needsRouterApproval
+                      ? swapExecuting
                     : swapExecuting ||
                     (tradeSide === "LONG" &&
                       tradeAction === "OPEN" &&
-                      (!collateral || quoteLoading)) ||
+                      (!collateral || quoteLoading || !hasRouteQuote)) ||
                     (tradeSide === "LONG" &&
                       tradeAction === "CLOSE" &&
-                      (!hasCloseAmount || quoteLoading || closeLongExceedsBalance)) ||
+                      (!hasCloseAmount ||
+                        quoteLoading ||
+                        !hasRouteQuote ||
+                        closeLongExceedsBalance)) ||
                     (tradeSide === "SHORT" &&
                       tradeAction === "OPEN" &&
                       (!collateral ||
@@ -1231,7 +1270,7 @@ export default function SimulationTerminal() {
                         ? (!hasCloseShortDebt ||
                           closeShortDebtExceedsOutstanding ||
                           closeShortDebtExceedsBrokerWrlp)
-                        : (!hasCloseShortAmount || quoteLoading))),
+                        : (!hasCloseShortAmount || quoteLoading || !hasRouteQuote))),
                 variant:
                   tradeAction === "CLOSE"
                     ? "pink"
@@ -1359,7 +1398,11 @@ export default function SimulationTerminal() {
                           ${payDropdownOpen ? "border-white/30" : ""}
                         `}
                       >
-                        <span>{closeShortRepayMode}</span>
+                        <span>
+                          {closeShortRepayMode === "wRLP"
+                            ? positionSymbol
+                            : collateralSymbol}
+                        </span>
                         <ChevronDown
                           size={12}
                           className={`transition-transform duration-200 flex-shrink-0 ${payDropdownOpen ? "rotate-180" : ""}`}
@@ -2171,6 +2214,7 @@ export default function SimulationTerminal() {
         }}
         brokerFactoryAddr={marketInfo?.broker_factory}
         waUsdcAddr={marketInfo?.collateral?.address}
+        collateralSymbol={collateralSymbol}
         externalContracts={marketInfo?.external_contracts}
       />
       {/* Swap Confirmation Modal */}
@@ -2187,7 +2231,7 @@ export default function SimulationTerminal() {
         onConfirm={() => {
           if (tradeAction === "CLOSE" && tradeSide === "LONG") {
             // Close Long flow
-            executeCloseLong(parseFloat(closeAmount), (receipt) => {
+            executeCloseLong(parseFloat(closeAmount), routeMinOut, (receipt) => {
               setShowSwapConfirm(false);
               refresh(activeBrokerAddress, receipt?.blockNumber || null);
               addToast({
@@ -2216,7 +2260,7 @@ export default function SimulationTerminal() {
               });
             } else {
               // waUSDC mode: spend waUSDC to buy wRLP and repay debt
-              executeCloseShort(parseFloat(closeShortAmount), (receipt) => {
+              executeCloseShort(parseFloat(closeShortAmount), routeMinOut, (receipt) => {
                 setShowSwapConfirm(false);
                 refresh(activeBrokerAddress, receipt?.blockNumber || null);
                 addToast({
@@ -2242,7 +2286,7 @@ export default function SimulationTerminal() {
             });
           } else {
             // Open Long flow
-            executeLong(collateral, (receipt) => {
+            executeLong(collateral, routeMinOut, (receipt) => {
               setShowSwapConfirm(false);
               refresh(activeBrokerAddress, receipt?.blockNumber || null);
               addToast({
@@ -2267,6 +2311,11 @@ export default function SimulationTerminal() {
           tradeSide === "SHORT" && tradeAction === "OPEN"
             ? shortAmount
             : swapQuote?.amountOut
+        }
+        minAmountOut={
+          tradeAction === "CLOSE" && tradeSide === "SHORT" && closeShortRepayMode === "wRLP"
+            ? 0
+            : routeMinOut
         }
         entryRate={currentRate}
         liqRate={liqRate}

@@ -159,9 +159,9 @@ library RLDDeployConfig {
     int24 internal constant TICK_SPACING = 60;
 
     /// @notice TWAP observation window for the V4 oracle
-    /// @dev 3600 seconds = 1-hour TWAP. Longer = more manipulation-resistant
-    ///      but slower to react to real price changes.
-    uint32 internal constant ORACLE_PERIOD = 3600;
+    /// @dev Demo Reth deployments use a 60-second TWAP so the oracle can be
+    ///      primed by waiting one minute before user setup.
+    uint32 internal constant ORACLE_PERIOD = 60;
 
     /* ======================================================================
        MARKET METADATA — Default aUSDC market naming

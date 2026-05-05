@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ethers } from "ethers";
-import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
 import { SIM_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { rpcProvider } from "../utils/provider";
@@ -32,6 +31,23 @@ function isUsableAddress(addr) {
     ethers.isAddress(addr) &&
     addr.toLowerCase() !== ethers.ZeroAddress.toLowerCase()
   );
+}
+
+function resolveBuyPositionZeroForOne(marketInfo) {
+  const infrastructure = marketInfo?.infrastructure || {};
+  if (typeof marketInfo?.twamm?.buyPositionZeroForOne === "boolean") {
+    return marketInfo.twamm.buyPositionZeroForOne;
+  }
+  if (typeof infrastructure.buyPositionZeroForOne === "boolean") {
+    return infrastructure.buyPositionZeroForOne;
+  }
+  if (typeof marketInfo?.zeroForOneLong === "boolean") {
+    return marketInfo.zeroForOneLong;
+  }
+  if (typeof marketInfo?.zero_for_one_long === "boolean") {
+    return marketInfo.zero_for_one_long;
+  }
+  return false;
 }
 
 function formatTimeLeft(seconds) {
@@ -124,8 +140,15 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
   }, [selectedBrokerAddress]);
 
   const marketId = marketInfo?.marketId || marketInfo?.market_id;
-  const twammMarketId = marketInfo?.poolId || marketInfo?.pool_id || marketId;
+  const twammMarketId =
+    marketInfo?.twamm?.marketId ||
+    marketInfo?.infrastructure?.twammMarketId ||
+    marketInfo?.infrastructure?.twamm_market_id ||
+    marketInfo?.poolId ||
+    marketInfo?.pool_id ||
+    marketId;
   const twapEngineAddr =
+    marketInfo?.twamm?.engine ||
     marketInfo?.infrastructure?.twapEngine ||
     marketInfo?.infrastructure?.twap_engine ||
     marketInfo?.infrastructure?.twammHook ||
@@ -134,6 +157,7 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
   const positionAddr = marketInfo?.positionToken?.address || marketInfo?.position_token?.address;
   const collateralSymbol = marketInfo?.collateral?.symbol || "waUSDC";
   const positionSymbol = marketInfo?.position_token?.symbol || marketInfo?.positionToken?.symbol || "wRLP";
+  const buyPositionZeroForOne = resolveBuyPositionZeroForOne(marketInfo);
 
   // ── Core fetch: GQL + minimal RPC → single setState ───────────
   const fetchAll = useCallback(async (force = false, brokerAddressOverride = undefined) => {
@@ -248,7 +272,7 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
         const timeLeftSec = Math.max(0, expTs - now);
         const isExpired = timeLeftSec === 0;
         const isDone = isExpired;
-        const isBuy = evt.zeroForOne === ZERO_FOR_ONE_LONG;
+        const isBuy = evt.zeroForOne === buyPositionZeroForOne;
         const direction = isBuy
           ? `${collateralSymbol} → ${positionSymbol}`
           : `${positionSymbol} → ${collateralSymbol}`;
@@ -361,8 +385,10 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
               isExpired ||
               (sellRate === 0 && buyTokensOwed === 0n && sellTokensRefund === 0n);
 
-            const isBuy = evt.zeroForOne === ZERO_FOR_ONE_LONG;
-            const direction = isBuy ? "waUSDC → wRLP" : "wRLP → waUSDC";
+            const isBuy = evt.zeroForOne === buyPositionZeroForOne;
+            const direction = isBuy
+              ? `${collateralSymbol} → ${positionSymbol}`
+              : `${positionSymbol} → ${collateralSymbol}`;
 
             // All tokens are 6 decimals
             const buyTokensRaw = Number(buyTokensOwed) / 1e6;
@@ -376,8 +402,8 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
               : sellRefundRaw * markPrice;
             const valueUsd = earnedUsd + remainingUsd;
 
-            const sellToken = isBuy ? "waUSDC" : "wRLP";
-            const buyToken = isBuy ? "wRLP" : "waUSDC";
+            const sellToken = isBuy ? collateralSymbol : positionSymbol;
+            const buyToken = isBuy ? positionSymbol : collateralSymbol;
 
             const tracked =
               trackedOrderId != null &&
@@ -639,10 +665,10 @@ export function useBrokerData(account, marketInfo, blockNumber, blockTimestamp, 
     positionAddr,
     collateralSymbol,
     positionSymbol,
+    buyPositionZeroForOne,
     marketInfo,
     blockTimestamp,
     pauseRef,
-    selectedBrokerAddress,
   ]);
 
   // ── Block-driven: refresh when new block arrives ──────────────

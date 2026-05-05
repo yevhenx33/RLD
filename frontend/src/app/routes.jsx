@@ -4,6 +4,7 @@ import AppShell from "./AppShell";
 import LoadingScreen from "./LoadingScreen";
 import { useEnvioStatus } from "../hooks/queries/useEnvioStatus";
 import { SimulationProvider, useSim } from "../context/SimulationContext";
+import { runtimeMarketKeyForPath } from "../lib/runtimeMarketRouting";
 
 const HomepagePage = lazy(() => import("../pages/public/HomepagePage"));
 const IntelPage = lazy(() => import("../pages/public/IntelPage"));
@@ -70,7 +71,7 @@ function SimulationRuntimeShellInner() {
 function SimulationRuntimeShell() {
   const { address } = useParams();
   const location = useLocation();
-  const marketKey = address ? String(address).toLowerCase() : null;
+  const marketKey = runtimeMarketKeyForPath(location.pathname, address);
   const enableChart = !location.pathname.startsWith("/markets/perps/");
   return (
     <SimulationProvider pollInterval={2000} marketKey={marketKey} enableChart={enableChart}>

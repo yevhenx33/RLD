@@ -202,6 +202,16 @@ GHOST_ROUTER_ABI: list[dict[str, Any]] = [
     },
 ]
 
+BROKER_FACTORY_ABI: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "name": "setDefaultOperators",
+        "stateMutability": "nonpayable",
+        "inputs": [{"name": "operators", "type": "address[]"}],
+        "outputs": [],
+    },
+]
+
 
 def die(msg: str) -> None:
     print(f"[ERR] {msg}", file=sys.stderr)
@@ -407,7 +417,7 @@ def main() -> None:
     parser.add_argument("--r-max-wad", type=int, default=DEFAULT_R_MAX_WAD)
     parser.add_argument("--pool-fee", type=int, default=500)
     parser.add_argument("--tick-spacing", type=int, default=5)
-    parser.add_argument("--oracle-period", type=int, default=3600)
+    parser.add_argument("--oracle-period", type=int, default=60)
     parser.add_argument("--funding-period", type=int, default=30 * 24 * 60 * 60)
     parser.add_argument("--min-col-ratio", type=int, default=1_200_000_000_000_000_000)
     parser.add_argument("--maintenance-margin", type=int, default=1_090_000_000_000_000_000)
@@ -591,6 +601,42 @@ def main() -> None:
         die(f"CDSCoverageFactory has no code: {coverage_factory}")
     ok(f"CDSCoverageFactory deployed: {coverage_factory}")
 
+    step("Deploy CDS execution router")
+    deposit_adapter = deploy_contract_with_forge(
+        "src/periphery/adapters/DirectDepositAdapter.sol:DirectDepositAdapter",
+        private_key,
+        args.rpc_url,
+        [collateral_token],
+    )
+    if not has_code(w3, deposit_adapter):
+        die(f"DirectDepositAdapter has no code: {deposit_adapter}")
+    ok(f"DirectDepositAdapter deployed: {deposit_adapter}")
+
+    broker_router_config = (
+        f"({checksum(preview_broker_factory)},{candidate_market_id_hex},{collateral_token},{position_token},{underlying_token},{deposit_adapter})"
+    )
+    broker_router = deploy_contract_with_forge(
+        "src/periphery/BrokerRouter.sol:BrokerRouter",
+        private_key,
+        args.rpc_url,
+        [checksum(deploy["ghost_router"]), checksum(deploy["permit2"]), broker_router_config],
+    )
+    if not has_code(w3, broker_router):
+        die(f"BrokerRouter has no code: {broker_router}")
+    ok(f"CDS BrokerRouter deployed: {broker_router}")
+
+    broker_factory_contract = w3.eth.contract(
+        address=checksum(preview_broker_factory),
+        abi=BROKER_FACTORY_ABI,
+    )
+    send_contract_tx(
+        w3,
+        private_key,
+        broker_factory_contract.functions.setDefaultOperators([broker_router]),
+        "PrimeBrokerFactory.setDefaultOperators(CDS)",
+        gas_cap=500_000,
+    )
+
     step("Update deployment config")
     cds_entry = {
         "type": "cds",
@@ -603,6 +649,8 @@ def main() -> None:
         "position_token": position_token,
         "position_name": args.position_name,
         "position_symbol": args.position_symbol,
+        "broker_router": broker_router,
+        "deposit_adapter": deposit_adapter,
         "broker_factory": checksum(preview_broker_factory),
         "rate_oracle": rate_oracle,
         "spot_oracle": spot_oracle,
@@ -638,6 +686,8 @@ def main() -> None:
     deploy["cds_pool_id"] = pool_id
     deploy["cds_position_token"] = position_token
     deploy["cds_broker_factory"] = checksum(preview_broker_factory)
+    deploy["cds_broker_router"] = broker_router
+    deploy["cds_deposit_adapter"] = deposit_adapter
     deploy["cds_funding_model"] = funding_model
     deploy["cds_settlement_module"] = settlement_proxy
     deploy["cds_coverage_factory"] = coverage_factory

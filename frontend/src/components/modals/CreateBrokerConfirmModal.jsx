@@ -15,6 +15,7 @@ export default function CreateBrokerConfirmModal({
 
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDepositAmount("");
     }
   }, [isOpen]);

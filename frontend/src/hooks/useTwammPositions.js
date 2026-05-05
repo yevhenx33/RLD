@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { ethers } from "ethers";
-import { ZERO_FOR_ONE_LONG } from "../config/simulationConfig";
 import { SIM_GRAPHQL_URL } from "../api/endpoints";
 import { postGraphQL } from "../api/graphqlClient";
 import { queryKeys } from "../api/queryKeys";
@@ -10,37 +9,16 @@ import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 // ── ABI: only view functions (no event scanning) ──────────────────
 
-const JTM_VIEW_ABI = [
-  "function getOrder((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 sellRate, uint256 earningsFactorLast)",
-  "function getCancelOrderState((address,address,uint24,int24,address) key, (address,uint160,bool,uint256) orderKey) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
+const TWAP_ENGINE_VIEW_ABI = [
+  "function streamOrders(bytes32 marketId, bytes32 orderId) view returns (address owner, uint256 sellRate, uint256 earningsFactorLast, uint256 startEpoch, uint256 expiration, bool zeroForOne)",
+  "function getCancelOrderState(bytes32 marketId, bytes32 orderId) view returns (uint256 buyTokensOwed, uint256 sellTokensRefund)",
 ];
 
 const BROKER_ACTIVE_ORDER_ABI = [
-  // Solidity auto-getter flattens TwammOrderInfo { PoolKey key; OrderKey orderKey; bytes32 orderId }
-  // PoolKey = (address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)
-  // OrderKey = (address owner, uint160 expiration, bool zeroForOne, uint256 nonce)
-  "function activeTwammOrder() view returns (address, address, uint24, int24, address, address, uint160, bool, uint256, bytes32)",
+  "function activeTwammOrder() view returns (bytes32 marketId, bytes32 orderId)",
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-function buildPoolKey(infrastructure, collateralAddr, positionAddr) {
-  const token0 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? collateralAddr
-      : positionAddr;
-  const token1 =
-    collateralAddr.toLowerCase() < positionAddr.toLowerCase()
-      ? positionAddr
-      : collateralAddr;
-  return [
-    token0,
-    token1,
-    infrastructure.pool_fee || 500,
-    infrastructure.tick_spacing || 5,
-    infrastructure.twamm_hook,
-  ];
-}
 
 function formatTimeLeft(seconds) {
   if (seconds <= 0) return "Expired";
@@ -54,6 +32,23 @@ function formatTimeLeft(seconds) {
   }
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   return `${m}m ${String(s).padStart(2, "0")}s`;
+}
+
+function resolveBuyPositionZeroForOne(marketInfo) {
+  const infrastructure = marketInfo?.infrastructure || {};
+  if (typeof marketInfo?.twamm?.buyPositionZeroForOne === "boolean") {
+    return marketInfo.twamm.buyPositionZeroForOne;
+  }
+  if (typeof infrastructure.buyPositionZeroForOne === "boolean") {
+    return infrastructure.buyPositionZeroForOne;
+  }
+  if (typeof marketInfo?.zeroForOneLong === "boolean") {
+    return marketInfo.zeroForOneLong;
+  }
+  if (typeof marketInfo?.zero_for_one_long === "boolean") {
+    return marketInfo.zero_for_one_long;
+  }
+  return false;
 }
 
 // ── GraphQL query replaces getLogs scanning ────────────────────────
@@ -92,9 +87,25 @@ export function useTwammPositions(
   const mountedRef = useRef(true);
   const initialLoadDone = useRef(false);
 
-  const hookAddr = marketInfo?.infrastructure?.twamm_hook;
+  const twapEngineAddr =
+    marketInfo?.twamm?.engine ||
+    marketInfo?.infrastructure?.twapEngine ||
+    marketInfo?.infrastructure?.twap_engine;
+  const twammMarketId =
+    marketInfo?.twamm?.marketId ||
+    marketInfo?.infrastructure?.twammMarketId ||
+    marketInfo?.infrastructure?.twamm_market_id ||
+    marketInfo?.poolId ||
+    marketInfo?.pool_id ||
+    marketInfo?.marketId;
   const collateralAddr = marketInfo?.collateral?.address;
-  const positionAddr = marketInfo?.position_token?.address;
+  const positionAddr = marketInfo?.positionToken?.address || marketInfo?.position_token?.address;
+  const collateralSymbol = marketInfo?.collateral?.symbol || "waUSDC";
+  const positionSymbol =
+    marketInfo?.positionToken?.symbol ||
+    marketInfo?.position_token?.symbol ||
+    "wRLP";
+  const buyPositionZeroForOne = resolveBuyPositionZeroForOne(marketInfo);
 
   // ── Fetch base orders via GraphQL (SWR with dedup) ──────────────
   const { data: gqlData, mutate: refreshGql } = useSWR(
@@ -112,7 +123,8 @@ export function useTwammPositions(
   const enrichOrders = useCallback(async () => {
     if (
       !brokerAddress ||
-      !hookAddr ||
+      !twapEngineAddr ||
+      !twammMarketId ||
       !collateralAddr ||
       !positionAddr ||
       !marketInfo?.infrastructure ||
@@ -149,7 +161,7 @@ export function useTwammPositions(
           provider,
         );
         const result = await broker.activeTwammOrder();
-        trackedOrderId = result[9]; // orderId is the 10th return value (index 9)
+        trackedOrderId = result[1];
         if (
           trackedOrderId ===
           "0x0000000000000000000000000000000000000000000000000000000000000000"
@@ -161,38 +173,24 @@ export function useTwammPositions(
 
       const markPrice = oraclePrice > 0 ? oraclePrice : 1;
 
-      const poolKey = buildPoolKey(
-        marketInfo.infrastructure,
-        collateralAddr,
-        positionAddr,
-      );
-      const hook = new ethers.Contract(hookAddr, JTM_VIEW_ABI, provider);
+      const twapEngine = new ethers.Contract(twapEngineAddr, TWAP_ENGINE_VIEW_ABI, provider);
 
       const enrichedOrders = await Promise.all(
         activeOrders.map(async (evt) => {
-          const orderKeyTuple = [
-            evt.owner,
-            parseInt(evt.expiration),
-            evt.zeroForOne,
-            parseInt(evt.nonce || "0"),
-          ];
-
           let sellRate = 0n;
           let buyTokensOwed = 0n;
           let sellTokensRefund = 0n;
+          const orderId = evt.orderId?.startsWith("0x") ? evt.orderId : `0x${evt.orderId}`;
 
           try {
-            const orderResult = await hook.getOrder(poolKey, orderKeyTuple);
-            sellRate = orderResult[0];
+            const orderResult = await twapEngine.streamOrders(twammMarketId, orderId);
+            sellRate = orderResult.sellRate ?? orderResult[1];
           } catch (e) {
-            console.warn("[TWAMM] getOrder failed:", e.message);
+            console.warn("[TWAMM] streamOrders failed:", e.message);
           }
 
           try {
-            const cancelState = await hook.getCancelOrderState(
-              poolKey,
-              orderKeyTuple,
-            );
+            const cancelState = await twapEngine.getCancelOrderState(twammMarketId, orderId);
             buyTokensOwed = cancelState[0];
             sellTokensRefund = cancelState[1];
           } catch (e) {
@@ -223,8 +221,10 @@ export function useTwammPositions(
           const isExpired = timeLeftSec === 0;
           const isDone = isExpired || sellRate === 0n;
 
-          const isBuy = evt.zeroForOne === ZERO_FOR_ONE_LONG;
-          const direction = isBuy ? "waUSDC → wRLP" : "wRLP → waUSDC";
+          const isBuy = evt.zeroForOne === buyPositionZeroForOne;
+          const direction = isBuy
+            ? `${collateralSymbol} → ${positionSymbol}`
+            : `${positionSymbol} → ${collateralSymbol}`;
 
           const buyTokensRaw = Number(buyTokensOwed) / 1e6;
           const sellRefundRaw = refundNum / 1e6;
@@ -237,8 +237,8 @@ export function useTwammPositions(
             : sellRefundRaw * markPrice;
           const valueUsd = earnedUsd + remainingUsd;
 
-          const sellToken = isBuy ? "waUSDC" : "wRLP";
-          const buyToken = isBuy ? "wRLP" : "waUSDC";
+          const sellToken = isBuy ? collateralSymbol : positionSymbol;
+          const buyToken = isBuy ? positionSymbol : collateralSymbol;
 
           const tracked =
             trackedOrderId != null &&
@@ -298,7 +298,19 @@ export function useTwammPositions(
         setLoading(false);
       }
     }
-  }, [brokerAddress, hookAddr, collateralAddr, positionAddr, marketInfo, oraclePrice, gqlData]);
+  }, [
+    brokerAddress,
+    twapEngineAddr,
+    twammMarketId,
+    collateralAddr,
+    positionAddr,
+    collateralSymbol,
+    positionSymbol,
+    buyPositionZeroForOne,
+    marketInfo,
+    oraclePrice,
+    gqlData,
+  ]);
 
   // Re-enrich whenever GraphQL data updates
   useEffect(() => {

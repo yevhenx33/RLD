@@ -5,6 +5,8 @@ import { useWallet } from "../context/WalletContext";
 import { useBrokerAccount } from "./useBrokerAccount";
 import { usePoolLiquidity } from "./usePoolLiquidity";
 import { useChartControls } from "./useChartControls";
+import { SIM_GRAPHQL_URL } from "../api/endpoints";
+import { postGraphQL } from "../api/graphqlClient";
 
 /**
  * usePoolData — Coordinator hook for the Pool LP page.
@@ -30,6 +32,12 @@ export function usePoolData() {
     marketInfo,
   } = sim;
 
+  const selectedMarketKey =
+    marketInfo?.marketId ||
+    marketInfo?.market_id ||
+    market?.marketId ||
+    null;
+
   // ── 2. Wallet (instant) ──────────────────────────────────────────
   const { account } = useWallet();
 
@@ -40,34 +48,30 @@ export function usePoolData() {
     defaultResolution: "1H",
   });
   const { appliedStart, appliedEnd, resolution } = chartControls;
-
-  // Sim block timestamp for chart time anchoring
-  const [simBlockTs, setSimBlockTs] = useState(null);
-  useEffect(() => {
-    if (simBlockTs) return;
-    const ts = sim?.latest?.market?.blockTimestamp;
-    if (ts) setSimBlockTs(ts);
-  }, [sim?.latest, simBlockTs]);
+  const simBlockTs = market?.blockTimestamp || sim?.latest?.market?.blockTimestamp || null;
+  const chartReferenceTime = useMemo(() => {
+    if (!appliedEnd) return null;
+    return Math.floor(new Date(`${appliedEnd}T23:59:59Z`).getTime() / 1000);
+  }, [appliedEnd]);
 
   const chartStartTime = useMemo(() => {
-    if (!simBlockTs || !appliedStart) return null;
-    const wallNow = Math.floor(Date.now() / 1000);
+    if (!simBlockTs || !appliedStart || !chartReferenceTime) return null;
     const wallStart = Math.floor(new Date(appliedStart).getTime() / 1000);
-    return simBlockTs - (wallNow - wallStart);
-  }, [appliedStart, simBlockTs]);
+    return simBlockTs - (chartReferenceTime - wallStart);
+  }, [appliedStart, chartReferenceTime, simBlockTs]);
 
   const chartEndTime = useMemo(() => {
-    if (!simBlockTs || !appliedEnd) return null;
-    const wallNow = Math.floor(Date.now() / 1000);
+    if (!simBlockTs || !appliedEnd || !chartReferenceTime) return null;
     const wallEnd = Math.floor(new Date(appliedEnd + "T23:59:59Z").getTime() / 1000);
-    return simBlockTs - (wallNow - wallEnd);
-  }, [appliedEnd, simBlockTs]);
+    return simBlockTs - (chartReferenceTime - wallEnd);
+  }, [appliedEnd, chartReferenceTime, simBlockTs]);
 
   const simChart = useSimulation({
     pollInterval: 2000,
     chartResolution: resolution,
     chartStartTime,
     chartEndTime,
+    marketKey: selectedMarketKey,
   });
   const { chartData, volumeHistory } = simChart;
 
@@ -78,10 +82,15 @@ export function usePoolData() {
     marketInfo?.collateral?.address,
   );
 
-  // ── 5. Pool liquidity (depends on broker + marketInfo) ──────────
-  // onRefreshComplete will be populated AFTER we define refreshAll()
-  const [externalRefreshes, setExternalRefreshes] = useState([]);
+  const refreshAll = useCallback(async () => {
+    await Promise.all([
+      fetchBrokerBalance?.(),
+      checkBroker?.(),
+    ].filter(Boolean));
+  }, [fetchBrokerBalance, checkBroker]);
+  const refreshCallbacks = useMemo(() => [refreshAll], [refreshAll]);
 
+  // ── 5. Pool liquidity (depends on broker + marketInfo) ──────────
   const {
     executeAddLiquidity,
     executeCollectFees,
@@ -97,7 +106,7 @@ export function usePoolData() {
     executionError: lpError,
     clearError: clearLpError,
   } = usePoolLiquidity(brokerAddress, marketInfo, {
-    onRefreshComplete: externalRefreshes,
+    onRefreshComplete: refreshCallbacks,
   });
 
   // ── 6. Liquidity distribution bins (depends on pool data) ───────
@@ -129,21 +138,22 @@ export function usePoolData() {
   }, []);
 
   useEffect(() => {
+    if (!selectedMarketKey) return;
     let cancelled = false;
-    const GQL_URL = `/graphql`;
-    const LIQ_QUERY = `query { liquidityDistribution }`;
+    const LIQ_QUERY = `
+      query PoolLiquidityDistribution($market: String) {
+        liquidityDistribution(market: $market)
+      }
+    `;
 
     async function fetchDistribution() {
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const res = await fetch(GQL_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: LIQ_QUERY }),
+          const json = await postGraphQL(SIM_GRAPHQL_URL, {
+            query: LIQ_QUERY,
+            variables: { market: selectedMarketKey },
           });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const json = await res.json();
-          const rawBins = json?.data?.liquidityDistribution;
+          const rawBins = json?.liquidityDistribution;
           if (!cancelled && rawBins?.length) {
             const curPrice = pool?.markPrice || 1;
             const bins = rawBins
@@ -180,28 +190,14 @@ export function usePoolData() {
       if (!cancelled && allPositions?.length) {
         const price = pool?.markPrice || 1;
         setLiquidityBins(buildLocalBins(allPositions, price));
+      } else if (!cancelled) {
+        setLiquidityBins([]);
+        setLiqDistPrice(null);
       }
     }
     fetchDistribution();
     return () => { cancelled = true; };
-  }, [pool?.markPrice, allPositions, buildLocalBins]);
-
-  // ── refreshAll() — called after any transaction as onRefreshComplete ──
-  // NOTE: refreshPosition is NOT included here because every LP operation
-  // already calls refreshPosition() explicitly before _syncAndNotify().
-  // Including it here would cause a redundant second GQL call that may
-  // return stale data and overwrite the correct positions.
-  const refreshAll = useCallback(async () => {
-    await Promise.all([
-      fetchBrokerBalance?.(),
-      checkBroker?.(),
-    ].filter(Boolean));
-  }, [fetchBrokerBalance, checkBroker]);
-
-  // Register refreshAll as external refresh for LP hook
-  useEffect(() => {
-    setExternalRefreshes([refreshAll]);
-  }, [refreshAll]);
+  }, [pool?.markPrice, allPositions, buildLocalBins, selectedMarketKey]);
 
   // ── Readiness gate ────────────────────────────────────────────────
   // Render once the core pool snapshot is available. Chart candles and

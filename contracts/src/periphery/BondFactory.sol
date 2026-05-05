@@ -61,10 +61,10 @@ interface IAavePool {
 ///
 ///   ### Create:
 ///   1. One-time: `USDC.approve(bondFactory, type(uint256).max)` (or waUSDC)
-///   2. Per bond: `bondFactory.mintBond(notional, hedge, duration, poolKey, useUnderlying)`
+///   2. Per bond: `bondFactory.mintBond(notional, hedge, duration, poolKey, useUnderlying, minHedgeProceeds)`
 ///
 ///   ### Close:
-///   1. `bondFactory.closeBond(broker, poolKey, useUnderlying)` — no approvals needed
+///   1. `bondFactory.closeBond(broker, poolKey, useUnderlying, maxDebtRepayCollateralIn, minCollateralReturned)` — no approvals needed
 ///
 ///   ### Optional NFT custody:
 ///   - `claimBond(broker)` — transfer NFT to your wallet
@@ -98,6 +98,16 @@ contract BondFactory is ReentrancyGuard {
     /// @notice Tracks bond ownership when NFT is custodied by BondFactory
     /// @dev broker address → user address. Zero when NFT has been claimed.
     mapping(address => address) public bondOwner;
+
+    /* =============================== ERRORS =============================== */
+
+    error SlippageExceeded();
+    error MaxInputExceeded();
+    error BondMintPreview(uint256 hedgeProceeds);
+    error BondClosePreview(
+        uint256 debtRepayCollateralIn,
+        uint256 collateralReturned
+    );
 
     /* =============================== EVENTS =============================== */
 
@@ -168,14 +178,55 @@ contract BondFactory is ReentrancyGuard {
     /// @param useUnderlying If true, pull underlying (e.g. USDC) from user and
     ///                     auto-wrap to collateral (e.g. waUSDC). If false, pull
     ///                     collateral directly.
+    /// @param minHedgeProceeds Minimum collateral proceeds required from the
+    ///                         self-funding hedge swap.
     /// @return broker        The deployed broker address (also the NFT token)
     function mintBond(
         uint256 notional,
         uint256 debtAmount,
         uint256 duration,
         PoolKey calldata poolKey,
-        bool useUnderlying
+        bool useUnderlying,
+        uint256 minHedgeProceeds
     ) external nonReentrant returns (address broker) {
+        (broker, ) = _mintBond(
+            notional,
+            debtAmount,
+            duration,
+            poolKey,
+            useUnderlying,
+            minHedgeProceeds
+        );
+    }
+
+    /// @notice Exact executable preview for bond minting.
+    /// @dev Intended for eth_call only. Always reverts with BondMintPreview.
+    function previewMintBond(
+        uint256 notional,
+        uint256 debtAmount,
+        uint256 duration,
+        PoolKey calldata poolKey,
+        bool useUnderlying
+    ) external nonReentrant {
+        (, uint256 proceeds) = _mintBond(
+            notional,
+            debtAmount,
+            duration,
+            poolKey,
+            useUnderlying,
+            0
+        );
+        revert BondMintPreview(proceeds);
+    }
+
+    function _mintBond(
+        uint256 notional,
+        uint256 debtAmount,
+        uint256 duration,
+        PoolKey calldata poolKey,
+        bool useUnderlying,
+        uint256 minHedgeProceeds
+    ) internal returns (address broker, uint256 proceeds) {
         require(notional > 0, "Zero notional");
         require(debtAmount > 0, "Zero debt");
         require(duration > 0, "Zero duration");
@@ -199,13 +250,13 @@ contract BondFactory is ReentrancyGuard {
         // ── 4. Withdraw minted wRLP → swap → waUSDC proceeds ───────────
         address positionToken = pb.positionToken();
         pb.withdrawToken(pb.positionToken(), address(this), debtAmount);
-        uint256 proceeds = PeripheryGhostLib.swapExactInput(
+        proceeds = PeripheryGhostLib.swapExactInput(
             GHOST_ROUTER,
             poolKey,
             positionToken,
             COLLATERAL,
             debtAmount,
-            0
+            minHedgeProceeds
         );
 
         // ── 5. Send proceeds to broker → TWAMM buy-back order ──────────
@@ -246,11 +297,52 @@ contract BondFactory is ReentrancyGuard {
     /// @param poolKey        The Uniswap V4 pool key (needed for swaps)
     /// @param useUnderlying  If true, unwrap collateral to underlying (e.g. USDC)
     ///                       before returning to user
+    /// @param maxDebtRepayCollateralIn Maximum collateral that may be spent
+    ///                                 buying wRLP shortfall. Zero disables this bound.
+    /// @param minCollateralReturned Minimum collateral balance required before withdrawal.
     function closeBond(
+        address broker,
+        PoolKey calldata poolKey,
+        bool useUnderlying,
+        uint256 maxDebtRepayCollateralIn,
+        uint256 minCollateralReturned
+    ) external nonReentrant {
+        _closeBond(
+            broker,
+            poolKey,
+            useUnderlying,
+            maxDebtRepayCollateralIn,
+            minCollateralReturned
+        );
+    }
+
+    /// @notice Exact executable preview for bond closing.
+    /// @dev Intended for eth_call only. Always reverts with BondClosePreview.
+    function previewCloseBond(
         address broker,
         PoolKey calldata poolKey,
         bool useUnderlying
     ) external nonReentrant {
+        (
+            uint256 debtRepayCollateralIn,
+            uint256 collateralReturned
+        ) = _closeBond(broker, poolKey, useUnderlying, 0, 0);
+        revert BondClosePreview(debtRepayCollateralIn, collateralReturned);
+    }
+
+    function _closeBond(
+        address broker,
+        PoolKey calldata poolKey,
+        bool useUnderlying,
+        uint256 maxDebtRepayCollateralIn,
+        uint256 minCollateralReturned
+    )
+        internal
+        returns (
+            uint256 debtRepayCollateralIn,
+            uint256 collateralReturned
+        )
+    {
         PrimeBroker pb = PrimeBroker(payable(broker));
         uint256 tokenId = uint256(uint160(broker));
 
@@ -272,36 +364,12 @@ contract BondFactory is ReentrancyGuard {
         PeripheryTwapLib.closeActiveOrder(pb, TWAP_ENGINE);
 
         // ── 4. Repay wRLP debt ──────────────────────────────────────────
-        address coreAddr = pb.CORE();
-        MarketId mktId = pb.marketId();
-        bytes32 rawMarketId = MarketId.unwrap(mktId);
-
-        IRLDCore.Position memory pos = IRLDCore(coreAddr).getPosition(
-            mktId,
-            broker
+        debtRepayCollateralIn = _repayBondDebt(
+            pb,
+            broker,
+            poolKey,
+            maxDebtRepayCollateralIn
         );
-        uint128 debtPrincipal = pos.debtPrincipal;
-
-        if (debtPrincipal > 0) {
-            address positionToken = pb.positionToken();
-            uint256 wrlpBalance = ERC20(positionToken).balanceOf(broker);
-
-            // If wRLP insufficient, buy the shortfall through GhostRouter
-            if (wrlpBalance < debtPrincipal) {
-                uint256 shortfall = debtPrincipal - wrlpBalance;
-                _buyExactWRLP(pb, shortfall, positionToken, poolKey);
-            }
-
-            // Re-fetch wRLP balance after swap
-            uint256 availableWRLP = ERC20(positionToken).balanceOf(broker);
-            uint256 repayAmount = availableWRLP < debtPrincipal
-                ? availableWRLP
-                : debtPrincipal;
-
-            if (repayAmount > 0) {
-                pb.modifyPosition(rawMarketId, int256(0), -int256(repayAmount));
-            }
-        }
 
         // ── 5. Convert leftover wRLP → waUSDC ───────────────────────────
         _sellLeftoverPosition(pb, poolKey);
@@ -309,6 +377,8 @@ contract BondFactory is ReentrancyGuard {
         // ── 6. Withdraw collateral ───────────────────────────────────────
         address collateralToken = pb.collateralToken();
         uint256 collBal = ERC20(collateralToken).balanceOf(broker);
+        if (collBal < minCollateralReturned) revert SlippageExceeded();
+        collateralReturned = collBal;
 
         if (collBal > 0) {
             if (useUnderlying) {
@@ -366,6 +436,47 @@ contract BondFactory is ReentrancyGuard {
         IERC20(COLLATERAL).transfer(broker, waUSDCReceived);
     }
 
+    function _repayBondDebt(
+        PrimeBroker pb,
+        address broker,
+        PoolKey calldata poolKey,
+        uint256 maxDebtRepayCollateralIn
+    ) internal returns (uint256 debtRepayCollateralIn) {
+        MarketId mktId = pb.marketId();
+        IRLDCore.Position memory pos = IRLDCore(pb.CORE()).getPosition(
+            mktId,
+            broker
+        );
+        uint128 debtPrincipal = pos.debtPrincipal;
+        if (debtPrincipal == 0) return 0;
+
+        address positionToken = pb.positionToken();
+        uint256 wrlpBalance = ERC20(positionToken).balanceOf(broker);
+
+        if (wrlpBalance < debtPrincipal) {
+            debtRepayCollateralIn = _buyExactWRLP(
+                pb,
+                debtPrincipal - wrlpBalance,
+                positionToken,
+                poolKey,
+                maxDebtRepayCollateralIn
+            );
+        }
+
+        uint256 availableWRLP = ERC20(positionToken).balanceOf(broker);
+        uint256 repayAmount = availableWRLP < debtPrincipal
+            ? availableWRLP
+            : debtPrincipal;
+
+        if (repayAmount > 0) {
+            pb.modifyPosition(
+                MarketId.unwrap(mktId),
+                int256(0),
+                -int256(repayAmount)
+            );
+        }
+    }
+
     /* ========================= INTERNAL HELPERS ========================== */
 
     /* ========================= V4 SWAP HELPERS ============================ */
@@ -376,14 +487,15 @@ contract BondFactory is ReentrancyGuard {
         PrimeBroker pb,
         uint256 wrlpNeeded,
         address positionToken,
-        PoolKey calldata poolKey
-    ) internal {
+        PoolKey calldata poolKey,
+        uint256 maxCollateralIn
+    ) internal returns (uint256 amountIn) {
         address collToken = pb.collateralToken();
         PeripheryGhostLib.validatePoolKey(poolKey, collToken, positionToken);
 
         // 1. Quote exact waUSDC input needed for wrlpNeeded output
         bool zeroForOne = PeripheryGhostLib.zeroForOne(poolKey, collToken);
-        (uint256 amountIn, ) = QUOTER.quoteExactOutputSingle(
+        (amountIn, ) = QUOTER.quoteExactOutputSingle(
             IV4Quoter.QuoteExactSingleParams({
                 poolKey: poolKey,
                 zeroForOne: zeroForOne,
@@ -391,6 +503,9 @@ contract BondFactory is ReentrancyGuard {
                 hookData: new bytes(0)
             })
         );
+        if (maxCollateralIn > 0 && amountIn > maxCollateralIn) {
+            revert MaxInputExceeded();
+        }
 
         // 2. Withdraw exactly amountIn waUSDC from broker to this contract
         pb.withdrawToken(pb.collateralToken(), address(this), amountIn);
@@ -402,7 +517,7 @@ contract BondFactory is ReentrancyGuard {
             collToken,
             positionToken,
             amountIn,
-            0
+            wrlpNeeded
         );
 
         // 4. Transfer wRLP to broker for debt repayment

@@ -1,4 +1,5 @@
 export const queryKeys = {
+  runtimeManifest: (url) => [url, "simulation.runtime-manifest.v1", null],
   simulationSnapshot: (url, market = null) => [url, "simulation.snapshot.v2", { market }],
   simulationAccount: (url, owner) =>
     owner ? [url, "simulation.account.v1", { owner: owner.toLowerCase(), status: "all" }] : null,
