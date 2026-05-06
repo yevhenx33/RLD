@@ -71,6 +71,13 @@ def apply_env_from_config(path: str | None = None) -> dict[str, Any]:
     if migration_password_env and migration_password_env in os.environ:
         _setdefault("CLICKHOUSE_MIGRATION_PASSWORD", os.environ[migration_password_env])
 
+    pendle = (cfg.get("sources", {}) or {}).get("PENDLE_ETHEREUM_PT_YT_PRICES", {})
+    _setdefault("PENDLE_POLL_INTERVAL_SEC", pendle.get("poll_interval_sec"))
+    _setdefault("PENDLE_BACKFILL_START", pendle.get("backfill_start"))
+    _setdefault("PENDLE_BACKFILL_TIME_FRAME", pendle.get("backfill_time_frame"))
+    _setdefault("PENDLE_BACKFILL_MAX_CALLS_PER_CYCLE", pendle.get("backfill_max_calls_per_cycle"))
+    _setdefault("PENDLE_HTTP_TIMEOUT_SEC", pendle.get("http_timeout_sec"))
+
     return cfg
 
 

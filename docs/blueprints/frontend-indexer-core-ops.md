@@ -6,6 +6,8 @@ The simulation indexer is the frontend's canonical runtime source of truth. The 
 
 Contracts remain canonical for execution semantics only: route previews, wallet-specific reads, transaction submission, and post-transaction verification. The frontend must not read `docker/deployment.json` or rely on production contract-address environment fallbacks.
 
+This rule applies to simulation and execution runtime configuration. It does not make the simulation indexer the source of truth for analytics page data. Rates, lending charts, protocol TVL, and other analytics page models come from the ClickHouse-backed analytics GraphQL API defined in `docs/blueprints/analytics-indexer-architecture.md`.
+
 ## Runtime Manifest Contract
 
 Preferred endpoint:
@@ -28,6 +30,8 @@ Manifest v1 fields:
 - `markets`: keyed by market type, currently `perp` and `cds`.
 
 Existing `/config` and `/api/market-info` remain compatibility endpoints. New frontend integration should use the runtime manifest first.
+
+Analytics GraphQL endpoints are intentionally outside this runtime manifest contract. Frontend analytics routes must use page-level analytics GraphQL contracts, while trading and simulation routes use the runtime manifest plus contract previews.
 
 ## Frontend Execution Gates
 

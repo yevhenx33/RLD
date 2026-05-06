@@ -1,0 +1,35 @@
+{
+  "n_days": 358,
+  "full_sample_rho": 0.2907,
+  "full_sample_rho_raw": 0.2907,
+  "full_sample_ci_95": [
+    0.1928,
+    0.3828
+  ],
+  "rolling_stats": {
+    "14d": {
+      "mean_rho": 0.1365,
+      "std_rho": 0.4223,
+      "pct_negative": 39.7,
+      "pct_insignificant_95ci": 76.2
+    },
+    "30d": {
+      "mean_rho": 0.2044,
+      "std_rho": 0.3087,
+      "pct_negative": 25.5,
+      "pct_insignificant_95ci": 59.6
+    },
+    "60d": {
+      "mean_rho": 0.2598,
+      "std_rho": 0.2333,
+      "pct_negative": 14.4,
+      "pct_insignificant_95ci": 51.5
+    },
+    "90d": {
+      "mean_rho": 0.3069,
+      "std_rho": 0.1797,
+      "pct_negative": 7.4,
+      "pct_insignificant_95ci": 25.7
+    }
+  }
+}

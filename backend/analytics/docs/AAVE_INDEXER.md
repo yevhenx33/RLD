@@ -57,25 +57,20 @@ The indexer has successfully hit absolute `0.00%` drift across all heavily-trade
 
 ## 3. Production Docker Daemonization
 
-The architecture is physically compiled into a dedicated `rld_indexer` dual-service array operating in the background.
+The Aave indexer runs as the `rld_aave_worker` service in the `rld-analytics` Compose project. The worker uses the unified analytics operator CLI and runs collection plus processing in one protocol-isolated loop.
 
 ```yaml
-# docker-compose.yml
+# backend/analytics/docker-compose.yml
 services:
-  aave_collector:
-    build: .
+  aave_worker:
+    image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+    env_file:
+      - .env
     restart: unless-stopped
-    env_file: .env # Inherits Alchemy Network API Keys natively
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "AAVE_MARKET", "--role", "collector"]
-
-  aave_processor:
-    build: .
-    restart: unless-stopped
-    env_file: .env
-    command: ["python", "/app/scripts/run_indexer.py", "--source", "AAVE_MARKET", "--role", "processor"]
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "AAVE_MARKET"]
 ```
 
-These processes are natively constrained and will perpetually fill out the `aave_timeseries` database autonomously without human interaction.
+This service is natively constrained and will perpetually fill out the `aave_events`, `aave_timeseries`, and analytics serving tables without human interaction. `analytics.scripts.run_indexer` remains the lower-level worker implementation used by `analytics.scripts.rld_indexer`.
 
 ## 4. Derived Whale & Analytical Capabilities
 Because the architecture fundamentally preserves all chronological hex logs in ClickHouse (`aave_events`), we effectively maintain a local physical copy of Aave's financial ledger.

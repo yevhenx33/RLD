@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from analytics.protocols import MORPHO_MARKET
 from analytics.state import ensure_source_status_table
 
 
@@ -12,6 +13,11 @@ API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
 AAVE_FLOW_DAILY_AGG_TABLE = "api_aave_market_flow_daily_agg"
 API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE = "api_chainlink_price_weekly_agg"
 MARKET_TIMESERIES_TABLE = "market_timeseries"
+PENDLE_ETH_ASSETS_TABLE = "pendle_eth_assets"
+PENDLE_ETH_PRICE_LATEST_TABLE = "pendle_eth_price_latest"
+PENDLE_ETH_PRICE_OHLCV_TABLE = "pendle_eth_price_ohlcv"
+PENDLE_ETH_BACKFILL_PROGRESS_TABLE = "pendle_eth_backfill_progress"
+MORPHO_CHAINLINK_TIMESERIES_TABLE = "morpho_chainlink_timeseries"
 
 
 def _escape_sql_string(value: str) -> str:
@@ -170,6 +176,195 @@ def ensure_schema(ch) -> None:
         TTL day + INTERVAL 72 MONTH DELETE
         """
     )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {PENDLE_ETH_ASSETS_TABLE} (
+            asset_address String,
+            chain_id UInt32,
+            asset_type LowCardinality(String),
+            symbol String,
+            market_address String,
+            expiry DateTime,
+            active UInt8,
+            matured UInt8,
+            raw_metadata_json String,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY asset_address
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {PENDLE_ETH_PRICE_LATEST_TABLE} (
+            asset_address String,
+            chain_id UInt32,
+            asset_type LowCardinality(String),
+            symbol String,
+            price_usd Float64,
+            source_timestamp DateTime,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY asset_address
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {PENDLE_ETH_PRICE_OHLCV_TABLE} (
+            asset_address String,
+            chain_id UInt32,
+            asset_type LowCardinality(String),
+            symbol String,
+            time_frame LowCardinality(String),
+            timestamp DateTime,
+            open Float64,
+            high Float64,
+            low Float64,
+            close Float64,
+            volume Float64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (asset_address, time_frame, timestamp)
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {PENDLE_ETH_BACKFILL_PROGRESS_TABLE} (
+            asset_address String,
+            chain_id UInt32,
+            time_frame LowCardinality(String),
+            cursor_timestamp DateTime,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY (asset_address, time_frame)
+        """
+    )
+
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS morpho_events (
+            block_number UInt64,
+            block_timestamp DateTime,
+            tx_hash String,
+            log_index UInt32,
+            contract String,
+            event_name LowCardinality(String),
+            topic0 String,
+            topic1 Nullable(String),
+            topic2 Nullable(String),
+            topic3 Nullable(String),
+            data String
+        ) ENGINE = ReplacingMergeTree()
+        PARTITION BY toStartOfMonth(block_timestamp)
+        ORDER BY (block_number, tx_hash, log_index)
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS morpho_market_params (
+            market_id String,
+            loan_token String,
+            collateral_token String,
+            loan_symbol String,
+            collateral_symbol String,
+            loan_decimals UInt8,
+            collateral_decimals UInt8,
+            oracle String,
+            irm String,
+            lltv UInt256,
+            creation_block UInt64 DEFAULT 0,
+            creation_timestamp DateTime DEFAULT toDateTime(0),
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY market_id
+        """
+    )
+    for alter in (
+        "ALTER TABLE morpho_market_params ADD COLUMN IF NOT EXISTS creation_block UInt64 DEFAULT 0",
+        "ALTER TABLE morpho_market_params ADD COLUMN IF NOT EXISTS creation_timestamp DateTime DEFAULT toDateTime(0)",
+        "ALTER TABLE morpho_market_params ADD COLUMN IF NOT EXISTS updated_at DateTime DEFAULT now()",
+    ):
+        ch.command(alter)
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS morpho_market_state (
+            market_id String,
+            total_supply_assets String,
+            total_supply_shares String,
+            total_borrow_assets String,
+            total_borrow_shares String,
+            collateral_assets String,
+            fee_wad String,
+            last_borrow_rate_wad String,
+            last_event_block UInt64,
+            last_event_timestamp DateTime,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY market_id
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS morpho_market_oracle_support (
+            market_id String,
+            oracle_support LowCardinality(String),
+            loan_symbol String,
+            collateral_symbol String,
+            loan_price_feeds Array(String),
+            collateral_price_feeds Array(String),
+            reason String,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY market_id
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS morpho_market_metrics (
+            timestamp DateTime,
+            market_id String,
+            entity_id String,
+            loan_symbol LowCardinality(String),
+            collateral_symbol LowCardinality(String),
+            supply_usd Float64,
+            borrow_usd Float64,
+            collateral_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            loan_price_usd Float64,
+            collateral_price_usd Float64,
+            lltv Float64,
+            oracle String,
+            oracle_support LowCardinality(String),
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (market_id, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {MORPHO_CHAINLINK_TIMESERIES_TABLE} (
+            timestamp DateTime,
+            protocol LowCardinality(String),
+            symbol LowCardinality(String),
+            entity_id String,
+            target_id String,
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (protocol, entity_id, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
     ch.command(f"DROP VIEW IF EXISTS mv_{API_MARKET_TIMESERIES_AGG_TABLE}")
     ch.command(f"DROP VIEW IF EXISTS mv_{API_PROTOCOL_TVL_AGG_TABLE}")
     ch.command(f"DROP VIEW IF EXISTS mv_{API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE}")
@@ -204,7 +399,7 @@ def ensure_schema(ch) -> None:
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM {MARKET_TIMESERIES_TABLE}
-            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
               AND entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY day, clean_protocol, entity_id
         )
@@ -325,7 +520,7 @@ def rebuild_aggregates(ch) -> None:
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM {MARKET_TIMESERIES_TABLE}
-            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
               AND entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY day, clean_protocol, entity_id
         )

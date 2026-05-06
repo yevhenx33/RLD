@@ -34,7 +34,20 @@ enabled = true
 poll_interval_sec = 30
 batch_blocks = 100000
 
+[sources.MORPHO_MARKET]
+enabled = true
+poll_interval_sec = 30
+batch_blocks = 100000
+
 [sources.SOFR_RATES]
 enabled = true
 poll_interval_sec = 300
 max_business_day_lag = 3
+
+[sources.PENDLE_ETHEREUM_PT_YT_PRICES]
+enabled = true
+poll_interval_sec = 300
+backfill_start = "2023-01-01T00:00:00Z"
+backfill_time_frame = "hour"
+backfill_max_calls_per_cycle = 8
+http_timeout_sec = 120

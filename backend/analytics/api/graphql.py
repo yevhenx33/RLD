@@ -21,6 +21,7 @@ apply_env_from_config()
 from analytics.protocols import (  # noqa: E402
     AAVE_MARKET,
     FLUID_MARKET,
+    MORPHO_MARKET,
     SOFR_RATES,
     READY_PROTOCOLS_DEFAULT,
     RAW_TABLE_BY_PROTOCOL,
@@ -72,7 +73,7 @@ API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
 AAVE_FLOW_DAILY_AGG_TABLE = "api_aave_market_flow_daily_agg"
 API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE = "api_chainlink_price_weekly_agg"
 AAVE_SERIES_TABLE = "market_timeseries"
-TVL_PROTOCOLS = ("AAVE", "EULER", "FLUID")
+TVL_PROTOCOLS = ("AAVE", "EULER", "FLUID", "MORPHO")
 TVL_SYNTHETIC_ENTITY_IDS = {"AAVE_MARKET_SYNTHETIC"}
 AAVE_FLOW_EVENT_NAMES = (
     "Supply",
@@ -100,6 +101,38 @@ class HistoricalRate:
     symbol: str
     apy: float
     price: float
+
+
+@strawberry.type
+class PendleAsset:
+    asset_address: str = strawberry.field(name="assetAddress")
+    chain_id: int = strawberry.field(name="chainId")
+    asset_type: str = strawberry.field(name="assetType")
+    symbol: str
+    market_address: str = strawberry.field(name="marketAddress")
+    expiry: int
+    active: bool
+    matured: bool
+
+
+@strawberry.type
+class PendleLatestPrice:
+    asset_address: str = strawberry.field(name="assetAddress")
+    chain_id: int = strawberry.field(name="chainId")
+    asset_type: str = strawberry.field(name="assetType")
+    symbol: str
+    price_usd: float = strawberry.field(name="priceUsd")
+    timestamp: int
+
+
+@strawberry.type
+class PendlePricePoint:
+    timestamp: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
 
 
 @strawberry.type
@@ -136,7 +169,10 @@ class MarketDetail:
     borrow_apy: float = strawberry.field(name="borrowApy")
     utilization: float
     collateral_symbol: Optional[str] = strawberry.field(name="collateralSymbol", default=None)
+    collateral_usd: Optional[float] = strawberry.field(name="collateralUsd", default=None)
     lltv: Optional[float] = None
+    oracle: Optional[str] = None
+    pricing_status: Optional[str] = strawberry.field(name="pricingStatus", default=None)
 
 
 @strawberry.type
@@ -145,6 +181,7 @@ class ProtocolTvlPoint:
     aave: float = 0.0
     euler: float = 0.0
     fluid: float = 0.0
+    morpho: float = 0.0
 
 
 @strawberry.type
@@ -248,7 +285,10 @@ class ProtocolMarketRow:
     borrow_apy: float = strawberry.field(name="borrowApy")
     utilization: float
     collateral_symbol: Optional[str] = strawberry.field(name="collateralSymbol", default=None)
+    collateral_usd: Optional[float] = strawberry.field(name="collateralUsd", default=None)
     lltv: Optional[float] = None
+    oracle: Optional[str] = None
+    pricing_status: Optional[str] = strawberry.field(name="pricingStatus", default=None)
     is_trapped: bool = strawberry.field(name="isTrapped", default=False)
 
 
@@ -409,7 +449,7 @@ def _ensure_support_tables(ch) -> None:
             avgState(toFloat64(utilization)) AS utilization_state,
             avgState(toFloat64(supply_usd)) AS supply_usd_state,
             avgState(toFloat64(borrow_usd)) AS borrow_usd_state
-        FROM unified_timeseries
+        FROM market_timeseries
         GROUP BY protocol, entity_id, ts
         """
     )
@@ -425,8 +465,8 @@ def _ensure_support_tables(ch) -> None:
                 splitByChar('_', protocol)[1] AS clean_protocol,
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
-            FROM unified_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+            FROM market_timeseries
+            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
             GROUP BY day, clean_protocol, entity_id
         )
@@ -486,7 +526,7 @@ def _ensure_support_tables(ch) -> None:
                         ),
                         timestamp
                     ) AS latest_tuple
-                FROM unified_timeseries
+                FROM market_timeseries
                 WHERE entity_id != 'AAVE_MARKET_SYNTHETIC'
                 GROUP BY protocol, entity_id
             )
@@ -506,7 +546,7 @@ def _ensure_support_tables(ch) -> None:
                 avgState(toFloat64(utilization)) AS utilization_state,
                 avgState(toFloat64(supply_usd)) AS supply_usd_state,
                 avgState(toFloat64(borrow_usd)) AS borrow_usd_state
-            FROM unified_timeseries
+            FROM market_timeseries
             WHERE entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY protocol, entity_id, ts
             """
@@ -523,8 +563,8 @@ def _ensure_support_tables(ch) -> None:
                     splitByChar('_', protocol)[1] AS clean_protocol,
                     entity_id,
                     argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
-                FROM unified_timeseries
-                WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET')
+                FROM market_timeseries
+                WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
                   AND entity_id != 'AAVE_MARKET_SYNTHETIC'
                 GROUP BY day, clean_protocol, entity_id
             )
@@ -1535,6 +1575,43 @@ def _finite_non_negative(value: object) -> float:
     return max(0.0, numeric)
 
 
+
+def _morpho_coverage_snapshot(ch) -> dict[str, object]:
+    try:
+        params = ch.query(
+            """
+            SELECT
+                count() AS total,
+                min(creation_block) AS first_block,
+                max(creation_block) AS last_market_block
+            FROM morpho_market_params
+            """
+        ).result_rows[0]
+        support_rows = ch.query(
+            """
+            SELECT oracle_support, count()
+            FROM morpho_market_oracle_support FINAL
+            GROUP BY oracle_support
+            """
+        ).result_rows
+        support_counts = {str(status): int(count) for status, count in support_rows}
+        raw_head = _query_int(ch, "SELECT max(block_number) FROM morpho_events")
+        processed_head = _query_int(ch, "SELECT max(last_processed_block) FROM processor_state WHERE protocol = \'MORPHO_MARKET\'")
+        return {
+            "totalDiscoveredMarkets": int(params[0] or 0),
+            "chainlinkSupportedMarkets": support_counts.get("CHAINLINK_SUPPORTED", 0),
+            "unsupportedOracleMarkets": support_counts.get("UNSUPPORTED_ORACLE", 0),
+            "unpricedMarkets": support_counts.get("UNPRICED", 0),
+            "firstMarketBlock": int(params[1] or 0),
+            "lastMarketBlock": int(params[2] or 0),
+            "rawHead": int(raw_head or 0),
+            "processedHead": int(processed_head or 0),
+            "lagBlocks": max(0, int(raw_head or 0) - int(processed_head or 0)),
+        }
+    except Exception as exc:
+        return {"status": "unavailable", "reason": str(exc)}
+
+
 def _freshness_payload(status: str = "ready", ready: bool = True) -> AnalyticsFreshness:
     return AnalyticsFreshness(
         ready=ready,
@@ -1648,7 +1725,10 @@ def _build_protocol_markets_page_payload(
                 borrow_apy=borrow_apy,
                 utilization=utilization,
                 collateral_symbol=market.collateral_symbol,
+                collateral_usd=market.collateral_usd,
                 lltv=market.lltv,
+                oracle=market.oracle,
+                pricing_status=market.pricing_status,
                 is_trapped=is_trapped,
             )
         )
@@ -1792,6 +1872,7 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
         AAVE_MARKET,
         "EULER_MARKET",
         FLUID_MARKET,
+        MORPHO_MARKET,
     }
     if protocol not in allowed:
         return []
@@ -1811,26 +1892,64 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
         if protocol == AAVE_MARKET
         else "WHERE supply_usd >= 1000 OR borrow_usd >= 1000"
     )
-    query = f"""
-    SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
-           supply_apy, borrow_apy, utilization,
-           '' AS collateral_symbol, 0 AS lltv
-    FROM (
-        SELECT entity_id,
-               symbol,
-               '{escaped_protocol}' AS proto,
-               supply_usd,
-               borrow_usd,
-               supply_apy,
-               borrow_apy,
-               utilization
-        FROM api_market_latest FINAL
-        WHERE protocol = '{escaped_protocol}'
-        {entity_filter}
-    )
-    {value_filter}
-    ORDER BY supply_usd DESC
-    """
+    if protocol == MORPHO_MARKET:
+        query = f"""
+        SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
+               supply_apy, borrow_apy, utilization,
+               collateral_symbol, collateral_usd, lltv, oracle, oracle_support
+        FROM (
+            SELECT latest.entity_id,
+                   latest.symbol,
+                   '{escaped_protocol}' AS proto,
+                   latest.supply_usd,
+                   latest.borrow_usd,
+                   latest.supply_apy,
+                   latest.borrow_apy,
+                   latest.utilization,
+                   metrics.collateral_symbol,
+                   metrics.collateral_usd,
+                   metrics.lltv,
+                   metrics.oracle,
+                   metrics.oracle_support
+            FROM api_market_latest FINAL AS latest
+            LEFT JOIN (
+                SELECT market_id,
+                       argMax(collateral_symbol, timestamp) AS collateral_symbol,
+                       argMax(collateral_usd, timestamp) AS collateral_usd,
+                       argMax(lltv, timestamp) AS lltv,
+                       argMax(oracle, timestamp) AS oracle,
+                       argMax(oracle_support, timestamp) AS oracle_support
+                FROM morpho_market_metrics
+                GROUP BY market_id
+            ) AS metrics
+              ON metrics.market_id = latest.entity_id
+            WHERE latest.protocol = '{escaped_protocol}'
+            {entity_filter}
+        )
+        {value_filter}
+        ORDER BY supply_usd DESC
+        """
+    else:
+        query = f"""
+        SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
+               supply_apy, borrow_apy, utilization,
+               '' AS collateral_symbol, 0 AS collateral_usd, 0 AS lltv, '' AS oracle, '' AS oracle_support
+        FROM (
+            SELECT entity_id,
+                   symbol,
+                   '{escaped_protocol}' AS proto,
+                   supply_usd,
+                   borrow_usd,
+                   supply_apy,
+                   borrow_apy,
+                   utilization
+            FROM api_market_latest FINAL
+            WHERE protocol = '{escaped_protocol}'
+            {entity_filter}
+        )
+        {value_filter}
+        ORDER BY supply_usd DESC
+        """
 
     res = ch.query(query)
     return [
@@ -1844,7 +1963,10 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
             borrow_apy=float(row[6]),
             utilization=float(row[7]),
             collateral_symbol=str(row[8]) if row[8] else None,
-            lltv=float(row[9]) if row[9] else None,
+            collateral_usd=float(row[9]) if row[9] is not None else None,
+            lltv=float(row[10]) if row[10] else None,
+            oracle=str(row[11]) if row[11] else None,
+            pricing_status=str(row[12]) if row[12] else None,
         )
         for row in res.result_rows
     ]
@@ -1956,6 +2078,7 @@ def _forward_fill_protocol_tvl(rows) -> list[ProtocolTvlPoint]:
                 aave=totals_by_protocol.get("AAVE", 0.0),
                 euler=totals_by_protocol.get("EULER", 0.0),
                 fluid=totals_by_protocol.get("FLUID", 0.0),
+                morpho=totals_by_protocol.get("MORPHO", 0.0),
             )
         )
         cursor += one_week
@@ -2035,7 +2158,7 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
 def _query_protocol_apy_history(
     ch, protocol: str, resolution: str, limit: int
 ) -> list[ProtocolApyPoint]:
-    allowed = {AAVE_MARKET, "EULER_MARKET", FLUID_MARKET}
+    allowed = {AAVE_MARKET, "EULER_MARKET", FLUID_MARKET, MORPHO_MARKET}
     if protocol not in allowed:
         return []
 
@@ -2215,6 +2338,173 @@ def _query_market_flow_timeseries(ch, entity_id: str, resolution: str, limit: in
     return _query_market_flow_timeseries_from_balance_deltas(ch, entity_id, resolution, limit)
 
 
+def _normalize_pendle_asset_type(value: str) -> str:
+    normalized = (value or "").strip().upper()
+    return normalized if normalized in {"PT", "YT"} else ""
+
+
+def _normalize_pendle_time_frame(value: str) -> str:
+    normalized = (value or "hour").strip().lower()
+    return normalized if normalized in {"hour", "day", "week"} else "hour"
+
+
+def _normalize_pendle_address(value: str) -> str:
+    text = (value or "").strip().lower()
+    if "-" in text and text.split("-", 1)[0].isdigit():
+        text = text.split("-", 1)[1]
+    if text and not text.startswith("0x") and len(text) == 40:
+        text = f"0x{text}"
+    return text
+
+
+def _timestamp(value) -> int:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return int(value.timestamp())
+    if isinstance(value, date):
+        return int(datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            return 0
+    return 0
+
+
+def _pendle_type_filter(asset_types: Optional[list[str]]) -> str:
+    if not asset_types:
+        return ""
+    normalized = sorted({kind for kind in (_normalize_pendle_asset_type(v) for v in asset_types) if kind})
+    if not normalized:
+        return ""
+    return " AND asset_type IN (" + ", ".join(f"'{kind}'" for kind in normalized) + ")"
+
+
+def _query_pendle_eth_assets(
+    ch,
+    asset_types: Optional[list[str]] = None,
+    active_only: bool = False,
+    search: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[PendleAsset]:
+    conditions = ["chain_id = 1"]
+    type_filter = _pendle_type_filter(asset_types)
+    if type_filter:
+        conditions.append(type_filter.replace(" AND ", "", 1))
+    if active_only:
+        conditions.append("active = 1")
+    if search and search.strip():
+        needle = _escape_sql_string(search.strip().lower())
+        conditions.append(
+            f"(positionCaseInsensitive(symbol, '{needle}') > 0 "
+            f"OR positionCaseInsensitive(asset_address, '{needle}') > 0 "
+            f"OR positionCaseInsensitive(market_address, '{needle}') > 0)"
+        )
+    sql = f"""
+        SELECT asset_address, chain_id, asset_type, symbol, market_address, expiry, active, matured
+        FROM pendle_eth_assets FINAL
+        WHERE {' AND '.join(conditions)}
+        ORDER BY active DESC, expiry ASC, symbol ASC, asset_address ASC
+        LIMIT {_safe_limit(limit)} OFFSET {max(0, int(offset or 0))}
+    """
+    rows = ch.query(sql).result_rows
+    return [
+        PendleAsset(
+            asset_address=str(row[0]),
+            chain_id=int(row[1]),
+            asset_type=str(row[2]),
+            symbol=str(row[3]),
+            market_address=str(row[4]),
+            expiry=_timestamp(row[5]),
+            active=bool(row[6]),
+            matured=bool(row[7]),
+        )
+        for row in rows
+    ]
+
+
+def _query_pendle_eth_latest_prices(
+    ch,
+    asset_types: Optional[list[str]] = None,
+    addresses: Optional[list[str]] = None,
+    limit: int = 500,
+) -> list[PendleLatestPrice]:
+    conditions = ["chain_id = 1"]
+    type_filter = _pendle_type_filter(asset_types)
+    if type_filter:
+        conditions.append(type_filter.replace(" AND ", "", 1))
+    if addresses:
+        normalized = sorted({_normalize_pendle_address(v) for v in addresses if _normalize_pendle_address(v)})
+        if normalized:
+            values = ", ".join(f"'{_escape_sql_string(v)}'" for v in normalized)
+            conditions.append(f"asset_address IN ({values})")
+    sql = f"""
+        SELECT asset_address, chain_id, asset_type, symbol, price_usd, source_timestamp
+        FROM pendle_eth_price_latest FINAL
+        WHERE {' AND '.join(conditions)}
+        ORDER BY source_timestamp DESC, symbol ASC, asset_address ASC
+        LIMIT {_safe_limit(limit)}
+    """
+    rows = ch.query(sql).result_rows
+    return [
+        PendleLatestPrice(
+            asset_address=str(row[0]),
+            chain_id=int(row[1]),
+            asset_type=str(row[2]),
+            symbol=str(row[3]),
+            price_usd=float(row[4]),
+            timestamp=_timestamp(row[5]),
+        )
+        for row in rows
+    ]
+
+
+def _query_pendle_eth_price_history(
+    ch,
+    address: str,
+    time_frame: str = "hour",
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
+    limit: int = 1440,
+) -> list[PendlePricePoint]:
+    asset_address = _normalize_pendle_address(address)
+    if not asset_address:
+        return []
+    frame = _normalize_pendle_time_frame(time_frame)
+    conditions = [
+        "chain_id = 1",
+        f"asset_address = '{_escape_sql_string(asset_address)}'",
+        f"time_frame = '{frame}'",
+    ]
+    if start_ts is not None:
+        conditions.append(f"timestamp >= toDateTime({max(0, int(start_ts))})")
+    if end_ts is not None:
+        conditions.append(f"timestamp <= toDateTime({max(0, int(end_ts))})")
+    sql = f"""
+        SELECT timestamp, open, high, low, close, volume
+        FROM pendle_eth_price_ohlcv FINAL
+        WHERE {' AND '.join(conditions)}
+        ORDER BY timestamp DESC
+        LIMIT {min(_safe_limit(limit), 1440)}
+    """
+    rows = list(reversed(ch.query(sql).result_rows))
+    return [
+        PendlePricePoint(
+            timestamp=_timestamp(row[0]),
+            open=float(row[1]),
+            high=float(row[2]),
+            low=float(row[3]),
+            close=float(row[4]),
+            volume=float(row[5]),
+        )
+        for row in rows
+    ]
+
+
 @strawberry.type
 class Query:
     @strawberry.field(name="lendingDataPage")
@@ -2244,6 +2534,40 @@ class Query:
     ) -> List[HistoricalRate]:
         ch = get_clickhouse_client()
         return _query_historical_rates(ch, symbols, resolution, limit)
+
+    @strawberry.field(name="pendleEthAssets")
+    def pendle_eth_assets(
+        self,
+        asset_types: Optional[List[str]] = None,
+        active_only: bool = False,
+        search: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[PendleAsset]:
+        ch = get_clickhouse_client()
+        return _query_pendle_eth_assets(ch, asset_types, active_only, search, limit, offset)
+
+    @strawberry.field(name="pendleEthLatestPrices")
+    def pendle_eth_latest_prices(
+        self,
+        asset_types: Optional[List[str]] = None,
+        addresses: Optional[List[str]] = None,
+        limit: int = 500,
+    ) -> List[PendleLatestPrice]:
+        ch = get_clickhouse_client()
+        return _query_pendle_eth_latest_prices(ch, asset_types, addresses, limit)
+
+    @strawberry.field(name="pendleEthPriceHistory")
+    def pendle_eth_price_history(
+        self,
+        address: str,
+        time_frame: str = "hour",
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
+        limit: int = 1440,
+    ) -> List[PendlePricePoint]:
+        ch = get_clickhouse_client()
+        return _query_pendle_eth_price_history(ch, address, time_frame, start_ts, end_ts, limit)
 
     @strawberry.field(name="marketSnapshots")
     def market_snapshots(self, protocol: Optional[str] = None) -> List[MarketSnapshot]:
@@ -2335,6 +2659,7 @@ def healthz():
             "collectorLag": _collect_collector_lag(ch),
             "processingLag": _collect_processing_lag(ch),
             "sourceStatus": _source_status_snapshot(ch),
+            "morphoCoverage": _morpho_coverage_snapshot(ch),
         }
     except Exception as exc:
         close_clickhouse_client()
@@ -2363,6 +2688,7 @@ def status():
             "collectorLag": _collect_collector_lag(ch),
             "processingLag": _collect_processing_lag(ch),
             "sourceStatus": _source_status_snapshot(ch),
+            "morphoCoverage": _morpho_coverage_snapshot(ch),
         }
     except Exception as exc:
         close_clickhouse_client()
@@ -2406,8 +2732,8 @@ def readyz():
                     (protocol == SOFR_RATES and lag > MAX_READY_SOFR_BUSINESS_DAYS)
                     or (protocol != SOFR_RATES and lag > MAX_READY_LAG_BLOCKS)
                 )
-            )
-        ]
+        )
+    ]
         failing = sorted(set(failing_processing + failing_collector))
         if failing:
             return JSONResponse(

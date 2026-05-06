@@ -11,7 +11,7 @@ This runbook rebuilds Aave data from raw `aave_events` into fresh serving tables
 ## 1) Freeze Aave ingest
 
 ```bash
-docker stop rld_aave_processor rld_aave_collector
+docker stop rld_aave_worker
 ```
 
 ## 2) Reset Aave derived/state tables
@@ -112,7 +112,7 @@ FROM (
 
 ```bash
 docker restart rld_graphql_api
-docker start rld_aave_collector rld_aave_processor
+docker start rld_aave_worker
 ```
 
 ## 6) Validation queries

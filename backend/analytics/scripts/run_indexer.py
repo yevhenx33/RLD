@@ -23,12 +23,23 @@ apply_env_from_config()
 
 from analytics.collector import ProtocolCollector
 from analytics.processor import ProtocolProcessor
-from analytics.sources import FluidSource, ChainlinkSource, AaveV3Source, LidoRebaseSource, StaticPegsSource, SofrSource
+from analytics.sources import (
+    FluidSource,
+    ChainlinkSource,
+    AaveV3Source,
+    MorphoSource,
+    LidoRebaseSource,
+    StaticPegsSource,
+    SofrSource,
+    PendleEthereumPtYtSource,
+)
 from analytics.protocols import (
     AAVE_MARKET,
     FLUID_MARKET,
+    MORPHO_MARKET,
     CHAINLINK_PRICES,
     SOFR_RATES,
+    PENDLE_ETHEREUM_PT_YT_PRICES,
 )
 
 logging.basicConfig(
@@ -42,10 +53,12 @@ INDEXER_VERSION = os.getenv("INDEXER_VERSION", "dev")
 SOURCE_MAP = {
     AAVE_MARKET: AaveV3Source,
     FLUID_MARKET: FluidSource,
+    MORPHO_MARKET: MorphoSource,
     CHAINLINK_PRICES: ChainlinkSource,
     "LIDO_REBASE": LidoRebaseSource,
     "STATIC_PEGS": StaticPegsSource,
     SOFR_RATES: SofrSource,
+    PENDLE_ETHEREUM_PT_YT_PRICES: PendleEthereumPtYtSource,
 }
 
 def _build_cycle(source, role: str) -> Callable:
@@ -121,7 +134,15 @@ if __name__ == "__main__":
         
     source_class = SOURCE_MAP[args.source]
     if args.poll_interval is None:
-        args.poll_interval = source_poll_interval(args.source, default=30)
+        if args.source == PENDLE_ETHEREUM_PT_YT_PRICES:
+            args.poll_interval = int(
+                os.getenv(
+                    "PENDLE_POLL_INTERVAL_SEC",
+                    source_poll_interval(args.source, default=300),
+                )
+            )
+        else:
+            args.poll_interval = source_poll_interval(args.source, default=30)
     if args.role in {"processor", "worker"}:
         test_instance = source_class()
         if not getattr(test_instance, "is_offchain", False):

@@ -12,6 +12,8 @@ backend analytics indexers -> ClickHouse pre-aggregates -> page-level GraphQL ->
 
 The frontend should not understand finance data deeply. It should not join raw series, compute weighted APYs, forward-fill histories, classify markets, or merge chart datasets when the analytics can do it once and cache or pre-aggregate it.
 
+The backend analytics architecture behind this flow is defined in `docs/blueprints/analytics-indexer-architecture.md`. This frontend blueprint defines consumption boundaries and page contracts, not ClickHouse worker topology.
+
 ## Role Separation
 
 ### Analytics
@@ -23,6 +25,8 @@ The analytics owns:
 - Freshness/readiness status.
 - Page-level GraphQL read models.
 - Financial calculations, normalization, bucketing, joining, and chart-ready shaping.
+
+Analytics runtime ownership, worker services, and readiness semantics are governed by `analytics-indexer-architecture.md`.
 
 ### GraphQL API
 
@@ -180,4 +184,3 @@ Every frontend architecture change should report:
 - Whether analytics routes remain free of simulation polling.
 - Which tests and guardrails passed.
 - Any remaining compatibility fields or legacy paths.
-

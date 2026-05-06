@@ -223,6 +223,79 @@ services:
       start_period: 20s
       retries: 3
 
+  morpho_worker:
+    <<: *rld-indexer-service
+    container_name: rld_morpho_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "MORPHO_MARKET"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "morpho-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Morpho Blue Chainlink-priced market worker writing processed analytics rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'MORPHO_MARKET' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  pendle_worker:
+    <<: *rld-indexer-service
+    container_name: rld_pendle_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - PENDLE_BACKFILL_START=${PENDLE_BACKFILL_START:-2023-01-01T00:00:00Z}
+      - PENDLE_BACKFILL_TIME_FRAME=${PENDLE_BACKFILL_TIME_FRAME:-hour}
+      - PENDLE_BACKFILL_MAX_CALLS_PER_CYCLE=${PENDLE_BACKFILL_MAX_CALLS_PER_CYCLE:-8}
+      - PENDLE_HTTP_TIMEOUT_SEC=${PENDLE_HTTP_TIMEOUT_SEC:-120}
+      - PENDLE_POLL_INTERVAL_SEC=${PENDLE_POLL_INTERVAL_SEC:-300}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "PENDLE_ETHEREUM_PT_YT_PRICES"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "pendle-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Ethereum-only Pendle PT/YT price worker writing latest and historical OHLCV rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'PENDLE_ETHEREUM_PT_YT_PRICES' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
 networks:
   default:
     name: rld_shared
