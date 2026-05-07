@@ -1,0 +1,56 @@
+backend/analytics/api/graphql.py:230:    supply_apy: float = strawberry.field(name="supplyApy")
+backend/analytics/api/graphql.py:253:    supply_apy: float = strawberry.field(name="supplyApy")
+backend/analytics/api/graphql.py:390:    supply_apy: float = strawberry.field(name="supplyApy")
+backend/analytics/api/graphql.py:435:    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+backend/analytics/api/graphql.py:442:    supply_apy: Optional[float] = strawberry.field(name="supplyApy", default=None)
+backend/analytics/api/graphql.py:646:    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+backend/analytics/api/graphql.py:655:    average_supply_apy: Optional[float] = strawberry.field(name="averageSupplyApy", default=None)
+backend/analytics/api/graphql.py:666:    supply_apy: float = strawberry.field(name="supplyApy")
+backend/analytics/api/graphql.py:685:    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+backend/analytics/api/graphql.py:697:    supply_apy: float = strawberry.field(name="supplyApy")
+backend/analytics/api/graphql.py:718:    supply_apy: float = strawberry.field(name="supplyApy")
+backend/analytics/api/graphql.py:786:            supply_apy Float64,
+backend/analytics/api/graphql.py:801:            supply_apy_state AggregateFunction(avg, Float64),
+backend/analytics/api/graphql.py:861:            avgState(toFloat64(supply_apy)) AS supply_apy_state,
+backend/analytics/api/graphql.py:911:                supply_usd, borrow_usd, supply_apy, borrow_apy, utilization, price_usd
+backend/analytics/api/graphql.py:921:                tupleElement(latest_tuple, 6) AS supply_apy,
+backend/analytics/api/graphql.py:936:                            supply_apy,
+backend/analytics/api/graphql.py:958:                avgState(toFloat64(supply_apy)) AS supply_apy_state,
+backend/analytics/api/graphql.py:2372:            supply_apy,
+backend/analytics/api/graphql.py:2388:            supply_apy,
+backend/analytics/api/graphql.py:2403:            supply_apy=float(row[5]),
+backend/analytics/api/graphql.py:2420:            supply_apy,
+backend/analytics/api/graphql.py:2432:            AND supply_apy > 1.0
+backend/analytics/api/graphql.py:2444:            supply_apy=float(row[5]),
+backend/analytics/api/graphql.py:2635:               volume_usd, fees_usd, supply_apy, borrow_apy, utilization, ltv,
+backend/analytics/api/graphql.py:2655:                argMax(supply_apy, tuple(fps.timestamp, fps.block_number)) AS supply_apy,
+backend/analytics/api/graphql.py:2699:                supply_apy=float(row[15] or 0.0),
+backend/analytics/api/graphql.py:2893:        supply_apy = _finite_non_negative(row.supply_apy)
+backend/analytics/api/graphql.py:2903:                supply_apy=supply_apy,
+backend/analytics/api/graphql.py:2912:    weighted_supply = sum(row.supply_apy * row.supply_usd for row in normalized_markets)
+backend/analytics/api/graphql.py:2917:        average_supply_apy=weighted_supply / totals_supply if totals_supply > 0 else 0.0,
+backend/analytics/api/graphql.py:2951:        existing.average_supply_apy = _finite_non_negative(row.average_supply_apy) * 100.0
+backend/analytics/api/graphql.py:2977:        supply_apy = _finite_non_negative(market.supply_apy)
+backend/analytics/api/graphql.py:2980:        is_trapped = utilization >= 0.995 and supply_apy > 1.0
+backend/analytics/api/graphql.py:2988:                supply_apy=supply_apy,
+backend/analytics/api/graphql.py:3010:        average_supply_apy=(
+backend/analytics/api/graphql.py:3011:            sum(row.supply_apy * row.supply_usd for row in healthy) / healthy_supply
+backend/analytics/api/graphql.py:3035:            supply_apy=_finite_non_negative(point.supply_apy) * 100.0,
+backend/analytics/api/graphql.py:3513:               supply_apy, borrow_apy, utilization,
+backend/analytics/api/graphql.py:3526:                   if(latest.entity_id != '', latest.supply_apy, if(metrics.market_id != '', metrics.supply_apy, 0.0)) AS supply_apy,
+backend/analytics/api/graphql.py:3556:                SELECT entity_id, symbol, supply_usd, borrow_usd, supply_apy, borrow_apy, utilization
+backend/analytics/api/graphql.py:3566:                       argMax(supply_apy, tuple(timestamp, inserted_at)) AS supply_apy,
+backend/analytics/api/graphql.py:3597:               supply_apy, borrow_apy, utilization,
+backend/analytics/api/graphql.py:3605:                   supply_apy,
+backend/analytics/api/graphql.py:3624:            supply_apy=float(row[5]),
+backend/analytics/api/graphql.py:3860:                    sum(supply_apy * supply_usd) / sum(supply_usd),
+backend/analytics/api/graphql.py:3861:                    avg(supply_apy)
+backend/analytics/api/graphql.py:3862:                ) AS average_supply_apy,
+backend/analytics/api/graphql.py:3872:                    avg(toFloat64(supply_apy)) AS supply_apy,
+backend/analytics/api/graphql.py:3894:                    sum(supply_apy * supply_usd) / sum(supply_usd),
+backend/analytics/api/graphql.py:3895:                    avg(supply_apy)
+backend/analytics/api/graphql.py:3896:                ) AS average_supply_apy,
+backend/analytics/api/graphql.py:3906:                    avgMerge(supply_apy_state) AS supply_apy,
+backend/analytics/api/graphql.py:3922:            average_supply_apy=float(row[1]) if row[1] is not None else 0.0,
+backend/analytics/api/graphql.py:3955:        avgMerge(supply_apy_state) AS supply_apy,
+backend/analytics/api/graphql.py:3971:            supply_apy=float(row[1]) if row[1] is not None else None,
