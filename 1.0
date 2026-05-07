@@ -1,0 +1,56 @@
+230:    supply_apy: float = strawberry.field(name="supplyApy")
+253:    supply_apy: float = strawberry.field(name="supplyApy")
+390:    supply_apy: float = strawberry.field(name="supplyApy")
+435:    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+442:    supply_apy: Optional[float] = strawberry.field(name="supplyApy", default=None)
+646:    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+655:    average_supply_apy: Optional[float] = strawberry.field(name="averageSupplyApy", default=None)
+666:    supply_apy: float = strawberry.field(name="supplyApy")
+685:    average_supply_apy: float = strawberry.field(name="averageSupplyApy")
+697:    supply_apy: float = strawberry.field(name="supplyApy")
+718:    supply_apy: float = strawberry.field(name="supplyApy")
+786:            supply_apy Float64,
+801:            supply_apy_state AggregateFunction(avg, Float64),
+861:            avgState(toFloat64(supply_apy)) AS supply_apy_state,
+911:                supply_usd, borrow_usd, supply_apy, borrow_apy, utilization, price_usd
+921:                tupleElement(latest_tuple, 6) AS supply_apy,
+936:                            supply_apy,
+958:                avgState(toFloat64(supply_apy)) AS supply_apy_state,
+2372:            supply_apy,
+2388:            supply_apy,
+2403:            supply_apy=float(row[5]),
+2420:            supply_apy,
+2432:            AND supply_apy > 1.0
+2444:            supply_apy=float(row[5]),
+2635:               volume_usd, fees_usd, supply_apy, borrow_apy, utilization, ltv,
+2655:                argMax(supply_apy, tuple(fps.timestamp, fps.block_number)) AS supply_apy,
+2699:                supply_apy=float(row[15] or 0.0),
+2893:        supply_apy = _finite_non_negative(row.supply_apy)
+2903:                supply_apy=supply_apy,
+2912:    weighted_supply = sum(row.supply_apy * row.supply_usd for row in normalized_markets)
+2917:        average_supply_apy=weighted_supply / totals_supply if totals_supply > 0 else 0.0,
+2951:        existing.average_supply_apy = _finite_non_negative(row.average_supply_apy) * 100.0
+2977:        supply_apy = _finite_non_negative(market.supply_apy)
+2980:        is_trapped = utilization >= 0.995 and supply_apy > 1.0
+2988:                supply_apy=supply_apy,
+3010:        average_supply_apy=(
+3011:            sum(row.supply_apy * row.supply_usd for row in healthy) / healthy_supply
+3035:            supply_apy=_finite_non_negative(point.supply_apy) * 100.0,
+3513:               supply_apy, borrow_apy, utilization,
+3526:                   if(latest.entity_id != '', latest.supply_apy, if(metrics.market_id != '', metrics.supply_apy, 0.0)) AS supply_apy,
+3556:                SELECT entity_id, symbol, supply_usd, borrow_usd, supply_apy, borrow_apy, utilization
+3566:                       argMax(supply_apy, tuple(timestamp, inserted_at)) AS supply_apy,
+3597:               supply_apy, borrow_apy, utilization,
+3605:                   supply_apy,
+3624:            supply_apy=float(row[5]),
+3860:                    sum(supply_apy * supply_usd) / sum(supply_usd),
+3861:                    avg(supply_apy)
+3862:                ) AS average_supply_apy,
+3872:                    avg(toFloat64(supply_apy)) AS supply_apy,
+3894:                    sum(supply_apy * supply_usd) / sum(supply_usd),
+3895:                    avg(supply_apy)
+3896:                ) AS average_supply_apy,
+3906:                    avgMerge(supply_apy_state) AS supply_apy,
+3922:            average_supply_apy=float(row[1]) if row[1] is not None else 0.0,
+3955:        avgMerge(supply_apy_state) AS supply_apy,
+3971:            supply_apy=float(row[1]) if row[1] is not None else None,
