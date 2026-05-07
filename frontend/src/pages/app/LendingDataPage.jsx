@@ -2,7 +2,8 @@ import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
-import { Activity, PieChart, Layers, Users, Check, Loader2 } from "lucide-react";
+import { Activity, PieChart as PieChartIcon, Layers, Users, Check, Loader2 } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import RLDPerformanceChart from "../../charts/primitives/RLDPerformanceChart";
 import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
 import { postGraphQL } from "../../api/graphqlClient";
@@ -50,7 +51,7 @@ const SUPPLY_APY_AREA = {
 };
 const BORROW_APY_AREA = {
   key: "averageBorrowApy",
-  color: "#f97316",
+  color: "#06b6d4",
   name: "Avg Borrow APY",
   format: "percent",
   yAxisId: "right",
@@ -71,9 +72,8 @@ const CustomCheckbox = ({ label, checked = false, disabled = false, onClick }) =
   <button
     type="button"
     onClick={disabled ? undefined : onClick}
-    className={`w-full text-left flex items-center gap-3 select-none ${
-      disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:opacity-80 transition-opacity"
-    }`}
+    className={`w-full text-left flex items-center gap-3 select-none ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer hover:opacity-80 transition-opacity"
+      }`}
   >
     <div className={`w-4 h-4 rounded-sm border flex items-center justify-center transition-colors ${checked ? 'bg-cyan-500 border-cyan-500' : 'bg-[#080808] border-white/20'
       }`}>
@@ -89,6 +89,7 @@ export default function LendingDataPage() {
   const [showSupplyApyHistory, setShowSupplyApyHistory] = useState(false);
   const [showBorrowApyHistory, setShowBorrowApyHistory] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [protocolFilter, setProtocolFilter] = useState('ALL');
   const { data: gqlData, error: _error, isLoading: loading } = useSWR(
     [ENVIO_GRAPHQL_URL, `envio.lending-data-hub.${displayUnit}.v6`],
     ([url]) =>
@@ -114,15 +115,31 @@ export default function LendingDataPage() {
     };
   }, [gqlData]);
 
+  const handleProtocolFilter = (filter) => {
+    setProtocolFilter(filter);
+    setCurrentPage(1);
+  };
+
+  const filteredMarkets = useMemo(() => {
+    return marketsData.filter(pool => {
+      if (protocolFilter === 'ALL') return true;
+      const protocol = (pool.protocol === "AAVE_MARKET" || pool.protocol === "AAVE") ? "AAVE" : pool.protocol?.toUpperCase();
+      if (protocolFilter === 'LENDING') {
+        return ['AAVE', 'MORPHO', 'FLUID', 'EULER'].includes(protocol);
+      }
+      return protocol === protocolFilter;
+    });
+  }, [marketsData, protocolFilter]);
+
   const ITEMS_PER_PAGE = 10;
-  const maxPage = Math.ceil(marketsData.length / ITEMS_PER_PAGE) || 1;
+  const maxPage = Math.ceil(filteredMarkets.length / ITEMS_PER_PAGE) || 1;
   const safeCurrentPage = Math.min(currentPage, maxPage);
 
   const paginatedMarkets = useMemo(() => {
     const startIndex = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
-    return marketsData.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-  }, [marketsData, safeCurrentPage]);
-  
+    return filteredMarkets.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [filteredMarkets, safeCurrentPage]);
+
   const totalPages = maxPage;
 
   const tvlArea = useMemo(() => {
@@ -150,6 +167,45 @@ export default function LendingDataPage() {
     return areas;
   }, [showBorrowApyHistory, showSupplyApyHistory, tvlArea]);
 
+  const mockRatioData = useMemo(() => {
+    const data = [];
+    const now = Math.floor(Date.now() / 1000);
+    let currentRatio = 45;
+    for (let i = 0; i < 90; i++) {
+      currentRatio = currentRatio + (Math.random() - 0.5) * 2;
+      data.push({
+        timestamp: now - (90 - i) * 86400,
+        ratio: Math.max(20, Math.min(80, currentRatio)),
+      });
+    }
+    return data;
+  }, []);
+
+  const mockMarketShareData = useMemo(() => {
+    const data = [];
+    const now = Math.floor(Date.now() / 1000);
+    let aave = 70;
+    let morpho = 20;
+    let fluid = 10;
+    for (let i = 0; i < 30; i++) {
+      aave += (Math.random() - 0.5) * 2;
+      morpho += (Math.random() - 0.5) * 1.5;
+      fluid += (Math.random() - 0.5) * 1;
+
+      const sum = Math.max(0.1, aave) + Math.max(0.1, morpho) + Math.max(0.1, fluid);
+      const date = new Date((now - (30 - i) * 86400) * 1000);
+
+      data.push({
+        timestamp: now - (30 - i) * 86400,
+        dateStr: `${date.getMonth() + 1}/${date.getDate()}`,
+        aave: (Math.max(0, aave) / sum) * 100,
+        morpho: (Math.max(0, morpho) / sum) * 100,
+        fluid: (Math.max(0, fluid) / sum) * 100,
+      });
+    }
+    return data;
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#050505] text-gray-300 font-mono">
       <main className="max-w-[1800px] mx-auto px-6 pb-12">
@@ -159,7 +215,7 @@ export default function LendingDataPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 border border-white/10 bg-[#080808] divide-y md:divide-y-0 md:divide-x divide-white/10">
             <MetricCell
               label="OVERVIEW"
-              Icon={PieChart}
+              Icon={PieChartIcon}
               hideLabelOnMobile={false}
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
@@ -221,92 +277,198 @@ export default function LendingDataPage() {
           </div>
         </div>
 
-        <section className="mt-8 grid grid-cols-1 lg:grid-cols-4 gap-0 lg:gap-0 border border-white/10 bg-[#080808] divide-y lg:divide-y-0 lg:divide-x divide-white/10">
+        <section className="mt-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-          {/* Settings Panel (Left - 1 Col) */}
-          <div className="col-span-1 p-4 md:p-6 flex flex-col">
-
-            <div className="flex flex-col gap-8">
-
-              <div className="flex flex-col gap-3">
-                <div className="text-[12px] text-gray-500 uppercase tracking-widest border-b border-white/10 pb-2 mb-1">Protocols</div>
-                <CustomCheckbox label="ALL MARKETS" checked={true} />
-                <CustomCheckbox label="AAVE" checked={true} />
-                <CustomCheckbox label="Morpho (soon)" disabled={true} />
-                <CustomCheckbox label="Fluid (soon)" disabled={true} />
-                <CustomCheckbox label="Euler (soon)" disabled={true} />
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <div className="text-[12px] text-gray-500 uppercase tracking-widest border-b border-white/10 pb-2 mb-1">Metrics</div>
-                <CustomCheckbox
-                  label="Supply APY"
-                  checked={showSupplyApyHistory}
-                  onClick={() => setShowSupplyApyHistory((value) => !value)}
-                />
-                <CustomCheckbox
-                  label="Borrow APY"
-                  checked={showBorrowApyHistory}
-                  onClick={() => setShowBorrowApyHistory((value) => !value)}
-                />
-              </div>
-
-              <div className="flex flex-col gap-3">
-                <div className="text-[12px] text-gray-500 uppercase tracking-widest border-b border-white/10 pb-2 mb-1">Display In</div>
-                <CustomCheckbox
-                  label="USD"
-                  checked={displayUnit === "USD"}
-                  onClick={() => setDisplayUnit("USD")}
-                />
-                <CustomCheckbox
-                  label="BTC"
-                  checked={displayUnit === "BTC"}
-                  onClick={() => setDisplayUnit("BTC")}
-                />
-                <CustomCheckbox
-                  label="ETH"
-                  checked={displayUnit === "ETH"}
-                  onClick={() => setDisplayUnit("ETH")}
-                />
-              </div>
-
-            </div>
-          </div>
-
-          {/* Chart Panel (Right - 3 Cols) */}
-          <div className="lg:col-span-3 flex flex-col p-4 md:p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
-                {`PROTOCOL TVL (${displayUnit})`}
-              </h2>
-              <div className="text-[9px] md:text-xs text-gray-500 uppercase tracking-widest border border-white/10 px-2 py-1 bg-[#050505]">
-                3Y / 1W STEP
-              </div>
-            </div>
-            <div className="h-[280px] md:h-[394px] w-full relative mt-auto">
-              {loading && chartData.length === 0 ? (
-                <div className="absolute inset-0 bg-[#0a0a0a]/50 backdrop-blur-sm z-10 flex flex-col items-center justify-center border border-white/10">
-                  <Loader2 className="w-6 h-6 text-cyan-500 animate-spin mb-2" />
-                  <span className="text-[10px] uppercase tracking-widest text-gray-400">Syncing Chart...</span>
+            {/* Top-Left: Historical Interest Rates */}
+            <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
+                  HISTORICAL INTEREST RATES
+                </h2>
+                <div className="flex gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2" style={{ backgroundColor: SUPPLY_APY_AREA.color }} />
+                    <span className="text-[9px] text-gray-500 uppercase tracking-widest">Supply</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2" style={{ backgroundColor: BORROW_APY_AREA.color }} />
+                    <span className="text-[9px] text-gray-500 uppercase tracking-widest">Borrow</span>
+                  </div>
                 </div>
-              ) : (
-                <RLDPerformanceChart
-                  data={chartData}
-                  areas={chartAreas}
-                  resolution="1W"
-                />
-              )}
+              </div>
+              <div className="h-[280px] w-full relative mt-auto">
+                {loading && chartData.length === 0 ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <Loader2 className="w-6 h-6 text-cyan-500 animate-spin mb-2" />
+                  </div>
+                ) : (
+                  <RLDPerformanceChart
+                    data={chartData}
+                    areas={[SUPPLY_APY_AREA, BORROW_APY_AREA]}
+                    resolution="1D"
+                  />
+                )}
+              </div>
             </div>
-          </div>
 
+            {/* Top-Right: Historical Protocol TVL */}
+            <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
+                  {`PROTOCOL TVL (${displayUnit})`}
+                </h2>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2" style={{ backgroundColor: tvlArea.color }} />
+                  <span className="text-[9px] text-gray-500 uppercase tracking-widest">TVL</span>
+                </div>
+              </div>
+              <div className="h-[280px] w-full relative mt-auto">
+                {loading && chartData.length === 0 ? (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <Loader2 className="w-6 h-6 text-cyan-500 animate-spin mb-2" />
+                  </div>
+                ) : (
+                  <RLDPerformanceChart
+                    data={chartData}
+                    areas={[tvlArea]}
+                    resolution="1D"
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Bottom-Left: Historical Debt/Collateral Ratio */}
+            <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
+                  DEBT / COLLATERAL RATIO
+                </h2>
+                <div className="text-[9px] text-gray-500 uppercase tracking-widest border border-white/10 px-2 py-1 bg-[#050505]">
+                  MOCK DATA
+                </div>
+              </div>
+              <div className="h-[280px] w-full relative mt-auto">
+                <RLDPerformanceChart
+                  data={mockRatioData}
+                  areas={[
+                    { key: "ratio", color: "#F43F5E", name: "D/C Ratio", format: "percent" }
+                  ]}
+                  resolution="1D"
+                  yAxisDomain={[0, 100]}
+                />
+              </div>
+            </div>
+
+            {/* Bottom-Right: Market Share Stacked Bar Chart */}
+            <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
+                  MARKET SHARE
+                </h2>
+                <div className="flex items-center gap-4">
+                  <div className="text-[9px] text-gray-500 uppercase tracking-widest border border-white/10 px-2 py-1 bg-[#050505] mr-2">
+                    MOCK DATA
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 bg-[#818cf8]" />
+                      <span className="text-[9px] text-gray-500 uppercase tracking-widest">Aave</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 bg-[#34d399]" />
+                      <span className="text-[9px] text-gray-500 uppercase tracking-widest">Morpho</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 bg-[#22d3ee]" />
+                      <span className="text-[9px] text-gray-500 uppercase tracking-widest">Fluid</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="h-[280px] w-full relative mt-auto pt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={mockMarketShareData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
+                    <XAxis
+                      dataKey="dateStr"
+                      stroke="#555"
+                      tick={{ fill: '#888', fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                      minTickGap={20}
+                    />
+                    <YAxis
+                      stroke="#555"
+                      tick={{ fill: '#888', fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(val) => `${val}%`}
+                      domain={[0, 100]}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                      contentStyle={{ backgroundColor: '#111', borderColor: '#333', color: '#fff', fontSize: '12px' }}
+                      itemStyle={{ color: '#fff' }}
+                      formatter={(value, name) => [`${value.toFixed(1)}%`, name.charAt(0).toUpperCase() + name.slice(1)]}
+                      labelStyle={{ color: '#888', marginBottom: '4px' }}
+                    />
+                    <Bar dataKey="aave" stackId="a" fill="#818cf8" maxBarSize={40} isAnimationActive={false} />
+                    <Bar dataKey="morpho" stackId="a" fill="#34d399" maxBarSize={40} isAnimationActive={false} />
+                    <Bar dataKey="fluid" stackId="a" fill="#22d3ee" maxBarSize={40} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+          </div>
         </section>
 
         {/* Markets Table Section */}
         <section className="mt-8 border border-white/10 bg-[#080808]">
-          <div className="p-4 md:p-6 border-b border-white/10">
-            <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
-              MARKETS
-            </h2>
+          <div className="flex flex-col md:flex-row md:items-center justify-between p-4 md:p-4 md:px-6 border-b border-white/10 gap-4">
+            <div className="flex items-center gap-2 md:gap-4 overflow-x-auto no-scrollbar pb-1 md:pb-0">
+              <button
+                onClick={() => handleProtocolFilter('ALL')}
+                className={`text-xs md:text-sm tracking-widest uppercase transition-colors px-3 py-1.5 rounded-sm border whitespace-nowrap ${protocolFilter === 'ALL' ? 'text-cyan-400 border-cyan-400/30 bg-cyan-400/5' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}
+              >
+                ALL
+              </button>
+
+              <div className="h-4 w-px bg-white/10 shrink-0 mx-1" />
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleProtocolFilter('LENDING')}
+                  className={`text-xs md:text-sm tracking-widest uppercase transition-colors px-3 py-1.5 rounded-sm border ${protocolFilter === 'LENDING' ? 'text-cyan-400 border-cyan-400/30 bg-cyan-400/5' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}
+                >
+                  LENDING
+                </button>
+                <div className="flex items-center gap-1">
+                  {['AAVE', 'MORPHO', 'FLUID'].map(p => (
+                    <button
+                      key={p}
+                      onClick={() => handleProtocolFilter(p)}
+                      className={`text-xs md:text-sm tracking-widest uppercase transition-colors px-3 py-1.5 rounded-sm border ${protocolFilter === p ? 'text-cyan-400 border-cyan-400/30 bg-cyan-400/5' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                  <button disabled className="text-xs md:text-sm tracking-widest uppercase text-gray-700 px-3 py-1.5 pt-2 cursor-not-allowed border border-transparent">
+                    EULER <span className="text-[9px] opacity-50">(SOON)</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-4 w-px bg-white/10 shrink-0 mx-1" />
+
+              <button
+                onClick={() => handleProtocolFilter('PENDLE')}
+                className={`text-xs md:text-sm tracking-widest uppercase transition-colors px-3 py-1.5 rounded-sm border shrink-0 ${protocolFilter === 'PENDLE' ? 'text-cyan-400 border-cyan-400/30 bg-cyan-400/5' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}
+              >
+                PENDLE
+              </button>
+            </div>
           </div>
 
           <div className="w-full overflow-x-auto">
@@ -332,12 +494,11 @@ export default function LendingDataPage() {
                   </div>
                 ) : (
                   paginatedMarkets.map((pool, idx) => (
-                    <div 
-                      key={`${pool.symbol}-${idx}`} 
+                    <div
+                      key={`${pool.symbol}-${idx}`}
                       onClick={() => pool.entityId && navigate(`/data/aave/${pool.entityId}`)}
-                      className={`grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center transition-colors ${
-                        pool.entityId ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
-                      }`}
+                      className={`grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center transition-colors ${pool.entityId ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
+                        }`}
                     >
                       <div className="col-span-2 flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">

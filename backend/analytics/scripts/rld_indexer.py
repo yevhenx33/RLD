@@ -105,6 +105,24 @@ def cmd_worker(args) -> int:
     return 0
 
 
+def cmd_morpho_oracle_backfill(args) -> int:
+    from analytics.scripts.backfill_morpho_oracle_snapshots import run as run_morpho_oracle_backfill
+
+    return run_morpho_oracle_backfill(args)
+
+
+def cmd_metamorpho_backfill(args) -> int:
+    from analytics.scripts.backfill_metamorpho import run as run_metamorpho_backfill
+
+    return run_metamorpho_backfill(args)
+
+
+def cmd_fluid_product_backfill(args) -> int:
+    from analytics.scripts.backfill_fluid_product_snapshots import run as run_fluid_product_backfill
+
+    return run_fluid_product_backfill(args)
+
+
 def cmd_views(args) -> int:
     ch = ch_client()
     try:
@@ -143,6 +161,64 @@ def main() -> int:
     worker.add_argument("--genesis-block", type=int, default=None)
     worker.add_argument("--poll-interval", type=int, default=None)
     worker.set_defaults(func=cmd_worker)
+
+    morpho_oracle = sub.add_parser("morpho-oracle-backfill", help="Backfill Morpho oracle.price() snapshots")
+    morpho_oracle.add_argument("--rpc-url", default=None)
+    morpho_oracle.add_argument("--start", default=None)
+    morpho_oracle.add_argument("--end", default=None)
+    morpho_oracle.add_argument("--min-supply-usd", type=float, default=100_000.0)
+    morpho_oracle.add_argument("--min-borrow-usd", type=float, default=1.0)
+    morpho_oracle.add_argument("--max-oracles", type=int, default=None)
+    morpho_oracle.add_argument("--limit-hours", type=int, default=None)
+    morpho_oracle.add_argument("--rpc-batch-size", type=int, default=100)
+    morpho_oracle.add_argument("--http-timeout-sec", type=int, default=120)
+    morpho_oracle.add_argument("--retries", type=int, default=2)
+    morpho_oracle.add_argument("--progress-every", type=int, default=25)
+    morpho_oracle.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
+    morpho_oracle.add_argument("--dry-run", action="store_true")
+    morpho_oracle.set_defaults(func=cmd_morpho_oracle_backfill)
+
+    metamorpho = sub.add_parser("metamorpho-backfill", help="Backfill and snapshot MetaMorpho vault state, events, and allocations")
+    metamorpho.add_argument("--rpc-url", default=None)
+    metamorpho.add_argument("--block-number", type=int, default=None)
+    metamorpho.add_argument("--factory-addresses", default=None)
+    metamorpho.add_argument("--factory-start-block", type=int, default=None)
+    metamorpho.add_argument("--events-start-block", type=int, default=None)
+    metamorpho.add_argument("--ignore-existing-cursor", action="store_true")
+    metamorpho.add_argument("--max-vaults", type=int, default=None)
+    metamorpho.add_argument("--max-queue-items", type=int, default=256)
+    metamorpho.add_argument("--log-chunk-size", type=int, default=25000)
+    metamorpho.add_argument("--progress-every-ranges", type=int, default=10)
+    metamorpho.add_argument("--http-timeout-sec", type=int, default=60)
+    metamorpho.add_argument("--retries", type=int, default=2)
+    metamorpho.add_argument("--skip-factory-discovery", action="store_true")
+    metamorpho.add_argument("--skip-events", action="store_true")
+    metamorpho.add_argument("--skip-replay", action="store_true")
+    metamorpho.add_argument("--skip-rpc-snapshot", action="store_true")
+    metamorpho.add_argument("--dry-run", action="store_true")
+    metamorpho.set_defaults(func=cmd_metamorpho_backfill)
+
+    fluid_products = sub.add_parser("fluid-products-backfill", help="Backfill Fluid product discovery and latest snapshots")
+    fluid_products.add_argument("--rpc-url", default=None)
+    fluid_products.add_argument("--block-number", type=int, default=None)
+    fluid_products.add_argument("--max-contracts", type=int, default=None)
+    fluid_products.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_products.add_argument("--retries", type=int, default=2)
+    fluid_products.add_argument("--dry-run", action="store_true")
+    fluid_products.add_argument("--skip-oracles", action="store_true")
+    fluid_products.add_argument("--skip-validation", action="store_true")
+    fluid_products.set_defaults(func=cmd_fluid_product_backfill)
+
+    fluid_full = sub.add_parser("fluid-full-coverage-cycle", help="Run Fluid oracle snapshots, product snapshots, and validation")
+    fluid_full.add_argument("--rpc-url", default=None)
+    fluid_full.add_argument("--block-number", type=int, default=None)
+    fluid_full.add_argument("--max-contracts", type=int, default=None)
+    fluid_full.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_full.add_argument("--retries", type=int, default=2)
+    fluid_full.add_argument("--dry-run", action="store_true")
+    fluid_full.add_argument("--skip-oracles", action="store_true")
+    fluid_full.add_argument("--skip-validation", action="store_true")
+    fluid_full.set_defaults(func=cmd_fluid_product_backfill)
 
     views = sub.add_parser("views", help="Manage serving materialized views")
     views_sub = views.add_subparsers(dest="views_command", required=True)

@@ -23,6 +23,7 @@ log = logging.getLogger("indexer")
 # The Merge-engine 'unified_timeseries' view combines them for reads.
 PROTOCOL_TABLES = {
     "AAVE_MARKET": "aave_timeseries",
+    "FLUID_MARKET": "fluid_timeseries",
     "MORPHO_MARKET": "morpho_chainlink_timeseries",
 }
 
@@ -412,6 +413,7 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
         read_table = PROTOCOL_TABLES.get(protocol, 'unified_timeseries')
         last_known = ch.query_df(f"""
             SELECT entity_id, symbol,
+                   argMax(target_id, timestamp) AS target_id,
                    argMax(timestamp, timestamp) AS last_ts,
                    argMax(supply_usd, timestamp) AS supply_usd,
                    argMax(borrow_usd, timestamp) AS borrow_usd,
@@ -440,6 +442,7 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
         
         fill_start = eid_rows["timestamp"].min() if not eid_rows.empty else batch_max_ts
         symbol = eid_rows["symbol"].iloc[0] if not eid_rows.empty else ""
+        target_id = eid_rows["target_id"].iloc[0] if (not eid_rows.empty and "target_id" in eid_rows.columns) else ""
         
         seed_row = None
         if not last_known.empty:
@@ -447,6 +450,7 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
             if not lk.empty:
                 last_ts = pd.Timestamp(lk["last_ts"].iloc[0])
                 symbol = lk["symbol"].iloc[0]
+                target_id = lk["target_id"].iloc[0] if "target_id" in lk.columns else target_id
                 if eid_rows.empty or last_ts < fill_start:
                     fill_start = last_ts + pd.Timedelta(hours=1)
                     seed_row = lk.iloc[0]
@@ -469,7 +473,7 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
         template["entity_id"] = eid
         template["symbol"] = symbol
         template["protocol"] = protocol
-        template["target_id"] = ""
+        template["target_id"] = "" if pd.isna(target_id) else str(target_id)
 
         # Merge actual data onto template
         merged = template.merge(

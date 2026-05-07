@@ -67,6 +67,13 @@ jobs:
           python -m py_compile
           backend/indexers/api/graphql.py
           backend/indexers/bootstrap.py
+          backend/analytics/api/graphql.py
+          backend/analytics/protocols.py
+          backend/analytics/schema.py
+          backend/analytics/scripts/backfill_metamorpho.py
+          backend/analytics/scripts/rld_indexer.py
+          backend/analytics/scripts/run_indexer.py
+          backend/analytics/sources/metamorpho.py
           docker/dashboard/live_status_server.py
           docker/reth/simctl.py
           docker/reth/deploy_cds_market_live.py

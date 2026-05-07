@@ -13,9 +13,11 @@ const BondsDirectoryPage = lazy(() => import("../pages/app/BondsDirectoryPage"))
 const ProtocolMarketsPage = lazy(
   () => import("../features/explore/pages/ProtocolMarketsPage"),
 );
-const LendingPoolPage = lazy(
-  () => import("../pages/app/LendingPoolPage"),
-);
+const AaveMarketPage = lazy(() => import("../pages/app/markets/AaveMarketPage"));
+const MorphoMarketPage = lazy(() => import("../pages/app/markets/MorphoMarketPage"));
+const FluidMarketPage = lazy(() => import("../pages/app/markets/FluidMarketPage"));
+const PendleMarketPage = lazy(() => import("../pages/app/markets/PendleMarketPage"));
+const UnsupportedMarketPage = lazy(() => import("../pages/app/markets/UnsupportedMarketPage"));
 const PortfolioPage = lazy(() => import("../pages/app/PortfolioPage"));
 const SimulationTerminalPage = lazy(
   () => import("../pages/app/SimulationTerminalPage"),
@@ -94,10 +96,11 @@ export default function AppRoutes() {
           path="/data/:protocol"
           element={renderLazy(ProtocolMarketsPage)}
         />
-        <Route
-          path="/data/:protocol/:marketId"
-          element={renderLazy(LendingPoolPage)}
-        />
+        <Route path="/data/aave/:marketId" element={renderLazy(AaveMarketPage)} />
+        <Route path="/data/morpho/:marketId" element={renderLazy(MorphoMarketPage)} />
+        <Route path="/data/fluid/:marketId" element={renderLazy(FluidMarketPage)} />
+        <Route path="/data/pendle/:marketId" element={renderLazy(PendleMarketPage)} />
+        <Route path="/data/:protocol/:marketId" element={renderLazy(UnsupportedMarketPage)} />
       </Route>
 
       <Route element={<SimulationRuntimeShell />}>

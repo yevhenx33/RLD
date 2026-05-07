@@ -23,6 +23,7 @@ apply_env_from_config()
 
 from analytics.collector import ProtocolCollector
 from analytics.processor import ProtocolProcessor
+from analytics.sources.metamorpho import MetaMorphoFactorySource, MetaMorphoSource, MetaMorphoVaultBackfillSource
 from analytics.sources import (
     FluidSource,
     ChainlinkSource,
@@ -37,6 +38,9 @@ from analytics.protocols import (
     AAVE_MARKET,
     FLUID_MARKET,
     MORPHO_MARKET,
+    METAMORPHO_FACTORY,
+    METAMORPHO_VAULT,
+    METAMORPHO_VAULT_BACKFILL,
     CHAINLINK_PRICES,
     SOFR_RATES,
     PENDLE_ETHEREUM_PT_YT_PRICES,
@@ -54,6 +58,9 @@ SOURCE_MAP = {
     AAVE_MARKET: AaveV3Source,
     FLUID_MARKET: FluidSource,
     MORPHO_MARKET: MorphoSource,
+    METAMORPHO_FACTORY: MetaMorphoFactorySource,
+    METAMORPHO_VAULT: MetaMorphoSource,
+    METAMORPHO_VAULT_BACKFILL: MetaMorphoVaultBackfillSource,
     CHAINLINK_PRICES: ChainlinkSource,
     "LIDO_REBASE": LidoRebaseSource,
     "STATIC_PEGS": StaticPegsSource,
