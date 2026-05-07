@@ -9,16 +9,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analytics.api.graphql import (  # noqa: E402
+    API_DEFAULT_PAGE_SIZE,
+    API_MAX_PAGE_SIZE,
     AnalyticsFreshness,
+    GRAPHQL_RATE_LIMIT_PER_MINUTE,
     MarketDetail,
     MarketFlowPoint,
     MarketSnapshot,
     MarketTimeseriesPoint,
     ProtocolApyPoint,
     ProtocolTvlPoint,
+    _api_page_size,
     _build_lending_data_page_payload,
     _build_lending_pool_page_payload,
     _build_protocol_markets_page_payload,
+    _connection_page,
+    _is_introspection_query,
+    _protocol_readiness_items,
+    _query_depth,
+    _rate_limit_allowed,
 )
 
 
@@ -157,6 +166,58 @@ class PageModelTests(unittest.TestCase):
         self.assertEqual(payload.rate_chart[0].borrow_apy, 8.0)
         self.assertEqual(payload.rate_chart[0].utilization, 50.0)
         self.assertEqual(len(payload.flow_chart), 1)
+
+    def test_graphql_introspection_detector_ignores_regular_queries(self):
+        self.assertFalse(_is_introspection_query("query Market { latestRates { timestamp } }"))
+        self.assertTrue(_is_introspection_query("query IntrospectionQuery { __schema { queryType { name } } }"))
+        self.assertTrue(_is_introspection_query('query TypeLookup { __type(name: "Query") { name } }'))
+
+    def test_graphql_depth_counter_ignores_strings(self):
+        query = """
+        query Deep {
+          lendingDataPage {
+            freshness { status }
+            markets { symbol protocol }
+          }
+          latestRates { timestamp }
+        }
+        """
+        self.assertEqual(_query_depth(query), 3)
+        self.assertEqual(_query_depth('query Q { latestRates { symbol: "__schema { nope }" } }'), 2)
+
+    def test_rate_limit_helper_enforces_rolling_window(self):
+        key = "unit-test-rate-limit"
+        allowed = [
+            _rate_limit_allowed(key, now=1000.0 + index * 0.01)
+            for index in range(GRAPHQL_RATE_LIMIT_PER_MINUTE)
+        ]
+        self.assertTrue(all(allowed))
+        self.assertFalse(_rate_limit_allowed(key, now=1001.5))
+        self.assertTrue(_rate_limit_allowed(key, now=1061.0))
+
+    def test_pendle_public_readiness_does_not_require_processor_lag(self):
+        readiness = _protocol_readiness_items(
+            {"PENDLE_ETHEREUM_PT_YT_PRICES": 0},
+            {"PENDLE_ETHEREUM_PT_YT_PRICES": -1},
+            ("PENDLE_ETHEREUM_PT_YT_PRICES",),
+        )
+        self.assertTrue(readiness[0].ready)
+        self.assertEqual(readiness[0].issues, [])
+
+    def test_api_pagination_defaults_and_caps(self):
+        self.assertEqual(_api_page_size(None), API_DEFAULT_PAGE_SIZE)
+        self.assertEqual(_api_page_size(25), 25)
+        self.assertEqual(_api_page_size(5000), API_MAX_PAGE_SIZE)
+        nodes, page_info, total_count = _connection_page(list(range(250)), None, None)
+        self.assertEqual(nodes, list(range(100)))
+        self.assertTrue(page_info.has_next_page)
+        self.assertEqual(page_info.end_cursor, "100")
+        self.assertEqual(total_count, 250)
+        nodes, page_info, total_count = _connection_page(list(range(250)), 1000, "100")
+        self.assertEqual(nodes, list(range(100, 250)))
+        self.assertFalse(page_info.has_next_page)
+        self.assertIsNone(page_info.end_cursor)
+        self.assertEqual(total_count, 250)
 
 
 if __name__ == "__main__":

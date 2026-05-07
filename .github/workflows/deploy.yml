@@ -39,7 +39,7 @@ jobs:
           cp docker/.env.example docker/.env
           cat > backend/analytics/.env <<'ENV'
           MAINNET_RPC_URL=http://localhost:8545
-          ENVIO_API_TOKEN=ci
+          HYPERSYNC_API_TOKEN=ci
           CLICKHOUSE_PASSWORD=ci_clickhouse_password
           CLICKHOUSE_USER=default
           CLICKHOUSE_API_USER=default
@@ -113,15 +113,16 @@ jobs:
         working-directory: frontend
         run: npm run check:boundaries
 
-      - name: Check analytics contracts
+      - name: Check API contracts
         working-directory: frontend
-        run: npm run check:analytics-contracts
+        run: npm run check:api-contracts
 
       - name: Build
         working-directory: frontend
         run: npm run build
         env:
           VITE_API_BASE_URL: https://rld.fi/api
+          VITE_PUBLIC_API_BASE: https://rld.fi/analytics
           VITE_MAINNET_RPC_URL: ${{ secrets.VITE_MAINNET_RPC_URL }}
 
       - name: Check frontend bundle budgets

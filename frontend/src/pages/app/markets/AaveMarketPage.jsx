@@ -1,64 +1,19 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { Activity, ArrowLeft, Loader2, ExternalLink } from "lucide-react";
 import RLDPerformanceChart from "../../../charts/primitives/RLDPerformanceChart";
-import { ENVIO_GRAPHQL_URL } from "../../../api/endpoints";
-import { postGraphQL } from "../../../api/graphqlClient";
+import { API_GRAPHQL_URL } from "../../../api/endpoints";
+import { apiGraphQL } from "../../../api/apiClient";
+import { MARKET_PAGE_QUERY } from "../../../api/apiQueries";
+import { queryKeys } from "../../../api/queryKeys";
+import { apiProtocolForSlug, normalizeMarketIdForApi } from "../../../lib/protocolConfig";
 import { getTokenIcon } from "../../../utils/tokenIcons";
 import { REFRESH_INTERVALS } from "../../../config/refreshIntervals";
-
-const PROTOCOL_MAP = {
-  aave: "AAVE_MARKET",
-  euler: "EULER_MARKET",
-  fluid: "FLUID_MARKET",
-};
 
 const CHART_RESOLUTION = "1D";
 const TIMESERIES_LIMIT_DAYS = 500;
 const FLOW_LIMIT_DAYS = 500;
-
-const LENDING_POOL_PAGE_QUERY = `
-  query LendingPoolPage($protocol: String!, $entityId: String!, $timeseriesLimit: Int!, $flowLimit: Int!) {
-    lendingPoolPage(
-      protocol: $protocol
-      entityId: $entityId
-      timeseriesLimit: $timeseriesLimit
-      flowLimit: $flowLimit
-    ) {
-      freshness { ready status generatedAt }
-      market {
-        entityId
-        symbol
-        protocol
-        supplyUsd
-        borrowUsd
-        supplyApy
-        borrowApy
-        utilization
-      }
-      rateChart {
-        timestamp
-        supplyApy
-        borrowApy
-        utilization
-        supplyUsd
-        borrowUsd
-      }
-      flowChart {
-        timestamp
-        supplyInflowUsd
-        supplyOutflowUsd
-        borrowInflowUsd
-        borrowOutflowUsd
-        netSupplyFlowUsd
-        netBorrowFlowUsd
-        cumulativeSupplyNetInflowUsd
-        cumulativeBorrowNetInflowUsd
-      }
-    }
-  }
-`;
 
 const formatCurrency = (value) => {
   if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
@@ -74,37 +29,32 @@ const formatApy = (value) => {
 export default function AaveMarketPage() {
   const { protocol: protocolSlug, marketId } = useParams();
   const navigate = useNavigate();
-  const protocolKey = PROTOCOL_MAP[protocolSlug?.toLowerCase()] || "AAVE_MARKET";
+  const protocolKey = apiProtocolForSlug(protocolSlug);
   const normalizedEntityId = useMemo(() => {
-    const raw = String(marketId || "").trim().toLowerCase();
-    if (!raw) return null;
-    if (protocolKey === "AAVE_MARKET" && !raw.startsWith("0x")) {
-      return `0x${raw}`;
-    }
-    return raw;
-  }, [marketId, protocolKey]);
+    return normalizeMarketIdForApi(protocolSlug, marketId);
+  }, [marketId, protocolSlug]);
 
   const { data: pageGqlData, isLoading: pageLoading } = useSWR(
-    normalizedEntityId ? [ENVIO_GRAPHQL_URL, `envio.lending-pool.page.${normalizedEntityId}.v1`] : null,
-    ([url]) =>
-      postGraphQL(url, {
-        query: LENDING_POOL_PAGE_QUERY,
+    queryKeys.apiMarketPage(API_GRAPHQL_URL, protocolKey, normalizedEntityId),
+    ([, , variables]) =>
+      apiGraphQL("MarketPage", {
+        query: MARKET_PAGE_QUERY,
         variables: {
-          protocol: protocolKey,
-          entityId: normalizedEntityId,
+          protocol: variables.protocol,
+          marketId: variables.marketId,
           timeseriesLimit: TIMESERIES_LIMIT_DAYS,
           flowLimit: FLOW_LIMIT_DAYS,
         },
       }),
     {
-      refreshInterval: REFRESH_INTERVALS.ANALYTICS_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.ANALYTICS_DEDUPE_MS,
+      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
+      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
       revalidateOnFocus: false,
     }
   );
 
   const { market, tsData, flowData } = useMemo(() => {
-    const page = pageGqlData?.lendingPoolPage || {};
+    const page = pageGqlData?.marketPage || {};
     const rawMarket = page.market || null;
 
     let safeMarket = null;
@@ -197,7 +147,7 @@ export default function AaveMarketPage() {
 
         {/* Nav Route / Breadcrumbs */}
         <div className="flex items-center gap-3 my-6 transition-all duration-500">
-          <span className="font-mono text-[#333] text-[12px]">|—</span>
+          <span className="font-mono text-[#333] text-[12px]">|вЂ”</span>
           <div className="flex items-center gap-2 font-mono text-[11px] md:text-[13px] tracking-[0.28em] uppercase text-[#999]">
             <button onClick={() => navigate("/data")} className="hover:text-white transition-colors uppercase">data</button>
             <span className="text-[#999]">/</span>

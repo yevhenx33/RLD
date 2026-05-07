@@ -45,15 +45,21 @@ CLICKHOUSE_WAIT_FOR_ASYNC_INSERT = (
 )
 
 
-def require_envio_token(explicit_token: str = "") -> str:
-    token = (explicit_token or os.getenv("ENVIO_API_TOKEN", "")).strip()
+def require_hypersync_token(explicit_token: str = "") -> str:
+    token = (
+        explicit_token
+        or os.getenv("HYPERSYNC_API_TOKEN", "")
+        or os.getenv("ENVIO_API_TOKEN", "")
+    ).strip()
     if not token:
         raise RuntimeError(
-            "ENVIO_API_TOKEN is required for HyperSync access. "
-            "Set it in the environment before starting the indexer."
+            "HYPERSYNC_API_TOKEN is required for HyperSync access. "
+            "ENVIO_API_TOKEN is accepted only as a deprecated compatibility alias."
         )
     return token
 
+
+require_envio_token = require_hypersync_token
 
 def build_block_ts_map(blocks) -> dict:
     """Convert HyperSync block list to {block_number: datetime} map."""
@@ -89,7 +95,7 @@ class IndexerEngine:
     ):
         self.sources = sources
         self.poll_interval = poll_interval
-        self.envio_token = require_envio_token(envio_token)
+        self.envio_token = require_hypersync_token(envio_token)
         self.ch_host = clickhouse_host
         self.ch_port = clickhouse_port
 

@@ -1,4 +1,4 @@
-import { API_BASE_URL, ENVIO_GRAPHQL_URL } from "../api/endpoints";
+import { API_BASE_URL, API_GRAPHQL_URL } from "../api/endpoints";
 
 export const API_BASE = API_BASE_URL;
 export const API_URL = API_BASE;
@@ -6,7 +6,7 @@ export const API_URL = API_BASE;
 // API auth is handled server-side by Nginx proxy — no client-side key needed
 export const authHeaders = {};
 
-export const ENVIO_GQL_URL = ENVIO_GRAPHQL_URL;
+export const API_GQL_URL = API_GRAPHQL_URL;
 
 // Earliest date the indexer has data for (protocol deployment date)
 export const DEPLOYMENT_DATE = "2026-03-03";

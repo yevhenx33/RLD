@@ -37,6 +37,53 @@ _API_TABLES_READY = False
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
 API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
 MARKET_TIMESERIES_TABLE = "market_timeseries"
+MARKET_RISK_COLUMNS = [
+    "ltv",
+    "liquidation_threshold",
+    "liquidation_penalty",
+    "e_mode_category",
+    "e_mode_ltv",
+    "e_mode_liquidation_threshold",
+    "e_mode_liquidation_penalty",
+    "e_mode_label",
+]
+MARKET_RISK_DEFAULTS = {
+    "ltv": 0.0,
+    "liquidation_threshold": 0.0,
+    "liquidation_penalty": 0.0,
+    "e_mode_category": 0,
+    "e_mode_ltv": 0.0,
+    "e_mode_liquidation_threshold": 0.0,
+    "e_mode_liquidation_penalty": 0.0,
+    "e_mode_label": "",
+}
+
+
+def _with_market_risk_defaults(df):
+    enriched = df.copy()
+    for column, default in MARKET_RISK_DEFAULTS.items():
+        if column not in enriched.columns:
+            enriched[column] = default
+    enriched["e_mode_category"] = enriched["e_mode_category"].fillna(0).astype("uint8")
+    enriched["e_mode_label"] = enriched["e_mode_label"].fillna("").astype(str)
+    for column in MARKET_RISK_COLUMNS:
+        if column not in {"e_mode_category", "e_mode_label"}:
+            enriched[column] = enriched[column].fillna(0.0).astype(float)
+    return enriched
+
+
+def _ensure_market_risk_columns(ch, table: str) -> None:
+    for column, column_type in (
+        ("ltv", "Float64 DEFAULT 0"),
+        ("liquidation_threshold", "Float64 DEFAULT 0"),
+        ("liquidation_penalty", "Float64 DEFAULT 0"),
+        ("e_mode_category", "UInt8 DEFAULT 0"),
+        ("e_mode_ltv", "Float64 DEFAULT 0"),
+        ("e_mode_liquidation_threshold", "Float64 DEFAULT 0"),
+        ("e_mode_liquidation_penalty", "Float64 DEFAULT 0"),
+        ("e_mode_label", "String DEFAULT ''"),
+    ):
+        ch.command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {column_type}")
 
 
 def insert_rows_batched(ch, table: str, rows: list[list], column_names: list[str], batch_size: int = DEFAULT_INSERT_BATCH_SIZE) -> int:
@@ -81,6 +128,14 @@ def ensure_api_preagg_tables(ch) -> None:
             borrow_apy Float64,
             utilization Float64,
             price_usd Float64,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            e_mode_category UInt8 DEFAULT 0,
+            e_mode_ltv Float64 DEFAULT 0,
+            e_mode_liquidation_threshold Float64 DEFAULT 0,
+            e_mode_liquidation_penalty Float64 DEFAULT 0,
+            e_mode_label String DEFAULT '',
             inserted_at DateTime DEFAULT now()
         ) ENGINE = ReplacingMergeTree(inserted_at)
         ORDER BY (protocol, entity_id)
@@ -100,6 +155,14 @@ def ensure_api_preagg_tables(ch) -> None:
             borrow_apy Float64,
             utilization Float64,
             price_usd Float64,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            e_mode_category UInt8 DEFAULT 0,
+            e_mode_ltv Float64 DEFAULT 0,
+            e_mode_liquidation_threshold Float64 DEFAULT 0,
+            e_mode_liquidation_penalty Float64 DEFAULT 0,
+            e_mode_label String DEFAULT '',
             inserted_at DateTime DEFAULT now()
         ) ENGINE = ReplacingMergeTree(inserted_at)
         PARTITION BY toStartOfMonth(timestamp)
@@ -137,6 +200,8 @@ def ensure_api_preagg_tables(ch) -> None:
         TTL day + INTERVAL 36 MONTH DELETE
         """
     )
+    _ensure_market_risk_columns(ch, "api_market_latest")
+    _ensure_market_risk_columns(ch, "market_timeseries")
     ch.command(
         """
         CREATE MATERIALIZED VIEW IF NOT EXISTS mv_api_market_timeseries_hourly_agg
@@ -271,6 +336,7 @@ def upsert_api_market_latest(ch, df) -> int:
     )
     if latest.empty:
         return 0
+    latest = _with_market_risk_defaults(latest)
     latest["target_id"] = latest["target_id"].fillna("").astype(str)
     latest["symbol"] = latest["symbol"].fillna("").astype(str)
     latest["protocol"] = latest["protocol"].fillna("").astype(str)
@@ -291,6 +357,7 @@ def upsert_api_market_latest(ch, df) -> int:
                 "borrow_apy",
                 "utilization",
                 "price_usd",
+                *MARKET_RISK_COLUMNS,
             ]
         ],
     )
@@ -316,10 +383,11 @@ def upsert_market_timeseries(ch, df) -> int:
     }
     if not required.issubset(set(df.columns)):
         return 0
+    output = _with_market_risk_defaults(df)
     return insert_df_batched(
         ch,
         MARKET_TIMESERIES_TABLE,
-        df[
+        output[
             [
                 "timestamp",
                 "protocol",
@@ -332,6 +400,7 @@ def upsert_market_timeseries(ch, df) -> int:
                 "borrow_apy",
                 "utilization",
                 "price_usd",
+                *MARKET_RISK_COLUMNS,
             ]
         ],
     )
@@ -405,12 +474,19 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
 
     entity_ids = df["entity_id"].unique().tolist()
     batch_max_ts = df["timestamp"].max()
+    risk_columns = [column for column in MARKET_RISK_COLUMNS if column in df.columns]
 
     # Get last known state across ALL entities in protocol from ClickHouse
     batch_min_ts = df["timestamp"].min()
     try:
         # POKA-YOKE: Read from protocol-specific table, not shared view
         read_table = PROTOCOL_TABLES.get(protocol, 'unified_timeseries')
+        risk_select = ""
+        if risk_columns:
+            risk_select = "".join(
+                f",\n                   argMax({column}, timestamp) AS {column}"
+                for column in risk_columns
+            )
         last_known = ch.query_df(f"""
             SELECT entity_id, symbol,
                    argMax(target_id, timestamp) AS target_id,
@@ -421,6 +497,7 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
                    argMax(borrow_apy, timestamp) AS borrow_apy,
                    argMax(utilization, timestamp) AS utilization,
                    argMax(price_usd, timestamp) AS price_usd
+                   {risk_select}
             FROM {read_table}
             WHERE protocol = '{protocol}'
               AND timestamp < '{batch_min_ts.strftime("%Y-%m-%d %H:%M:%S")}'
@@ -476,9 +553,18 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
         template["target_id"] = "" if pd.isna(target_id) else str(target_id)
 
         # Merge actual data onto template
+        value_columns = [
+            "timestamp",
+            "supply_usd",
+            "borrow_usd",
+            "supply_apy",
+            "borrow_apy",
+            "utilization",
+            "price_usd",
+            *risk_columns,
+        ]
         merged = template.merge(
-            eid_rows[["timestamp", "supply_usd", "borrow_usd", "supply_apy",
-                       "borrow_apy", "utilization", "price_usd"]],
+            eid_rows[value_columns],
             on="timestamp",
             how="left",
         )
@@ -486,18 +572,26 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
         # If we have a seed row from CH, prepend it so ffill has a starting value
         if seed_row is not None and merged.iloc[0].isna().any():
             for col in ["supply_usd", "borrow_usd", "supply_apy", "borrow_apy",
-                        "utilization", "price_usd"]:
+                        "utilization", "price_usd", *risk_columns]:
                 if pd.isna(merged[col].iloc[0]):
-                    merged.loc[merged.index[0], col] = seed_row.get(col, 0.0)
+                    merged.loc[merged.index[0], col] = seed_row.get(
+                        col,
+                        MARKET_RISK_DEFAULTS.get(col, 0.0),
+                    )
 
         # Track exactly which rows were mathematically empty before filling
         is_gap = pd.isna(merged["supply_usd"])
 
         # Forward-fill all anchor bases
         fill_cols = ["supply_usd", "borrow_usd", "supply_apy", "borrow_apy",
-                     "utilization", "price_usd"]
+                     "utilization", "price_usd", *risk_columns]
         merged[fill_cols] = merged[fill_cols].ffill()
-        merged[fill_cols] = merged[fill_cols].fillna(0.0)
+        for column in fill_cols:
+            merged[column] = merged[column].fillna(MARKET_RISK_DEFAULTS.get(column, 0.0))
+        if "e_mode_label" in merged.columns:
+            merged["e_mode_label"] = merged["e_mode_label"].fillna("").astype(str)
+        if "e_mode_category" in merged.columns:
+            merged["e_mode_category"] = merged["e_mode_category"].fillna(0).astype("uint8")
 
         if compound:
             # Segment the DataFrame by physical anchors. 

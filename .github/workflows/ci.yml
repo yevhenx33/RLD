@@ -44,7 +44,7 @@ jobs:
           cp docker/.env.example docker/.env
           cat > backend/analytics/.env <<'ENV'
           MAINNET_RPC_URL=http://localhost:8545
-          ENVIO_API_TOKEN=ci
+          HYPERSYNC_API_TOKEN=ci
           CLICKHOUSE_PASSWORD=ci_clickhouse_password
           CLICKHOUSE_USER=default
           CLICKHOUSE_API_USER=default
@@ -251,8 +251,8 @@ jobs:
       - name: Check frontend architecture boundaries
         run: npm run check:boundaries
 
-      - name: Check analytics contracts
-        run: npm run check:analytics-contracts
+      - name: Check API contracts
+        run: npm run check:api-contracts
 
       - name: Build frontend
         run: npm run build
@@ -307,7 +307,7 @@ jobs:
           cp docker/.env.example docker/.env
           cat > backend/analytics/.env <<'ENV'
           MAINNET_RPC_URL=http://localhost:8545
-          ENVIO_API_TOKEN=ci
+          HYPERSYNC_API_TOKEN=ci
           CLICKHOUSE_PASSWORD=ci_clickhouse_password
           CLICKHOUSE_USER=default
           CLICKHOUSE_API_USER=default

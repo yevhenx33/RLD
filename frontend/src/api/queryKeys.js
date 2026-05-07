@@ -12,13 +12,19 @@ export const queryKeys = {
   brokerData: (url, owner, marketId) =>
     owner && marketId ? [url, "simulation.broker-data.v1", { owner, marketId }] : null,
 
-  envioStatus: (url) => [url, "envio.status.v1", null],
-  envioHistoricalRates: (url, resolution, startDate, endDate, limit) => [
+  apiStatus: (url) => [url, "api.status.v1", null],
+  apiHistoricalRates: (url, resolution, startDate, endDate, limit) => [
     url,
-    "envio.historical-rates.v1",
+    "api.historical-rates.v1",
     { resolution, startDate, endDate, limit },
   ],
-  envioSusdeLatest: (url) => [url, "envio.latest-susde.v1", null],
+  apiSusdeLatest: (url) => [url, "api.latest-susde.v1", null],
+  apiLendingPage: (url, displayIn) => [url, "api.lending-page.v1", { displayIn }],
+  apiProtocolMarkets: (url, protocol) => [url, "api.protocol-markets.v1", { protocol }],
+  apiMarketPage: (url, protocol, marketId) =>
+    protocol && marketId ? [url, "api.market-page.v1", { protocol, marketId }] : null,
+  apiPendleMarketPage: (url, marketId) =>
+    marketId ? [url, "api.pendle-market-page.v1", { marketId }] : null,
 
   twammDashboard: (url, marketId) =>
     marketId ? [url, "simulation.twamm-dashboard.v1", { marketId }] : null,
