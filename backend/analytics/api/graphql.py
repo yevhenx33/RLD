@@ -173,6 +173,166 @@ class MarketDetail:
     lltv: Optional[float] = None
     oracle: Optional[str] = None
     pricing_status: Optional[str] = strawberry.field(name="pricingStatus", default=None)
+    loan_asset: Optional[str] = strawberry.field(name="loanAsset", default=None)
+    loan_token: Optional[str] = strawberry.field(name="loanToken", default=None)
+    loan_decimals: Optional[int] = strawberry.field(name="loanDecimals", default=None)
+    collateral_asset: Optional[str] = strawberry.field(name="collateralAsset", default=None)
+    collateral_token: Optional[str] = strawberry.field(name="collateralToken", default=None)
+    collateral_decimals: Optional[int] = strawberry.field(name="collateralDecimals", default=None)
+    loan_price_usd: Optional[float] = strawberry.field(name="loanPriceUsd", default=None)
+    collateral_price_usd: Optional[float] = strawberry.field(name="collateralPriceUsd", default=None)
+    supply_assets: Optional[str] = strawberry.field(name="supplyAssets", default=None)
+    borrow_assets: Optional[str] = strawberry.field(name="borrowAssets", default=None)
+    collateral_assets: Optional[str] = strawberry.field(name="collateralAssets", default=None)
+    irm: Optional[str] = None
+    oracle_support: Optional[str] = strawberry.field(name="oracleSupport", default=None)
+    pricing_error: Optional[str] = strawberry.field(name="pricingError", default=None)
+    is_active: Optional[bool] = strawberry.field(name="isActive", default=None)
+    has_supply: Optional[bool] = strawberry.field(name="hasSupply", default=None)
+    has_borrow: Optional[bool] = strawberry.field(name="hasBorrow", default=None)
+    has_collateral: Optional[bool] = strawberry.field(name="hasCollateral", default=None)
+    last_event_timestamp: Optional[int] = strawberry.field(name="lastEventTimestamp", default=None)
+    last_priced_timestamp: Optional[int] = strawberry.field(name="lastPricedTimestamp", default=None)
+
+
+@strawberry.type
+class MorphoMarketEvent:
+    timestamp: int
+    block_number: int = strawberry.field(name="blockNumber")
+    tx_hash: str = strawberry.field(name="txHash")
+    log_index: int = strawberry.field(name="logIndex")
+    market_id: str = strawberry.field(name="marketId")
+    event_name: str = strawberry.field(name="eventName")
+    caller: str
+    on_behalf: str = strawberry.field(name="onBehalf")
+    receiver: str
+    assets: str
+    shares: str
+    collateral_assets: str = strawberry.field(name="collateralAssets")
+    repaid_assets: str = strawberry.field(name="repaidAssets")
+    seized_assets: str = strawberry.field(name="seizedAssets")
+    bad_debt_assets: str = strawberry.field(name="badDebtAssets")
+    interest_assets: str = strawberry.field(name="interestAssets")
+    fee_shares: str = strawberry.field(name="feeShares")
+    fee_wad: str = strawberry.field(name="feeWad")
+
+
+@strawberry.type
+class MorphoMarketPosition:
+    market_id: str = strawberry.field(name="marketId")
+    user: str
+    supply_shares: str = strawberry.field(name="supplyShares")
+    borrow_shares: str = strawberry.field(name="borrowShares")
+    collateral_assets: str = strawberry.field(name="collateralAssets")
+    estimated_supply_assets: str = strawberry.field(name="estimatedSupplyAssets")
+    estimated_borrow_assets: str = strawberry.field(name="estimatedBorrowAssets")
+    collateral_usd: float = strawberry.field(name="collateralUsd")
+    health_factor: Optional[float] = strawberry.field(name="healthFactor", default=None)
+    last_event_timestamp: int = strawberry.field(name="lastEventTimestamp")
+
+
+@strawberry.type
+class MetaMorphoVault:
+    vault_address: str = strawberry.field(name="vaultAddress")
+    name: str
+    asset_symbol: str = strawberry.field(name="assetSymbol")
+    asset_address: str = strawberry.field(name="assetAddress")
+    total_assets: str = strawberry.field(name="totalAssets")
+    total_supply: str = strawberry.field(name="totalSupply")
+    share_price_usd: float = strawberry.field(name="sharePriceUsd")
+    tvl_usd: float = strawberry.field(name="tvlUsd")
+    is_canonical_tvl: bool = strawberry.field(name="isCanonicalTvl")
+    last_snapshot_timestamp: int = strawberry.field(name="lastSnapshotTimestamp")
+
+
+@strawberry.type
+class MetaMorphoVaultAllocation:
+    vault_address: str = strawberry.field(name="vaultAddress")
+    market_id: str = strawberry.field(name="marketId")
+    cap: str
+    supplied_assets: str = strawberry.field(name="suppliedAssets")
+    supplied_usd: float = strawberry.field(name="suppliedUsd")
+    allocation_share: float = strawberry.field(name="allocationShare")
+    timestamp: int
+
+
+@strawberry.type
+class MetaMorphoVaultFlow:
+    timestamp: int
+    vault_address: str = strawberry.field(name="vaultAddress")
+    asset_symbol: str = strawberry.field(name="assetSymbol")
+    deposit_assets: str = strawberry.field(name="depositAssets")
+    withdraw_assets: str = strawberry.field(name="withdrawAssets")
+    deposit_shares: str = strawberry.field(name="depositShares")
+    withdraw_shares: str = strawberry.field(name="withdrawShares")
+    transfer_shares: str = strawberry.field(name="transferShares")
+    deposit_usd: float = strawberry.field(name="depositUsd")
+    withdraw_usd: float = strawberry.field(name="withdrawUsd")
+    net_flow_usd: float = strawberry.field(name="netFlowUsd")
+    event_count: int = strawberry.field(name="eventCount")
+
+
+@strawberry.type
+class FluidContractRegistryItem:
+    chain_id: int = strawberry.field(name="chainId")
+    product_type: str = strawberry.field(name="productType")
+    contract: str
+    factory: str
+    name: str
+    created_block: int = strawberry.field(name="createdBlock")
+    active: bool
+    resolver: str
+    metadata: str
+
+
+@strawberry.type
+class FluidProductSnapshot:
+    chain_id: int = strawberry.field(name="chainId")
+    product_type: str = strawberry.field(name="productType")
+    product_id: str = strawberry.field(name="productId")
+    timestamp: int
+    block_number: int = strawberry.field(name="blockNumber")
+    symbol: str
+    underlying: str
+    collateral_token: str = strawberry.field(name="collateralToken")
+    debt_token: str = strawberry.field(name="debtToken")
+    supply_usd: float = strawberry.field(name="supplyUsd")
+    borrow_usd: float = strawberry.field(name="borrowUsd")
+    collateral_usd: float = strawberry.field(name="collateralUsd")
+    liquidity_usd: float = strawberry.field(name="liquidityUsd")
+    volume_usd: float = strawberry.field(name="volumeUsd")
+    fees_usd: float = strawberry.field(name="feesUsd")
+    supply_apy: float = strawberry.field(name="supplyApy")
+    borrow_apy: float = strawberry.field(name="borrowApy")
+    utilization: float
+    ltv: float
+    liquidation_threshold: float = strawberry.field(name="liquidationThreshold")
+    position_count: int = strawberry.field(name="positionCount")
+    is_canonical_tvl: bool = strawberry.field(name="isCanonicalTvl")
+    pricing_status: str = strawberry.field(name="pricingStatus")
+    oracle_status: str = strawberry.field(name="oracleStatus")
+    snapshot_status: str = strawberry.field(name="snapshotStatus")
+    provenance: str
+    error: str
+
+
+@strawberry.type
+class FluidProductComponent:
+    chain_id: int = strawberry.field(name="chainId")
+    product_type: str = strawberry.field(name="productType")
+    product_id: str = strawberry.field(name="productId")
+    timestamp: int
+    block_number: int = strawberry.field(name="blockNumber")
+    component_type: str = strawberry.field(name="componentType")
+    token: str
+    symbol: str
+    raw_amount: str = strawberry.field(name="rawAmount")
+    decimals: int
+    price_usd: float = strawberry.field(name="priceUsd")
+    amount_usd: float = strawberry.field(name="amountUsd")
+    pricing_status: str = strawberry.field(name="pricingStatus")
+    oracle_status: str = strawberry.field(name="oracleStatus")
+    provenance: str
 
 
 @strawberry.type
@@ -1576,6 +1736,291 @@ def _finite_non_negative(value: object) -> float:
 
 
 
+def _fluid_coverage_snapshot(ch) -> dict[str, object]:
+    try:
+        reserve_support_rows = ch.query(
+            """
+            SELECT oracle_support, count()
+            FROM fluid_reserve_oracle_support FINAL
+            GROUP BY oracle_support
+            """
+        ).result_rows
+        reserve_support = {str(status): int(count) for status, count in reserve_support_rows}
+        product_rows = ch.query(
+            """
+            SELECT product_type, count()
+            FROM fluid_contract_registry FINAL
+            GROUP BY product_type
+            """
+        ).result_rows
+        product_counts = {str(product): int(count) for product, count in product_rows}
+        snapshot_rows = _query_int(ch, "SELECT count() FROM fluid_product_snapshots FINAL")
+        priced_product_rows = _query_int(ch, """
+            SELECT countIf(pricing_status = 'PRICED')
+            FROM (
+                SELECT
+                    product_type,
+                    product_id,
+                    argMax(pricing_status, tuple(timestamp, block_number)) AS pricing_status
+                FROM fluid_product_snapshots FINAL
+                GROUP BY product_type, product_id
+            )
+            """)
+        canonical_rows = _query_int(ch, """
+            SELECT countIf(is_canonical_tvl = 1)
+            FROM (
+                SELECT
+                    product_type,
+                    product_id,
+                    argMax(is_canonical_tvl, tuple(timestamp, block_number)) AS is_canonical_tvl
+                FROM fluid_product_snapshots FINAL
+                GROUP BY product_type, product_id
+            )
+            """)
+        product_status_rows = ch.query("""
+            SELECT product_type, pricing_status, snapshot_status, count()
+            FROM (
+                SELECT
+                    product_type,
+                    product_id,
+                    argMax(pricing_status, tuple(timestamp, block_number)) AS pricing_status,
+                    argMax(snapshot_status, tuple(timestamp, block_number)) AS snapshot_status
+                FROM fluid_product_snapshots FINAL
+                GROUP BY product_type, product_id
+            )
+            GROUP BY product_type, pricing_status, snapshot_status
+            """).result_rows
+        product_status = [
+            {"productType": str(product), "pricingStatus": str(pricing), "snapshotStatus": str(snapshot), "count": int(count)}
+            for product, pricing, snapshot, count in product_status_rows
+        ]
+        missing_reason_rows = ch.query("""
+            SELECT symbol, reason, count()
+            FROM fluid_asset_oracle_support FINAL
+            WHERE oracle_support != 'CHAINLINK_SUPPORTED'
+              AND asset NOT IN (
+                  SELECT subject
+                  FROM oracle_snapshots FINAL
+                  WHERE source = 'FLUID' AND status = 'OK' AND price_usd > 0
+              )
+            GROUP BY symbol, reason
+            ORDER BY count() DESC, symbol
+            LIMIT 50
+            """).result_rows
+        missing_oracles = [
+            {"symbol": str(symbol), "reason": str(reason), "count": int(count)}
+            for symbol, reason, count in missing_reason_rows
+        ]
+        component_rows = _query_int(ch, "SELECT count() FROM fluid_product_components FINAL")
+        component_subjects = _query_int(ch, "SELECT uniqExact(product_id) FROM fluid_product_components FINAL")
+        shared_oracle_rows = _query_int(ch, "SELECT count() FROM oracle_snapshots FINAL WHERE source = 'FLUID' AND status = 'OK'")
+        shared_oracle_subjects = _query_int(ch, "SELECT uniqExact(subject) FROM oracle_snapshots FINAL WHERE source = 'FLUID' AND status = 'OK'")
+        raw_head = _query_int(ch, "SELECT max(block_number) FROM fluid_events")
+        processed_head = _query_int(ch, "SELECT max(last_processed_block) FROM processor_state WHERE protocol = 'FLUID_MARKET'")
+        validation_rows = ch.query(
+            """
+            SELECT status, checked_count, mismatch_count, max_relative_supply_diff, max_relative_borrow_diff, finished_at
+            FROM fluid_rpc_validation_runs FINAL
+            ORDER BY finished_at DESC
+            LIMIT 1
+            """
+        ).result_rows
+        validation = {}
+        if validation_rows:
+            row = validation_rows[0]
+            finished = row[5]
+            if isinstance(finished, datetime):
+                finished_ts = int(finished.replace(tzinfo=timezone.utc).timestamp()) if finished.tzinfo is None else int(finished.timestamp())
+            else:
+                finished_ts = 0
+            validation = {
+                "status": str(row[0]),
+                "checkedCount": int(row[1] or 0),
+                "mismatchCount": int(row[2] or 0),
+                "maxRelativeSupplyDiff": float(row[3] or 0.0),
+                "maxRelativeBorrowDiff": float(row[4] or 0.0),
+                "finishedAt": finished_ts,
+            }
+        return {
+            "reserveStates": _query_int(ch, "SELECT count() FROM fluid_reserve_state FINAL"),
+            "reserveSupport": reserve_support,
+            "productContracts": product_counts,
+            "productSnapshotRows": int(snapshot_rows or 0),
+            "pricedProductSnapshotRows": int(priced_product_rows or 0),
+            "canonicalProductSnapshotRows": int(canonical_rows or 0),
+            "productStatus": product_status,
+            "productComponentRows": int(component_rows or 0),
+            "productComponentSubjects": int(component_subjects or 0),
+            "missingOracles": missing_oracles,
+            "fluidOracleSnapshotRows": int(shared_oracle_rows or 0),
+            "fluidOracleSnapshotSubjects": int(shared_oracle_subjects or 0),
+            "rawHead": int(raw_head or 0),
+            "processedHead": int(processed_head or 0),
+            "lagBlocks": max(0, int(raw_head or 0) - int(processed_head or 0)),
+            "tvlPolicy": "Liquidity Layer reserves are canonical; fToken/vault/DEX snapshots are exposure rows unless isCanonicalTvl=true.",
+            "rpcValidation": validation,
+        }
+    except Exception as exc:
+        return {"status": "unavailable", "reason": str(exc)}
+
+
+def _query_fluid_contracts(product_type: Optional[str] = None, active_only: bool = True, limit: int = 500) -> list[FluidContractRegistryItem]:
+    ch = get_clickhouse_client()
+    filters = ["chain_id = 1"]
+    if product_type:
+        filters.append(f"product_type = '{_escape_sql_string(product_type.upper())}'")
+    if active_only:
+        filters.append("active = 1")
+    safe_limit = max(1, min(int(limit or 500), 2000))
+    query = f"""
+        SELECT chain_id, product_type, contract, factory, name, created_block, active, resolver, metadata
+        FROM fluid_contract_registry FINAL
+        WHERE {' AND '.join(filters)}
+        ORDER BY product_type, name, contract
+        LIMIT {safe_limit}
+        """
+    rows = ch.query(query).result_rows
+    return [
+        FluidContractRegistryItem(
+            chain_id=int(row[0] or 0),
+            product_type=str(row[1] or ""),
+            contract=str(row[2] or ""),
+            factory=str(row[3] or ""),
+            name=str(row[4] or ""),
+            created_block=int(row[5] or 0),
+            active=bool(row[6]),
+            resolver=str(row[7] or ""),
+            metadata=str(row[8] or ""),
+        )
+        for row in rows
+    ]
+
+
+def _query_fluid_product_snapshots(product_type: Optional[str] = None, product_id: Optional[str] = None, limit: int = 500) -> list[FluidProductSnapshot]:
+    ch = get_clickhouse_client()
+    filters = ["chain_id = 1"]
+    if product_type:
+        filters.append(f"product_type = '{_escape_sql_string(product_type.upper())}'")
+    if product_id:
+        filters.append(f"product_id = '{_escape_sql_string(product_id.lower())}'")
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    where_clause = " AND ".join(filters)
+    query = f"""
+        SELECT chain_id, product_type, product_id, timestamp, block_number, symbol, underlying,
+               collateral_token, debt_token, supply_usd, borrow_usd, collateral_usd, liquidity_usd,
+               volume_usd, fees_usd, supply_apy, borrow_apy, utilization, ltv,
+               liquidation_threshold, position_count, is_canonical_tvl, pricing_status,
+               oracle_status, snapshot_status, provenance, error
+        FROM (
+            SELECT
+                chain_id,
+                product_type,
+                product_id,
+                argMax(timestamp, tuple(fps.timestamp, fps.block_number)) AS timestamp,
+                argMax(block_number, tuple(fps.timestamp, fps.block_number)) AS block_number,
+                argMax(symbol, tuple(fps.timestamp, fps.block_number)) AS symbol,
+                argMax(underlying, tuple(fps.timestamp, fps.block_number)) AS underlying,
+                argMax(collateral_token, tuple(fps.timestamp, fps.block_number)) AS collateral_token,
+                argMax(debt_token, tuple(fps.timestamp, fps.block_number)) AS debt_token,
+                argMax(supply_usd, tuple(fps.timestamp, fps.block_number)) AS supply_usd,
+                argMax(borrow_usd, tuple(fps.timestamp, fps.block_number)) AS borrow_usd,
+                argMax(collateral_usd, tuple(fps.timestamp, fps.block_number)) AS collateral_usd,
+                argMax(liquidity_usd, tuple(fps.timestamp, fps.block_number)) AS liquidity_usd,
+                argMax(volume_usd, tuple(fps.timestamp, fps.block_number)) AS volume_usd,
+                argMax(fees_usd, tuple(fps.timestamp, fps.block_number)) AS fees_usd,
+                argMax(supply_apy, tuple(fps.timestamp, fps.block_number)) AS supply_apy,
+                argMax(borrow_apy, tuple(fps.timestamp, fps.block_number)) AS borrow_apy,
+                argMax(utilization, tuple(fps.timestamp, fps.block_number)) AS utilization,
+                argMax(ltv, tuple(fps.timestamp, fps.block_number)) AS ltv,
+                argMax(liquidation_threshold, tuple(fps.timestamp, fps.block_number)) AS liquidation_threshold,
+                argMax(position_count, tuple(fps.timestamp, fps.block_number)) AS position_count,
+                argMax(is_canonical_tvl, tuple(fps.timestamp, fps.block_number)) AS is_canonical_tvl,
+                argMax(pricing_status, tuple(fps.timestamp, fps.block_number)) AS pricing_status,
+                argMax(oracle_status, tuple(fps.timestamp, fps.block_number)) AS oracle_status,
+                argMax(snapshot_status, tuple(fps.timestamp, fps.block_number)) AS snapshot_status,
+                argMax(provenance, tuple(fps.timestamp, fps.block_number)) AS provenance,
+                argMax(error, tuple(fps.timestamp, fps.block_number)) AS error
+            FROM fluid_product_snapshots AS fps FINAL
+            WHERE {where_clause}
+            GROUP BY chain_id, product_type, product_id
+        )
+        ORDER BY liquidity_usd DESC, supply_usd DESC, product_type, product_id
+        LIMIT {safe_limit}
+        """
+    rows = ch.query(query).result_rows
+    result: list[FluidProductSnapshot] = []
+    for row in rows:
+        ts = row[3]
+        if isinstance(ts, datetime):
+            timestamp = int(ts.replace(tzinfo=timezone.utc).timestamp()) if ts.tzinfo is None else int(ts.timestamp())
+        else:
+            timestamp = 0
+        result.append(
+            FluidProductSnapshot(
+                chain_id=int(row[0] or 0),
+                product_type=str(row[1] or ""),
+                product_id=str(row[2] or ""),
+                timestamp=timestamp,
+                block_number=int(row[4] or 0),
+                symbol=str(row[5] or ""),
+                underlying=str(row[6] or ""),
+                collateral_token=str(row[7] or ""),
+                debt_token=str(row[8] or ""),
+                supply_usd=float(row[9] or 0.0),
+                borrow_usd=float(row[10] or 0.0),
+                collateral_usd=float(row[11] or 0.0),
+                liquidity_usd=float(row[12] or 0.0),
+                volume_usd=float(row[13] or 0.0),
+                fees_usd=float(row[14] or 0.0),
+                supply_apy=float(row[15] or 0.0),
+                borrow_apy=float(row[16] or 0.0),
+                utilization=float(row[17] or 0.0),
+                ltv=float(row[18] or 0.0),
+                liquidation_threshold=float(row[19] or 0.0),
+                position_count=int(row[20] or 0),
+                is_canonical_tvl=bool(row[21]),
+                pricing_status=str(row[22] or ""),
+                oracle_status=str(row[23] or ""),
+                snapshot_status=str(row[24] or ""),
+                provenance=str(row[25] or ""),
+                error=str(row[26] or ""),
+            )
+        )
+    return result
+
+
+def _query_fluid_product_components(product_type: Optional[str] = None, product_id: Optional[str] = None, limit: int = 1000) -> list[FluidProductComponent]:
+    ch = get_clickhouse_client()
+    filters = ["chain_id = 1"]
+    if product_type:
+        filters.append(f"product_type = '{_escape_sql_string(product_type.upper())}'")
+    if product_id:
+        filters.append(f"product_id = '{_escape_sql_string(product_id.lower())}'")
+    safe_limit = max(1, min(int(limit or 1000), 10000))
+    query = f"""
+        SELECT chain_id, product_type, product_id, timestamp, block_number, component_type,
+               token, symbol, raw_amount, decimals, price_usd, amount_usd, pricing_status,
+               oracle_status, provenance
+        FROM fluid_product_components FINAL
+        WHERE {' AND '.join(filters)}
+        ORDER BY timestamp DESC, product_type, product_id, component_type, token
+        LIMIT {safe_limit}
+        """
+    rows = ch.query(query).result_rows
+    result: list[FluidProductComponent] = []
+    for row in rows:
+        ts = row[3]
+        timestamp = int(ts.replace(tzinfo=timezone.utc).timestamp()) if isinstance(ts, datetime) and ts.tzinfo is None else (int(ts.timestamp()) if isinstance(ts, datetime) else 0)
+        result.append(FluidProductComponent(
+            chain_id=int(row[0] or 0), product_type=str(row[1] or ""), product_id=str(row[2] or ""),
+            timestamp=timestamp, block_number=int(row[4] or 0), component_type=str(row[5] or ""),
+            token=str(row[6] or ""), symbol=str(row[7] or ""), raw_amount=str(row[8] or "0"),
+            decimals=int(row[9] or 0), price_usd=float(row[10] or 0.0), amount_usd=float(row[11] or 0.0),
+            pricing_status=str(row[12] or ""), oracle_status=str(row[13] or ""), provenance=str(row[14] or ""),
+        ))
+    return result
+
+
 def _morpho_coverage_snapshot(ch) -> dict[str, object]:
     try:
         params = ch.query(
@@ -1595,13 +2040,103 @@ def _morpho_coverage_snapshot(ch) -> dict[str, object]:
             """
         ).result_rows
         support_counts = {str(status): int(count) for status, count in support_rows}
+        display_row = ch.query(
+            """
+            SELECT
+                count() AS display_markets,
+                countIf(latest.entity_id != '') AS api_latest_markets,
+                countIf(metrics.market_id != '') AS metric_markets,
+                countIf(
+                    greatest(
+                        if(latest.entity_id != '', latest.supply_usd, if(metrics.market_id != '', metrics.supply_usd, 0.0)),
+                        if(latest.entity_id != '', latest.borrow_usd, if(metrics.market_id != '', metrics.borrow_usd, 0.0))
+                    ) > 0
+                ) AS priced_markets,
+                countIf(
+                    greatest(
+                        if(latest.entity_id != '', latest.supply_usd, if(metrics.market_id != '', metrics.supply_usd, 0.0)),
+                        if(latest.entity_id != '', latest.borrow_usd, if(metrics.market_id != '', metrics.borrow_usd, 0.0))
+                    ) <= 0
+                ) AS zero_markets,
+                countIf(support.market_id = '') AS missing_support_markets,
+                countIf(support.oracle_support = 'ORACLE_SNAPSHOT_SUPPORTED') AS snapshot_required_markets,
+                countIf(support.oracle_support = 'ORACLE_SNAPSHOT_SUPPORTED' AND ifNull(snapshots.oracle, '') != '') AS snapshot_resolved_markets,
+                countIf(support.oracle_support = 'ORACLE_SNAPSHOT_SUPPORTED' AND ifNull(snapshots.oracle, '') = '') AS missing_snapshot_markets
+            FROM morpho_market_params p
+            LEFT JOIN (
+                SELECT entity_id,
+                       argMax(supply_usd, inserted_at) AS supply_usd,
+                       argMax(borrow_usd, inserted_at) AS borrow_usd
+                FROM api_market_latest FINAL
+                WHERE protocol = 'MORPHO_MARKET'
+                GROUP BY entity_id
+            ) AS latest
+              ON latest.entity_id = p.market_id
+            LEFT JOIN (
+                SELECT market_id,
+                       argMax(supply_usd, tuple(timestamp, inserted_at)) AS supply_usd,
+                       argMax(borrow_usd, tuple(timestamp, inserted_at)) AS borrow_usd
+                FROM morpho_market_metrics FINAL
+                GROUP BY market_id
+            ) AS metrics
+              ON metrics.market_id = p.market_id
+            LEFT JOIN (SELECT * FROM morpho_market_oracle_support FINAL) AS support
+              ON support.market_id = p.market_id
+            LEFT JOIN (
+                SELECT lower(oracle) AS oracle
+                FROM morpho_oracle_snapshots FINAL
+                WHERE status = 'OK'
+                GROUP BY oracle
+            ) AS snapshots
+              ON snapshots.oracle = lower(p.oracle)
+            """
+        ).result_rows[0]
+        oracle_snapshot_supported = _query_int(
+            ch,
+            """
+            SELECT count()
+            FROM (SELECT * FROM morpho_market_oracle_support FINAL) AS s
+            INNER JOIN morpho_market_params AS p USING market_id
+            WHERE p.oracle != '0x0000000000000000000000000000000000000000'
+              AND NOT empty(s.loan_price_feeds)
+              AND empty(s.collateral_price_feeds)
+            """,
+        )
+        snapshot_rows = _query_int(ch, "SELECT count() FROM morpho_oracle_snapshots FINAL WHERE status = 'OK'")
+        snapshot_oracles = _query_int(ch, "SELECT uniqExact(oracle) FROM morpho_oracle_snapshots FINAL WHERE status = 'OK'")
+        snapshot_latest = _query_int(ch, "SELECT toUInt64(max(toUnixTimestamp(timestamp))) FROM morpho_oracle_snapshots FINAL WHERE status = 'OK'")
         raw_head = _query_int(ch, "SELECT max(block_number) FROM morpho_events")
         processed_head = _query_int(ch, "SELECT max(last_processed_block) FROM processor_state WHERE protocol = \'MORPHO_MARKET\'")
+        oracle_snapshot_supported_count = support_counts.get("ORACLE_SNAPSHOT_SUPPORTED", 0)
+        unsupported_count = support_counts.get("UNSUPPORTED_ORACLE", 0)
+        if support_counts.get("ORACLE_SNAPSHOT_SUPPORTED", 0) == 0:
+            unsupported_count = max(0, unsupported_count - oracle_snapshot_supported_count)
         return {
             "totalDiscoveredMarkets": int(params[0] or 0),
             "chainlinkSupportedMarkets": support_counts.get("CHAINLINK_SUPPORTED", 0),
-            "unsupportedOracleMarkets": support_counts.get("UNSUPPORTED_ORACLE", 0),
+            "oracleSnapshotSupportedMarkets": oracle_snapshot_supported_count,
+            "unsupportedOracleMarkets": unsupported_count,
+            "displayMarkets": int(display_row[0] or 0),
+            "apiLatestMarkets": int(display_row[1] or 0),
+            "metricMarkets": int(display_row[2] or 0),
+            "pricedMarkets": int(display_row[3] or 0),
+            "zeroMarkets": int(display_row[4] or 0),
+            "missingApiLatestMarkets": max(0, int(params[0] or 0) - int(display_row[1] or 0)),
+            "missingMetricMarkets": max(0, int(params[0] or 0) - int(display_row[2] or 0)),
+            "missingOracleSupportMarkets": int(display_row[5] or 0),
             "unpricedMarkets": support_counts.get("UNPRICED", 0),
+            "oracleSnapshotRows": int(snapshot_rows or 0),
+            "oracleSnapshotOracles": int(snapshot_oracles or 0),
+            "oracleSnapshotLatestTimestamp": int(snapshot_latest or 0),
+            "resolverDiagnostics": {
+                "oracleSnapshotRequiredMarkets": int(display_row[6] or 0),
+                "oracleSnapshotResolvedMarkets": int(display_row[7] or 0),
+                "missingSnapshotMarkets": int(display_row[8] or 0),
+                "chainlinkSupportedMarkets": support_counts.get("CHAINLINK_SUPPORTED", 0),
+                "oracleSnapshotSupportedMarkets": oracle_snapshot_supported_count,
+                "unsupportedOracleMarkets": unsupported_count,
+                "unpricedMarkets": support_counts.get("UNPRICED", 0),
+            },
             "firstMarketBlock": int(params[1] or 0),
             "lastMarketBlock": int(params[2] or 0),
             "rawHead": int(raw_head or 0),
@@ -1887,49 +2422,98 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
         else:
             entity_filter = f" AND entity_id = '{escaped_entity}'"
 
-    value_filter = (
-        ""
-        if protocol == AAVE_MARKET
-        else "WHERE supply_usd >= 1000 OR borrow_usd >= 1000"
-    )
     if protocol == MORPHO_MARKET:
+        morpho_entity_filter = ""
+        if normalized_entity_id:
+            escaped_entity = _escape_sql_string(normalized_entity_id)
+            if normalized_entity_id.startswith("0x"):
+                morpho_entity_filter = f" AND p.market_id LIKE '{escaped_entity}%'"
+            else:
+                morpho_entity_filter = f" AND p.market_id = '{escaped_entity}'"
         query = f"""
         SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
                supply_apy, borrow_apy, utilization,
-               collateral_symbol, collateral_usd, lltv, oracle, oracle_support
+               collateral_symbol, collateral_usd, lltv, oracle, pricing_status,
+               loan_asset, loan_token, loan_decimals, collateral_asset, collateral_token,
+               collateral_decimals, loan_price_usd, collateral_price_usd,
+               supply_assets, borrow_assets, collateral_assets, irm, oracle_support,
+               pricing_error, is_active, has_supply, has_borrow, has_collateral,
+               last_event_ts, last_priced_ts
         FROM (
-            SELECT latest.entity_id,
-                   latest.symbol,
+            SELECT p.market_id AS entity_id,
+                   if(latest.entity_id != '' AND latest.symbol != '', latest.symbol, p.loan_symbol) AS symbol,
                    '{escaped_protocol}' AS proto,
-                   latest.supply_usd,
-                   latest.borrow_usd,
-                   latest.supply_apy,
-                   latest.borrow_apy,
-                   latest.utilization,
-                   metrics.collateral_symbol,
-                   metrics.collateral_usd,
-                   metrics.lltv,
-                   metrics.oracle,
-                   metrics.oracle_support
-            FROM api_market_latest FINAL AS latest
+                   if(latest.entity_id != '', latest.supply_usd, if(metrics.market_id != '', metrics.supply_usd, 0.0)) AS supply_usd,
+                   if(latest.entity_id != '', latest.borrow_usd, if(metrics.market_id != '', metrics.borrow_usd, 0.0)) AS borrow_usd,
+                   if(latest.entity_id != '', latest.supply_apy, if(metrics.market_id != '', metrics.supply_apy, 0.0)) AS supply_apy,
+                   if(latest.entity_id != '', latest.borrow_apy, if(metrics.market_id != '', metrics.borrow_apy, 0.0)) AS borrow_apy,
+                   if(latest.entity_id != '', latest.utilization, if(metrics.market_id != '', metrics.utilization, 0.0)) AS utilization,
+                   if(metrics.market_id != '' AND metrics.collateral_symbol != '', metrics.collateral_symbol, p.collateral_symbol) AS collateral_symbol,
+                   if(metrics.market_id != '', metrics.collateral_usd, 0.0) AS collateral_usd,
+                   if(metrics.market_id != '' AND metrics.lltv > 0, metrics.lltv, toFloat64(p.lltv) / 1000000000000000000.0) AS lltv,
+                   if(metrics.market_id != '' AND metrics.oracle != '', metrics.oracle, p.oracle) AS oracle,
+                   multiIf(metrics.market_id != '', 'PRICED', support.market_id != '', support.oracle_support, 'DISCOVERED') AS pricing_status,
+                   p.loan_symbol AS loan_asset,
+                   p.loan_token AS loan_token,
+                   toUInt64(p.loan_decimals) AS loan_decimals,
+                   p.collateral_symbol AS collateral_asset,
+                   p.collateral_token AS collateral_token,
+                   toUInt64(p.collateral_decimals) AS collateral_decimals,
+                   if(metrics.market_id != '', metrics.loan_price_usd, 0.0) AS loan_price_usd,
+                   if(metrics.market_id != '', metrics.collateral_price_usd, 0.0) AS collateral_price_usd,
+                   if(state.market_id != '', state.total_supply_assets, '0') AS supply_assets,
+                   if(state.market_id != '', state.total_borrow_assets, '0') AS borrow_assets,
+                   if(state.market_id != '', state.collateral_assets, '0') AS collateral_assets,
+                   p.irm AS irm,
+                   if(support.market_id != '', support.oracle_support, 'DISCOVERED') AS oracle_support,
+                   if(support.market_id != '', support.reason, '') AS pricing_error,
+                   if(state.market_id != '', state.last_event_timestamp > toDateTime(0), false) AS is_active,
+                   if(state.market_id != '', toUInt256OrZero(state.total_supply_assets) > 0, false) AS has_supply,
+                   if(state.market_id != '', toUInt256OrZero(state.total_borrow_assets) > 0, false) AS has_borrow,
+                   if(state.market_id != '', toUInt256OrZero(state.collateral_assets) > 0, false) AS has_collateral,
+                   if(state.market_id != '', toUnixTimestamp(state.last_event_timestamp), 0) AS last_event_ts,
+                   if(metrics.market_id != '', toUnixTimestamp(metrics.metric_timestamp), 0) AS last_priced_ts
+            FROM morpho_market_params p
+            LEFT JOIN (
+                SELECT entity_id, symbol, supply_usd, borrow_usd, supply_apy, borrow_apy, utilization
+                FROM api_market_latest FINAL
+                WHERE protocol = '{escaped_protocol}'
+            ) AS latest
+              ON latest.entity_id = p.market_id
             LEFT JOIN (
                 SELECT market_id,
-                       argMax(collateral_symbol, timestamp) AS collateral_symbol,
-                       argMax(collateral_usd, timestamp) AS collateral_usd,
-                       argMax(lltv, timestamp) AS lltv,
-                       argMax(oracle, timestamp) AS oracle,
-                       argMax(oracle_support, timestamp) AS oracle_support
-                FROM morpho_market_metrics
+                       argMax(timestamp, tuple(timestamp, inserted_at)) AS metric_timestamp,
+                       argMax(supply_usd, tuple(timestamp, inserted_at)) AS supply_usd,
+                       argMax(borrow_usd, tuple(timestamp, inserted_at)) AS borrow_usd,
+                       argMax(supply_apy, tuple(timestamp, inserted_at)) AS supply_apy,
+                       argMax(borrow_apy, tuple(timestamp, inserted_at)) AS borrow_apy,
+                       argMax(utilization, tuple(timestamp, inserted_at)) AS utilization,
+                       argMax(collateral_symbol, tuple(timestamp, inserted_at)) AS collateral_symbol,
+                       argMax(collateral_usd, tuple(timestamp, inserted_at)) AS collateral_usd,
+                       argMax(lltv, tuple(timestamp, inserted_at)) AS lltv,
+                       argMax(oracle, tuple(timestamp, inserted_at)) AS oracle,
+                       argMax(oracle_support, tuple(timestamp, inserted_at)) AS oracle_support,
+                       argMax(loan_price_usd, tuple(timestamp, inserted_at)) AS loan_price_usd,
+                       argMax(collateral_price_usd, tuple(timestamp, inserted_at)) AS collateral_price_usd
+                FROM morpho_market_metrics FINAL
                 GROUP BY market_id
             ) AS metrics
-              ON metrics.market_id = latest.entity_id
-            WHERE latest.protocol = '{escaped_protocol}'
-            {entity_filter}
+              ON metrics.market_id = p.market_id
+            LEFT JOIN (SELECT * FROM morpho_market_oracle_support FINAL) AS support
+              ON support.market_id = p.market_id
+            LEFT JOIN (SELECT * FROM morpho_market_state FINAL) AS state
+              ON state.market_id = p.market_id
+            WHERE 1 = 1
+            {morpho_entity_filter}
         )
-        {value_filter}
-        ORDER BY supply_usd DESC
+        ORDER BY supply_usd DESC, borrow_usd DESC, entity_id ASC
         """
     else:
+        value_filter = (
+            ""
+            if protocol == AAVE_MARKET
+            else "WHERE supply_usd >= 1000 OR borrow_usd >= 1000"
+        )
         query = f"""
         SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
                supply_apy, borrow_apy, utilization,
@@ -1967,10 +2551,29 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
             lltv=float(row[10]) if row[10] else None,
             oracle=str(row[11]) if row[11] else None,
             pricing_status=str(row[12]) if row[12] else None,
+            loan_asset=str(row[13]) if len(row) > 13 and row[13] else None,
+            loan_token=str(row[14]) if len(row) > 14 and row[14] else None,
+            loan_decimals=int(row[15]) if len(row) > 15 and row[15] is not None else None,
+            collateral_asset=str(row[16]) if len(row) > 16 and row[16] else None,
+            collateral_token=str(row[17]) if len(row) > 17 and row[17] else None,
+            collateral_decimals=int(row[18]) if len(row) > 18 and row[18] is not None else None,
+            loan_price_usd=float(row[19]) if len(row) > 19 and row[19] is not None else None,
+            collateral_price_usd=float(row[20]) if len(row) > 20 and row[20] is not None else None,
+            supply_assets=str(row[21]) if len(row) > 21 and row[21] is not None else None,
+            borrow_assets=str(row[22]) if len(row) > 22 and row[22] is not None else None,
+            collateral_assets=str(row[23]) if len(row) > 23 and row[23] is not None else None,
+            irm=str(row[24]) if len(row) > 24 and row[24] else None,
+            oracle_support=str(row[25]) if len(row) > 25 and row[25] else None,
+            pricing_error=str(row[26]) if len(row) > 26 and row[26] else None,
+            is_active=bool(row[27]) if len(row) > 27 and row[27] is not None else None,
+            has_supply=bool(row[28]) if len(row) > 28 and row[28] is not None else None,
+            has_borrow=bool(row[29]) if len(row) > 29 and row[29] is not None else None,
+            has_collateral=bool(row[30]) if len(row) > 30 and row[30] is not None else None,
+            last_event_timestamp=int(row[31]) if len(row) > 31 and row[31] else None,
+            last_priced_timestamp=int(row[32]) if len(row) > 32 and row[32] else None,
         )
         for row in res.result_rows
     ]
-
 
 def _to_week_date(value) -> date | None:
     if isinstance(value, datetime):
@@ -2463,6 +3066,253 @@ def _query_pendle_eth_latest_prices(
     ]
 
 
+def _query_morpho_market_events(market_id: Optional[str] = None, event_name: Optional[str] = None, limit: int = 500) -> list[MorphoMarketEvent]:
+    ch = get_clickhouse_client()
+    filters = []
+    if market_id:
+        filters.append(f"market_id = '{_escape_sql_string(market_id.lower())}'")
+    if event_name:
+        filters.append(f"event_name = '{_escape_sql_string(event_name)}'")
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    try:
+        rows = ch.query(
+            f"""
+            SELECT timestamp, block_number, tx_hash, log_index, market_id, event_name,
+                   caller, on_behalf, receiver, assets, shares, collateral_assets,
+                   repaid_assets, seized_assets, bad_debt_assets, interest_assets, fee_shares, fee_wad
+            FROM morpho_market_events FINAL
+            {where_clause}
+            ORDER BY block_number DESC, log_index DESC
+            LIMIT {safe_limit}
+            """
+        ).result_rows
+    except Exception:
+        return []
+    return [
+        MorphoMarketEvent(
+            timestamp=_timestamp(row[0]),
+            block_number=int(row[1] or 0),
+            tx_hash=str(row[2] or ""),
+            log_index=int(row[3] or 0),
+            market_id=str(row[4] or ""),
+            event_name=str(row[5] or ""),
+            caller=str(row[6] or ""),
+            on_behalf=str(row[7] or ""),
+            receiver=str(row[8] or ""),
+            assets=str(row[9] or "0"),
+            shares=str(row[10] or "0"),
+            collateral_assets=str(row[11] or "0"),
+            repaid_assets=str(row[12] or "0"),
+            seized_assets=str(row[13] or "0"),
+            bad_debt_assets=str(row[14] or "0"),
+            interest_assets=str(row[15] or "0"),
+            fee_shares=str(row[16] or "0"),
+            fee_wad=str(row[17] or "0"),
+        )
+        for row in rows
+    ]
+
+
+def _query_morpho_market_positions(market_id: Optional[str] = None, user: Optional[str] = None, limit: int = 500) -> list[MorphoMarketPosition]:
+    ch = get_clickhouse_client()
+    filters = []
+    if market_id:
+        filters.append(f"pos.market_id = '{_escape_sql_string(market_id.lower())}'")
+    if user:
+        filters.append(f"pos.user = '{_escape_sql_string(user.lower())}'")
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    try:
+        rows = ch.query(
+            f"""
+            SELECT pos.market_id, pos.user, pos.supply_shares, pos.borrow_shares, pos.collateral_assets,
+                   if(state.total_supply_shares != '0',
+                      toString(toUInt256OrZero(pos.supply_shares) * toUInt256OrZero(state.total_supply_assets) / toUInt256OrZero(state.total_supply_shares)), '0') AS estimated_supply_assets,
+                   if(state.total_borrow_shares != '0',
+                      toString(toUInt256OrZero(pos.borrow_shares) * toUInt256OrZero(state.total_borrow_assets) / toUInt256OrZero(state.total_borrow_shares)), '0') AS estimated_borrow_assets,
+                   if(metrics.market_id != '' AND toUInt256OrZero(state.collateral_assets) > 0,
+                      metrics.collateral_usd * toFloat64(toUInt256OrZero(pos.collateral_assets)) / toFloat64(toUInt256OrZero(state.collateral_assets)), 0.0) AS collateral_usd,
+                   if(metrics.market_id != '' AND metrics.borrow_usd > 0,
+                      (metrics.collateral_usd * metrics.lltv) / metrics.borrow_usd, NULL) AS health_factor,
+                   toUnixTimestamp(pos.last_event_timestamp) AS last_event_ts
+            FROM morpho_market_positions pos
+            LEFT JOIN morpho_market_state state ON state.market_id = pos.market_id
+            LEFT JOIN (
+                SELECT market_id,
+                       argMax(collateral_usd, tuple(timestamp, inserted_at)) AS collateral_usd,
+                       argMax(borrow_usd, tuple(timestamp, inserted_at)) AS borrow_usd,
+                       argMax(lltv, tuple(timestamp, inserted_at)) AS lltv
+                FROM morpho_market_metrics FINAL
+                GROUP BY market_id
+            ) AS metrics ON metrics.market_id = pos.market_id
+            {where_clause}
+            ORDER BY toUInt256OrZero(pos.collateral_assets) DESC, pos.market_id, pos.user
+            LIMIT {safe_limit}
+            """
+        ).result_rows
+    except Exception:
+        return []
+    return [
+        MorphoMarketPosition(
+            market_id=str(row[0] or ""),
+            user=str(row[1] or ""),
+            supply_shares=str(row[2] or "0"),
+            borrow_shares=str(row[3] or "0"),
+            collateral_assets=str(row[4] or "0"),
+            estimated_supply_assets=str(row[5] or "0"),
+            estimated_borrow_assets=str(row[6] or "0"),
+            collateral_usd=float(row[7] or 0.0),
+            health_factor=float(row[8]) if row[8] is not None else None,
+            last_event_timestamp=int(row[9] or 0),
+        )
+        for row in rows
+    ]
+
+
+def _query_metamorpho_vaults(vault_address: Optional[str] = None, limit: int = 500) -> list[MetaMorphoVault]:
+    ch = get_clickhouse_client()
+    vault_filter = f"WHERE registry.vault_address = '{_escape_sql_string(vault_address.lower())}'" if vault_address else ""
+    safe_limit = max(1, min(int(limit or 500), 2000))
+    try:
+        rows = ch.query(
+            f"""
+            SELECT registry.vault_address, registry.name, registry.asset_symbol, registry.asset_address,
+                   if(state.vault_address != '', state.total_assets, '0') AS total_assets,
+                   if(state.vault_address != '', state.total_supply, '0') AS total_supply,
+                   if(state.vault_address != '', state.share_price_usd, 0.0) AS share_price_usd,
+                   if(state.vault_address != '', state.tvl_usd, 0.0) AS tvl_usd,
+                   if(state.vault_address != '', state.is_canonical_tvl, 0) AS is_canonical_tvl,
+                   if(state.vault_address != '', toUnixTimestamp(state.metric_timestamp), 0) AS last_snapshot_ts
+            FROM metamorpho_vault_registry registry
+            LEFT JOIN (
+                SELECT vault_address,
+                       argMax(timestamp, tuple(timestamp, inserted_at)) AS metric_timestamp,
+                       argMax(total_assets, tuple(timestamp, inserted_at)) AS total_assets,
+                       argMax(total_supply, tuple(timestamp, inserted_at)) AS total_supply,
+                       argMax(share_price_usd, tuple(timestamp, inserted_at)) AS share_price_usd,
+                       argMax(tvl_usd, tuple(timestamp, inserted_at)) AS tvl_usd,
+                       argMax(is_canonical_tvl, tuple(timestamp, inserted_at)) AS is_canonical_tvl
+                FROM metamorpho_vault_state FINAL
+                GROUP BY vault_address
+            ) AS state ON state.vault_address = registry.vault_address
+            {vault_filter}
+            ORDER BY tvl_usd DESC, registry.name
+            LIMIT {safe_limit}
+            """
+        ).result_rows
+    except Exception:
+        return []
+    return [
+        MetaMorphoVault(
+            vault_address=str(row[0] or ""),
+            name=str(row[1] or ""),
+            asset_symbol=str(row[2] or ""),
+            asset_address=str(row[3] or ""),
+            total_assets=str(row[4] or "0"),
+            total_supply=str(row[5] or "0"),
+            share_price_usd=float(row[6] or 0.0),
+            tvl_usd=float(row[7] or 0.0),
+            is_canonical_tvl=bool(row[8]),
+            last_snapshot_timestamp=int(row[9] or 0),
+        )
+        for row in rows
+    ]
+
+
+def _query_metamorpho_vault_allocations(vault_address: Optional[str] = None, market_id: Optional[str] = None, limit: int = 1000) -> list[MetaMorphoVaultAllocation]:
+    ch = get_clickhouse_client()
+    filters = []
+    if vault_address:
+        filters.append(f"vault_address = '{_escape_sql_string(vault_address.lower())}'")
+    if market_id:
+        filters.append(f"market_id = '{_escape_sql_string(market_id.lower())}'")
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+    safe_limit = max(1, min(int(limit or 1000), 5000))
+    try:
+        rows = ch.query(
+            f"""
+            SELECT vault_address, market_id,
+                   argMax(cap, tuple(timestamp, inserted_at)) AS cap,
+                   argMax(supplied_assets, tuple(timestamp, inserted_at)) AS supplied_assets,
+                   argMax(supplied_usd, tuple(timestamp, inserted_at)) AS supplied_usd,
+                   argMax(allocation_share, tuple(timestamp, inserted_at)) AS allocation_share,
+                   max(timestamp) AS latest_timestamp
+            FROM metamorpho_vault_allocations FINAL
+            {where_clause}
+            GROUP BY vault_address, market_id
+            ORDER BY supplied_usd DESC
+            LIMIT {safe_limit}
+            """
+        ).result_rows
+    except Exception:
+        return []
+    return [
+        MetaMorphoVaultAllocation(
+            vault_address=str(row[0] or ""),
+            market_id=str(row[1] or ""),
+            cap=str(row[2] or "0"),
+            supplied_assets=str(row[3] or "0"),
+            supplied_usd=float(row[4] or 0.0),
+            allocation_share=float(row[5] or 0.0),
+            timestamp=_timestamp(row[6]),
+        )
+        for row in rows
+    ]
+
+
+
+def _query_metamorpho_vault_flows(
+    vault_address: Optional[str] = None,
+    limit: int = 1000,
+) -> list[MetaMorphoVaultFlow]:
+    ch = get_clickhouse_client()
+    filters = []
+    if vault_address:
+        filters.append(f"vault_address = '{_escape_sql_string(vault_address.lower())}'")
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+    safe_limit = max(1, min(int(limit or 1000), 5000))
+    try:
+        rows = ch.query(
+            f"""
+            SELECT timestamp, vault_address, asset_symbol,
+                   argMax(deposit_assets, inserted_at) AS deposit_assets,
+                   argMax(withdraw_assets, inserted_at) AS withdraw_assets,
+                   argMax(deposit_shares, inserted_at) AS deposit_shares,
+                   argMax(withdraw_shares, inserted_at) AS withdraw_shares,
+                   argMax(transfer_shares, inserted_at) AS transfer_shares,
+                   argMax(deposit_usd, inserted_at) AS deposit_usd,
+                   argMax(withdraw_usd, inserted_at) AS withdraw_usd,
+                   argMax(net_flow_usd, inserted_at) AS net_flow_usd,
+                   argMax(event_count, inserted_at) AS event_count
+            FROM metamorpho_vault_flows_hourly FINAL
+            {where_clause}
+            GROUP BY timestamp, vault_address, asset_symbol
+            ORDER BY timestamp DESC, abs(net_flow_usd) DESC
+            LIMIT {safe_limit}
+            """
+        ).result_rows
+    except Exception:
+        return []
+    return [
+        MetaMorphoVaultFlow(
+            timestamp=_timestamp(row[0]),
+            vault_address=str(row[1] or ""),
+            asset_symbol=str(row[2] or ""),
+            deposit_assets=str(row[3] or "0"),
+            withdraw_assets=str(row[4] or "0"),
+            deposit_shares=str(row[5] or "0"),
+            withdraw_shares=str(row[6] or "0"),
+            transfer_shares=str(row[7] or "0"),
+            deposit_usd=float(row[8] or 0.0),
+            withdraw_usd=float(row[9] or 0.0),
+            net_flow_usd=float(row[10] or 0.0),
+            event_count=int(row[11] or 0),
+        )
+        for row in rows
+    ]
+
+
 def _query_pendle_eth_price_history(
     ch,
     address: str,
@@ -2612,6 +3462,54 @@ class Query:
         ch = get_clickhouse_client()
         return _query_market_flow_timeseries(ch, entity_id, resolution, limit)
 
+    @strawberry.field(name="morphoMarketEvents")
+    def morpho_market_events(
+        self, market_id: Optional[str] = None, event_name: Optional[str] = None, limit: int = 500
+    ) -> list[MorphoMarketEvent]:
+        return _query_morpho_market_events(market_id, event_name, limit)
+
+    @strawberry.field(name="morphoMarketPositions")
+    def morpho_market_positions(
+        self, market_id: Optional[str] = None, user: Optional[str] = None, limit: int = 500
+    ) -> list[MorphoMarketPosition]:
+        return _query_morpho_market_positions(market_id, user, limit)
+
+    @strawberry.field(name="metamorphoVaults")
+    def metamorpho_vaults(
+        self, vault_address: Optional[str] = None, limit: int = 500
+    ) -> list[MetaMorphoVault]:
+        return _query_metamorpho_vaults(vault_address, limit)
+
+    @strawberry.field(name="metamorphoVaultAllocations")
+    def metamorpho_vault_allocations(
+        self, vault_address: Optional[str] = None, market_id: Optional[str] = None, limit: int = 1000
+    ) -> list[MetaMorphoVaultAllocation]:
+        return _query_metamorpho_vault_allocations(vault_address, market_id, limit)
+
+    @strawberry.field(name="metamorphoVaultFlows")
+    def metamorpho_vault_flows(
+        self, vault_address: Optional[str] = None, limit: int = 1000
+    ) -> list[MetaMorphoVaultFlow]:
+        return _query_metamorpho_vault_flows(vault_address, limit)
+
+    @strawberry.field(name="fluidContracts")
+    def fluid_contracts(
+        self, product_type: Optional[str] = None, active_only: bool = True, limit: int = 500
+    ) -> list[FluidContractRegistryItem]:
+        return _query_fluid_contracts(product_type, active_only, limit)
+
+    @strawberry.field(name="fluidProductSnapshots")
+    def fluid_product_snapshots(
+        self, product_type: Optional[str] = None, product_id: Optional[str] = None, limit: int = 500
+    ) -> list[FluidProductSnapshot]:
+        return _query_fluid_product_snapshots(product_type, product_id, limit)
+
+    @strawberry.field(name="fluidProductComponents")
+    def fluid_product_components(
+        self, product_type: Optional[str] = None, product_id: Optional[str] = None, limit: int = 1000
+    ) -> list[FluidProductComponent]:
+        return _query_fluid_product_components(product_type, product_id, limit)
+
 schema = strawberry.Schema(query=Query)
 graphql_app = GraphQLRouter(schema)
 app = FastAPI(title="RLD ClickHouse GraphQL")
@@ -2660,6 +3558,7 @@ def healthz():
             "processingLag": _collect_processing_lag(ch),
             "sourceStatus": _source_status_snapshot(ch),
             "morphoCoverage": _morpho_coverage_snapshot(ch),
+            "fluidCoverage": _fluid_coverage_snapshot(ch),
         }
     except Exception as exc:
         close_clickhouse_client()
@@ -2689,6 +3588,7 @@ def status():
             "processingLag": _collect_processing_lag(ch),
             "sourceStatus": _source_status_snapshot(ch),
             "morphoCoverage": _morpho_coverage_snapshot(ch),
+            "fluidCoverage": _fluid_coverage_snapshot(ch),
         }
     except Exception as exc:
         close_clickhouse_client()

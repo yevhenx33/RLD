@@ -26,6 +26,11 @@ from ..base import (
     upsert_api_market_latest,
     upsert_market_timeseries,
 )
+from ..morpho_oracle_snapshots import (
+    ZERO_ADDRESS,
+    collateral_value_usd_from_oracle,
+    ensure_morpho_oracle_snapshot_tables,
+)
 from ..protocols import MORPHO_MARKET
 from ..tokens import BTC_ASSETS, ETH_ASSETS, STABLES, TOKENS
 
@@ -66,10 +71,13 @@ EVENT_MAP = {
 PRICE_FEED_ALIASES = {
     "ETH": ("ETH / USD",),
     "WETH": ("ETH / USD",),
-    "WBTC": ("WBTC / BTC", "BTC / USD"),
     "BTC": ("BTC / USD",),
+    "WBTC": ("WBTC / BTC", "BTC / USD"),
     "cbBTC": ("cbBTC / USD",),
     "CBBTC": ("cbBTC / USD",),
+    "LBTC": ("LBTC / BTC", "BTC / USD"),
+    "tBTC": ("TBTC / USD",),
+    "TBTC": ("TBTC / USD",),
     "stETH": ("STETH / USD",),
     "STETH": ("STETH / USD",),
     "wstETH": ("wstETH/stETH exchange rate", "STETH / USD"),
@@ -78,25 +86,35 @@ PRICE_FEED_ALIASES = {
     "WEETH": ("weETH / ETH", "ETH / USD"),
     "rETH": ("RETH / ETH", "ETH / USD"),
     "RETH": ("RETH / ETH", "ETH / USD"),
+    "cbETH": ("CBETH / ETH", "ETH / USD"),
+    "CBETH": ("CBETH / ETH", "ETH / USD"),
+    "lsETH": ("LsETH / ETH Exchange Rate", "ETH / USD"),
+    "LSETH": ("LsETH / ETH Exchange Rate", "ETH / USD"),
+    "XAUt": ("XAU / USD",),
+    "USD0pp": ("USD0++ / USD",),
+    "crvUSD": ("CRVUSD / USD",),
+    "CRVUSD": ("CRVUSD / USD",),
+    "frxUSD": ("frxUSD / USD",),
+    "FRXUSD": ("frxUSD / USD",),
 }
 
 DIRECT_USD_FEED_SYMBOLS = {
     "AAVE",
-    "cbBTC",
     "DAI",
-    "ETH",
+    "EIGEN",
     "LINK",
     "MKR",
     "PAXG",
     "PYUSD",
     "RLUSD",
+    "SKY",
     "STETH",
     "UNI",
     "USDC",
     "USDe",
     "USDS",
     "USDT",
-    "XAUt",
+    "USD0",
 }
 
 
@@ -129,6 +147,15 @@ class MorphoMarketState:
     last_event_timestamp: datetime.datetime = datetime.datetime(1970, 1, 1)
 
 
+@dataclass
+class MorphoUserPosition:
+    supply_shares: int = 0
+    borrow_shares: int = 0
+    collateral_assets: int = 0
+    last_event_block: int = 0
+    last_event_timestamp: datetime.datetime = datetime.datetime(1970, 1, 1)
+
+
 def _word_address(word: str) -> str:
     return "0x" + word[-40:].lower()
 
@@ -138,6 +165,13 @@ def _words(data: str) -> list[str]:
     if len(raw) % 64 != 0:
         raw = raw[: len(raw) - (len(raw) % 64)]
     return [raw[i : i + 64] for i in range(0, len(raw), 64) if len(raw[i : i + 64]) == 64]
+
+
+
+def _topic_address(topics: list[str], idx: int) -> str:
+    if idx >= len(topics) or not topics[idx]:
+        return ""
+    return _word_address(str(topics[idx]).removeprefix("0x").rjust(64, "0"))
 
 
 def _uint(words: list[str], idx: int) -> int:
@@ -156,22 +190,18 @@ def _clip_nonnegative(value: int) -> int:
 
 
 def price_feed_requirements(symbol: str, available_feeds: set[str] | None = None) -> tuple[str, ...]:
-    """Return the strict Chainlink worker feeds needed to price a symbol."""
+    """Return the exact feeds the runtime resolver will use for a symbol."""
     available_feeds = available_feeds or set()
     direct = f"{symbol} / USD"
-    if direct in available_feeds or symbol in DIRECT_USD_FEED_SYMBOLS:
+    if direct in available_feeds:
         return (direct,)
 
     alias = PRICE_FEED_ALIASES.get(symbol)
     if alias:
         return alias
 
-    if symbol in STABLES:
+    if symbol in DIRECT_USD_FEED_SYMBOLS or symbol in STABLES:
         return (direct,)
-    if symbol in ETH_ASSETS:
-        return (direct,) if direct in available_feeds else ("ETH / USD",)
-    if symbol in BTC_ASSETS:
-        return (direct,) if direct in available_feeds else ("BTC / USD",)
 
     eth_pair = f"{symbol} / ETH"
     btc_pair = f"{symbol} / BTC"
@@ -192,41 +222,17 @@ def _ratio(value: float | int | None) -> float | None:
 
 
 def resolve_symbol_price(symbol: str, feed_prices: dict[str, float]) -> float | None:
-    """Resolve a symbol price without synthetic defaults."""
-    direct = f"{symbol} / USD"
-    if direct in feed_prices:
-        return float(feed_prices[direct])
-
-    if symbol in ("ETH", "WETH"):
-        return feed_prices.get("ETH / USD")
-    if symbol == "WBTC":
-        if "WBTC / BTC" in feed_prices and "BTC / USD" in feed_prices:
-            return float(feed_prices["WBTC / BTC"]) * float(feed_prices["BTC / USD"])
-        return feed_prices.get("BTC / USD")
-    if symbol in ("BTC", "cbBTC", "CBBTC"):
-        return feed_prices.get("cbBTC / USD") or feed_prices.get("BTC / USD")
-    if symbol in ("stETH", "STETH"):
-        return feed_prices.get("STETH / USD")
-    if symbol in ("wstETH", "WSTETH"):
-        if "wstETH/stETH exchange rate" in feed_prices and "STETH / USD" in feed_prices:
-            return _ratio(feed_prices["wstETH/stETH exchange rate"]) * float(feed_prices["STETH / USD"])
+    """Resolve a symbol price through the same feed path used for classification."""
+    feeds = price_feed_requirements(symbol, set(feed_prices))
+    if not feeds or any(feed not in feed_prices for feed in feeds):
         return None
-    if symbol in ("weETH", "WEETH"):
-        if "weETH / ETH" in feed_prices and "ETH / USD" in feed_prices:
-            return _ratio(feed_prices["weETH / ETH"]) * float(feed_prices["ETH / USD"])
+    if len(feeds) == 1:
+        return float(feed_prices[feeds[0]])
+    ratio = _ratio(feed_prices.get(feeds[0]))
+    base = feed_prices.get(feeds[1])
+    if ratio is None or base is None:
         return None
-    if symbol in ("rETH", "RETH"):
-        if "RETH / ETH" in feed_prices and "ETH / USD" in feed_prices:
-            return _ratio(feed_prices["RETH / ETH"]) * float(feed_prices["ETH / USD"])
-        return None
-
-    eth_pair = f"{symbol} / ETH"
-    btc_pair = f"{symbol} / BTC"
-    if eth_pair in feed_prices and "ETH / USD" in feed_prices:
-        return _ratio(feed_prices[eth_pair]) * float(feed_prices["ETH / USD"])
-    if btc_pair in feed_prices and "BTC / USD" in feed_prices:
-        return _ratio(feed_prices[btc_pair]) * float(feed_prices["BTC / USD"])
-    return None
+    return float(ratio) * float(base)
 
 
 def classify_price_support(
@@ -241,6 +247,9 @@ def classify_price_support(
     missing = [feed for feed in (*loan_feeds, *collateral_feeds) if feed not in available_feeds]
     if missing:
         return "UNPRICED", loan_feeds, collateral_feeds, "missing Chainlink worker feed: " + ", ".join(sorted(set(missing)))
+    probe_prices = {feed: 1.0 for feed in (*loan_feeds, *collateral_feeds)}
+    if resolve_symbol_price(loan_symbol, probe_prices) is None or resolve_symbol_price(collateral_symbol, probe_prices) is None:
+        return "UNSUPPORTED_ORACLE", loan_feeds, collateral_feeds, "missing resolver path"
     return "CHAINLINK_SUPPORTED", loan_feeds, collateral_feeds, ""
 
 
@@ -267,9 +276,12 @@ class MorphoSource(BaseSource):
     def __init__(self):
         self._markets: dict[str, MorphoMarketState] = {}
         self._params: dict[str, MorphoMarketParams] = {}
+        self._positions: dict[tuple[str, str], MorphoUserPosition] = {}
         self._oracle_support: dict[str, tuple[str, tuple[str, ...], tuple[str, ...], str]] = {}
         self._available_feeds: set[str] = set()
         self._touched_markets: set[str] = set()
+        self._touched_positions: set[tuple[str, str]] = set()
+        self._event_facts: list[dict] = []
         self._initialized = False
 
     def get_cursor(self, ch) -> int:
@@ -278,12 +290,14 @@ class MorphoSource(BaseSource):
             self._load_available_feeds(ch)
             self._load_params(ch)
             self._load_state(ch)
+            self._load_positions(ch)
             self._initialized = True
             log.info(
-                "[%s] Initialized %s markets, %s durable states, %s Chainlink feeds",
+                "[%s] Initialized %s markets, %s durable states, %s positions, %s Chainlink feeds",
                 self.name,
                 len(self._params),
                 len(self._markets),
+                len(self._positions),
                 len(self._available_feeds),
             )
         result = ch.command("SELECT max(block_number) FROM morpho_events")
@@ -336,23 +350,73 @@ class MorphoSource(BaseSource):
         market_id = str(topics[1]).lower()
         state = self._markets.setdefault(market_id, MorphoMarketState())
 
+        caller = _topic_address(topics, 2)
+        on_behalf = _topic_address(topics, 3)
+        receiver = ""
+        assets = shares = collateral_assets = 0
+        repaid_assets = repaid_shares = seized_assets = bad_debt_assets = bad_debt_shares = 0
+        interest = fee_shares = 0
+        user = on_behalf
+
+        def position_for(position_user: str) -> MorphoUserPosition | None:
+            if not position_user:
+                return None
+            key = (market_id, position_user.lower())
+            position = self._positions.setdefault(key, MorphoUserPosition())
+            position.last_event_block = int(log_entry.block_number)
+            position.last_event_timestamp = ts
+            self._touched_positions.add(key)
+            return position
+
         if event_name == "Supply":
-            state.total_supply_assets += _uint(words, 0)
-            state.total_supply_shares += _uint(words, 1)
+            assets = _uint(words, 0)
+            shares = _uint(words, 1)
+            state.total_supply_assets += assets
+            state.total_supply_shares += shares
+            position = position_for(user)
+            if position:
+                position.supply_shares += shares
         elif event_name == "Withdraw":
-            state.total_supply_assets = _clip_nonnegative(state.total_supply_assets - _uint(words, 1))
-            state.total_supply_shares = _clip_nonnegative(state.total_supply_shares - _uint(words, 2))
+            receiver = _word_address(words[0]) if words else ""
+            assets = _uint(words, 1)
+            shares = _uint(words, 2)
+            state.total_supply_assets = _clip_nonnegative(state.total_supply_assets - assets)
+            state.total_supply_shares = _clip_nonnegative(state.total_supply_shares - shares)
+            position = position_for(user)
+            if position:
+                position.supply_shares = _clip_nonnegative(position.supply_shares - shares)
         elif event_name == "Borrow":
-            state.total_borrow_assets += _uint(words, 1)
-            state.total_borrow_shares += _uint(words, 2)
+            receiver = _word_address(words[0]) if words else ""
+            assets = _uint(words, 1)
+            shares = _uint(words, 2)
+            state.total_borrow_assets += assets
+            state.total_borrow_shares += shares
+            position = position_for(user)
+            if position:
+                position.borrow_shares += shares
         elif event_name == "Repay":
-            state.total_borrow_assets = _clip_nonnegative(state.total_borrow_assets - _uint(words, 0))
-            state.total_borrow_shares = _clip_nonnegative(state.total_borrow_shares - _uint(words, 1))
+            assets = _uint(words, 0)
+            shares = _uint(words, 1)
+            state.total_borrow_assets = _clip_nonnegative(state.total_borrow_assets - assets)
+            state.total_borrow_shares = _clip_nonnegative(state.total_borrow_shares - shares)
+            position = position_for(user)
+            if position:
+                position.borrow_shares = _clip_nonnegative(position.borrow_shares - shares)
         elif event_name == "SupplyCollateral":
-            state.collateral_assets += _uint(words, 0)
+            collateral_assets = _uint(words, 0)
+            state.collateral_assets += collateral_assets
+            position = position_for(user)
+            if position:
+                position.collateral_assets += collateral_assets
         elif event_name == "WithdrawCollateral":
-            state.collateral_assets = _clip_nonnegative(state.collateral_assets - _uint(words, 1))
+            receiver = _word_address(words[0]) if words else ""
+            collateral_assets = _uint(words, 1)
+            state.collateral_assets = _clip_nonnegative(state.collateral_assets - collateral_assets)
+            position = position_for(user)
+            if position:
+                position.collateral_assets = _clip_nonnegative(position.collateral_assets - collateral_assets)
         elif event_name == "Liquidate":
+            user = on_behalf
             repaid_assets = _uint(words, 0)
             repaid_shares = _uint(words, 1)
             seized_assets = _uint(words, 2)
@@ -362,6 +426,10 @@ class MorphoSource(BaseSource):
             state.total_borrow_shares = _clip_nonnegative(state.total_borrow_shares - repaid_shares - bad_debt_shares)
             state.total_supply_assets = _clip_nonnegative(state.total_supply_assets - bad_debt_assets)
             state.collateral_assets = _clip_nonnegative(state.collateral_assets - seized_assets)
+            position = position_for(user)
+            if position:
+                position.borrow_shares = _clip_nonnegative(position.borrow_shares - repaid_shares - bad_debt_shares)
+                position.collateral_assets = _clip_nonnegative(position.collateral_assets - seized_assets)
         elif event_name == "AccrueInterest":
             state.last_borrow_rate_wad = _uint(words, 0)
             interest = _uint(words, 1)
@@ -377,6 +445,30 @@ class MorphoSource(BaseSource):
         state.last_event_block = int(log_entry.block_number)
         state.last_event_timestamp = ts
         self._touched_markets.add(market_id)
+        self._event_facts.append(
+            {
+                "block_number": int(log_entry.block_number),
+                "timestamp": ts,
+                "tx_hash": str(getattr(log_entry, "transaction_hash", "") or ""),
+                "log_index": int(getattr(log_entry, "log_index", 0) or 0),
+                "market_id": market_id,
+                "event_name": event_name,
+                "caller": caller,
+                "on_behalf": on_behalf,
+                "receiver": receiver,
+                "assets": str(assets),
+                "shares": str(shares),
+                "collateral_assets": str(collateral_assets),
+                "repaid_assets": str(repaid_assets),
+                "repaid_shares": str(repaid_shares),
+                "seized_assets": str(seized_assets),
+                "bad_debt_assets": str(bad_debt_assets),
+                "bad_debt_shares": str(bad_debt_shares),
+                "interest_assets": str(interest),
+                "fee_shares": str(fee_shares),
+                "fee_wad": str(state.fee_wad) if event_name == "SetFee" else "0",
+            }
+        )
         return {
             "kind": "snapshot",
             "market_id": market_id,
@@ -396,7 +488,9 @@ class MorphoSource(BaseSource):
         if snapshot_rows:
             written = self._write_snapshots(ch, snapshot_rows)
 
+        self._persist_event_facts(ch)
         self._persist_state(ch)
+        self._persist_positions(ch)
         return written
 
     def _ensure_tables(self, ch) -> None:
@@ -465,6 +559,56 @@ class MorphoSource(BaseSource):
         )
         ch.command(
             """
+            CREATE TABLE IF NOT EXISTS morpho_market_positions (
+                market_id String,
+                user String,
+                supply_shares String,
+                borrow_shares String,
+                collateral_assets String,
+                last_event_block UInt64,
+                last_event_timestamp DateTime,
+                updated_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(updated_at)
+            ORDER BY (market_id, user)
+            """
+        )
+        ch.command(
+            """
+            CREATE TABLE IF NOT EXISTS morpho_market_events (
+                block_number UInt64,
+                timestamp DateTime,
+                tx_hash String,
+                log_index UInt32,
+                market_id String,
+                event_name LowCardinality(String),
+                caller String,
+                on_behalf String,
+                receiver String,
+                assets String,
+                shares String,
+                collateral_assets String,
+                repaid_assets String,
+                repaid_shares String,
+                seized_assets String,
+                bad_debt_assets String,
+                bad_debt_shares String,
+                interest_assets String,
+                fee_shares String,
+                fee_wad String,
+                inserted_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toStartOfMonth(timestamp)
+            ORDER BY (market_id, block_number, tx_hash, log_index, event_name)
+            TTL timestamp + INTERVAL 36 MONTH DELETE
+            """
+        )
+        for alter in (
+            "ALTER TABLE morpho_market_positions ADD COLUMN IF NOT EXISTS updated_at DateTime DEFAULT now()",
+            "ALTER TABLE morpho_market_events ADD COLUMN IF NOT EXISTS inserted_at DateTime DEFAULT now()",
+        ):
+            ch.command(alter)
+        ch.command(
+            """
             CREATE TABLE IF NOT EXISTS morpho_market_oracle_support (
                 market_id String,
                 oracle_support LowCardinality(String),
@@ -504,6 +648,7 @@ class MorphoSource(BaseSource):
             TTL timestamp + INTERVAL 36 MONTH DELETE
             """
         )
+        ensure_morpho_oracle_snapshot_tables(ch)
         ch.command(
             """
             CREATE TABLE IF NOT EXISTS morpho_chainlink_timeseries (
@@ -587,8 +732,67 @@ class MorphoSource(BaseSource):
                 last_event_timestamp=row[9] or datetime.datetime(1970, 1, 1),
             )
 
+    def _load_positions(self, ch) -> None:
+        try:
+            rows = ch.query(
+                """
+                SELECT market_id, user, supply_shares, borrow_shares, collateral_assets,
+                       last_event_block, last_event_timestamp
+                FROM morpho_market_positions FINAL
+                """
+            ).result_rows
+        except Exception:
+            rows = []
+        for row in rows:
+            self._positions[(str(row[0]).lower(), str(row[1]).lower())] = MorphoUserPosition(
+                supply_shares=int(row[2] or 0),
+                borrow_shares=int(row[3] or 0),
+                collateral_assets=int(row[4] or 0),
+                last_event_block=int(row[5] or 0),
+                last_event_timestamp=row[6] or datetime.datetime(1970, 1, 1),
+            )
+
     def _support_for(self, params: MorphoMarketParams) -> tuple[str, tuple[str, ...], tuple[str, ...], str]:
-        support = classify_price_support(params.loan_symbol, params.collateral_symbol, self._available_feeds)
+        loan_feeds = price_feed_requirements(params.loan_symbol, self._available_feeds)
+        collateral_feeds = price_feed_requirements(params.collateral_symbol, self._available_feeds)
+        if not loan_feeds:
+            support = ("UNSUPPORTED_ORACLE", loan_feeds, collateral_feeds, "missing loan feed mapping")
+        else:
+            missing_loan = [feed for feed in loan_feeds if feed not in self._available_feeds]
+            if missing_loan:
+                support = (
+                    "UNPRICED",
+                    loan_feeds,
+                    collateral_feeds,
+                    "missing loan-side USD conversion feed: " + ", ".join(sorted(set(missing_loan))),
+                )
+            elif collateral_feeds:
+                missing_collateral = [feed for feed in collateral_feeds if feed not in self._available_feeds]
+                if missing_collateral:
+                    support = (
+                        "UNPRICED",
+                        loan_feeds,
+                        collateral_feeds,
+                        "missing collateral USD conversion feed: " + ", ".join(sorted(set(missing_collateral))),
+                    )
+                else:
+                    probe_prices = {feed: 1.0 for feed in (*loan_feeds, *collateral_feeds)}
+                    if (
+                        resolve_symbol_price(params.loan_symbol, probe_prices) is None
+                        or resolve_symbol_price(params.collateral_symbol, probe_prices) is None
+                    ):
+                        support = ("UNSUPPORTED_ORACLE", loan_feeds, collateral_feeds, "missing resolver path")
+                    else:
+                        support = ("CHAINLINK_SUPPORTED", loan_feeds, collateral_feeds, "")
+            elif params.oracle.lower() != ZERO_ADDRESS:
+                support = (
+                    "ORACLE_SNAPSHOT_SUPPORTED",
+                    loan_feeds,
+                    collateral_feeds,
+                    "collateral priced by Morpho IOracle.price() snapshots",
+                )
+            else:
+                support = ("UNSUPPORTED_ORACLE", loan_feeds, collateral_feeds, "missing collateral feed mapping")
         self._oracle_support[params.market_id] = support
         return support
 
@@ -705,11 +909,55 @@ class MorphoSource(BaseSource):
             )
         self._touched_markets.clear()
 
+    def _persist_positions(self, ch) -> None:
+        if not self._touched_positions:
+            return
+        rows = []
+        for key in sorted(self._touched_positions):
+            position = self._positions.get(key)
+            if not position:
+                continue
+            market_id, user = key
+            rows.append(
+                [
+                    market_id,
+                    user,
+                    str(position.supply_shares),
+                    str(position.borrow_shares),
+                    str(position.collateral_assets),
+                    position.last_event_block,
+                    position.last_event_timestamp,
+                ]
+            )
+        if rows:
+            insert_rows_batched(
+                ch,
+                "morpho_market_positions",
+                rows,
+                [
+                    "market_id",
+                    "user",
+                    "supply_shares",
+                    "borrow_shares",
+                    "collateral_assets",
+                    "last_event_block",
+                    "last_event_timestamp",
+                ],
+            )
+        self._touched_positions.clear()
+
+    def _persist_event_facts(self, ch) -> None:
+        if not self._event_facts:
+            return
+        df = pd.DataFrame(self._event_facts)
+        insert_df_batched(ch, "morpho_market_events", df)
+        self._event_facts.clear()
+
     def _price_frame(self, ch, min_ts: datetime.datetime, max_ts: datetime.datetime, feeds: set[str]) -> pd.DataFrame:
         if not feeds:
             return pd.DataFrame()
         escaped = ", ".join("'" + feed.replace("'", "''") + "'" for feed in sorted(feeds))
-        start = (pd.to_datetime(min_ts) - pd.Timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+        start = (pd.to_datetime(min_ts) - pd.Timedelta(days=730)).strftime("%Y-%m-%d %H:%M:%S")
         end = pd.to_datetime(max_ts).strftime("%Y-%m-%d %H:%M:%S")
         df = ch.query_df(
             f"""
@@ -727,6 +975,32 @@ class MorphoSource(BaseSource):
         pivot = df.pivot_table(index="ts", columns="feed", values="price", aggfunc="last").sort_index()
         return pivot.ffill()
 
+    def _oracle_snapshot_frame(self, ch, min_ts: datetime.datetime, max_ts: datetime.datetime, oracles: set[str]) -> pd.DataFrame:
+        if not oracles:
+            return pd.DataFrame()
+        ensure_morpho_oracle_snapshot_tables(ch)
+        escaped = ", ".join("'" + oracle.replace("'", "''") + "'" for oracle in sorted(oracles))
+        start = (pd.to_datetime(min_ts) - pd.Timedelta(days=730)).strftime("%Y-%m-%d %H:%M:%S")
+        end = pd.to_datetime(max_ts).strftime("%Y-%m-%d %H:%M:%S")
+        df = ch.query_df(
+            f"""
+            SELECT toStartOfHour(timestamp) AS ts,
+                   oracle,
+                   argMax(toFloat64OrZero(price_raw), inserted_at) AS price_raw
+            FROM morpho_oracle_snapshots
+            WHERE oracle IN ({escaped})
+              AND status = 'OK'
+              AND timestamp >= '{start}'
+              AND timestamp <= '{end}'
+            GROUP BY ts, oracle
+            ORDER BY ts, oracle
+            """
+        )
+        if df.empty:
+            return pd.DataFrame()
+        pivot = df.pivot_table(index="ts", columns="oracle", values="price_raw", aggfunc="last").sort_index()
+        return pivot.ffill()
+
     def _write_snapshots(self, ch, snapshot_rows: list[dict]) -> int:
         df = pd.DataFrame(snapshot_rows)
         if df.empty:
@@ -737,6 +1011,8 @@ class MorphoSource(BaseSource):
 
         required_feeds: set[str] = set()
         supported_market_ids: set[str] = set()
+        oracle_priced_market_ids: set[str] = set()
+        required_oracles: set[str] = set()
         for market_id in hourly["market_id"].unique():
             params = self._params.get(str(market_id))
             if not params:
@@ -746,6 +1022,11 @@ class MorphoSource(BaseSource):
                 supported_market_ids.add(str(market_id))
                 required_feeds.update(loan_feeds)
                 required_feeds.update(collateral_feeds)
+            elif support == "ORACLE_SNAPSHOT_SUPPORTED":
+                supported_market_ids.add(str(market_id))
+                oracle_priced_market_ids.add(str(market_id))
+                required_feeds.update(loan_feeds)
+                required_oracles.add(params.oracle.lower())
 
         if not supported_market_ids:
             return 0
@@ -753,6 +1034,9 @@ class MorphoSource(BaseSource):
         prices = self._price_frame(ch, hourly["ts"].min(), hourly["ts"].max(), required_feeds)
         if prices.empty:
             return 0
+        oracle_prices = self._oracle_snapshot_frame(ch, hourly["ts"].min(), hourly["ts"].max(), required_oracles)
+        if oracle_priced_market_ids and oracle_prices.empty:
+            log.info("[%s] Oracle-priced markets are waiting for morpho_oracle_snapshots", self.name)
 
         metrics = []
         for row in hourly.itertuples(index=False):
@@ -772,8 +1056,7 @@ class MorphoSource(BaseSource):
                 for feed, value in price_row.iloc[-1].dropna().items()
             }
             loan_price = resolve_symbol_price(params.loan_symbol, feed_prices)
-            collateral_price = resolve_symbol_price(params.collateral_symbol, feed_prices)
-            if loan_price is None or collateral_price is None:
+            if loan_price is None:
                 continue
 
             supply_tokens = state.total_supply_assets / (10 ** params.loan_decimals)
@@ -781,7 +1064,27 @@ class MorphoSource(BaseSource):
             collateral_tokens = state.collateral_assets / (10 ** params.collateral_decimals)
             supply_usd = supply_tokens * loan_price
             borrow_usd = borrow_tokens * loan_price
-            collateral_usd = collateral_tokens * collateral_price
+            oracle_support_label = "CHAINLINK_SUPPORTED"
+            if market_id in oracle_priced_market_ids:
+                oracle_price_rows = oracle_prices.loc[oracle_prices.index <= ts] if not oracle_prices.empty else pd.DataFrame()
+                if oracle_price_rows.empty or params.oracle.lower() not in oracle_price_rows.columns:
+                    continue
+                oracle_price_raw = oracle_price_rows.iloc[-1].get(params.oracle.lower())
+                collateral_usd = collateral_value_usd_from_oracle(
+                    state.collateral_assets,
+                    oracle_price_raw,
+                    params.loan_decimals,
+                    loan_price,
+                )
+                if collateral_usd is None:
+                    continue
+                collateral_price = collateral_usd / collateral_tokens if collateral_tokens > 0 else 0.0
+                oracle_support_label = "ORACLE_SNAPSHOT_SUPPORTED"
+            else:
+                collateral_price = resolve_symbol_price(params.collateral_symbol, feed_prices)
+                if collateral_price is None:
+                    continue
+                collateral_usd = collateral_tokens * collateral_price
             utilization = min(max(borrow_tokens / supply_tokens, 0.0), 1.0) if supply_tokens > 0 else 0.0
             borrow_apy = _borrow_apy_from_rate(state.last_borrow_rate_wad)
             fee = max(0.0, min(float(state.fee_wad) / WAD, 1.0))
@@ -804,7 +1107,7 @@ class MorphoSource(BaseSource):
                     "collateral_price_usd": float(collateral_price),
                     "lltv": float(lltv),
                     "oracle": params.oracle,
-                    "oracle_support": "CHAINLINK_SUPPORTED",
+                    "oracle_support": oracle_support_label,
                 }
             )
 
@@ -829,9 +1132,6 @@ class MorphoSource(BaseSource):
                 "price_usd": metrics_df["loan_price_usd"],
             }
         )
-        final = final[(final["supply_usd"] > 0) | (final["borrow_usd"] > 0)]
-        if final.empty:
-            return 0
         final = forward_fill_hourly(final, ch, MORPHO_MARKET, compound=False)
         if final.empty:
             return 0

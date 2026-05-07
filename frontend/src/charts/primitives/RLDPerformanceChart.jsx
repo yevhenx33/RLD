@@ -93,8 +93,9 @@ const RLDPerformanceChart = ({
   areas = [],
   referenceLines = [],
   resolution = "1H",
+  yAxisDomain,
   onDataChange,
-onRequestDataWindow,
+  onRequestDataWindow,
 }) => {
   // State & Refs
   const containerRef = useRef(null);
@@ -492,7 +493,7 @@ onRequestDataWindow,
           <YAxis
             stroke="#71717a"
             fontSize={12}
-            domain={yDomain}
+            domain={yAxisDomain || yDomain}
             tickFormatter={(val) => {
               // Check if any area uses dollar format
               const hasDollar = areas.some((a) => a.format === "dollar");

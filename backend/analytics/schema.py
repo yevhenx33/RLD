@@ -6,6 +6,9 @@ import os
 
 from analytics.protocols import MORPHO_MARKET
 from analytics.state import ensure_source_status_table
+from analytics.morpho_oracle_snapshots import ensure_morpho_oracle_snapshot_tables
+from analytics.oracle_snapshots import ensure_oracle_snapshot_tables
+from analytics.fluid_full_coverage import ensure_fluid_full_coverage_tables, seed_core_fluid_contracts
 
 
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
@@ -18,6 +21,7 @@ PENDLE_ETH_PRICE_LATEST_TABLE = "pendle_eth_price_latest"
 PENDLE_ETH_PRICE_OHLCV_TABLE = "pendle_eth_price_ohlcv"
 PENDLE_ETH_BACKFILL_PROGRESS_TABLE = "pendle_eth_backfill_progress"
 MORPHO_CHAINLINK_TIMESERIES_TABLE = "morpho_chainlink_timeseries"
+FLUID_TIMESERIES_TABLE = "fluid_timeseries"
 
 
 def _escape_sql_string(value: str) -> str:
@@ -59,6 +63,10 @@ def ensure_schema(ch) -> None:
     """Apply idempotent ClickHouse support schema for workers and serving."""
     ensure_clickhouse_users(ch)
     ensure_source_status_table(ch)
+    ensure_morpho_oracle_snapshot_tables(ch)
+    ensure_oracle_snapshot_tables(ch)
+    ensure_fluid_full_coverage_tables(ch)
+    seed_core_fluid_contracts(ch)
     ch.command(
         """
         CREATE TABLE IF NOT EXISTS processor_state (
@@ -305,6 +313,51 @@ def ensure_schema(ch) -> None:
     )
     ch.command(
         """
+        CREATE TABLE IF NOT EXISTS morpho_market_positions (
+            market_id String,
+            user String,
+            supply_shares String,
+            borrow_shares String,
+            collateral_assets String,
+            last_event_block UInt64,
+            last_event_timestamp DateTime,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY (market_id, user)
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS morpho_market_events (
+            block_number UInt64,
+            timestamp DateTime,
+            tx_hash String,
+            log_index UInt32,
+            market_id String,
+            event_name LowCardinality(String),
+            caller String,
+            on_behalf String,
+            receiver String,
+            assets String,
+            shares String,
+            collateral_assets String,
+            repaid_assets String,
+            repaid_shares String,
+            seized_assets String,
+            bad_debt_assets String,
+            bad_debt_shares String,
+            interest_assets String,
+            fee_shares String,
+            fee_wad String,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (market_id, block_number, tx_hash, log_index, event_name)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
         CREATE TABLE IF NOT EXISTS morpho_market_oracle_support (
             market_id String,
             oracle_support LowCardinality(String),
@@ -365,6 +418,246 @@ def ensure_schema(ch) -> None:
         TTL timestamp + INTERVAL 36 MONTH DELETE
         """
     )
+
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS fluid_reserve_state (
+            token String,
+            symbol LowCardinality(String),
+            decimals UInt8,
+            total_supply_tokens Float64,
+            total_borrow_tokens Float64,
+            utilization Float64,
+            borrow_apy Float64,
+            supply_apy Float64,
+            fee Float64,
+            supply_exchange_price String,
+            borrow_exchange_price String,
+            last_event_block UInt64,
+            last_event_timestamp DateTime,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY token
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS fluid_reserve_oracle_support (
+            token String,
+            symbol LowCardinality(String),
+            oracle_support LowCardinality(String),
+            price_feeds Array(String),
+            reason String,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY token
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS fluid_reserve_metrics (
+            timestamp DateTime,
+            token String,
+            entity_id String,
+            symbol LowCardinality(String),
+            total_supply_tokens Float64,
+            total_borrow_tokens Float64,
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            oracle_support LowCardinality(String),
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (token, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {FLUID_TIMESERIES_TABLE} (
+            timestamp DateTime,
+            protocol LowCardinality(String),
+            symbol LowCardinality(String),
+            entity_id String,
+            target_id String,
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (protocol, entity_id, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS metamorpho_factory_raw_events (
+            block_number UInt64,
+            block_timestamp DateTime,
+            tx_hash String,
+            log_index UInt32,
+            contract String,
+            event_name LowCardinality(String),
+            topic0 String,
+            topic1 Nullable(String),
+            topic2 Nullable(String),
+            topic3 Nullable(String),
+            data String
+        ) ENGINE = ReplacingMergeTree()
+        PARTITION BY toStartOfMonth(block_timestamp)
+        ORDER BY (block_number, tx_hash, log_index)
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS metamorpho_vault_backfill_raw_events (
+            block_number UInt64,
+            block_timestamp DateTime,
+            tx_hash String,
+            log_index UInt32,
+            contract String,
+            event_name LowCardinality(String),
+            topic0 String,
+            topic1 Nullable(String),
+            topic2 Nullable(String),
+            topic3 Nullable(String),
+            data String
+        ) ENGINE = ReplacingMergeTree()
+        PARTITION BY toStartOfMonth(block_timestamp)
+        ORDER BY (block_number, tx_hash, log_index)
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS metamorpho_vault_registry (
+            vault_address String,
+            name String,
+            asset_symbol LowCardinality(String),
+            asset_address String,
+            owner String DEFAULT '',
+            curator String DEFAULT '',
+            guardian String DEFAULT '',
+            allocator String DEFAULT '',
+            fee_wad String DEFAULT '0',
+            fee_recipient String DEFAULT '',
+            timelock UInt64 DEFAULT 0,
+            source LowCardinality(String) DEFAULT 'seed',
+            active UInt8 DEFAULT 1,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY vault_address
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS metamorpho_vault_state (
+            timestamp DateTime,
+            block_number UInt64,
+            vault_address String,
+            total_assets String,
+            total_supply String,
+            share_price_usd Float64,
+            tvl_usd Float64,
+            asset_price_usd Float64,
+            is_canonical_tvl UInt8 DEFAULT 0,
+            snapshot_status LowCardinality(String) DEFAULT '',
+            error String DEFAULT '',
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (vault_address, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS metamorpho_vault_allocations (
+            timestamp DateTime,
+            block_number UInt64,
+            vault_address String,
+            market_id String,
+            cap String,
+            supplied_assets String,
+            supplied_usd Float64,
+            allocation_share Float64,
+            snapshot_status LowCardinality(String) DEFAULT '',
+            error String DEFAULT '',
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (vault_address, market_id, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS metamorpho_vault_flows_hourly (
+            timestamp DateTime,
+            vault_address String,
+            asset_symbol LowCardinality(String),
+            deposit_assets String,
+            withdraw_assets String,
+            deposit_shares String,
+            withdraw_shares String,
+            transfer_shares String,
+            deposit_usd Float64,
+            withdraw_usd Float64,
+            net_flow_usd Float64,
+            event_count UInt64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (vault_address, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS metamorpho_vault_events (
+            block_number UInt64,
+            timestamp DateTime,
+            tx_hash String,
+            log_index UInt32,
+            vault_address String,
+            event_name LowCardinality(String),
+            caller String,
+            owner String,
+            receiver String,
+            market_id String,
+            assets String,
+            shares String,
+            raw_data String,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (vault_address, block_number, tx_hash, log_index, event_name)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+
+    try:
+        ch.command(
+            """
+            INSERT INTO metamorpho_vault_registry
+                (vault_address, name, asset_symbol, asset_address, source, active)
+            SELECT lower(vault_address), name, asset_symbol, lower(asset_address), 'legacy_seed', 1
+            FROM morpho_vault_meta
+            WHERE lower(vault_address) NOT IN (
+                SELECT vault_address FROM metamorpho_vault_registry FINAL
+            )
+            """
+        )
+    except Exception:
+        pass
+
     ch.command(f"DROP VIEW IF EXISTS mv_{API_MARKET_TIMESERIES_AGG_TABLE}")
     ch.command(f"DROP VIEW IF EXISTS mv_{API_PROTOCOL_TVL_AGG_TABLE}")
     ch.command(f"DROP VIEW IF EXISTS mv_{API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE}")

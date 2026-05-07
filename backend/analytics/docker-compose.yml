@@ -257,6 +257,230 @@ services:
       start_period: 20s
       retries: 3
 
+
+  metamorpho_factory_worker:
+    <<: *rld-indexer-service
+    container_name: rld_metamorpho_factory_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - METAMORPHO_FACTORY_ADDRESSES=${METAMORPHO_FACTORY_ADDRESSES:-}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "METAMORPHO_FACTORY"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "metamorpho-factory-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "MetaMorpho factory HyperSync discovery worker writing vault registry rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'METAMORPHO_FACTORY' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+
+  metamorpho_vault_backfill_worker:
+    <<: *rld-indexer-service
+    container_name: rld_metamorpho_vault_backfill_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "METAMORPHO_VAULT_BACKFILL"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "metamorpho-vault-backfill-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "MetaMorpho historical vault event backfill for factory-discovered vaults"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'METAMORPHO_VAULT_BACKFILL' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+
+  metamorpho_event_worker:
+    <<: *rld-indexer-service
+    container_name: rld_metamorpho_event_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "METAMORPHO_VAULT"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "metamorpho-event-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "MetaMorpho vault HyperSync event collector and replay processor"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'METAMORPHO_VAULT' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+
+  metamorpho_snapshot_worker:
+    <<: *rld-indexer-service
+    container_name: rld_metamorpho_snapshot_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - METAMORPHO_SNAPSHOT_INTERVAL_SEC=${METAMORPHO_SNAPSHOT_INTERVAL_SEC:-3600}
+      - METAMORPHO_EVENTS_START_BLOCK=${METAMORPHO_EVENTS_START_BLOCK:-18883124}
+      - METAMORPHO_LOG_CHUNK_SIZE=${METAMORPHO_LOG_CHUNK_SIZE:-25000}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command:
+      [
+        "sh",
+        "-c",
+        "while true; do python -m analytics.scripts.rld_indexer metamorpho-backfill --skip-factory-discovery --skip-events --skip-replay --http-timeout-sec $${METAMORPHO_HTTP_TIMEOUT_SEC:-120} --retries $${METAMORPHO_RPC_RETRIES:-3} --log-chunk-size $${METAMORPHO_LOG_CHUNK_SIZE:-25000}; sleep $${METAMORPHO_SNAPSHOT_INTERVAL_SEC:-3600}; done"
+      ]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "metamorpho-snapshot-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "MetaMorpho vault factory discovery and RPC state/allocation checkpoint worker"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'metamorpho-backfill' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+
+  fluid_worker:
+    <<: *rld-indexer-service
+    container_name: rld_fluid_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "FLUID_MARKET"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "fluid-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Fluid Liquidity Layer reserve worker writing processed analytics rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'FLUID_MARKET' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  fluid_products_snapshot_worker:
+    <<: *rld-indexer-service
+    container_name: rld_fluid_products_snapshot_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - FLUID_PRODUCTS_SNAPSHOT_INTERVAL_SEC=${FLUID_PRODUCTS_SNAPSHOT_INTERVAL_SEC:-3600}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command:
+      [
+        "sh",
+        "-c",
+        "while true; do python -m analytics.scripts.rld_indexer fluid-full-coverage-cycle --http-timeout-sec $${FLUID_PRODUCTS_HTTP_TIMEOUT_SEC:-120} --retries $${FLUID_PRODUCTS_RPC_RETRIES:-4}; sleep $${FLUID_PRODUCTS_SNAPSHOT_INTERVAL_SEC:-3600}; done"
+      ]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "fluid-products-snapshot-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Fluid fToken/vault/DEX product discovery and RPC snapshot worker"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'fluid-full-coverage-cycle' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
   pendle_worker:
     <<: *rld-indexer-service
     container_name: rld_pendle_worker
