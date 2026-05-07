@@ -1,46 +1,16 @@
-import React, { useMemo, useState } from "react";
+﻿import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
 import { Activity, PieChart as PieChartIcon, Layers, Users, Check, Loader2 } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import RLDPerformanceChart from "../../charts/primitives/RLDPerformanceChart";
-import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
-import { postGraphQL } from "../../api/graphqlClient";
+import { API_GRAPHQL_URL } from "../../api/endpoints";
+import { apiGraphQL } from "../../api/apiClient";
+import { LENDING_DATA_QUERY } from "../../api/apiQueries";
+import { queryKeys } from "../../api/queryKeys";
+import { marketRouteFor } from "../../lib/protocolConfig";
 import { getTokenIcon } from "../../utils/tokenIcons";
 import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
-
-const LENDING_DATA_QUERY = `
-  query LendingDataHub($displayIn: String!) {
-    lendingDataPage(displayIn: $displayIn) {
-      freshness { ready status generatedAt }
-      stats {
-        totalSupplyUsd
-        totalBorrowUsd
-        averageSupplyApy
-        averageBorrowApy
-        marketCount
-      }
-      chartData {
-        timestamp
-        tvl
-        averageSupplyApy
-        averageBorrowApy
-      }
-      markets {
-        entityId
-        symbol
-        protocol
-        supplyUsd
-        borrowUsd
-        supplyApy
-        borrowApy
-        utilization
-        netWorth
-      }
-    }
-  }
-`;
 
 const SUPPLY_APY_AREA = {
   key: "averageSupplyApy",
@@ -91,13 +61,13 @@ export default function LendingDataPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [protocolFilter, setProtocolFilter] = useState('ALL');
   const { data: gqlData, error: _error, isLoading: loading } = useSWR(
-    [ENVIO_GRAPHQL_URL, `envio.lending-data-hub.${displayUnit}.v6`],
-    ([url]) =>
-      postGraphQL(url, {
+    queryKeys.apiLendingPage(API_GRAPHQL_URL, displayUnit),
+    ([, , variables]) =>
+      apiGraphQL("LendingDataHub", {
         query: LENDING_DATA_QUERY,
-        variables: { displayIn: displayUnit },
+        variables,
       }),
-    { refreshInterval: REFRESH_INTERVALS.ANALYTICS_PAGE_MS, dedupingInterval: REFRESH_INTERVALS.ANALYTICS_DEDUPE_MS }
+    { refreshInterval: REFRESH_INTERVALS.API_PAGE_MS, dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS }
   );
 
   const { stats, chartData, marketsData } = useMemo(() => {
@@ -166,45 +136,6 @@ export default function LendingDataPage() {
     if (showBorrowApyHistory) areas.push(BORROW_APY_AREA);
     return areas;
   }, [showBorrowApyHistory, showSupplyApyHistory, tvlArea]);
-
-  const mockRatioData = useMemo(() => {
-    const data = [];
-    const now = Math.floor(Date.now() / 1000);
-    let currentRatio = 45;
-    for (let i = 0; i < 90; i++) {
-      currentRatio = currentRatio + (Math.random() - 0.5) * 2;
-      data.push({
-        timestamp: now - (90 - i) * 86400,
-        ratio: Math.max(20, Math.min(80, currentRatio)),
-      });
-    }
-    return data;
-  }, []);
-
-  const mockMarketShareData = useMemo(() => {
-    const data = [];
-    const now = Math.floor(Date.now() / 1000);
-    let aave = 70;
-    let morpho = 20;
-    let fluid = 10;
-    for (let i = 0; i < 30; i++) {
-      aave += (Math.random() - 0.5) * 2;
-      morpho += (Math.random() - 0.5) * 1.5;
-      fluid += (Math.random() - 0.5) * 1;
-
-      const sum = Math.max(0.1, aave) + Math.max(0.1, morpho) + Math.max(0.1, fluid);
-      const date = new Date((now - (30 - i) * 86400) * 1000);
-
-      data.push({
-        timestamp: now - (30 - i) * 86400,
-        dateStr: `${date.getMonth() + 1}/${date.getDate()}`,
-        aave: (Math.max(0, aave) / sum) * 100,
-        morpho: (Math.max(0, morpho) / sum) * 100,
-        fluid: (Math.max(0, fluid) / sum) * 100,
-      });
-    }
-    return data;
-  }, []);
 
   return (
     <div className="min-h-screen bg-[#050505] text-gray-300 font-mono">
@@ -338,89 +269,6 @@ export default function LendingDataPage() {
               </div>
             </div>
 
-            {/* Bottom-Left: Historical Debt/Collateral Ratio */}
-            <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
-                  DEBT / COLLATERAL RATIO
-                </h2>
-                <div className="text-[9px] text-gray-500 uppercase tracking-widest border border-white/10 px-2 py-1 bg-[#050505]">
-                  MOCK DATA
-                </div>
-              </div>
-              <div className="h-[280px] w-full relative mt-auto">
-                <RLDPerformanceChart
-                  data={mockRatioData}
-                  areas={[
-                    { key: "ratio", color: "#F43F5E", name: "D/C Ratio", format: "percent" }
-                  ]}
-                  resolution="1D"
-                  yAxisDomain={[0, 100]}
-                />
-              </div>
-            </div>
-
-            {/* Bottom-Right: Market Share Stacked Bar Chart */}
-            <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
-                  MARKET SHARE
-                </h2>
-                <div className="flex items-center gap-4">
-                  <div className="text-[9px] text-gray-500 uppercase tracking-widest border border-white/10 px-2 py-1 bg-[#050505] mr-2">
-                    MOCK DATA
-                  </div>
-                  <div className="flex gap-3">
-                    <div className="flex items-center gap-1">
-                      <div className="w-2 h-2 bg-[#818cf8]" />
-                      <span className="text-[9px] text-gray-500 uppercase tracking-widest">Aave</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <div className="w-2 h-2 bg-[#34d399]" />
-                      <span className="text-[9px] text-gray-500 uppercase tracking-widest">Morpho</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <div className="w-2 h-2 bg-[#22d3ee]" />
-                      <span className="text-[9px] text-gray-500 uppercase tracking-widest">Fluid</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="h-[280px] w-full relative mt-auto pt-4">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={mockMarketShareData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
-                    <XAxis
-                      dataKey="dateStr"
-                      stroke="#555"
-                      tick={{ fill: '#888', fontSize: 10 }}
-                      tickLine={false}
-                      axisLine={false}
-                      minTickGap={20}
-                    />
-                    <YAxis
-                      stroke="#555"
-                      tick={{ fill: '#888', fontSize: 10 }}
-                      tickLine={false}
-                      axisLine={false}
-                      tickFormatter={(val) => `${val}%`}
-                      domain={[0, 100]}
-                    />
-                    <Tooltip
-                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                      contentStyle={{ backgroundColor: '#111', borderColor: '#333', color: '#fff', fontSize: '12px' }}
-                      itemStyle={{ color: '#fff' }}
-                      formatter={(value, name) => [`${value.toFixed(1)}%`, name.charAt(0).toUpperCase() + name.slice(1)]}
-                      labelStyle={{ color: '#888', marginBottom: '4px' }}
-                    />
-                    <Bar dataKey="aave" stackId="a" fill="#818cf8" maxBarSize={40} isAnimationActive={false} />
-                    <Bar dataKey="morpho" stackId="a" fill="#34d399" maxBarSize={40} isAnimationActive={false} />
-                    <Bar dataKey="fluid" stackId="a" fill="#22d3ee" maxBarSize={40} isAnimationActive={false} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
           </div>
         </section>
 
@@ -496,7 +344,7 @@ export default function LendingDataPage() {
                   paginatedMarkets.map((pool, idx) => (
                     <div
                       key={`${pool.symbol}-${idx}`}
-                      onClick={() => pool.entityId && navigate(`/data/aave/${pool.entityId}`)}
+                      onClick={() => pool.entityId && navigate(marketRouteFor(pool.protocol, pool.entityId))}
                       className={`grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center transition-colors ${pool.entityId ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
                         }`}
                     >

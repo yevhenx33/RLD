@@ -1,20 +1,24 @@
 export class GraphQLRequestError extends Error {
-  constructor(message, { status = null, errors = null, response = null } = {}) {
+  constructor(message, { status = null, errors = null, response = null, requestId = null } = {}) {
     super(message);
     this.name = "GraphQLRequestError";
     this.status = status;
     this.errors = errors;
     this.response = response;
+    this.requestId = requestId;
   }
 }
 
 export async function postGraphQL(
   url,
-  { query, variables = undefined, headers = undefined, signal = undefined },
+  { query, variables = undefined, operationName = undefined, headers = undefined, signal = undefined },
 ) {
   const payload = { query };
   if (variables !== undefined) {
     payload.variables = variables;
+  }
+  if (operationName !== undefined) {
+    payload.operationName = operationName;
   }
 
   const res = await fetch(url, {
@@ -26,6 +30,7 @@ export async function postGraphQL(
     body: JSON.stringify(payload),
     signal,
   });
+  const requestId = res.headers.get("x-request-id");
 
   let json = null;
   try {
@@ -33,20 +38,21 @@ export async function postGraphQL(
   } catch {
     throw new GraphQLRequestError(`Invalid JSON response from ${url}`, {
       status: res.status,
+      requestId,
     });
   }
 
   if (!res.ok) {
     throw new GraphQLRequestError(
       `GraphQL HTTP ${res.status}`,
-      { status: res.status, errors: json?.errors || null, response: json },
+      { status: res.status, errors: json?.errors || null, response: json, requestId },
     );
   }
 
   if (json?.errors?.length) {
     throw new GraphQLRequestError(
       json.errors[0]?.message || "GraphQL query failed",
-      { status: res.status, errors: json.errors, response: json },
+      { status: res.status, errors: json.errors, response: json, requestId },
     );
   }
 

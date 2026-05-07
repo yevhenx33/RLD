@@ -22,6 +22,21 @@ PENDLE_ETH_PRICE_OHLCV_TABLE = "pendle_eth_price_ohlcv"
 PENDLE_ETH_BACKFILL_PROGRESS_TABLE = "pendle_eth_backfill_progress"
 MORPHO_CHAINLINK_TIMESERIES_TABLE = "morpho_chainlink_timeseries"
 FLUID_TIMESERIES_TABLE = "fluid_timeseries"
+AAVE_TIMESERIES_TABLE = "aave_timeseries"
+
+
+def _ensure_market_risk_columns(ch, table: str) -> None:
+    for column, column_type in (
+        ("ltv", "Float64 DEFAULT 0"),
+        ("liquidation_threshold", "Float64 DEFAULT 0"),
+        ("liquidation_penalty", "Float64 DEFAULT 0"),
+        ("e_mode_category", "UInt8 DEFAULT 0"),
+        ("e_mode_ltv", "Float64 DEFAULT 0"),
+        ("e_mode_liquidation_threshold", "Float64 DEFAULT 0"),
+        ("e_mode_liquidation_penalty", "Float64 DEFAULT 0"),
+        ("e_mode_label", "String DEFAULT ''"),
+    ):
+        ch.command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {column_type}")
 
 
 def _escape_sql_string(value: str) -> str:
@@ -101,6 +116,14 @@ def ensure_schema(ch) -> None:
             borrow_apy Float64,
             utilization Float64,
             price_usd Float64,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            e_mode_category UInt8 DEFAULT 0,
+            e_mode_ltv Float64 DEFAULT 0,
+            e_mode_liquidation_threshold Float64 DEFAULT 0,
+            e_mode_liquidation_penalty Float64 DEFAULT 0,
+            e_mode_label String DEFAULT '',
             inserted_at DateTime DEFAULT now()
         ) ENGINE = ReplacingMergeTree(inserted_at)
         PARTITION BY toStartOfMonth(timestamp)
@@ -122,9 +145,75 @@ def ensure_schema(ch) -> None:
             borrow_apy Float64,
             utilization Float64,
             price_usd Float64,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            e_mode_category UInt8 DEFAULT 0,
+            e_mode_ltv Float64 DEFAULT 0,
+            e_mode_liquidation_threshold Float64 DEFAULT 0,
+            e_mode_liquidation_penalty Float64 DEFAULT 0,
+            e_mode_label String DEFAULT '',
             inserted_at DateTime DEFAULT now()
         ) ENGINE = ReplacingMergeTree(inserted_at)
         ORDER BY (protocol, entity_id)
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {AAVE_TIMESERIES_TABLE} (
+            timestamp DateTime,
+            protocol LowCardinality(String),
+            symbol LowCardinality(String),
+            entity_id String,
+            target_id String,
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            e_mode_category UInt8 DEFAULT 0,
+            e_mode_ltv Float64 DEFAULT 0,
+            e_mode_liquidation_threshold Float64 DEFAULT 0,
+            e_mode_liquidation_penalty Float64 DEFAULT 0,
+            e_mode_label String DEFAULT '',
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (protocol, entity_id, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    for table in (MARKET_TIMESERIES_TABLE, "api_market_latest", AAVE_TIMESERIES_TABLE):
+        _ensure_market_risk_columns(ch, table)
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS aave_reserve_risk_state (
+            entity_id String,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            e_mode_category UInt8 DEFAULT 0,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY entity_id
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS aave_emode_categories (
+            category_id UInt8,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            price_source String DEFAULT '',
+            label String DEFAULT '',
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY category_id
         """
     )
     ch.command(

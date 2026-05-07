@@ -1,7 +1,9 @@
 import datetime as dt
+import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +18,7 @@ from analytics.api.graphql import (  # noqa: E402
 from analytics.sources.pendle import (  # noqa: E402
     ETHEREUM_CHAIN_ID,
     PendleEthereumPtYtSource,
+    _derive_yt_price_from_pt,
     _history_window_seconds,
     parse_ohlcv_csv,
 )
@@ -159,6 +162,62 @@ class PendleSourceTests(unittest.TestCase):
         self.assertEqual(inserted, 1)
         self.assertEqual(ch.inserted[0][0], "pendle_eth_price_latest")
         self.assertEqual(ch.inserted[0][1][0][4], 0.95)
+
+    def test_latest_prices_derive_missing_active_yt_from_pt(self):
+        source = FakePendleSource(
+            [
+                {
+                    "prices": {
+                        "1-0xpt": {"price": 0.95},
+                    },
+                    "errors": {"1-0xyt": "missing"},
+                }
+            ]
+        )
+        ch = FakeClickHouse()
+        metadata = json.dumps({"market": {"details": {"impliedApy": 0.10}}})
+
+        with patch("analytics.sources.pendle._utc_now_naive", return_value=dt.datetime(2026, 1, 1)):
+            inserted = source._sync_latest_prices(
+                ch,
+                [
+                    {
+                        "asset_address": "0xpt",
+                        "asset_type": "PT",
+                        "symbol": "PT-mainnet",
+                        "market_address": "0xmarket",
+                        "active": 1,
+                        "expiry": dt.datetime(2026, 7, 2),
+                        "raw_metadata_json": metadata,
+                    },
+                    {
+                        "asset_address": "0xyt",
+                        "asset_type": "YT",
+                        "symbol": "YT-mainnet",
+                        "market_address": "0xmarket",
+                        "active": 1,
+                        "expiry": dt.datetime(2026, 7, 2),
+                        "raw_metadata_json": metadata,
+                    },
+                ],
+            )
+
+        self.assertEqual(inserted, 2)
+        prices = {row[2]: row[4] for row in ch.inserted[0][1]}
+        self.assertAlmostEqual(prices["PT"], 0.95)
+        self.assertAlmostEqual(prices["YT"], 0.95 * 0.10 * (182 / 365))
+
+    def test_derive_yt_price_from_pt_returns_zero_after_expiry(self):
+        price = _derive_yt_price_from_pt(
+            {
+                "expiry": dt.datetime(2026, 1, 1),
+                "raw_metadata_json": json.dumps({"market": {"details": {"impliedApy": 0.10}}}),
+            },
+            0.95,
+            dt.datetime(2026, 1, 2),
+        )
+
+        self.assertEqual(price, 0.0)
 
     def test_empty_history_cursor_is_treated_as_missing(self):
         source = FakePendleSource([])

@@ -19,16 +19,15 @@ function joinEndpoint(base, path) {
 
 const simApiBase = endpoint(env.VITE_SIM_API_URL, "");
 const restApiBase = endpoint(env.VITE_API_BASE_URL, "/api");
-const analyticsApiBase = endpoint(env.VITE_ANALYTICS_API_BASE, "/analytics");
+const publicApiBase = endpoint(env.VITE_PUBLIC_API_BASE, "/analytics");
 const defaultOrigin = browserOrigin || "";
 
 export const API_BASE_URL = restApiBase;
 export const SIM_API_BASE_URL = simApiBase;
 export const SIM_GRAPHQL_URL = joinEndpoint(simApiBase, "/graphql");
 export const RUNTIME_MANIFEST_URL = joinEndpoint(simApiBase, "/api/runtime-manifest");
-export const ANALYTICS_GRAPHQL_URL = joinEndpoint(analyticsApiBase, "/graphql");
-// Deprecated alias: keep while external callers migrate.
-export const ENVIO_GRAPHQL_URL = ANALYTICS_GRAPHQL_URL;
+export const API_GRAPHQL_URL = joinEndpoint(publicApiBase, "/graphql");
+export const API_STATUS_URL = joinEndpoint(publicApiBase, "/public-readyz");
 export const RPC_URL = endpoint(
   env.VITE_RPC_URL,
   defaultOrigin ? `${defaultOrigin}/rpc` : "/rpc",

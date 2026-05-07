@@ -2,7 +2,7 @@ import { Suspense, lazy } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import AppShell from "./AppShell";
 import LoadingScreen from "./LoadingScreen";
-import { useEnvioStatus } from "../hooks/queries/useEnvioStatus";
+import { useApiStatus } from "../hooks/queries/useApiStatus";
 import { SimulationProvider, useSim } from "../context/SimulationContext";
 import { runtimeMarketKeyForPath } from "../lib/runtimeMarketRouting";
 
@@ -14,8 +14,8 @@ const ProtocolMarketsPage = lazy(
   () => import("../features/explore/pages/ProtocolMarketsPage"),
 );
 const AaveMarketPage = lazy(() => import("../pages/app/markets/AaveMarketPage"));
-const MorphoMarketPage = lazy(() => import("../pages/app/markets/MorphoMarketPage"));
-const FluidMarketPage = lazy(() => import("../pages/app/markets/FluidMarketPage"));
+const MorphoMarketPage = AaveMarketPage;
+const FluidMarketPage = AaveMarketPage;
 const PendleMarketPage = lazy(() => import("../pages/app/markets/PendleMarketPage"));
 const UnsupportedMarketPage = lazy(() => import("../pages/app/markets/UnsupportedMarketPage"));
 const PortfolioPage = lazy(() => import("../pages/app/PortfolioPage"));
@@ -53,12 +53,12 @@ function PublicShell() {
   return <AppShell transparentHeader ratesLoaded isCapped={false} />;
 }
 
-function AnalyticsShell() {
+function ApiShell() {
   return <AppShell ratesLoaded isCapped={false} />;
 }
 
 function SimulationRuntimeShellInner() {
-  const { ratesLoaded, isCapped } = useEnvioStatus();
+  const { ratesLoaded, isCapped } = useApiStatus();
   const { marketInfo } = useSim();
   return (
     <AppShell
@@ -90,7 +90,7 @@ export default function AppRoutes() {
         <Route path="/intel" element={renderLazy(IntelPage)} />
       </Route>
 
-      <Route element={<AnalyticsShell />}>
+      <Route element={<ApiShell />}>
         <Route path="/data" element={renderLazy(LendingDataPage)} />
         <Route
           path="/data/:protocol"

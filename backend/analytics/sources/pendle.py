@@ -79,6 +79,41 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _market_metadata(asset: dict[str, Any]) -> dict[str, Any]:
+    try:
+        raw = json.loads(str(asset.get("raw_metadata_json") or "{}"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    market = raw.get("market")
+    return market if isinstance(market, dict) else {}
+
+
+def _market_implied_apy(asset: dict[str, Any]) -> Optional[float]:
+    details = _market_metadata(asset).get("details")
+    if not isinstance(details, dict):
+        return None
+    implied_apy = _safe_float(details.get("impliedApy"), -1.0)
+    return implied_apy if implied_apy >= 0 else None
+
+
+def _derive_yt_price_from_pt(asset: dict[str, Any], pt_price: float, now: dt.datetime) -> Optional[float]:
+    if pt_price <= 0:
+        return None
+    expiry = asset.get("expiry")
+    if not isinstance(expiry, dt.datetime):
+        expiry = _parse_datetime(expiry)
+    if expiry is None:
+        return None
+    seconds_to_expiry = (expiry - now).total_seconds()
+    if seconds_to_expiry <= 0:
+        return 0.0
+    implied_apy = _market_implied_apy(asset)
+    if implied_apy is None:
+        return None
+    year_fraction = seconds_to_expiry / (365 * 24 * 60 * 60)
+    return max(0.0, pt_price * implied_apy * year_fraction)
+
+
 def _time_frame_step_seconds(time_frame: str) -> int:
     if time_frame == "day":
         return 86_400
@@ -368,6 +403,12 @@ class PendleEthereumPtYtSource(BaseSource):
         if not assets:
             return 0
         by_id = {f"{ETHEREUM_CHAIN_ID}-{asset['asset_address']}": asset for asset in assets}
+        by_market: dict[str, dict[str, dict[str, Any]]] = {}
+        for asset in assets:
+            market_address = str(asset.get("market_address") or "")
+            if market_address:
+                by_market.setdefault(market_address, {})[str(asset.get("asset_type"))] = asset
+        prices_by_address: dict[str, float] = {}
         rows: list[list[Any]] = []
         now = _utc_now_naive()
         ids = list(by_id.keys())
@@ -385,16 +426,35 @@ class PendleEthereumPtYtSource(BaseSource):
                 price = self._price_from_value(raw_value)
                 if price is None:
                     continue
-                rows.append(
-                    [
-                        asset["asset_address"],
-                        ETHEREUM_CHAIN_ID,
-                        asset["asset_type"],
-                        asset["symbol"],
-                        price,
-                        now,
-                    ]
-                )
+                prices_by_address[asset["asset_address"]] = price
+        derived_yt_prices = 0
+        for asset in assets:
+            price = prices_by_address.get(asset["asset_address"])
+            if asset.get("asset_type") == "YT" and (
+                price is None or (price <= 0 and int(asset.get("active") or 0) == 1)
+            ):
+                pair = by_market.get(str(asset.get("market_address") or ""), {})
+                pt_asset = pair.get("PT")
+                pt_price = prices_by_address.get(pt_asset["asset_address"]) if pt_asset else None
+                if pt_price is not None:
+                    derived_price = _derive_yt_price_from_pt(asset, pt_price, now)
+                    if derived_price is not None:
+                        price = derived_price
+                        derived_yt_prices += 1
+            if price is None:
+                continue
+            rows.append(
+                [
+                    asset["asset_address"],
+                    ETHEREUM_CHAIN_ID,
+                    asset["asset_type"],
+                    asset["symbol"],
+                    price,
+                    now,
+                ]
+            )
+        if derived_yt_prices:
+            log.info("[%s] derived %d YT latest prices from paired PT prices", self.name, derived_yt_prices)
         if not rows:
             return 0
         return insert_rows_batched(

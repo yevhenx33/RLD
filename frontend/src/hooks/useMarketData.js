@@ -1,25 +1,19 @@
 import { useState, useMemo } from "react";
 import useSWR from "swr";
-import { ENVIO_GRAPHQL_URL } from "../api/endpoints";
-import { postGraphQL } from "../api/graphqlClient";
+import { API_GRAPHQL_URL } from "../api/endpoints";
+import { apiGraphQL } from "../api/apiClient";
+import { HISTORICAL_RATES_QUERY } from "../api/apiQueries";
 import { queryKeys } from "../api/queryKeys";
 import { getPastDate, getToday } from "../utils/helpers";
 import { REFRESH_INTERVALS } from "../config/refreshIntervals";
 
 const MAX_POINTS = 17520;
 
-const fetchMarketRates = async ([url, , variables]) => {
-  const query = `
-    query HistoricalRates($resolution: String!, $limit: Int!) {
-      historicalRates(symbols: ["USDC"], resolution: $resolution, limit: $limit) {
-        timestamp
-        symbol
-        apy
-        price
-      }
-    }
-  `;
-  const data = await postGraphQL(url, { query, variables });
+const fetchMarketRates = async ([, , variables]) => {
+  const data = await apiGraphQL("HistoricalRates", {
+    query: HISTORICAL_RATES_QUERY,
+    variables,
+  });
   const nodes = data?.historicalRates || [];
   const { startDate, endDate } = variables;
   const startUnix = Math.floor(new Date(startDate).getTime() / 1000);
@@ -44,8 +38,8 @@ export function useMarketData(resolution = "4H") {
     error,
     isLoading,
   } = useSWR(
-    queryKeys.envioHistoricalRates(
-      ENVIO_GRAPHQL_URL,
+    queryKeys.apiHistoricalRates(
+      API_GRAPHQL_URL,
       resolution,
       dates.start,
       dates.end,

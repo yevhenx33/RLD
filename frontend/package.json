@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
     "check:boundaries": "node scripts/check-layer-boundaries.mjs",
-    "check:analytics-contracts": "node scripts/check-analytics-page-contracts.mjs",
+    "check:api-contracts": "node scripts/check-api-page-contracts.mjs",
     "check:perf-smoke": "node scripts/check-perf-smoke.mjs",
     "check:console": "node scripts/check-no-production-console.mjs"
   },

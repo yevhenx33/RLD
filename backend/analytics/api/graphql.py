@@ -1,15 +1,21 @@
+from __future__ import annotations
+
 import os
 import threading
 import atexit
 import math
 import logging
+import json
+import time
+import uuid
+from collections import defaultdict, deque
 from bisect import bisect_left
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 import clickhouse_connect
 import strawberry
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from strawberry.fastapi import GraphQLRouter
@@ -20,8 +26,11 @@ apply_env_from_config()
 # Imports must follow apply_env_from_config() so env-backed defaults load correctly.
 from analytics.protocols import (  # noqa: E402
     AAVE_MARKET,
+    CHAINLINK_PRICES,
     FLUID_MARKET,
+    METAMORPHO_VAULT,
     MORPHO_MARKET,
+    PENDLE_ETHEREUM_PT_YT_PRICES,
     SOFR_RATES,
     READY_PROTOCOLS_DEFAULT,
     RAW_TABLE_BY_PROTOCOL,
@@ -33,7 +42,24 @@ from analytics.tokens import TOKENS, get_usd_price  # noqa: E402
 
 logger = logging.getLogger("rld.clickhouse_api")
 
+
+def _parse_env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _parse_env_csv(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    return tuple(value.strip() for value in raw.split(",") if value.strip())
+
+
 MAX_LIMIT = 10000
+API_DEFAULT_PAGE_SIZE = 100
+API_MAX_PAGE_SIZE = 1000
 MAX_READY_LAG_BLOCKS = int(os.getenv("INDEXER_MAX_READY_LAG_BLOCKS", "250000"))
 MAX_READY_SOFR_BUSINESS_DAYS = int(os.getenv("INDEXER_MAX_READY_SOFR_BUSINESS_DAYS", "3"))
 INDEXER_READY_PROTOCOLS = tuple(
@@ -61,6 +87,49 @@ CLICKHOUSE_WAIT_FOR_ASYNC_INSERT = (
     in ("1", "true", "yes")
 )
 INDEXER_VERSION = os.getenv("INDEXER_VERSION", "dev")
+GRAPHQL_ENABLE_IDE = _parse_env_bool("GRAPHQL_ENABLE_IDE", False)
+GRAPHQL_ENABLE_INTROSPECTION = _parse_env_bool(
+    "GRAPHQL_ENABLE_INTROSPECTION",
+    GRAPHQL_ENABLE_IDE,
+)
+GRAPHQL_ALLOW_GET_QUERIES = _parse_env_bool(
+    "GRAPHQL_ALLOW_GET_QUERIES",
+    GRAPHQL_ENABLE_IDE,
+)
+GRAPHQL_MAX_BODY_BYTES = int(os.getenv("GRAPHQL_MAX_BODY_BYTES", "262144"))
+GRAPHQL_MAX_DEPTH = int(os.getenv("GRAPHQL_MAX_DEPTH", "12"))
+GRAPHQL_RATE_LIMIT_PER_MINUTE = int(os.getenv("GRAPHQL_RATE_LIMIT_PER_MINUTE", "120"))
+GRAPHQL_REQUIRE_API_KEY = _parse_env_bool("GRAPHQL_REQUIRE_API_KEY", False)
+API_KEYS = frozenset(_parse_env_csv("API_KEYS", _parse_env_csv("ANALYTICS_API_KEYS")))
+API_ADMIN_TOKENS = frozenset(
+    _parse_env_csv(
+        "API_ADMIN_TOKENS",
+        _parse_env_csv("ANALYTICS_ADMIN_TOKENS", _parse_env_csv("ANALYTICS_ADMIN_TOKEN")),
+    )
+)
+API_PROTECT_ADMIN_ENDPOINTS = _parse_env_bool(
+    "API_PROTECT_ADMIN_ENDPOINTS",
+    _parse_env_bool("ANALYTICS_PROTECT_ADMIN_ENDPOINTS", bool(API_ADMIN_TOKENS)),
+)
+API_PUBLIC_READY_PROTOCOLS = tuple(
+    protocol.strip()
+    for protocol in os.getenv(
+        "API_PUBLIC_READY_PROTOCOLS",
+        ",".join(
+            (
+                AAVE_MARKET,
+                MORPHO_MARKET,
+                METAMORPHO_VAULT,
+                FLUID_MARKET,
+                PENDLE_ETHEREUM_PT_YT_PRICES,
+                CHAINLINK_PRICES,
+                SOFR_RATES,
+            )
+        ),
+    ).split(",")
+    if protocol.strip()
+)
+PROCESSING_OPTIONAL_PROTOCOLS = (SOFR_RATES, PENDLE_ETHEREUM_PT_YT_PRICES)
 ENVIO_GRAPHQL_ALIAS_SUNSET = os.getenv(
     "ENVIO_GRAPHQL_ALIAS_SUNSET",
     "Wed, 31 Dec 2026 00:00:00 GMT",
@@ -68,6 +137,12 @@ ENVIO_GRAPHQL_ALIAS_SUNSET = os.getenv(
 
 _CLICKHOUSE_CLIENT = None
 _CLICKHOUSE_LOCK = threading.Lock()
+_RATE_LIMIT_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+_RATE_LIMIT_LOCK = threading.Lock()
+_HTTP_METRICS_LOCK = threading.Lock()
+_HTTP_REQUEST_COUNTS: dict[tuple[str, str], int] = defaultdict(int)
+_HTTP_REQUEST_LATENCY_SUM: dict[tuple[str, str], float] = defaultdict(float)
+_HTTP_REQUEST_LATENCY_MAX: dict[tuple[str, str], float] = defaultdict(float)
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
 API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
 AAVE_FLOW_DAILY_AGG_TABLE = "api_aave_market_flow_daily_agg"
@@ -133,6 +208,14 @@ class PendlePricePoint:
     low: float
     close: float
     volume: float
+
+
+@strawberry.type
+class PendleMarketPagePayload:
+    market_address: str = strawberry.field(name="marketAddress")
+    assets: list[PendleAsset]
+    latest_prices: list[PendleLatestPrice] = strawberry.field(name="latestPrices")
+    freshness: AnalyticsFreshness
 
 
 @strawberry.type
@@ -384,6 +467,103 @@ class AnalyticsFreshness:
     status: str
     version: str
     generated_at: int = strawberry.field(name="generatedAt")
+
+
+@strawberry.type
+class AnalyticsProtocolReadiness:
+    protocol: str
+    ready: bool
+    collector_lag: int = strawberry.field(name="collectorLag")
+    processing_lag: int = strawberry.field(name="processingLag")
+    max_lag_blocks: int = strawberry.field(name="maxLagBlocks")
+    issues: list[str]
+
+
+@strawberry.type
+class AnalyticsStatusPayload:
+    ready: bool
+    status: str
+    version: str
+    generated_at: int = strawberry.field(name="generatedAt")
+    ready_protocols: list[str] = strawberry.field(name="readyProtocols")
+    public_ready_protocols: list[str] = strawberry.field(name="publicReadyProtocols")
+    protocols: list[AnalyticsProtocolReadiness]
+    morpho_coverage_json: str = strawberry.field(name="morphoCoverageJson")
+    fluid_coverage_json: str = strawberry.field(name="fluidCoverageJson")
+
+
+@strawberry.type
+class ReadinessIssue:
+    code: str
+    severity: str = "warning"
+    message: str = ""
+
+
+@strawberry.type
+class SourceFreshness:
+    protocol: str
+    collector_lag: int = strawberry.field(name="collectorLag")
+    processing_lag: int = strawberry.field(name="processingLag")
+    status: str
+    issues: list[ReadinessIssue]
+
+
+@strawberry.type
+class PricingCoverage:
+    priced: int
+    unpriced: int
+    unsupported: int
+    partial: int = 0
+
+
+@strawberry.type
+class ProtocolCoverage:
+    protocol: str
+    total: int
+    indexed: int
+    priced: int
+    unpriced: int
+    unsupported: int
+    partial: int
+    status: str
+
+
+@strawberry.type
+class ProtocolStatus:
+    protocol: str
+    ready: bool
+    status: str
+    freshness: SourceFreshness
+    coverage: ProtocolCoverage
+
+
+@strawberry.type
+class ApiStatusPayload:
+    ready: bool
+    status: str
+    version: str
+    generated_at: int = strawberry.field(name="generatedAt")
+    protocols: list[ProtocolStatus]
+
+
+@strawberry.type
+class PageInfo:
+    has_next_page: bool = strawberry.field(name="hasNextPage")
+    end_cursor: Optional[str] = strawberry.field(name="endCursor", default=None)
+
+
+@strawberry.type
+class MarketConnection:
+    nodes: list[MarketDetail]
+    page_info: PageInfo = strawberry.field(name="pageInfo")
+    total_count: int = strawberry.field(name="totalCount")
+
+
+@strawberry.type
+class MarketSeriesConnection:
+    nodes: list[MarketTimeseriesPoint]
+    page_info: PageInfo = strawberry.field(name="pageInfo")
+    total_count: int = strawberry.field(name="totalCount")
 
 
 @strawberry.type
@@ -1032,7 +1212,436 @@ def _prometheus_metrics(ch) -> str:
     for name, free_space, total_space in disk_rows:
         lines.append(f'rld_clickhouse_disk_free_bytes{{disk="{name}"}} {int(free_space)}')
         lines.append(f'rld_clickhouse_disk_total_bytes{{disk="{name}"}} {int(total_space)}')
+    with _HTTP_METRICS_LOCK:
+        http_counts = dict(_HTTP_REQUEST_COUNTS)
+        http_latency_sum = dict(_HTTP_REQUEST_LATENCY_SUM)
+        http_latency_max = dict(_HTTP_REQUEST_LATENCY_MAX)
+    lines.extend([
+        "# HELP rld_api_http_requests_total HTTP requests handled by the analytics API.",
+        "# TYPE rld_api_http_requests_total counter",
+    ])
+    for (path, status), count in sorted(http_counts.items()):
+        lines.append(
+            f'rld_api_http_requests_total{{path="{_metric_label(path)}",status="{_metric_label(status)}"}} {count}'
+        )
+    lines.extend([
+        "# HELP rld_api_http_request_latency_seconds_sum Total HTTP request latency seconds.",
+        "# TYPE rld_api_http_request_latency_seconds_sum counter",
+        "# HELP rld_api_http_request_latency_seconds_max Max observed HTTP request latency seconds since process start.",
+        "# TYPE rld_api_http_request_latency_seconds_max gauge",
+    ])
+    for (path, status), total in sorted(http_latency_sum.items()):
+        label_path = _metric_label(path)
+        label_status = _metric_label(status)
+        lines.append(
+            f'rld_api_http_request_latency_seconds_sum{{path="{label_path}",status="{label_status}"}} {total:.6f}'
+        )
+        lines.append(
+            f'rld_api_http_request_latency_seconds_max{{path="{label_path}",status="{label_status}"}} {http_latency_max.get((path, status), 0.0):.6f}'
+        )
     return "\n".join(lines) + "\n"
+
+
+def _metric_label(value: object) -> str:
+    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _graphql_error(message: str, code: str, status_code: int = 400) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"errors": [{"message": message, "extensions": {"code": code}}]},
+    )
+
+
+def _extract_bearer_token(value: str) -> str:
+    prefix = "bearer "
+    if value.lower().startswith(prefix):
+        return value[len(prefix) :].strip()
+    return value.strip()
+
+
+def _request_api_key(request: Request) -> str:
+    return (
+        request.headers.get("x-rld-api-key", "").strip()
+        or _extract_bearer_token(request.headers.get("authorization", ""))
+    )
+
+
+def _request_admin_token(request: Request) -> str:
+    return (
+        request.headers.get("x-rld-admin-token", "").strip()
+        or _extract_bearer_token(request.headers.get("authorization", ""))
+    )
+
+
+def _is_valid_api_key(value: str) -> bool:
+    return bool(value and value in API_KEYS)
+
+
+def _is_valid_admin_token(value: str) -> bool:
+    return bool(value and value in API_ADMIN_TOKENS)
+
+
+def _rate_limit_bucket_key(request: Request) -> str:
+    key = _request_api_key(request)
+    if key:
+        return f"key:{key}"
+    forwarded = request.headers.get("x-forwarded-for", "")
+    client_host = request.client.host if request.client else "unknown"
+    ip = forwarded.split(",", 1)[0].strip() or client_host
+    return f"ip:{ip}"
+
+
+def _rate_limit_allowed(bucket_key: str, now: Optional[float] = None) -> bool:
+    if GRAPHQL_RATE_LIMIT_PER_MINUTE <= 0:
+        return True
+    current = time.monotonic() if now is None else now
+    window_start = current - 60.0
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS[bucket_key]
+        while bucket and bucket[0] < window_start:
+            bucket.popleft()
+        if len(bucket) >= GRAPHQL_RATE_LIMIT_PER_MINUTE:
+            return False
+        bucket.append(current)
+    return True
+
+
+def _is_introspection_query(query: str) -> bool:
+    compact = " ".join(str(query or "").split())
+    return "__schema" in compact or "__type" in compact
+
+
+def _query_depth(query: str) -> int:
+    depth = 0
+    max_depth = 0
+    in_string = False
+    escape = False
+    for char in str(query or ""):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+            max_depth = max(max_depth, depth)
+        elif char == "}":
+            depth = max(0, depth - 1)
+    return max_depth
+
+
+async def _parse_graphql_request_body(request: Request) -> tuple[Optional[dict[str, object]], Optional[JSONResponse]]:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > GRAPHQL_MAX_BODY_BYTES:
+                return None, _graphql_error("GraphQL request body is too large", "REQUEST_TOO_LARGE", 413)
+        except ValueError:
+            return None, _graphql_error("Invalid Content-Length", "BAD_REQUEST", 400)
+    raw_body = await request.body()
+    if len(raw_body) > GRAPHQL_MAX_BODY_BYTES:
+        return None, _graphql_error("GraphQL request body is too large", "REQUEST_TOO_LARGE", 413)
+    if not raw_body:
+        return {}, None
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, _graphql_error("Invalid GraphQL JSON request", "BAD_REQUEST", 400)
+    if not isinstance(payload, dict):
+        return None, _graphql_error("Invalid GraphQL JSON request", "BAD_REQUEST", 400)
+    return payload, None
+
+
+def _request_path_family(path: str) -> str:
+    if path.startswith("/graphql"):
+        return "/graphql"
+    if path.startswith("/envio-graphql"):
+        return "/envio-graphql"
+    if path in {"/status", "/healthz", "/readyz", "/public-readyz", "/metrics", "/livez"}:
+        return path
+    if path.startswith("/api/v1/"):
+        return "/api/v1"
+    return "other"
+
+
+def _record_http_metric(path: str, status_code: int, latency_seconds: float) -> None:
+    key = (_request_path_family(path), str(status_code))
+    with _HTTP_METRICS_LOCK:
+        _HTTP_REQUEST_COUNTS[key] += 1
+        _HTTP_REQUEST_LATENCY_SUM[key] += latency_seconds
+        _HTTP_REQUEST_LATENCY_MAX[key] = max(_HTTP_REQUEST_LATENCY_MAX[key], latency_seconds)
+
+
+def _protocol_readiness_items(
+    collector_lag_by_protocol: dict[str, int],
+    processing_lag_by_protocol: dict[str, int],
+    protocols: tuple[str, ...],
+) -> list[AnalyticsProtocolReadiness]:
+    items: list[AnalyticsProtocolReadiness] = []
+    for protocol in protocols:
+        collector_lag = int(collector_lag_by_protocol.get(protocol, -1))
+        processing_lag = int(processing_lag_by_protocol.get(protocol, -1))
+        issues: list[str] = []
+        if collector_lag < 0:
+            issues.append("collector_lag_unavailable")
+        elif protocol == SOFR_RATES and collector_lag > MAX_READY_SOFR_BUSINESS_DAYS:
+            issues.append("collector_lag_exceeded")
+        elif protocol != SOFR_RATES and collector_lag > MAX_READY_LAG_BLOCKS:
+            issues.append("collector_lag_exceeded")
+        if protocol not in PROCESSING_OPTIONAL_PROTOCOLS:
+            if processing_lag < 0:
+                issues.append("processing_lag_unavailable")
+            elif processing_lag > MAX_READY_LAG_BLOCKS:
+                issues.append("processing_lag_exceeded")
+        items.append(
+            AnalyticsProtocolReadiness(
+                protocol=protocol,
+                ready=not issues,
+                collector_lag=collector_lag,
+                processing_lag=processing_lag,
+                max_lag_blocks=(
+                    MAX_READY_SOFR_BUSINESS_DAYS if protocol == SOFR_RATES else MAX_READY_LAG_BLOCKS
+                ),
+                issues=issues,
+            )
+        )
+    return items
+
+
+def _analytics_status_payload(ch, protocols: tuple[str, ...] = API_PUBLIC_READY_PROTOCOLS) -> AnalyticsStatusPayload:
+    collector_lag = _collect_collector_lag(ch, list(protocols))
+    processing_lag = _collect_processing_lag(ch, list(protocols))
+    readiness = _protocol_readiness_items(collector_lag, processing_lag, protocols)
+    ready = all(item.ready for item in readiness)
+    return AnalyticsStatusPayload(
+        ready=ready,
+        status="ready" if ready else "degraded",
+        version=INDEXER_VERSION,
+        generated_at=int(datetime.now(timezone.utc).timestamp()),
+        ready_protocols=list(INDEXER_READY_PROTOCOLS),
+        public_ready_protocols=list(protocols),
+        protocols=readiness,
+        morpho_coverage_json=json.dumps(_morpho_coverage_snapshot(ch), sort_keys=True),
+        fluid_coverage_json=json.dumps(_fluid_coverage_snapshot(ch), sort_keys=True),
+    )
+
+
+def _analytics_status_response(ch, protocols: tuple[str, ...] = API_PUBLIC_READY_PROTOCOLS) -> dict[str, object]:
+    payload = _analytics_status_payload(ch, protocols)
+    return {
+        "status": payload.status,
+        "ready": payload.ready,
+        "version": payload.version,
+        "generatedAt": payload.generated_at,
+        "readyProtocols": payload.ready_protocols,
+        "publicReadyProtocols": payload.public_ready_protocols,
+        "protocols": [
+            {
+                "protocol": item.protocol,
+                "ready": item.ready,
+                "collectorLag": item.collector_lag,
+                "processingLag": item.processing_lag,
+                "maxLagBlocks": item.max_lag_blocks,
+                "issues": item.issues,
+            }
+            for item in payload.protocols
+        ],
+        "morphoCoverage": json.loads(payload.morpho_coverage_json or "{}"),
+        "fluidCoverage": json.loads(payload.fluid_coverage_json or "{}"),
+    }
+
+
+def _api_page_size(first: Optional[int]) -> int:
+    if first is None:
+        return API_DEFAULT_PAGE_SIZE
+    return max(1, min(int(first), API_MAX_PAGE_SIZE))
+
+
+def _decode_cursor(after: Optional[str]) -> int:
+    if not after:
+        return 0
+    try:
+        return max(0, int(str(after)))
+    except ValueError:
+        return 0
+
+
+def _connection_page(items: list, first: Optional[int], after: Optional[str]) -> tuple[list, PageInfo, int]:
+    start = _decode_cursor(after)
+    size = _api_page_size(first)
+    total = len(items)
+    end = min(total, start + size)
+    nodes = items[start:end]
+    has_next = end < total
+    return nodes, PageInfo(has_next_page=has_next, end_cursor=str(end) if has_next else None), total
+
+
+def _readiness_issue(code: str) -> ReadinessIssue:
+    message_by_code = {
+        "collector_lag_unavailable": "Collector lag is unavailable.",
+        "collector_lag_exceeded": "Collector lag exceeds the configured readiness threshold.",
+        "processing_lag_unavailable": "Processor lag is unavailable.",
+        "processing_lag_exceeded": "Processor lag exceeds the configured readiness threshold.",
+    }
+    return ReadinessIssue(code=code, severity="error", message=message_by_code.get(code, code))
+
+
+def _protocol_coverage(ch, protocol: str) -> ProtocolCoverage:
+    protocol = str(protocol or "").strip().upper()
+    try:
+        if protocol == MORPHO_MARKET:
+            coverage = _morpho_coverage_snapshot(ch)
+            total = int(coverage.get("totalDiscoveredMarkets", 0) or 0)
+            indexed = int(coverage.get("metricMarkets", 0) or 0)
+            priced = int(coverage.get("pricedMarkets", 0) or 0)
+            unpriced = int(coverage.get("unpricedMarkets", 0) or 0)
+            unsupported = int(coverage.get("unsupportedOracleMarkets", 0) or 0)
+            partial = max(0, total - priced - unpriced - unsupported)
+        elif protocol == FLUID_MARKET:
+            coverage = _fluid_coverage_snapshot(ch)
+            total = sum(int(value or 0) for value in dict(coverage.get("productContracts", {}) or {}).values())
+            indexed = int(coverage.get("productComponentSubjects", 0) or 0)
+            priced = int(coverage.get("pricedProductSnapshotRows", 0) or 0)
+            unpriced = sum(
+                int(row.get("count", 0) or 0)
+                for row in coverage.get("productStatus", []) or []
+                if row.get("pricingStatus") == "UNPRICED"
+            )
+            partial = sum(
+                int(row.get("count", 0) or 0)
+                for row in coverage.get("productStatus", []) or []
+                if row.get("snapshotStatus") == "PARTIAL" or row.get("pricingStatus") == "PARTIAL"
+            )
+            unsupported = len(coverage.get("missingOracles", []) or [])
+        elif protocol == PENDLE_ETHEREUM_PT_YT_PRICES:
+            total = _query_int(ch, "SELECT count() FROM pendle_eth_assets FINAL")
+            indexed = total
+            priced = _query_int(ch, "SELECT count() FROM pendle_eth_price_latest FINAL WHERE price_usd > 0")
+            unpriced = max(0, total - priced)
+            unsupported = 0
+            partial = 0
+        elif protocol in {AAVE_MARKET, "EULER_MARKET"}:
+            total = _query_int(
+                ch,
+                f"SELECT count() FROM api_market_latest FINAL WHERE protocol = '{_escape_sql_string(protocol)}'",
+            )
+            indexed = total
+            priced = _query_int(
+                ch,
+                f"""
+                SELECT count()
+                FROM api_market_latest FINAL
+                WHERE protocol = '{_escape_sql_string(protocol)}'
+                  AND (supply_usd > 0 OR borrow_usd > 0 OR price_usd > 0)
+                """,
+            )
+            unpriced = max(0, total - priced)
+            unsupported = 0
+            partial = 0
+        elif protocol == METAMORPHO_VAULT:
+            total = _query_int(ch, "SELECT count() FROM metamorpho_vault_registry")
+            indexed = _query_int(ch, "SELECT uniqExact(vault_address) FROM metamorpho_vault_state FINAL")
+            priced = _query_int(ch, "SELECT uniqExact(vault_address) FROM metamorpho_vault_state FINAL WHERE tvl_usd > 0")
+            unpriced = max(0, total - priced)
+            unsupported = 0
+            partial = max(0, total - indexed)
+        elif protocol == CHAINLINK_PRICES:
+            total = _query_int(ch, "SELECT uniqExact(feed) FROM chainlink_prices")
+            indexed = total
+            priced = total
+            unpriced = 0
+            unsupported = 0
+            partial = 0
+        elif protocol == SOFR_RATES:
+            total = _query_int(ch, "SELECT count() FROM raw_sofr_rates")
+            indexed = total
+            priced = total
+            unpriced = 0
+            unsupported = 0
+            partial = 0
+        else:
+            total = indexed = priced = unpriced = unsupported = partial = 0
+        status = "ready" if total == 0 or priced > 0 or protocol in {CHAINLINK_PRICES, SOFR_RATES} else "degraded"
+        return ProtocolCoverage(
+            protocol=protocol,
+            total=total,
+            indexed=indexed,
+            priced=priced,
+            unpriced=unpriced,
+            unsupported=unsupported,
+            partial=partial,
+            status=status,
+        )
+    except Exception as exc:
+        logger.warning("Protocol coverage unavailable for %s: %s", protocol, exc)
+        return ProtocolCoverage(
+            protocol=protocol,
+            total=0,
+            indexed=0,
+            priced=0,
+            unpriced=0,
+            unsupported=0,
+            partial=0,
+            status="unavailable",
+        )
+
+
+def _api_protocol_statuses(ch) -> list[ProtocolStatus]:
+    collector_lag = _collect_collector_lag(ch, list(API_PUBLIC_READY_PROTOCOLS))
+    processing_lag = _collect_processing_lag(ch, list(API_PUBLIC_READY_PROTOCOLS))
+    readiness = _protocol_readiness_items(collector_lag, processing_lag, API_PUBLIC_READY_PROTOCOLS)
+    statuses: list[ProtocolStatus] = []
+    for item in readiness:
+        issues = [_readiness_issue(code) for code in item.issues]
+        freshness = SourceFreshness(
+            protocol=item.protocol,
+            collector_lag=item.collector_lag,
+            processing_lag=item.processing_lag,
+            status="ready" if item.ready else "degraded",
+            issues=issues,
+        )
+        coverage = _protocol_coverage(ch, item.protocol)
+        statuses.append(
+            ProtocolStatus(
+                protocol=item.protocol,
+                ready=item.ready and coverage.status != "unavailable",
+                status="ready" if item.ready and coverage.status != "unavailable" else "degraded",
+                freshness=freshness,
+                coverage=coverage,
+            )
+        )
+    return statuses
+
+
+def _api_status_payload(ch) -> ApiStatusPayload:
+    statuses = _api_protocol_statuses(ch)
+    ready = all(status.ready for status in statuses)
+    return ApiStatusPayload(
+        ready=ready,
+        status="ready" if ready else "degraded",
+        version=INDEXER_VERSION,
+        generated_at=int(datetime.now(timezone.utc).timestamp()),
+        protocols=statuses,
+    )
+
+
+def _filter_markets(markets: list[MarketDetail], filter_text: Optional[str]) -> list[MarketDetail]:
+    needle = str(filter_text or "").strip().lower()
+    if not needle:
+        return markets
+    return [
+        market
+        for market in markets
+        if needle in str(market.entity_id or "").lower()
+        or needle in str(market.symbol or "").lower()
+        or needle in str(market.collateral_symbol or "").lower()
+    ]
 
 
 def _safe_limit(limit: int) -> int:
@@ -3066,6 +3675,23 @@ def _query_pendle_eth_latest_prices(
     ]
 
 
+def _query_pendle_market_page(ch, search: str) -> PendleMarketPagePayload:
+    assets = _query_pendle_eth_assets(ch, None, False, search, 50, 0)
+    addresses = [asset.asset_address for asset in assets]
+    prices = _query_pendle_eth_latest_prices(ch, None, addresses, API_MAX_PAGE_SIZE) if addresses else []
+    market_address = ""
+    if assets:
+        market_address = assets[0].market_address
+    else:
+        market_address = _normalize_pendle_address(search) or str(search or "").strip().lower()
+    return PendleMarketPagePayload(
+        market_address=market_address,
+        assets=assets,
+        latest_prices=prices,
+        freshness=_freshness_payload(),
+    )
+
+
 def _query_morpho_market_events(market_id: Optional[str] = None, event_name: Optional[str] = None, limit: int = 500) -> list[MorphoMarketEvent]:
     ch = get_clickhouse_client()
     filters = []
@@ -3357,6 +3983,85 @@ def _query_pendle_eth_price_history(
 
 @strawberry.type
 class Query:
+    @strawberry.field(name="apiStatus")
+    def api_status(self) -> ApiStatusPayload:
+        ch = get_clickhouse_client()
+        return _api_status_payload(ch)
+
+    @strawberry.field(name="protocols")
+    def protocols(self) -> list[ProtocolStatus]:
+        ch = get_clickhouse_client()
+        return _api_protocol_statuses(ch)
+
+    @strawberry.field(name="protocolCoverage")
+    def protocol_coverage(self, protocol: str) -> ProtocolCoverage:
+        ch = get_clickhouse_client()
+        return _protocol_coverage(ch, protocol)
+
+    @strawberry.field(name="markets")
+    def markets(
+        self,
+        protocol: str,
+        first: Optional[int] = None,
+        after: Optional[str] = None,
+        filter: Optional[str] = None,
+    ) -> MarketConnection:
+        ch = get_clickhouse_client()
+        rows = _filter_markets(_query_protocol_markets(ch, protocol), filter)
+        nodes, page_info, total_count = _connection_page(rows, first, after)
+        return MarketConnection(nodes=nodes, page_info=page_info, total_count=total_count)
+
+    @strawberry.field(name="market")
+    def market(self, protocol: str, market_id: str) -> Optional[MarketDetail]:
+        ch = get_clickhouse_client()
+        rows = _query_protocol_markets(ch, protocol, market_id)
+        return rows[0] if rows else None
+
+    @strawberry.field(name="marketPage")
+    def market_page(
+        self,
+        protocol: str,
+        market_id: str,
+        quote_asset: str = "USD",
+        timeseries_limit: Optional[int] = None,
+        flow_limit: Optional[int] = None,
+    ) -> LendingPoolPagePayload:
+        del quote_asset
+        ch = get_clickhouse_client()
+        return _query_lending_pool_page(
+            ch,
+            protocol,
+            market_id,
+            _api_page_size(timeseries_limit),
+            _api_page_size(flow_limit),
+        )
+
+    @strawberry.field(name="marketSeries")
+    def market_series(
+        self,
+        protocol: str,
+        market_id: str,
+        resolution: str = "1D",
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
+        first: Optional[int] = None,
+        after: Optional[str] = None,
+    ) -> MarketSeriesConnection:
+        del protocol
+        ch = get_clickhouse_client()
+        rows = _query_market_timeseries(ch, market_id, resolution, API_MAX_PAGE_SIZE)
+        if start_ts is not None:
+            rows = [row for row in rows if int(row.timestamp or 0) >= int(start_ts)]
+        if end_ts is not None:
+            rows = [row for row in rows if int(row.timestamp or 0) <= int(end_ts)]
+        nodes, page_info, total_count = _connection_page(rows, first, after)
+        return MarketSeriesConnection(nodes=nodes, page_info=page_info, total_count=total_count)
+
+    @strawberry.field(name="analyticsStatus", deprecation_reason="Use apiStatus.")
+    def analytics_status(self) -> AnalyticsStatusPayload:
+        ch = get_clickhouse_client()
+        return _analytics_status_payload(ch)
+
     @strawberry.field(name="lendingDataPage")
     def lending_data_page(self, display_in: str = "USD") -> LendingDataPagePayload:
         ch = get_clickhouse_client()
@@ -3418,6 +4123,11 @@ class Query:
     ) -> List[PendlePricePoint]:
         ch = get_clickhouse_client()
         return _query_pendle_eth_price_history(ch, address, time_frame, start_ts, end_ts, limit)
+
+    @strawberry.field(name="pendleMarketPage")
+    def pendle_market_page(self, search: str) -> PendleMarketPagePayload:
+        ch = get_clickhouse_client()
+        return _query_pendle_market_page(ch, search)
 
     @strawberry.field(name="marketSnapshots")
     def market_snapshots(self, protocol: Optional[str] = None) -> List[MarketSnapshot]:
@@ -3511,10 +4221,14 @@ class Query:
         return _query_fluid_product_components(product_type, product_id, limit)
 
 schema = strawberry.Schema(query=Query)
-graphql_app = GraphQLRouter(schema)
+graphql_app = GraphQLRouter(
+    schema,
+    graphql_ide="graphiql" if GRAPHQL_ENABLE_IDE else None,
+    allow_queries_via_get=GRAPHQL_ALLOW_GET_QUERIES,
+)
 app = FastAPI(title="RLD ClickHouse GraphQL")
 _CORS_ORIGINS = _parse_cors_origins(
-    "ENVIO_CORS_ORIGINS",
+    "API_CORS_ORIGINS",
     [
         "http://localhost:3000",
         "http://localhost:5173",
@@ -3534,17 +4248,61 @@ app.include_router(graphql_app, prefix="/envio-graphql")
 
 
 @app.middleware("http")
-async def envio_graphql_alias_deprecation(request, call_next):
-    response = await call_next(request)
-    if request.url.path.startswith("/envio-graphql"):
-        response.headers["Deprecation"] = "true"
-        response.headers["Link"] = '</graphql>; rel="successor-version"'
-        if ENVIO_GRAPHQL_ALIAS_SUNSET:
-            response.headers["Sunset"] = ENVIO_GRAPHQL_ALIAS_SUNSET
-        response.headers["Warning"] = '299 - "/envio-graphql is deprecated; use /graphql"'
-    return response
+async def analytics_api_guard(request: Request, call_next):
+    request_id = request.headers.get("x-request-id", "").strip() or str(uuid.uuid4())
+    start = time.monotonic()
+    response = None
+    path = request.url.path
+    try:
+        if path in {"/status", "/healthz", "/metrics"} and API_PROTECT_ADMIN_ENDPOINTS:
+            admin_token = _request_admin_token(request)
+            if not _is_valid_admin_token(admin_token):
+                response = JSONResponse(
+                    status_code=401,
+                    content={"status": "unauthorized", "reason": "admin_token_required"},
+                )
+                return response
 
+        if path.startswith("/graphql") or path.startswith("/envio-graphql"):
+            if request.method.upper() == "GET" and not GRAPHQL_ALLOW_GET_QUERIES:
+                response = _graphql_error("GraphQL GET queries are disabled", "GET_QUERIES_DISABLED", 405)
+                return response
 
+            if GRAPHQL_REQUIRE_API_KEY and not _is_valid_api_key(_request_api_key(request)):
+                response = _graphql_error("API key required", "UNAUTHENTICATED", 401)
+                return response
+
+            if not _rate_limit_allowed(_rate_limit_bucket_key(request)):
+                response = _graphql_error("GraphQL rate limit exceeded", "RATE_LIMITED", 429)
+                return response
+
+            if request.method.upper() == "POST":
+                payload, error_response = await _parse_graphql_request_body(request)
+                if error_response is not None:
+                    response = error_response
+                    return response
+                query = str((payload or {}).get("query") or "")
+                if query:
+                    if not GRAPHQL_ENABLE_INTROSPECTION and _is_introspection_query(query):
+                        response = _graphql_error("GraphQL introspection is disabled", "INTROSPECTION_DISABLED", 400)
+                        return response
+                    depth = _query_depth(query)
+                    if depth > GRAPHQL_MAX_DEPTH:
+                        response = _graphql_error("GraphQL query is too deep", "QUERY_TOO_DEEP", 400)
+                        return response
+
+        response = await call_next(request)
+        return response
+    finally:
+        if response is not None:
+            response.headers["X-Request-ID"] = request_id
+            if path.startswith("/envio-graphql"):
+                response.headers["Deprecation"] = "true"
+                response.headers["Link"] = '</graphql>; rel="successor-version"'
+                if ENVIO_GRAPHQL_ALIAS_SUNSET:
+                    response.headers["Sunset"] = ENVIO_GRAPHQL_ALIAS_SUNSET
+                response.headers["Warning"] = '299 - "/envio-graphql is deprecated; use /graphql"'
+            _record_http_metric(path, response.status_code, time.monotonic() - start)
 @app.get("/healthz")
 def healthz():
     try:
@@ -3584,6 +4342,7 @@ def status():
             "status": "ok",
             "version": INDEXER_VERSION,
             "readyProtocols": list(INDEXER_READY_PROTOCOLS),
+            "publicReadiness": _analytics_status_response(ch),
             "collectorLag": _collect_collector_lag(ch),
             "processingLag": _collect_processing_lag(ch),
             "sourceStatus": _source_status_snapshot(ch),
@@ -3663,6 +4422,28 @@ def readyz():
         return JSONResponse(
             status_code=503,
             content={"status": "not_ready", "reason": "clickhouse_unavailable"},
+        )
+
+
+@app.get("/public-readyz")
+def public_readyz():
+    try:
+        ch = get_clickhouse_client()
+        ch.command("SELECT 1")
+        payload = _analytics_status_response(ch)
+        status_code = 200 if payload["ready"] else 503
+        return JSONResponse(status_code=status_code, content=payload)
+    except Exception as exc:
+        close_clickhouse_client()
+        logger.warning("Public readiness check failed: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "ready": False,
+                "version": INDEXER_VERSION,
+                "reason": "clickhouse_unavailable",
+            },
         )
 
 

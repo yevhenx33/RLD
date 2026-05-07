@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+﻿import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import {
@@ -10,46 +10,14 @@ import {
   ArrowLeft,
 } from "lucide-react";
 import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
-import { ENVIO_GRAPHQL_URL } from "../../api/endpoints";
-import { postGraphQL } from "../../api/graphqlClient";
+import { API_GRAPHQL_URL } from "../../api/endpoints";
+import { apiGraphQL } from "../../api/apiClient";
+import { PROTOCOL_MARKETS_QUERY } from "../../api/apiQueries";
+import { queryKeys } from "../../api/queryKeys";
+import { apiProtocolForSlug, marketRouteFor } from "../../lib/protocolConfig";
 import { getTokenIcon, getTokenName, getProtocolDisplayName } from "../../utils/tokenIcons";
 
 const PAGE_SIZE = 25;
-
-const PROTOCOL_MAP = {
-  aave: "AAVE_MARKET",
-  euler: "EULER_MARKET",
-  fluid: "FLUID_MARKET",
-};
-
-const PROTOCOL_MARKETS_QUERY = `
-  query ProtocolMarketsByProtocol($protocol: String!) {
-    protocolMarketsPage(protocol: $protocol) {
-      freshness { ready status generatedAt }
-      stats {
-        totalSupplyUsd
-        totalBorrowUsd
-        averageUtilization
-        averageSupplyApy
-        averageBorrowApy
-        marketCount
-      }
-      rows {
-        entityId
-        symbol
-        protocol
-        supplyUsd
-        borrowUsd
-        supplyApy
-        borrowApy
-        utilization
-        collateralSymbol
-        lltv
-        isTrapped
-      }
-    }
-  }
-`;
 
 const formatCurrency = (value) => {
   if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
@@ -67,19 +35,19 @@ const formatApy = (value) => {
 export default function ProtocolMarkets() {
   const { protocol: protocolSlug } = useParams();
   const navigate = useNavigate();
-  const protocolKey = PROTOCOL_MAP[protocolSlug] || "AAVE_MARKET";
+  const protocolKey = apiProtocolForSlug(protocolSlug);
   const protocolName = getProtocolDisplayName(protocolKey);
 
   const [currentPage, setCurrentPage] = useState(1);
   const [sortKey, setSortKey] = useState("supplyUsd");
   const [sortDir, setSortDir] = useState("desc");
   const { data, error, isLoading: loading } = useSWR(
-    [ENVIO_GRAPHQL_URL, "envio.protocol-markets.v1", { protocol: protocolKey }],
-    ([url, , variables]) =>
-      postGraphQL(url, { query: PROTOCOL_MARKETS_QUERY, variables }),
+    queryKeys.apiProtocolMarkets(API_GRAPHQL_URL, protocolKey),
+    ([, , variables]) =>
+      apiGraphQL("ProtocolMarketsByProtocol", { query: PROTOCOL_MARKETS_QUERY, variables }),
     {
-      refreshInterval: REFRESH_INTERVALS.ANALYTICS_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.ANALYTICS_DEDUPE_MS,
+      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
+      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
       revalidateOnFocus: false,
     },
   );
@@ -173,7 +141,7 @@ export default function ProtocolMarkets() {
               {protocolName} Markets
             </h1>
             <p className="text-sm text-gray-500 uppercase tracking-widest">
-              {stats.count} individual reserves · Ethereum Mainnet
+              {stats.count} individual reserves В· Ethereum Mainnet
             </p>
           </div>
         </div>
@@ -256,7 +224,7 @@ export default function ProtocolMarkets() {
                       key={m.entityId}
                       className={`hover:bg-white/[0.03] transition-all duration-300 group cursor-pointer ${isTrapped ? "opacity-50" : ""}`}
                       onClick={() =>
-                        navigate(`/data/${protocolSlug}/${m.entityId.replace("0x", "")}`)
+                        navigate(marketRouteFor(m.protocol || protocolKey, m.entityId))
                       }
                     >
                       <td className="p-5">
@@ -313,7 +281,7 @@ export default function ProtocolMarkets() {
             {!loading && markets.length > 0 && (
               <div className="p-4 border-t border-white/5 bg-[#0d0d0d] flex justify-between items-center text-sm uppercase tracking-widest text-gray-600">
                 <span>
-                  Showing {Math.min((currentPage - 1) * PAGE_SIZE + 1, sortedData.length)}–
+                  Showing {Math.min((currentPage - 1) * PAGE_SIZE + 1, sortedData.length)}вЂ“
                   {Math.min(currentPage * PAGE_SIZE, sortedData.length)} of {sortedData.length} Markets
                 </span>
                 <div className="flex items-center gap-3">

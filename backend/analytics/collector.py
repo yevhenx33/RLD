@@ -44,15 +44,20 @@ CLICKHOUSE_WAIT_FOR_ASYNC_INSERT = (
 )
 
 
-def require_envio_token() -> str:
-    token = os.getenv("ENVIO_API_TOKEN", "").strip()
+def require_hypersync_token() -> str:
+    token = (
+        os.getenv("HYPERSYNC_API_TOKEN", "")
+        or os.getenv("ENVIO_API_TOKEN", "")
+    ).strip()
     if not token:
         raise RuntimeError(
-            "ENVIO_API_TOKEN is required for HyperSync collection. "
-            "Set it in the environment before starting the collector."
+            "HYPERSYNC_API_TOKEN is required for HyperSync collection. "
+            "ENVIO_API_TOKEN is accepted only as a deprecated compatibility alias."
         )
     return token
 
+
+require_envio_token = require_hypersync_token
 
 def build_block_ts_map(blocks) -> dict:
     ts_map = {}
@@ -71,7 +76,7 @@ class ProtocolCollector:
     """
     def __init__(self, source: BaseSource, clickhouse_host=None, clickhouse_port=None):
         self.source = source
-        self.envio_token = require_envio_token()
+        self.envio_token = require_hypersync_token()
         self.ch_host = clickhouse_host or os.getenv("CLICKHOUSE_HOST", "localhost")
         self.ch_port = int(clickhouse_port or os.getenv("CLICKHOUSE_PORT", "8123"))
         self._hs_client = None
