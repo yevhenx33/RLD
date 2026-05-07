@@ -15,6 +15,7 @@ import asyncio
 import logging
 from typing import Callable
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from analytics.config import apply_env_from_config, source_poll_interval
@@ -28,6 +29,7 @@ from analytics.sources import (
     FluidSource,
     ChainlinkSource,
     AaveV3Source,
+    AaveAccountSource,
     MorphoSource,
     LidoRebaseSource,
     StaticPegsSource,
@@ -36,6 +38,7 @@ from analytics.sources import (
 )
 from analytics.protocols import (
     AAVE_MARKET,
+    AAVE_ACCOUNTS,
     FLUID_MARKET,
     MORPHO_MARKET,
     METAMORPHO_FACTORY,
@@ -56,6 +59,7 @@ INDEXER_VERSION = os.getenv("INDEXER_VERSION", "dev")
 
 SOURCE_MAP = {
     AAVE_MARKET: AaveV3Source,
+    AAVE_ACCOUNTS: AaveAccountSource,
     FLUID_MARKET: FluidSource,
     MORPHO_MARKET: MorphoSource,
     METAMORPHO_FACTORY: MetaMorphoFactorySource,

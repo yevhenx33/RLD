@@ -30,6 +30,8 @@ from analytics.sources.morpho import (  # noqa: E402
     MorphoMarketParams,
     MorphoMarketState,
     MorphoSource,
+    _project_market_assets,
+    _w_taylor_compounded,
     classify_price_support,
     price_feed_requirements,
     resolve_symbol_price,
@@ -143,6 +145,23 @@ class MorphoSourceTests(unittest.TestCase):
         state = source._markets[MARKET_ID]
         self.assertEqual(state.total_supply_assets, 1_000_000)
         self.assertEqual(state.total_supply_shares, 999_999)
+
+    def test_pending_interest_projection_uses_last_update(self):
+        state = MorphoMarketState(
+            total_supply_assets=1_000_000_000,
+            total_borrow_assets=500_000_000,
+            last_borrow_rate_wad=10**9,
+            last_update_timestamp=dt.datetime(2026, 1, 1, 0, 0, 0),
+            last_event_timestamp=dt.datetime(2026, 1, 1, 1, 0, 0),
+        )
+
+        supply, borrow, interest = _project_market_assets(state, dt.datetime(2026, 1, 1, 2, 0, 0))
+
+        expected_factor = _w_taylor_compounded(10**9, 7200)
+        expected_interest = 500_000_000 * expected_factor // 10**18
+        self.assertEqual(interest, expected_interest)
+        self.assertEqual(supply, 1_000_000_000 + expected_interest)
+        self.assertEqual(borrow, 500_000_000 + expected_interest)
 
     def test_chainlink_support_classification(self):
         feeds = {"USDC / USD", "ETH / USD", "STETH / USD", "wstETH/stETH exchange rate"}
