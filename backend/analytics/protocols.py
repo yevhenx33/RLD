@@ -1,6 +1,7 @@
 """Canonical protocol identifiers and shared mappings for analytics."""
 
 AAVE_MARKET = "AAVE_MARKET"
+AAVE_ACCOUNTS = "AAVE_ACCOUNTS"
 FLUID_MARKET = "FLUID_MARKET"
 FLUID_FTOKEN = "FLUID_FTOKEN"
 FLUID_VAULT = "FLUID_VAULT"
@@ -25,6 +26,7 @@ READY_PROTOCOLS_DEFAULT = (
 # Raw mempool table per protocol.
 RAW_TABLE_BY_PROTOCOL = {
     AAVE_MARKET: "aave_events",
+    AAVE_ACCOUNTS: "aave_account_raw_events",
     FLUID_MARKET: "fluid_events",
     FLUID_FTOKEN: "fluid_product_raw_events",
     FLUID_VAULT: "fluid_product_raw_events",
@@ -42,6 +44,7 @@ RAW_TABLE_BY_PROTOCOL = {
 
 RAW_HEAD_QUERY_BY_PROTOCOL = {
     AAVE_MARKET: "SELECT max(block_number) FROM aave_events",
+    AAVE_ACCOUNTS: "SELECT max(block_number) FROM aave_account_raw_events",
     FLUID_MARKET: "SELECT max(block_number) FROM fluid_events",
     FLUID_FTOKEN: "SELECT max(block_number) FROM fluid_product_raw_events WHERE product_type = 'FTOKEN'",
     FLUID_VAULT: "SELECT max(block_number) FROM fluid_product_raw_events WHERE product_type = 'VAULT'",
@@ -61,6 +64,7 @@ RAW_HEAD_QUERY_BY_PROTOCOL = {
 # processor_state aliases retained for backward compatibility.
 PROCESSOR_STATE_ALIASES = {
     AAVE_MARKET: (AAVE_MARKET,),
+    AAVE_ACCOUNTS: (AAVE_ACCOUNTS,),
     FLUID_MARKET: (FLUID_MARKET,),
     FLUID_FTOKEN: (FLUID_FTOKEN,),
     FLUID_VAULT: (FLUID_VAULT,),

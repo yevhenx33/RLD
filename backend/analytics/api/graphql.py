@@ -39,6 +39,7 @@ from analytics.protocols import (  # noqa: E402
 )
 from analytics.state import get_source_status  # noqa: E402
 from analytics.tokens import TOKENS, get_usd_price  # noqa: E402
+from analytics.aave_accounts import AAVE_DEPLOYMENT_ID, ensure_aave_account_tables  # noqa: E402
 
 logger = logging.getLogger("rld.clickhouse_api")
 
@@ -150,6 +151,7 @@ API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE = "api_chainlink_price_weekly_agg"
 AAVE_SERIES_TABLE = "market_timeseries"
 TVL_PROTOCOLS = ("AAVE", "EULER", "FLUID", "MORPHO")
 TVL_SYNTHETIC_ENTITY_IDS = {"AAVE_MARKET_SYNTHETIC"}
+LENDING_DATA_MARKET_PROTOCOLS = (AAVE_MARKET, MORPHO_MARKET, FLUID_MARKET)
 AAVE_FLOW_EVENT_NAMES = (
     "Supply",
     "Withdraw",
@@ -567,6 +569,77 @@ class MarketSeriesConnection:
 
 
 @strawberry.type
+class AaveAccountFreshness:
+    latest_event_block: int = strawberry.field(name="latestEventBlock")
+    latest_index_timestamp: int = strawberry.field(name="latestIndexTimestamp")
+    latest_price_timestamp: int = strawberry.field(name="latestPriceTimestamp")
+    reconstruction_status: str = strawberry.field(name="reconstructionStatus")
+    last_rpc_audit_timestamp: int = strawberry.field(name="lastRpcAuditTimestamp")
+    audit_precision_status: str = strawberry.field(name="auditPrecisionStatus")
+
+
+@strawberry.type
+class AaveAccountStats:
+    deployment_id: str = strawberry.field(name="deploymentId")
+    active_accounts: int = strawberry.field(name="activeAccounts")
+    debt_accounts: int = strawberry.field(name="debtAccounts")
+    collateral_accounts: int = strawberry.field(name="collateralAccounts")
+    total_collateral_usd: float = strawberry.field(name="totalCollateralUsd")
+    total_debt_usd: float = strawberry.field(name="totalDebtUsd")
+    weighted_liquidation_threshold: float = strawberry.field(name="weightedLiquidationThreshold")
+    accounts_below_hf_125: int = strawberry.field(name="accountsBelowHf125")
+    accounts_below_hf_1: int = strawberry.field(name="accountsBelowHf1")
+    freshness: AaveAccountFreshness
+
+
+@strawberry.type
+class AaveAccountPosition:
+    reserve: str
+    symbol: str
+    scaled_supply_raw: str = strawberry.field(name="scaledSupplyRaw")
+    scaled_variable_debt_raw: str = strawberry.field(name="scaledVariableDebtRaw")
+    supply_usd: float = strawberry.field(name="supplyUsd")
+    debt_usd: float = strawberry.field(name="debtUsd")
+    collateral_enabled: bool = strawberry.field(name="collateralEnabled")
+    liquidation_threshold: float = strawberry.field(name="liquidationThreshold")
+
+
+@strawberry.type
+class AaveAccountProfilePoint:
+    timestamp: int
+    total_collateral_usd: float = strawberry.field(name="totalCollateralUsd")
+    total_debt_usd: float = strawberry.field(name="totalDebtUsd")
+    net_worth_usd: float = strawberry.field(name="netWorthUsd")
+    weighted_liquidation_threshold: float = strawberry.field(name="weightedLiquidationThreshold")
+    health_factor: Optional[float] = strawberry.field(name="healthFactor")
+    emode_category: int = strawberry.field(name="emodeCategory")
+    position_count: int = strawberry.field(name="positionCount")
+    debt_position_count: int = strawberry.field(name="debtPositionCount")
+    collateral_position_count: int = strawberry.field(name="collateralPositionCount")
+    last_event_block: int = strawberry.field(name="lastEventBlock")
+
+
+@strawberry.type
+class AaveAccount:
+    deployment_id: str = strawberry.field(name="deploymentId")
+    address: str
+    total_collateral_usd: float = strawberry.field(name="totalCollateralUsd")
+    total_debt_usd: float = strawberry.field(name="totalDebtUsd")
+    weighted_liquidation_threshold: float = strawberry.field(name="weightedLiquidationThreshold")
+    health_factor: Optional[float] = strawberry.field(name="healthFactor")
+    emode_category: int = strawberry.field(name="emodeCategory")
+    positions: list[AaveAccountPosition]
+    freshness: AaveAccountFreshness
+
+
+@strawberry.type
+class AaveAccountConnection:
+    nodes: list[AaveAccount]
+    page_info: PageInfo = strawberry.field(name="pageInfo")
+    total_count: int = strawberry.field(name="totalCount")
+
+
+@strawberry.type
 class LendingDataStats:
     total_supply_usd: float = strawberry.field(name="totalSupplyUsd")
     total_borrow_usd: float = strawberry.field(name="totalBorrowUsd")
@@ -679,6 +752,7 @@ def _ensure_support_tables(ch) -> None:
     global _TABLES_READY
     if _TABLES_READY:
         return
+    ensure_aave_account_tables(ch)
     ch.command(
         """
         CREATE TABLE IF NOT EXISTS processor_state (
@@ -2334,6 +2408,47 @@ def _query_market_snapshots(ch, protocol: Optional[str] = None) -> list[MarketSn
     ]
 
 
+def _query_lending_data_market_snapshots(ch) -> list[MarketSnapshot]:
+    protocol_names = ", ".join(f"'{_escape_sql_string(protocol)}'" for protocol in LENDING_DATA_MARKET_PROTOCOLS)
+    sql = f"""
+        SELECT
+            entity_id,
+            symbol,
+            protocol,
+            supply_usd,
+            borrow_usd,
+            supply_apy,
+            borrow_apy,
+            if(supply_usd > 0, borrow_usd / supply_usd, 0.0) AS utilization
+        FROM api_market_latest FINAL
+        WHERE protocol IN ({protocol_names})
+          AND (
+            protocol = '{_escape_sql_string(AAVE_MARKET)}'
+            OR supply_usd >= 1000
+            OR borrow_usd >= 1000
+          )
+          AND NOT (
+            protocol = '{_escape_sql_string(MORPHO_MARKET)}'
+            AND supply_apy > 1.0
+          )
+        ORDER BY borrow_usd DESC, supply_usd DESC, protocol ASC, entity_id ASC
+    """
+    res = ch.query(sql)
+    return [
+        MarketSnapshot(
+            entity_id=str(row[0]),
+            symbol=str(row[1]),
+            protocol=str(row[2]),
+            supply_usd=float(row[3]),
+            borrow_usd=float(row[4]),
+            supply_apy=float(row[5]),
+            borrow_apy=float(row[6]),
+            utilization=float(row[7]),
+        )
+        for row in res.result_rows
+    ]
+
+
 def _finite_non_negative(value: object) -> float:
     try:
         numeric = float(value or 0.0)
@@ -2777,6 +2892,8 @@ def _build_lending_data_page_payload(
         borrow_usd = _finite_non_negative(row.borrow_usd)
         supply_apy = _finite_non_negative(row.supply_apy)
         borrow_apy = _finite_non_negative(row.borrow_apy)
+        if str(row.protocol or "").upper() == MORPHO_MARKET and supply_apy > 1.0:
+            continue
         utilization = min(1.0, borrow_usd / supply_usd) if supply_usd > 0 else 0.0
         normalized_markets.append(
             LendingDataMarketRow(
@@ -2820,7 +2937,12 @@ def _build_lending_data_page_payload(
             continue
         chart_by_ts[ts] = LendingDataChartPoint(
             timestamp=ts,
-            tvl=_finite_non_negative(row.aave),
+            tvl=(
+                _finite_non_negative(row.aave)
+                + _finite_non_negative(row.euler)
+                + _finite_non_negative(row.fluid)
+                + _finite_non_negative(row.morpho)
+            ),
         )
 
     for row in apy_history:
@@ -2933,7 +3055,7 @@ def _build_lending_pool_page_payload(
 def _query_lending_data_page(ch, display_in: str) -> LendingDataPagePayload:
     return _build_lending_data_page_payload(
         _freshness_payload(),
-        _query_market_snapshots(ch, AAVE_MARKET),
+        _query_lending_data_market_snapshots(ch),
         _query_protocol_tvl_history(ch, display_in),
         _query_protocol_apy_history(ch, AAVE_MARKET, "1W", 5000),
     )
@@ -2956,8 +3078,8 @@ def _query_lending_pool_page(
     return _build_lending_pool_page_payload(
         _freshness_payload(),
         _query_protocol_markets(ch, protocol, entity_id),
-        _query_market_timeseries(ch, entity_id, "1D", timeseries_limit),
-        _query_market_flow_timeseries(ch, entity_id, "1D", flow_limit),
+        _query_market_timeseries(ch, entity_id, "1D", timeseries_limit, protocol),
+        _query_market_flow_timeseries(ch, entity_id, "1D", flow_limit, protocol),
     )
 
 
@@ -3009,6 +3131,355 @@ def _query_latest_rates(ch) -> Optional[LatestRates]:
 
     latest.timestamp = max_ts
     return latest
+
+
+def _aave_account_freshness(ch, deployment_id: str) -> AaveAccountFreshness:
+    ensure_aave_account_tables(ch)
+    latest_event = _query_int(
+        ch,
+        f"SELECT toUInt64(max(block_number)) FROM aave_account_events WHERE deployment_id = '{_escape_sql_string(deployment_id)}'",
+    )
+    latest_index = _query_int(
+        ch,
+        "SELECT toUInt64(max(toUnixTimestamp(timestamp))) FROM aave_timeseries",
+    )
+    latest_price = _query_int(
+        ch,
+        "SELECT toUInt64(max(toUnixTimestamp(timestamp))) FROM api_market_latest FINAL WHERE protocol = 'AAVE_MARKET'",
+    )
+    audit = ch.query(
+        """
+        SELECT toUInt64(max(toUnixTimestamp(finished_at))) AS ts,
+               argMax(status, finished_at) AS status
+        FROM aave_reconstruction_audit_runs
+        WHERE deployment_id = %(deployment_id)s
+        """,
+        parameters={"deployment_id": deployment_id},
+    ).result_rows
+    audit_ts = int(audit[0][0] or 0) if audit else 0
+    audit_status = str(audit[0][1] or "NOT_RUN") if audit else "NOT_RUN"
+    status = "READY" if latest_event and latest_index and latest_price else "NO_ACCOUNT_EVENTS"
+    return AaveAccountFreshness(
+        latest_event_block=int(latest_event or 0),
+        latest_index_timestamp=int(latest_index or 0),
+        latest_price_timestamp=int(latest_price or 0),
+        reconstruction_status=status,
+        last_rpc_audit_timestamp=audit_ts,
+        audit_precision_status=audit_status,
+    )
+
+
+def _query_aave_account_position_rows(
+    ch,
+    deployment_id: str,
+    address: Optional[str] = None,
+) -> list[dict]:
+    ensure_aave_account_tables(ch)
+    escaped_deployment = _escape_sql_string(deployment_id)
+    user_filter = ""
+    parameters: dict[str, object] = {}
+    if address:
+        parameters["address"] = _normalize_entity_id(address)
+        user_filter = "AND user = %(address)s"
+    rows = ch.query(
+        f"""
+        WITH
+        positions AS (
+            SELECT
+                user,
+                reserve,
+                sumIf(scaled_delta_raw, token_type = 'ATOKEN') AS scaled_supply_raw,
+                sumIf(scaled_delta_raw, token_type = 'VARIABLE_DEBT') AS scaled_variable_debt_raw,
+                max(block_number) AS last_block
+            FROM aave_account_events
+            WHERE deployment_id = '{escaped_deployment}'
+              {user_filter}
+              AND reserve != ''
+            GROUP BY user, reserve
+            HAVING scaled_supply_raw != 0 OR scaled_variable_debt_raw != 0
+        ),
+        collateral AS (
+            SELECT
+                user,
+                reserve,
+                argMax(collateral_enabled, tuple(block_number, log_index)) AS collateral_enabled
+            FROM aave_account_events
+            WHERE deployment_id = '{escaped_deployment}'
+              {user_filter}
+              AND event_name IN ('ReserveUsedAsCollateralEnabled', 'ReserveUsedAsCollateralDisabled')
+            GROUP BY user, reserve
+        ),
+        emode AS (
+            SELECT
+                user,
+                argMax(emode_category, tuple(block_number, log_index)) AS emode_category
+            FROM aave_account_events
+            WHERE deployment_id = '{escaped_deployment}'
+              {user_filter}
+              AND event_name = 'UserEModeSet'
+            GROUP BY user
+        )
+        SELECT
+            p.user,
+            p.reserve,
+            ifNull(tokens.symbol, latest.symbol) AS symbol,
+            toUInt8(ifNull(tokens.decimals, 18)) AS decimals,
+            p.scaled_supply_raw,
+            p.scaled_variable_debt_raw,
+            toUInt8(ifNull(c.collateral_enabled, 1)) AS collateral_enabled,
+            toUInt16(ifNull(e.emode_category, 0)) AS emode_category,
+            ifNull(state.liquidity_index, 1e27) AS liquidity_index,
+            ifNull(state.variable_borrow_index, 1e27) AS variable_borrow_index,
+            ifNull(latest.price_usd, 0.0) AS price_usd,
+            ifNull(latest.ltv, 0.0) AS ltv,
+            if(
+                ifNull(e.emode_category, 0) > 0
+                AND ifNull(e.emode_category, 0) = ifNull(latest.e_mode_category, 0)
+                AND ifNull(latest.e_mode_liquidation_threshold, 0.0) > 0,
+                latest.e_mode_liquidation_threshold,
+                ifNull(latest.liquidation_threshold, 0.0)
+            ) AS liquidation_threshold,
+            p.last_block
+        FROM positions AS p
+        LEFT JOIN (SELECT * FROM aave_reserve_tokens FINAL) AS tokens
+          ON tokens.deployment_id = '{escaped_deployment}' AND tokens.reserve = p.reserve
+        LEFT JOIN (
+            SELECT entity_id, argMax(liquidity_index, updated_at) AS liquidity_index,
+                   argMax(variable_borrow_index, updated_at) AS variable_borrow_index
+            FROM aave_scaled_state
+            GROUP BY entity_id
+        ) AS state
+          ON state.entity_id = p.reserve
+        LEFT JOIN (
+            SELECT entity_id, symbol, price_usd, ltv, liquidation_threshold,
+                   e_mode_category, e_mode_liquidation_threshold
+            FROM (SELECT * FROM api_market_latest FINAL)
+            WHERE protocol = 'AAVE_MARKET'
+        ) AS latest
+          ON latest.entity_id = p.reserve
+        LEFT JOIN collateral AS c
+          ON c.user = p.user AND c.reserve = p.reserve
+        LEFT JOIN emode AS e
+          ON e.user = p.user
+        ORDER BY p.user ASC, p.reserve ASC
+        """,
+        parameters=parameters,
+    ).result_rows
+    result = []
+    for row in rows:
+        decimals = int(row[3] or 18)
+        scale = 10 ** decimals
+        supply_tokens = max(0.0, float(row[4] or 0) * float(row[8] or 0.0) / 1e27 / scale)
+        debt_tokens = max(0.0, float(row[5] or 0) * float(row[9] or 0.0) / 1e27 / scale)
+        price = float(row[10] or 0.0)
+        collateral_enabled = bool(row[6])
+        liquidation_threshold = float(row[12] or 0.0)
+        supply_usd = supply_tokens * price
+        debt_usd = debt_tokens * price
+        collateral_usd = supply_usd if collateral_enabled else 0.0
+        result.append(
+            {
+                "user": str(row[0]),
+                "reserve": str(row[1]),
+                "symbol": str(row[2] or ""),
+                "scaled_supply_raw": str(row[4] or "0"),
+                "scaled_variable_debt_raw": str(row[5] or "0"),
+                "collateral_enabled": collateral_enabled,
+                "emode_category": int(row[7] or 0),
+                "supply_usd": supply_usd,
+                "collateral_usd": collateral_usd,
+                "debt_usd": debt_usd,
+                "liquidation_threshold": liquidation_threshold,
+                "collateral_liquidation_usd": collateral_usd * liquidation_threshold,
+                "last_block": int(row[13] or 0),
+            }
+        )
+    return result
+
+
+def _build_aave_account(
+    deployment_id: str,
+    user: str,
+    rows: list[dict],
+    freshness: AaveAccountFreshness,
+) -> AaveAccount:
+    total_collateral = sum(float(row["collateral_usd"]) for row in rows)
+    total_debt = sum(float(row["debt_usd"]) for row in rows)
+    liquidation_value = sum(float(row["collateral_liquidation_usd"]) for row in rows)
+    weighted_lt = liquidation_value / total_collateral if total_collateral > 0 else 0.0
+    hf = liquidation_value / total_debt if total_debt > 1e-9 else None
+    emode = max((int(row["emode_category"]) for row in rows), default=0)
+    return AaveAccount(
+        deployment_id=deployment_id,
+        address=user,
+        total_collateral_usd=total_collateral,
+        total_debt_usd=total_debt,
+        weighted_liquidation_threshold=weighted_lt,
+        health_factor=hf,
+        emode_category=emode,
+        positions=[
+            AaveAccountPosition(
+                reserve=str(row["reserve"]),
+                symbol=str(row["symbol"]),
+                scaled_supply_raw=str(row["scaled_supply_raw"]),
+                scaled_variable_debt_raw=str(row["scaled_variable_debt_raw"]),
+                supply_usd=float(row["supply_usd"]),
+                debt_usd=float(row["debt_usd"]),
+                collateral_enabled=bool(row["collateral_enabled"]),
+                liquidation_threshold=float(row["liquidation_threshold"]),
+            )
+            for row in rows
+            if float(row["supply_usd"]) > 0 or float(row["debt_usd"]) > 0
+        ],
+        freshness=freshness,
+    )
+
+
+def _query_aave_accounts(
+    ch,
+    deployment_id: str,
+    min_debt_usd: float,
+    max_health_factor: Optional[float] = None,
+    order_by: str = "HEALTH_FACTOR_ASC",
+) -> list[AaveAccount]:
+    freshness = _aave_account_freshness(ch, deployment_id)
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for row in _query_aave_account_position_rows(ch, deployment_id):
+        grouped[str(row["user"])].append(row)
+    accounts = [
+        _build_aave_account(deployment_id, user, rows, freshness)
+        for user, rows in grouped.items()
+    ]
+    accounts = [
+        account
+        for account in accounts
+        if account.total_debt_usd >= float(min_debt_usd or 0.0)
+        and (
+            max_health_factor is None
+            or (account.health_factor is not None and account.health_factor <= float(max_health_factor))
+        )
+    ]
+    normalized_order = str(order_by or "HEALTH_FACTOR_ASC").upper()
+    if normalized_order == "DEBT_DESC":
+        accounts.sort(key=lambda item: (-item.total_debt_usd, item.address))
+    elif normalized_order == "COLLATERAL_DESC":
+        accounts.sort(key=lambda item: (-item.total_collateral_usd, item.address))
+    else:
+        accounts.sort(
+            key=lambda item: (
+                item.health_factor if item.health_factor is not None else float("inf"),
+                -item.total_debt_usd,
+                item.address,
+            )
+        )
+    return accounts
+
+
+def _query_aave_account(
+    ch,
+    deployment_id: str,
+    address: str,
+) -> Optional[AaveAccount]:
+    freshness = _aave_account_freshness(ch, deployment_id)
+    rows = _query_aave_account_position_rows(ch, deployment_id, address)
+    if not rows:
+        return None
+    user = _normalize_entity_id(address)
+    return _build_aave_account(deployment_id, user, rows, freshness)
+
+
+def _query_aave_account_stats(
+    ch,
+    deployment_id: str,
+    min_debt_usd: float,
+    min_collateral_usd: float,
+) -> AaveAccountStats:
+    accounts = _query_aave_accounts(ch, deployment_id, min_debt_usd=0.0)
+    filtered = [
+        account
+        for account in accounts
+        if account.total_debt_usd >= float(min_debt_usd or 0.0)
+        and account.total_collateral_usd >= float(min_collateral_usd or 0.0)
+    ]
+    total_collateral = sum(account.total_collateral_usd for account in filtered)
+    total_debt = sum(account.total_debt_usd for account in filtered)
+    liquidation_value = sum(
+        account.total_collateral_usd * account.weighted_liquidation_threshold
+        for account in filtered
+    )
+    return AaveAccountStats(
+        deployment_id=deployment_id,
+        active_accounts=len(filtered),
+        debt_accounts=sum(1 for account in filtered if account.total_debt_usd > 0),
+        collateral_accounts=sum(1 for account in filtered if account.total_collateral_usd > 0),
+        total_collateral_usd=total_collateral,
+        total_debt_usd=total_debt,
+        weighted_liquidation_threshold=(
+            liquidation_value / total_collateral if total_collateral > 0 else 0.0
+        ),
+        accounts_below_hf_125=sum(
+            1 for account in filtered if account.health_factor is not None and account.health_factor < 1.25
+        ),
+        accounts_below_hf_1=sum(
+            1 for account in filtered if account.health_factor is not None and account.health_factor < 1.0
+        ),
+        freshness=_aave_account_freshness(ch, deployment_id),
+    )
+
+
+def _query_aave_account_profile_history(
+    ch,
+    deployment_id: str,
+    address: str,
+    start_ts: Optional[int],
+    end_ts: Optional[int],
+    limit: int,
+) -> list[AaveAccountProfilePoint]:
+    ensure_aave_account_tables(ch)
+    filters = ["deployment_id = %(deployment_id)s", "user = %(user)s"]
+    parameters: dict[str, object] = {
+        "deployment_id": deployment_id,
+        "user": _normalize_entity_id(address),
+        "limit": _safe_limit(limit),
+    }
+    if start_ts is not None:
+        filters.append("timestamp >= fromUnixTimestamp(%(start_ts)s)")
+        parameters["start_ts"] = int(start_ts)
+    if end_ts is not None:
+        filters.append("timestamp <= fromUnixTimestamp(%(end_ts)s)")
+        parameters["end_ts"] = int(end_ts)
+    where_sql = " AND ".join(filters)
+    rows = ch.query(
+        f"""
+        SELECT toUnixTimestamp(timestamp), total_collateral_usd, total_debt_usd,
+               net_worth_usd, weighted_liquidation_threshold, health_factor,
+               emode_category, position_count, debt_position_count,
+               collateral_position_count, last_event_block
+        FROM aave_account_profile_timeseries FINAL
+        WHERE {where_sql}
+        ORDER BY timestamp DESC
+        LIMIT %(limit)s
+        """,
+        parameters=parameters,
+    ).result_rows
+    points = [
+        AaveAccountProfilePoint(
+            timestamp=int(row[0] or 0),
+            total_collateral_usd=float(row[1] or 0.0),
+            total_debt_usd=float(row[2] or 0.0),
+            net_worth_usd=float(row[3] or 0.0),
+            weighted_liquidation_threshold=float(row[4] or 0.0),
+            health_factor=float(row[5]) if row[5] is not None and float(row[5]) > 0 else None,
+            emode_category=int(row[6] or 0),
+            position_count=int(row[7] or 0),
+            debt_position_count=int(row[8] or 0),
+            collateral_position_count=int(row[9] or 0),
+            last_event_block=int(row[10] or 0),
+        )
+        for row in rows
+    ]
+    points.sort(key=lambda item: item.timestamp)
+    return points
 
 
 def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) -> list[MarketDetail]:
@@ -3303,7 +3774,7 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
         f"""
         SELECT day, protocol, entity_id, argMaxMerge(supply_usd_state) AS supply_usd
         FROM {API_PROTOCOL_TVL_AGG_TABLE}
-        WHERE protocol IN ('AAVE', 'EULER', 'FLUID')
+        WHERE protocol IN ('AAVE', 'EULER', 'FLUID', 'MORPHO')
           AND entity_id != 'AAVE_MARKET_SYNTHETIC'
         GROUP BY day, protocol, entity_id
         ORDER BY day ASC, protocol ASC, entity_id ASC
@@ -3349,9 +3820,10 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
             converted.append(
                 ProtocolTvlPoint(
                     date=point.date,
-                    aave=0.0,
-                    euler=0.0,
-                    fluid=0.0,
+                aave=0.0,
+                euler=0.0,
+                fluid=0.0,
+                morpho=0.0,
                 )
             )
             continue
@@ -3362,6 +3834,7 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
                 aave=float(point.aave / divisor),
                 euler=float(point.euler / divisor),
                 fluid=float(point.fluid / divisor),
+                morpho=float(point.morpho / divisor),
             )
         )
     return converted
@@ -3457,7 +3930,26 @@ def _query_protocol_apy_history(
     return points
 
 
-def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) -> list[MarketTimeseriesPoint]:
+def _query_market_timeseries(
+    ch,
+    entity_id: str,
+    resolution: str,
+    limit: int,
+    protocol: Optional[str] = None,
+) -> list[MarketTimeseriesPoint]:
+    normalized_entity_id = _normalize_entity_id(entity_id)
+    if not normalized_entity_id:
+        return []
+
+    protocol_filter = ""
+    params = {
+        "eid_prefix": f"{normalized_entity_id}%",
+        "lim": _safe_limit(limit),
+    }
+    if protocol:
+        protocol_filter = "AND protocol = %(protocol)s"
+        params["protocol"] = str(protocol)
+
     time_expr = _time_bucket_expr(resolution, "ts")
     sql = f"""
     SELECT
@@ -3469,14 +3961,12 @@ def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) ->
         avgMerge(borrow_usd_state) AS borrow_usd
     FROM {API_MARKET_TIMESERIES_AGG_TABLE}
     WHERE entity_id LIKE %(eid_prefix)s
+      {protocol_filter}
     GROUP BY ts
     ORDER BY ts DESC
     LIMIT %(lim)s
     """
-    res = ch.query(
-        sql,
-        parameters={"eid_prefix": f"{entity_id}%", "lim": _safe_limit(limit)},
-    )
+    res = ch.query(sql, parameters=params)
     points = [
         MarketTimeseriesPoint(
             timestamp=int(row[0]),
@@ -3492,10 +3982,16 @@ def _query_market_timeseries(ch, entity_id: str, resolution: str, limit: int) ->
     return points
 
 
-def _query_market_flow_timeseries_from_balance_deltas(ch, entity_id: str, resolution: str, limit: int) -> list[MarketFlowPoint]:
+def _query_market_flow_timeseries_from_balance_deltas(
+    ch,
+    entity_id: str,
+    resolution: str,
+    limit: int,
+    protocol: Optional[str] = None,
+) -> list[MarketFlowPoint]:
     safe_limit = _safe_limit(limit)
     # Fetch one extra point so first visible bucket can compute deltas.
-    points = _query_market_timeseries(ch, entity_id, resolution, safe_limit + 1)
+    points = _query_market_timeseries(ch, entity_id, resolution, safe_limit + 1, protocol)
     if not points:
         return []
 
@@ -3539,7 +4035,13 @@ def _query_market_flow_timeseries_from_balance_deltas(ch, entity_id: str, resolu
     return flows
 
 
-def _query_market_flow_timeseries(ch, entity_id: str, resolution: str, limit: int) -> list[MarketFlowPoint]:
+def _query_market_flow_timeseries(
+    ch,
+    entity_id: str,
+    resolution: str,
+    limit: int,
+    protocol: Optional[str] = None,
+) -> list[MarketFlowPoint]:
     if _is_aave_market_entity(ch, entity_id):
         preaggregated = _query_aave_preaggregated_flow_timeseries(
             ch, entity_id, resolution, limit
@@ -3547,7 +4049,7 @@ def _query_market_flow_timeseries(ch, entity_id: str, resolution: str, limit: in
         if preaggregated:
             return preaggregated
         return _query_aave_event_flow_timeseries(ch, entity_id, resolution, limit)
-    return _query_market_flow_timeseries_from_balance_deltas(ch, entity_id, resolution, limit)
+    return _query_market_flow_timeseries_from_balance_deltas(ch, entity_id, resolution, limit, protocol)
 
 
 def _normalize_pendle_asset_type(value: str) -> str:
@@ -4047,9 +4549,8 @@ class Query:
         first: Optional[int] = None,
         after: Optional[str] = None,
     ) -> MarketSeriesConnection:
-        del protocol
         ch = get_clickhouse_client()
-        rows = _query_market_timeseries(ch, market_id, resolution, API_MAX_PAGE_SIZE)
+        rows = _query_market_timeseries(ch, market_id, resolution, API_MAX_PAGE_SIZE, protocol)
         if start_ts is not None:
             rows = [row for row in rows if int(row.timestamp or 0) >= int(start_ts)]
         if end_ts is not None:
@@ -4133,6 +4634,52 @@ class Query:
     def market_snapshots(self, protocol: Optional[str] = None) -> List[MarketSnapshot]:
         ch = get_clickhouse_client()
         return _query_market_snapshots(ch, protocol)
+
+    @strawberry.field(name="aaveAccountStats")
+    def aave_account_stats(
+        self,
+        deployment_id: str = AAVE_DEPLOYMENT_ID,
+        min_debt_usd: float = 0.0,
+        min_collateral_usd: float = 0.0,
+    ) -> AaveAccountStats:
+        ch = get_clickhouse_client()
+        return _query_aave_account_stats(ch, deployment_id, min_debt_usd, min_collateral_usd)
+
+    @strawberry.field(name="aaveAccounts")
+    def aave_accounts(
+        self,
+        deployment_id: str = AAVE_DEPLOYMENT_ID,
+        first: Optional[int] = None,
+        after: Optional[str] = None,
+        order_by: str = "HEALTH_FACTOR_ASC",
+        min_debt_usd: float = 0.0,
+        max_health_factor: Optional[float] = None,
+    ) -> AaveAccountConnection:
+        ch = get_clickhouse_client()
+        rows = _query_aave_accounts(ch, deployment_id, min_debt_usd, max_health_factor, order_by)
+        nodes, page_info, total_count = _connection_page(rows, first, after)
+        return AaveAccountConnection(nodes=nodes, page_info=page_info, total_count=total_count)
+
+    @strawberry.field(name="aaveAccount")
+    def aave_account(
+        self,
+        address: str,
+        deployment_id: str = AAVE_DEPLOYMENT_ID,
+    ) -> Optional[AaveAccount]:
+        ch = get_clickhouse_client()
+        return _query_aave_account(ch, deployment_id, address)
+
+    @strawberry.field(name="aaveAccountProfileHistory")
+    def aave_account_profile_history(
+        self,
+        address: str,
+        deployment_id: str = AAVE_DEPLOYMENT_ID,
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
+        limit: int = 1000,
+    ) -> list[AaveAccountProfilePoint]:
+        ch = get_clickhouse_client()
+        return _query_aave_account_profile_history(ch, deployment_id, address, start_ts, end_ts, limit)
 
     @strawberry.field(name="latestRates")
     def latest_rates(self) -> Optional[LatestRates]:

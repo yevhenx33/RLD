@@ -68,6 +68,17 @@ EVENT_MAP = {
     TOPIC_WITHDRAW_COLLATERAL: "WithdrawCollateral",
 }
 
+ACCRUES_INTEREST_EVENTS = {
+    "AccrueInterest",
+    "Borrow",
+    "Liquidate",
+    "Repay",
+    "SetFee",
+    "Supply",
+    "Withdraw",
+    "WithdrawCollateral",
+}
+
 PRICE_FEED_ALIASES = {
     "ETH": ("ETH / USD",),
     "WETH": ("ETH / USD",),
@@ -143,6 +154,7 @@ class MorphoMarketState:
     collateral_assets: int = 0
     fee_wad: int = 0
     last_borrow_rate_wad: int = 0
+    last_update_timestamp: datetime.datetime = datetime.datetime(1970, 1, 1)
     last_event_block: int = 0
     last_event_timestamp: datetime.datetime = datetime.datetime(1970, 1, 1)
 
@@ -266,6 +278,36 @@ def _borrow_apy_from_rate(rate_wad: int) -> float:
     return min(annual, 10.0)
 
 
+def _w_taylor_compounded(rate_wad: int, elapsed_seconds: int) -> int:
+    """Match Morpho MathLib.wTaylorCompounded using WAD integer arithmetic."""
+    if rate_wad <= 0 or elapsed_seconds <= 0:
+        return 0
+    first_term = int(rate_wad) * int(elapsed_seconds)
+    second_term = first_term * first_term // WAD // 2
+    third_term = second_term * first_term // WAD // 3
+    return first_term + second_term + third_term
+
+
+def _project_market_assets(
+    state: MorphoMarketState,
+    timestamp: datetime.datetime,
+) -> tuple[int, int, int]:
+    """Project Morpho's lazy interest from lastUpdate to timestamp for serving."""
+    supply_assets = int(state.total_supply_assets)
+    borrow_assets = int(state.total_borrow_assets)
+    last_update = state.last_update_timestamp or state.last_event_timestamp
+    if not isinstance(last_update, datetime.datetime) or last_update <= datetime.datetime(1971, 1, 1):
+        last_update = state.last_event_timestamp
+    if not isinstance(last_update, datetime.datetime):
+        return supply_assets, borrow_assets, 0
+    ts = timestamp.replace(tzinfo=None) if getattr(timestamp, "tzinfo", None) else timestamp
+    last = last_update.replace(tzinfo=None) if getattr(last_update, "tzinfo", None) else last_update
+    elapsed = max(0, int((ts - last).total_seconds()))
+    compounded = _w_taylor_compounded(state.last_borrow_rate_wad, elapsed)
+    interest = borrow_assets * compounded // WAD if borrow_assets > 0 and compounded > 0 else 0
+    return supply_assets + interest, borrow_assets + interest, interest
+
+
 class MorphoSource(BaseSource):
     name = MORPHO_MARKET
     contracts = [MORPHO_BLUE]
@@ -341,7 +383,8 @@ class MorphoSource(BaseSource):
                 creation_timestamp=ts,
             )
             self._params[market_id] = params
-            self._markets.setdefault(market_id, MorphoMarketState())
+            state = self._markets.setdefault(market_id, MorphoMarketState())
+            state.last_update_timestamp = ts
             self._touched_markets.add(market_id)
             return {"kind": "market_params", "market_id": market_id}
 
@@ -442,6 +485,8 @@ class MorphoSource(BaseSource):
         else:
             return None
 
+        if event_name in ACCRUES_INTEREST_EVENTS:
+            state.last_update_timestamp = ts
         state.last_event_block = int(log_entry.block_number)
         state.last_event_timestamp = ts
         self._touched_markets.add(market_id)
@@ -550,6 +595,7 @@ class MorphoSource(BaseSource):
                 collateral_assets String,
                 fee_wad String,
                 last_borrow_rate_wad String,
+                last_update_timestamp DateTime DEFAULT toDateTime(0),
                 last_event_block UInt64,
                 last_event_timestamp DateTime,
                 updated_at DateTime DEFAULT now()
@@ -557,6 +603,7 @@ class MorphoSource(BaseSource):
             ORDER BY market_id
             """
         )
+        ch.command("ALTER TABLE morpho_market_state ADD COLUMN IF NOT EXISTS last_update_timestamp DateTime DEFAULT toDateTime(0)")
         ch.command(
             """
             CREATE TABLE IF NOT EXISTS morpho_market_positions (
@@ -713,7 +760,8 @@ class MorphoSource(BaseSource):
                 """
                 SELECT market_id, total_supply_assets, total_supply_shares,
                        total_borrow_assets, total_borrow_shares, collateral_assets,
-                       fee_wad, last_borrow_rate_wad, last_event_block, last_event_timestamp
+                       fee_wad, last_borrow_rate_wad, last_update_timestamp,
+                       last_event_block, last_event_timestamp
                 FROM morpho_market_state FINAL
                 """
             ).result_rows
@@ -728,8 +776,9 @@ class MorphoSource(BaseSource):
                 collateral_assets=int(row[5] or 0),
                 fee_wad=int(row[6] or 0),
                 last_borrow_rate_wad=int(row[7] or 0),
-                last_event_block=int(row[8] or 0),
-                last_event_timestamp=row[9] or datetime.datetime(1970, 1, 1),
+                last_update_timestamp=row[8] or row[10] or datetime.datetime(1970, 1, 1),
+                last_event_block=int(row[9] or 0),
+                last_event_timestamp=row[10] or datetime.datetime(1970, 1, 1),
             )
 
     def _load_positions(self, ch) -> None:
@@ -885,6 +934,7 @@ class MorphoSource(BaseSource):
                     str(state.collateral_assets),
                     str(state.fee_wad),
                     str(state.last_borrow_rate_wad),
+                    state.last_update_timestamp,
                     state.last_event_block,
                     state.last_event_timestamp,
                 ]
@@ -903,6 +953,7 @@ class MorphoSource(BaseSource):
                     "collateral_assets",
                     "fee_wad",
                     "last_borrow_rate_wad",
+                    "last_update_timestamp",
                     "last_event_block",
                     "last_event_timestamp",
                 ],
@@ -1009,13 +1060,18 @@ class MorphoSource(BaseSource):
         df.sort_values("block_number", inplace=True)
         hourly = df.groupby(["ts", "market_id"]).last().reset_index()
 
+        batch_ts = pd.to_datetime(hourly["ts"].max())
+        batch_min_ts = pd.to_datetime(hourly["ts"].min())
         required_feeds: set[str] = set()
         supported_market_ids: set[str] = set()
         oracle_priced_market_ids: set[str] = set()
         required_oracles: set[str] = set()
-        for market_id in hourly["market_id"].unique():
-            params = self._params.get(str(market_id))
-            if not params:
+        for market_id, params in self._params.items():
+            state = self._markets.get(str(market_id))
+            if not state:
+                continue
+            created = pd.to_datetime(params.creation_timestamp)
+            if not pd.isna(created) and created > batch_ts:
                 continue
             support, loan_feeds, collateral_feeds, _reason = self._support_for(params)
             if support == "CHAINLINK_SUPPORTED":
@@ -1031,23 +1087,20 @@ class MorphoSource(BaseSource):
         if not supported_market_ids:
             return 0
 
-        prices = self._price_frame(ch, hourly["ts"].min(), hourly["ts"].max(), required_feeds)
+        prices = self._price_frame(ch, batch_min_ts, batch_ts, required_feeds)
         if prices.empty:
             return 0
-        oracle_prices = self._oracle_snapshot_frame(ch, hourly["ts"].min(), hourly["ts"].max(), required_oracles)
+        oracle_prices = self._oracle_snapshot_frame(ch, batch_min_ts, batch_ts, required_oracles)
         if oracle_priced_market_ids and oracle_prices.empty:
             log.info("[%s] Oracle-priced markets are waiting for morpho_oracle_snapshots", self.name)
 
         metrics = []
-        for row in hourly.itertuples(index=False):
-            market_id = str(row.market_id)
-            if market_id not in supported_market_ids:
-                continue
+        for market_id in sorted(supported_market_ids):
             params = self._params.get(market_id)
             state = self._markets.get(market_id)
             if not params or not state:
                 continue
-            ts = pd.to_datetime(row.ts)
+            ts = batch_ts
             price_row = prices.loc[prices.index <= ts]
             if price_row.empty:
                 continue
@@ -1059,8 +1112,9 @@ class MorphoSource(BaseSource):
             if loan_price is None:
                 continue
 
-            supply_tokens = state.total_supply_assets / (10 ** params.loan_decimals)
-            borrow_tokens = state.total_borrow_assets / (10 ** params.loan_decimals)
+            supply_assets, borrow_assets, _pending_interest = _project_market_assets(state, ts.to_pydatetime())
+            supply_tokens = supply_assets / (10 ** params.loan_decimals)
+            borrow_tokens = borrow_assets / (10 ** params.loan_decimals)
             collateral_tokens = state.collateral_assets / (10 ** params.collateral_decimals)
             supply_usd = supply_tokens * loan_price
             borrow_usd = borrow_tokens * loan_price

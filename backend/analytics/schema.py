@@ -9,6 +9,7 @@ from analytics.state import ensure_source_status_table
 from analytics.morpho_oracle_snapshots import ensure_morpho_oracle_snapshot_tables
 from analytics.oracle_snapshots import ensure_oracle_snapshot_tables
 from analytics.fluid_full_coverage import ensure_fluid_full_coverage_tables, seed_core_fluid_contracts
+from analytics.aave_accounts import ensure_aave_account_tables
 
 
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
@@ -80,6 +81,7 @@ def ensure_schema(ch) -> None:
     ensure_source_status_table(ch)
     ensure_morpho_oracle_snapshot_tables(ch)
     ensure_oracle_snapshot_tables(ch)
+    ensure_aave_account_tables(ch)
     ensure_fluid_full_coverage_tables(ch)
     seed_core_fluid_contracts(ch)
     ch.command(
@@ -393,6 +395,7 @@ def ensure_schema(ch) -> None:
             collateral_assets String,
             fee_wad String,
             last_borrow_rate_wad String,
+            last_update_timestamp DateTime DEFAULT toDateTime(0),
             last_event_block UInt64,
             last_event_timestamp DateTime,
             updated_at DateTime DEFAULT now()
@@ -400,6 +403,7 @@ def ensure_schema(ch) -> None:
         ORDER BY market_id
         """
     )
+    ch.command("ALTER TABLE morpho_market_state ADD COLUMN IF NOT EXISTS last_update_timestamp DateTime DEFAULT toDateTime(0)")
     ch.command(
         """
         CREATE TABLE IF NOT EXISTS morpho_market_positions (

@@ -64,6 +64,21 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: () => "/graphql",
       },
+      "/analytics/public-readyz": {
+        target: "http://127.0.0.1:5000",
+        changeOrigin: true,
+        rewrite: () => "/public-readyz",
+      },
+      "/analytics/readyz": {
+        target: "http://127.0.0.1:5000",
+        changeOrigin: true,
+        rewrite: () => "/readyz",
+      },
+      "/analytics/status": {
+        target: "http://127.0.0.1:5000",
+        changeOrigin: true,
+        rewrite: () => "/status",
+      },
       // Deprecated compatibility path; canonical analytics GraphQL route is /analytics/graphql.
       "/envio-graphql": {
         target: "http://127.0.0.1:5000",

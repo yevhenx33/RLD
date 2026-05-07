@@ -27,15 +27,44 @@ const BORROW_APY_AREA = {
   yAxisId: "right",
 };
 
+const finiteNumber = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
 const formatCurrency = (value) => {
-  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
-  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
-  if (value >= 1e3) return `$${(value / 1e3).toFixed(0)}K`;
-  return `$${value.toFixed(0)}`;
+  const amount = finiteNumber(value);
+  if (amount >= 1e9) return `$${(amount / 1e9).toFixed(2)}B`;
+  if (amount >= 1e6) return `$${(amount / 1e6).toFixed(2)}M`;
+  if (amount >= 1e3) return `$${(amount / 1e3).toFixed(0)}K`;
+  return `$${amount.toFixed(0)}`;
 };
 
 const formatApy = (value) => {
-  return `${(value * 100).toFixed(2)}%`;
+  return `${(finiteNumber(value) * 100).toFixed(2)}%`;
+};
+
+const formatPercent = (value, digits = 1) => {
+  return `${(finiteNumber(value) * 100).toFixed(digits)}%`;
+};
+
+const protocolGroup = (protocol) => {
+  const normalized = String(protocol || "").toUpperCase();
+  if (normalized === "AAVE" || normalized === "AAVE_MARKET") return "AAVE";
+  if (normalized === "MORPHO" || normalized === "MORPHO_MARKET") return "MORPHO";
+  if (normalized === "FLUID" || normalized === "FLUID_MARKET") return "FLUID";
+  if (normalized === "EULER" || normalized === "EULER_MARKET") return "EULER";
+  if (normalized.startsWith("PENDLE")) return "PENDLE";
+  return normalized;
+};
+
+const protocolLabel = (protocol) => {
+  const group = protocolGroup(protocol);
+  if (group === "AAVE") return "AAVE_V3";
+  if (group === "MORPHO") return "MORPHO";
+  if (group === "FLUID") return "FLUID";
+  if (group === "EULER") return "EULER";
+  return group || "UNKNOWN";
 };
 
 const CustomCheckbox = ({ label, checked = false, disabled = false, onClick }) => (
@@ -93,7 +122,7 @@ export default function LendingDataPage() {
   const filteredMarkets = useMemo(() => {
     return marketsData.filter(pool => {
       if (protocolFilter === 'ALL') return true;
-      const protocol = (pool.protocol === "AAVE_MARKET" || pool.protocol === "AAVE") ? "AAVE" : pool.protocol?.toUpperCase();
+      const protocol = protocolGroup(pool.protocol);
       if (protocolFilter === 'LENDING') {
         return ['AAVE', 'MORPHO', 'FLUID', 'EULER'].includes(protocol);
       }
@@ -151,7 +180,7 @@ export default function LendingDataPage() {
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
                   <div className="flex flex-col justify-end">
-                    <StatItem label="TOTAL NET WORTH" value={formatCurrency(Math.max(0, stats.totalSupplyUsd - stats.totalBorrowUsd))} />
+                    <StatItem label="TOTAL NET WORTH" value={formatCurrency(Math.max(0, finiteNumber(stats.totalSupplyUsd) - finiteNumber(stats.totalBorrowUsd)))} />
                   </div>
                   <div className="flex flex-col justify-center gap-2 border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
                     <StatItem label="TOTAL SUPPLY" value={formatCurrency(stats.totalSupplyUsd)} />
@@ -343,7 +372,7 @@ export default function LendingDataPage() {
                 ) : (
                   paginatedMarkets.map((pool, idx) => (
                     <div
-                      key={`${pool.symbol}-${idx}`}
+                      key={`${pool.protocol}-${pool.entityId || pool.symbol}-${idx}`}
                       onClick={() => pool.entityId && navigate(marketRouteFor(pool.protocol, pool.entityId))}
                       className={`grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center transition-colors ${pool.entityId ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
                         }`}
@@ -359,8 +388,8 @@ export default function LendingDataPage() {
                       <div className="text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.borrowUsd)}</div>
                       <div className="text-center text-[10px] md:text-[13px] text-green-500 tracking-widest">{formatApy(pool.supplyApy)}</div>
                       <div className="text-center text-[10px] md:text-[13px] text-cyan-500 tracking-widest">{formatApy(pool.borrowApy)}</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-gray-300 tracking-widest">{(pool.utilization * 100).toFixed(1)}%</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-gray-400 tracking-widest">{pool.protocol === "AAVE_MARKET" || pool.protocol === "AAVE" ? "AAVE_V3" : pool.protocol}</div>
+                      <div className="text-center text-[10px] md:text-[13px] text-gray-300 tracking-widest">{formatPercent(pool.utilization)}</div>
+                      <div className="text-center text-[10px] md:text-[13px] text-gray-400 tracking-widest">{protocolLabel(pool.protocol)}</div>
                     </div>
                   ))
                 )}

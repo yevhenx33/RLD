@@ -15,16 +15,47 @@ const CHART_RESOLUTION = "1D";
 const TIMESERIES_LIMIT_DAYS = 500;
 const FLOW_LIMIT_DAYS = 500;
 
+const finiteNumber = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
 const formatCurrency = (value) => {
-  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
-  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
-  if (value >= 1e3) return `$${(value / 1e3).toFixed(0)}K`;
-  return `$${value.toFixed(0)}`;
+  const amount = finiteNumber(value);
+  if (amount >= 1e9) return `$${(amount / 1e9).toFixed(2)}B`;
+  if (amount >= 1e6) return `$${(amount / 1e6).toFixed(2)}M`;
+  if (amount >= 1e3) return `$${(amount / 1e3).toFixed(0)}K`;
+  return `$${amount.toFixed(0)}`;
 };
 
 const formatApy = (value) => {
-  return `${(value * 100).toFixed(2)}%`;
+  return `${(finiteNumber(value) * 100).toFixed(2)}%`;
 };
+
+const formatPercent = (value, digits = 2) => {
+  return `${(finiteNumber(value) * 100).toFixed(digits)}%`;
+};
+
+const normalizeRatePoint = (point) => ({
+  timestamp: finiteNumber(point?.timestamp),
+  supplyApy: finiteNumber(point?.supplyApy),
+  borrowApy: finiteNumber(point?.borrowApy),
+  utilization: finiteNumber(point?.utilization),
+  supplyUsd: finiteNumber(point?.supplyUsd),
+  borrowUsd: finiteNumber(point?.borrowUsd),
+});
+
+const hasAnyFiniteValue = (point, keys) => {
+  return keys.some((key) => Number.isFinite(Number(point?.[key])));
+};
+
+function ChartEmptyState({ label }) {
+  return (
+    <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500">
+      {label}
+    </div>
+  );
+}
 
 export default function AaveMarketPage() {
   const { protocol: protocolSlug, marketId } = useParams();
@@ -66,29 +97,35 @@ export default function AaveMarketPage() {
         protocol: String(rawMarket.protocol || "AAVE_MARKET"),
         supplyUsd,
         borrowUsd,
-        supplyApy: Math.max(0, Number(rawMarket.supplyApy) || 0),
-        borrowApy: Math.max(0, Number(rawMarket.borrowApy) || 0),
+        supplyApy: Math.max(0, finiteNumber(rawMarket.supplyApy)),
+        borrowApy: Math.max(0, finiteNumber(rawMarket.borrowApy)),
         utilization: supplyUsd > 0 ? Math.min(1, borrowUsd / supplyUsd) : 0,
       };
     }
 
-    const chart = page.rateChart || [];
+    const chart = (page.rateChart || [])
+      .map(normalizeRatePoint)
+      .filter((p) => (
+        p.timestamp > 0
+        && hasAnyFiniteValue(p, ["supplyApy", "borrowApy", "supplyUsd", "borrowUsd", "utilization"])
+      ))
+      .sort((a, b) => a.timestamp - b.timestamp);
     const rawFlow = page.flowChart || [];
     const flowBase = rawFlow
       .map((p) => {
-        const supplyOutflowAbs = Math.max(0, Number(p.supplyOutflowUsd) || 0);
-        const borrowOutflowAbs = Math.max(0, Number(p.borrowOutflowUsd) || 0);
+        const supplyOutflowAbs = Math.max(0, finiteNumber(p.supplyOutflowUsd));
+        const borrowOutflowAbs = Math.max(0, finiteNumber(p.borrowOutflowUsd));
         return {
-          timestamp: Number(p.timestamp) || 0,
-          supplyInflowUsd: Math.max(0, Number(p.supplyInflowUsd) || 0),
+          timestamp: finiteNumber(p.timestamp),
+          supplyInflowUsd: Math.max(0, finiteNumber(p.supplyInflowUsd)),
           // Plot outflows below baseline for intuitive directionality.
           supplyOutflowUsd: -supplyOutflowAbs,
-          netSupplyFlowUsd: Number(p.netSupplyFlowUsd) || 0,
-          borrowInflowUsd: Math.max(0, Number(p.borrowInflowUsd) || 0),
+          netSupplyFlowUsd: finiteNumber(p.netSupplyFlowUsd),
+          borrowInflowUsd: Math.max(0, finiteNumber(p.borrowInflowUsd)),
           borrowOutflowUsd: -borrowOutflowAbs,
-          netBorrowFlowUsd: Number(p.netBorrowFlowUsd) || 0,
-          cumulativeSupplyNetInflowUsd: Number(p.cumulativeSupplyNetInflowUsd),
-          cumulativeBorrowNetInflowUsd: Number(p.cumulativeBorrowNetInflowUsd),
+          netBorrowFlowUsd: finiteNumber(p.netBorrowFlowUsd),
+          cumulativeSupplyNetInflowUsd: finiteNumber(p.cumulativeSupplyNetInflowUsd, NaN),
+          cumulativeBorrowNetInflowUsd: finiteNumber(p.cumulativeBorrowNetInflowUsd, NaN),
         };
       })
       .filter((p) => p.timestamp > 0)
@@ -147,7 +184,7 @@ export default function AaveMarketPage() {
 
         {/* Nav Route / Breadcrumbs */}
         <div className="flex items-center gap-3 my-6 transition-all duration-500">
-          <span className="font-mono text-[#333] text-[12px]">|вЂ”</span>
+          <span className="font-mono text-[#333] text-[12px]">|—</span>
           <div className="flex items-center gap-2 font-mono text-[11px] md:text-[13px] tracking-[0.28em] uppercase text-[#999]">
             <button onClick={() => navigate("/data")} className="hover:text-white transition-colors uppercase">data</button>
             <span className="text-[#999]">/</span>
@@ -189,7 +226,7 @@ export default function AaveMarketPage() {
           </div>
           <div className="flex flex-col p-4 md:p-6 flex-1">
             <div className="text-[10px] md:text-xs uppercase tracking-widest text-purple-500/70 mb-1">Utilization</div>
-            <div className="text-lg md:text-2xl font-bold text-purple-400">{(market.utilization * 100).toFixed(2)}%</div>
+            <div className="text-lg md:text-2xl font-bold text-purple-400">{formatPercent(market.utilization)}</div>
           </div>
         </div>
 
@@ -213,16 +250,25 @@ export default function AaveMarketPage() {
                 </div>
               </div>
             </div>
-            <div className="h-[300px] w-full">
-              <RLDPerformanceChart
-                data={tsData}
-                resolution={CHART_RESOLUTION}
-                areas={[
-                  { key: "borrowApy", color: "#22d3ee", name: "Borrow APY", format: "percent" },
-                  { key: "supplyApy", color: "#34d399", name: "Supply APY", format: "percent" }
-                ]}
-              />
-            </div>
+            {pageLoading && tsData.length === 0 ? (
+              <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
+                <Loader2 size={14} className="animate-spin" />
+                Loading Rate History...
+              </div>
+            ) : tsData.length === 0 ? (
+              <ChartEmptyState label="No rate history available" />
+            ) : (
+              <div className="h-[300px] w-full">
+                <RLDPerformanceChart
+                  data={tsData}
+                  resolution={CHART_RESOLUTION}
+                  areas={[
+                    { key: "borrowApy", color: "#22d3ee", name: "Borrow APY", format: "percent" },
+                    { key: "supplyApy", color: "#34d399", name: "Supply APY", format: "percent" }
+                  ]}
+                />
+              </div>
+            )}
           </div>
 
           {/* TVL Chart */}
@@ -243,16 +289,25 @@ export default function AaveMarketPage() {
                 </div>
               </div>
             </div>
-            <div className="h-[300px] w-full">
-              <RLDPerformanceChart
-                data={tsData}
-                resolution={CHART_RESOLUTION}
-                areas={[
-                  { key: "supplyUsd", color: "#818cf8", name: "Supply TVL", format: "dollar" },
-                  { key: "borrowUsd", color: "#fb7185", name: "Borrow TVL", format: "dollar" }
-                ]}
-              />
-            </div>
+            {pageLoading && tsData.length === 0 ? (
+              <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
+                <Loader2 size={14} className="animate-spin" />
+                Loading Value History...
+              </div>
+            ) : tsData.length === 0 ? (
+              <ChartEmptyState label="No value history available" />
+            ) : (
+              <div className="h-[300px] w-full">
+                <RLDPerformanceChart
+                  data={tsData}
+                  resolution={CHART_RESOLUTION}
+                  areas={[
+                    { key: "supplyUsd", color: "#818cf8", name: "Supply TVL", format: "dollar" },
+                    { key: "borrowUsd", color: "#fb7185", name: "Borrow TVL", format: "dollar" }
+                  ]}
+                />
+              </div>
+            )}
           </div>
 
           {/* Supply Flow Chart */}

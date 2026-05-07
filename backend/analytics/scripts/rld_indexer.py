@@ -14,6 +14,7 @@ import urllib.request
 
 import clickhouse_connect
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from analytics.config import apply_env_from_config, source_poll_interval
@@ -105,10 +106,61 @@ def cmd_worker(args) -> int:
     return 0
 
 
+def cmd_aave_account_events_backfill(args) -> int:
+    from analytics.scripts.backfill_aave_account_events import main as run_account_events_backfill
+
+    argv = ["backfill_aave_account_events"]
+    if args.rpc_url:
+        argv.extend(["--rpc-url", args.rpc_url])
+    argv.extend(["--from-block", str(args.from_block), "--to-block", str(args.to_block)])
+    argv.extend(["--batch-blocks", str(args.batch_blocks)])
+    if args.skip_collect:
+        argv.append("--skip-collect")
+    if args.skip_process:
+        argv.append("--skip-process")
+    old_argv = sys.argv
+    try:
+        sys.argv = argv
+        return run_account_events_backfill()
+    finally:
+        sys.argv = old_argv
+
+
+def cmd_aave_account_profiles_backfill(args) -> int:
+    from analytics.scripts.backfill_aave_account_profiles import main as run_account_profiles_backfill
+
+    argv = ["backfill_aave_account_profiles"]
+    if args.start:
+        argv.extend(["--start", args.start])
+    if args.end:
+        argv.extend(["--end", args.end])
+    argv.extend(["--full-snapshot-every-hours", str(args.full_snapshot_every_hours)])
+    argv.extend(["--insert-batch-size", str(args.insert_batch_size)])
+    old_argv = sys.argv
+    try:
+        sys.argv = argv
+        return run_account_profiles_backfill()
+    finally:
+        sys.argv = old_argv
+
+
 def cmd_morpho_oracle_backfill(args) -> int:
     from analytics.scripts.backfill_morpho_oracle_snapshots import run as run_morpho_oracle_backfill
 
     return run_morpho_oracle_backfill(args)
+
+
+def cmd_morpho_repair(args) -> int:
+    from analytics.scripts.repair_morpho_events import run as run_morpho_repair
+
+    return run_morpho_repair(args)
+
+
+def cmd_morpho_anchor(args) -> int:
+    from analytics.scripts.repair_morpho_events import run as run_morpho_anchor
+
+    args.anchor_once = True
+    return run_morpho_anchor(args)
 
 
 def cmd_metamorpho_backfill(args) -> int:
@@ -162,6 +214,22 @@ def main() -> int:
     worker.add_argument("--poll-interval", type=int, default=None)
     worker.set_defaults(func=cmd_worker)
 
+    aave_account_events = sub.add_parser("aave-account-events-backfill", help="Backfill Aave account token/config events")
+    aave_account_events.add_argument("--rpc-url", default=None)
+    aave_account_events.add_argument("--from-block", type=int, default=16291127)
+    aave_account_events.add_argument("--to-block", type=int, default=0)
+    aave_account_events.add_argument("--batch-blocks", type=int, default=50000)
+    aave_account_events.add_argument("--skip-collect", action="store_true")
+    aave_account_events.add_argument("--skip-process", action="store_true")
+    aave_account_events.set_defaults(func=cmd_aave_account_events_backfill)
+
+    aave_account_profiles = sub.add_parser("aave-account-profiles-backfill", help="Build historical Aave user profile timeseries")
+    aave_account_profiles.add_argument("--start", default=None)
+    aave_account_profiles.add_argument("--end", default=None)
+    aave_account_profiles.add_argument("--full-snapshot-every-hours", type=int, default=0)
+    aave_account_profiles.add_argument("--insert-batch-size", type=int, default=10000)
+    aave_account_profiles.set_defaults(func=cmd_aave_account_profiles_backfill)
+
     morpho_oracle = sub.add_parser("morpho-oracle-backfill", help="Backfill Morpho oracle.price() snapshots")
     morpho_oracle.add_argument("--rpc-url", default=None)
     morpho_oracle.add_argument("--start", default=None)
@@ -177,6 +245,34 @@ def main() -> int:
     morpho_oracle.add_argument("--skip-existing", action=argparse.BooleanOptionalAction, default=True)
     morpho_oracle.add_argument("--dry-run", action="store_true")
     morpho_oracle.set_defaults(func=cmd_morpho_oracle_backfill)
+
+    morpho_repair = sub.add_parser("morpho-repair", help="Backfill missing Morpho Blue raw logs and optionally rebuild latest state")
+    morpho_repair.add_argument("--rpc-url", default=None)
+    morpho_repair.add_argument("--from-block", type=int, required=True)
+    morpho_repair.add_argument("--to-block", type=int, required=True)
+    morpho_repair.add_argument("--batch-blocks", type=int, default=500)
+    morpho_repair.add_argument("--skip-repair", action="store_true")
+    morpho_repair.add_argument("--rebuild-state", action="store_true")
+    morpho_repair.add_argument("--sync-rpc-state", action="store_true")
+    morpho_repair.add_argument("--replay-batch-blocks", type=int, default=50000)
+    morpho_repair.add_argument("--max-markets", type=int, default=0)
+    morpho_repair.add_argument("--sleep-sec", type=float, default=0.0)
+    morpho_repair.add_argument("--dry-run", action="store_true")
+    morpho_repair.set_defaults(func=cmd_morpho_repair)
+
+    morpho_anchor = sub.add_parser("morpho-anchor", help="Run one RPC anchor audit against Morpho Blue market storage")
+    morpho_anchor.add_argument("--rpc-url", default=None)
+    morpho_anchor.add_argument("--block-number", type=int, default=0)
+    morpho_anchor.add_argument("--block-mode", choices=["processed", "latest"], default="processed")
+    morpho_anchor.add_argument("--confirmations", type=int, default=12)
+    morpho_anchor.add_argument("--gap-audit-blocks", type=int, default=7200)
+    morpho_anchor.add_argument("--gap-batch-blocks", type=int, default=500)
+    morpho_anchor.add_argument("--raw-tolerance", type=int, default=0)
+    morpho_anchor.add_argument("--max-markets", type=int, default=0)
+    morpho_anchor.add_argument("--max-diff-rows", type=int, default=5000)
+    morpho_anchor.add_argument("--fail-on-drift", action="store_true")
+    morpho_anchor.add_argument("--dry-run", action="store_true")
+    morpho_anchor.set_defaults(func=cmd_morpho_anchor)
 
     metamorpho = sub.add_parser("metamorpho-backfill", help="Backfill and snapshot MetaMorpho vault state, events, and allocations")
     metamorpho.add_argument("--rpc-url", default=None)

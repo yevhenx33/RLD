@@ -166,6 +166,40 @@ services:
       start_period: 20s
       retries: 3
 
+  aave_accounts_worker:
+    <<: *rld-indexer-service
+    container_name: rld_aave_accounts_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "AAVE_ACCOUNTS"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "aave-accounts-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Aave account reconstruction worker writing event-sourced account rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'AAVE_ACCOUNTS' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
   chainlink_worker:
     <<: *rld-indexer-service
     container_name: rld_chainlink_worker
@@ -263,6 +297,49 @@ services:
       com.rld.description: "Morpho Blue Chainlink-priced market worker writing processed analytics rows"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'MORPHO_MARKET' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  morpho_rpc_anchor_worker:
+    <<: *rld-indexer-service
+    container_name: rld_morpho_rpc_anchor_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - MORPHO_RPC_ANCHOR_INTERVAL_SEC=${MORPHO_RPC_ANCHOR_INTERVAL_SEC:-86400}
+      - MORPHO_RPC_ANCHOR_GAP_BLOCKS=${MORPHO_RPC_ANCHOR_GAP_BLOCKS:-7200}
+      - MORPHO_RPC_ANCHOR_GAP_BATCH_BLOCKS=${MORPHO_RPC_ANCHOR_GAP_BATCH_BLOCKS:-500}
+      - MORPHO_RPC_ANCHOR_MAX_DIFF_ROWS=${MORPHO_RPC_ANCHOR_MAX_DIFF_ROWS:-5000}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command:
+      [
+        "sh",
+        "-c",
+        "while true; do python -m analytics.scripts.rld_indexer morpho-anchor --block-mode processed --gap-audit-blocks $${MORPHO_RPC_ANCHOR_GAP_BLOCKS:-7200} --gap-batch-blocks $${MORPHO_RPC_ANCHOR_GAP_BATCH_BLOCKS:-500} --max-diff-rows $${MORPHO_RPC_ANCHOR_MAX_DIFF_ROWS:-5000}; sleep $${MORPHO_RPC_ANCHOR_INTERVAL_SEC:-86400}; done"
+      ]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "morpho-rpc-anchor-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "Daily RPC anchor audit for Morpho Blue event-sourced market state"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'morpho-anchor' in c\""]
       interval: 30s
       timeout: 5s
       start_period: 20s
