@@ -39,16 +39,36 @@ assertNotIncludes(lendingDataPage, "marketSnapshots(protocol:", "LendingDataPage
 assertNotIncludes(lendingDataPage, "protocolTvlHistory(", "LendingDataPage");
 assertNotIncludes(lendingDataPage, "protocolApyHistory(", "LendingDataPage");
 assertNotIncludes(lendingDataPage, "Math.random", "LendingDataPage");
+assertIncludes(apiQueries, "totalUsers", "ApiQueries");
+assertIncludes(lendingDataPage, "stats.totalUsers", "LendingDataPage");
+assertIncludes(apiQueries, "alluvialFlows", "ApiQueries");
+assertIncludes(lendingDataPage, "AlluvialFlowChart", "LendingDataPage");
+assertIncludes(lendingDataPage, "NET 30D LENDING FLOWS", "LendingDataPage");
+assertIncludes(lendingDataPage, "NET INFLOWS", "LendingDataPage");
+assertIncludes(lendingDataPage, "NET OUTFLOWS", "LendingDataPage");
+assertIncludes(apiQueries, "aaveTvl", "ApiQueries");
+assertIncludes(apiQueries, "eulerTvl", "ApiQueries");
+assertIncludes(apiQueries, "fluidTvl", "ApiQueries");
+assertIncludes(apiQueries, "morphoTvl", "ApiQueries");
+assertIncludes(lendingDataPage, 'key: "tvl"', "LendingDataPage");
+assertIncludes(lendingDataPage, "areas={[tvlArea]}", "LendingDataPage");
+assertIncludes(lendingDataPage, "['AAVE', 'MORPHO', 'FLUID', 'EULER']", "LendingDataPage");
+assertNotIncludes(lendingDataPage, "EULER <span", "LendingDataPage");
+assertNotIncludes(lendingDataPage, "(SOON)", "LendingDataPage");
 
 const protocolMarkets = read("src/components/charts/ProtocolMarkets.jsx");
 assertIncludes(apiQueries, "protocolMarketsPage(protocol: $protocol)", "ApiQueries");
 assertNotIncludes(protocolMarkets, "protocolMarkets(protocol:", "ProtocolMarkets");
 
 const marketPage = read("src/pages/app/markets/AaveMarketPage.jsx");
+const eulerMarketPage = read("src/pages/app/markets/EulerMarketPage.jsx");
 assertIncludes(apiQueries, "marketPage(", "ApiQueries");
 assertNotIncludes(marketPage, "marketTimeseries(", "MarketPage");
 assertNotIncludes(marketPage, "marketFlowTimeseries(", "MarketPage");
 assertNotIncludes(marketPage, "protocolMarkets(protocol:", "MarketPage");
+assertIncludes(routes, 'path="/data/euler/:marketId"', "Routes");
+assertIncludes(eulerMarketPage, 'const protocolSlug = "euler"', "EulerMarketPage");
+assertNotIncludes(eulerMarketPage, "Vault Breakdown", "EulerMarketPage");
 
 const endpointConfig = read("src/api/endpoints.js");
 assertNotIncludes(endpointConfig, "ENVIO", "Endpoint config");

@@ -36,15 +36,28 @@ export const LENDING_DATA_QUERY = `
       stats {
         totalSupplyUsd
         totalBorrowUsd
+        pooledSupplyUsd
+        isolatedSupplyUsd
         averageSupplyApy
         averageBorrowApy
         marketCount
+        totalUsers
       }
       chartData {
         timestamp
         tvl
+        aaveTvl
+        eulerTvl
+        fluidTvl
+        morphoTvl
         averageSupplyApy
         averageBorrowApy
+      }
+      alluvialFlows {
+        protocol
+        action
+        asset
+        valueUsd
       }
       markets {
         entityId

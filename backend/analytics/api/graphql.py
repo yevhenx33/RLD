@@ -154,7 +154,7 @@ AAVE_SERIES_TABLE = "market_timeseries"
 TVL_PROTOCOLS = ("AAVE", "EULER", "FLUID", "MORPHO")
 MORPHO_ALLOCATION_DEFAULT_LIMIT = 500
 TVL_SYNTHETIC_ENTITY_IDS = {"AAVE_MARKET_SYNTHETIC"}
-LENDING_DATA_MARKET_PROTOCOLS = (AAVE_MARKET, MORPHO_MARKET, FLUID_MARKET)
+LENDING_DATA_MARKET_PROTOCOLS = (AAVE_MARKET, "EULER_MARKET", MORPHO_MARKET, FLUID_MARKET)
 AAVE_FLOW_EVENT_NAMES = (
     "Supply",
     "Withdraw",
@@ -685,15 +685,22 @@ class AaveAccountConnection:
 class LendingDataStats:
     total_supply_usd: float = strawberry.field(name="totalSupplyUsd")
     total_borrow_usd: float = strawberry.field(name="totalBorrowUsd")
+    pooled_supply_usd: float = strawberry.field(name="pooledSupplyUsd")
+    isolated_supply_usd: float = strawberry.field(name="isolatedSupplyUsd")
     average_supply_apy: float = strawberry.field(name="averageSupplyApy")
     average_borrow_apy: float = strawberry.field(name="averageBorrowApy")
     market_count: int = strawberry.field(name="marketCount")
+    total_users: int = strawberry.field(name="totalUsers", default=0)
 
 
 @strawberry.type
 class LendingDataChartPoint:
     timestamp: int
     tvl: float
+    aave_tvl: float = strawberry.field(name="aaveTvl", default=0.0)
+    euler_tvl: float = strawberry.field(name="eulerTvl", default=0.0)
+    fluid_tvl: float = strawberry.field(name="fluidTvl", default=0.0)
+    morpho_tvl: float = strawberry.field(name="morphoTvl", default=0.0)
     average_supply_apy: Optional[float] = strawberry.field(name="averageSupplyApy", default=None)
     average_borrow_apy: Optional[float] = strawberry.field(name="averageBorrowApy", default=None)
 
@@ -713,10 +720,19 @@ class LendingDataMarketRow:
 
 
 @strawberry.type
+class LendingFlowAlluvialLink:
+    protocol: str
+    action: str
+    asset: str
+    value_usd: float = strawberry.field(name="valueUsd")
+
+
+@strawberry.type
 class LendingDataPagePayload:
     freshness: AnalyticsFreshness
     stats: LendingDataStats
     chart_data: list[LendingDataChartPoint] = strawberry.field(name="chartData")
+    alluvial_flows: list[LendingFlowAlluvialLink] = strawberry.field(name="alluvialFlows")
     markets: list[LendingDataMarketRow]
 
 
@@ -2946,6 +2962,8 @@ def _build_lending_data_page_payload(
     markets: list[MarketSnapshot],
     tvl_history: list[ProtocolTvlPoint],
     apy_history: list[ProtocolApyPoint],
+    total_users: int = 0,
+    alluvial_flows: Optional[list[LendingFlowAlluvialLink]] = None,
 ) -> LendingDataPagePayload:
     normalized_markets: list[LendingDataMarketRow] = []
     for row in markets:
@@ -2972,16 +2990,31 @@ def _build_lending_data_page_payload(
             )
         )
 
+    pooled_protocols = {AAVE_MARKET, FLUID_MARKET}
+    isolated_protocols = {"EULER_MARKET", MORPHO_MARKET}
     totals_supply = sum(row.supply_usd for row in normalized_markets)
     totals_borrow = sum(row.borrow_usd for row in normalized_markets)
+    pooled_supply = sum(
+        row.supply_usd
+        for row in normalized_markets
+        if str(row.protocol or "").upper() in pooled_protocols
+    )
+    isolated_supply = sum(
+        row.supply_usd
+        for row in normalized_markets
+        if str(row.protocol or "").upper() in isolated_protocols
+    )
     weighted_supply = sum(row.supply_apy * row.supply_usd for row in normalized_markets)
     weighted_borrow = sum(row.borrow_apy * row.borrow_usd for row in normalized_markets)
     stats = LendingDataStats(
         total_supply_usd=totals_supply,
         total_borrow_usd=totals_borrow,
+        pooled_supply_usd=pooled_supply,
+        isolated_supply_usd=isolated_supply,
         average_supply_apy=weighted_supply / totals_supply if totals_supply > 0 else 0.0,
         average_borrow_apy=weighted_borrow / totals_borrow if totals_borrow > 0 else 0.0,
         market_count=len(normalized_markets),
+        total_users=max(0, int(total_users or 0)),
     )
 
     chart_by_ts: dict[int, LendingDataChartPoint] = {}
@@ -2998,14 +3031,17 @@ def _build_lending_data_page_payload(
             ts = int(datetime.fromisoformat(normalized_date.replace("Z", "+00:00")).timestamp())
         except ValueError:
             continue
+        aave_tvl = _finite_non_negative(row.aave)
+        euler_tvl = _finite_non_negative(row.euler)
+        fluid_tvl = _finite_non_negative(row.fluid)
+        morpho_tvl = _finite_non_negative(row.morpho)
         chart_by_ts[ts] = LendingDataChartPoint(
             timestamp=ts,
-            tvl=(
-                _finite_non_negative(row.aave)
-                + _finite_non_negative(row.euler)
-                + _finite_non_negative(row.fluid)
-                + _finite_non_negative(row.morpho)
-            ),
+            tvl=aave_tvl + euler_tvl + fluid_tvl + morpho_tvl,
+            aave_tvl=aave_tvl,
+            euler_tvl=euler_tvl,
+            fluid_tvl=fluid_tvl,
+            morpho_tvl=morpho_tvl,
         )
 
     for row in apy_history:
@@ -3027,6 +3063,7 @@ def _build_lending_data_page_payload(
         freshness=freshness,
         stats=stats,
         chart_data=chart_data,
+        alluvial_flows=alluvial_flows or [],
         markets=normalized_markets,
     )
 
@@ -3231,12 +3268,345 @@ def _build_lending_pool_page_payload(
     )
 
 
+_LENDING_USERS_CACHE_TTL_SEC = 300
+_lending_users_cache: tuple[float, int] | None = None
+_lending_users_cache_lock = threading.Lock()
+_LENDING_FLOW_CACHE_TTL_SEC = 300
+_lending_flow_cache: tuple[float, list[LendingFlowAlluvialLink]] | None = None
+_lending_flow_cache_lock = threading.Lock()
+
+
+def _query_lending_unique_users(ch) -> int:
+    """Deduplicate actor addresses across indexed lending event tables."""
+    global _lending_users_cache
+    now = time.time()
+    with _lending_users_cache_lock:
+        if _lending_users_cache is not None:
+            cached_at, cached_value = _lending_users_cache
+            if now - cached_at <= _LENDING_USERS_CACHE_TTL_SEC:
+                return cached_value
+
+    sql = """
+    SELECT uniqExact(addr)
+    FROM
+    (
+        SELECT lower(user) AS addr
+        FROM aave_account_events FINAL
+        WHERE user != ''
+
+        UNION ALL
+        SELECT lower(caller) AS addr
+        FROM morpho_market_events FINAL
+        WHERE caller != ''
+        UNION ALL
+        SELECT lower(on_behalf) AS addr
+        FROM morpho_market_events FINAL
+        WHERE on_behalf != ''
+        UNION ALL
+        SELECT lower(receiver) AS addr
+        FROM morpho_market_events FINAL
+        WHERE receiver != ''
+
+        UNION ALL
+        SELECT lower(concat('0x', substring(ifNull(topic1, ''), 27))) AS addr
+        FROM fluid_events FINAL
+        WHERE event_name IN ('Operate', 'LogOperate')
+          AND length(ifNull(topic1, '')) >= 66
+
+        UNION ALL
+        SELECT lower(account) AS addr
+        FROM euler_vault_events FINAL
+        WHERE account != ''
+        UNION ALL
+        SELECT lower(sender) AS addr
+        FROM euler_vault_events FINAL
+        WHERE sender != ''
+        UNION ALL
+        SELECT lower(receiver) AS addr
+        FROM euler_vault_events FINAL
+        WHERE receiver != ''
+        UNION ALL
+        SELECT lower(owner) AS addr
+        FROM euler_vault_events FINAL
+        WHERE owner != ''
+    )
+    WHERE addr != ''
+      AND addr != '0x0000000000000000000000000000000000000000'
+      AND length(addr) = 42
+    """
+    try:
+        value = int(ch.query(sql).result_rows[0][0] or 0)
+    except Exception as exc:
+        logger.warning("Lending unique user count unavailable: %s", exc)
+        value = 0
+
+    with _lending_users_cache_lock:
+        _lending_users_cache = (time.time(), value)
+    return value
+
+
+def _token_meta_for_entity(entity_id: str) -> tuple[str, int]:
+    normalized = str(entity_id or "").lower().removeprefix("0x")[:40]
+    symbol, decimals = TOKENS.get(normalized, ("UNKNOWN", 18))
+    return str(symbol), int(decimals)
+
+
+def _query_lending_flow_alluvial(ch, window_days: int = 30) -> list[LendingFlowAlluvialLink]:
+    """Return last-N-day market-net USD flow links for the data page alluvial chart.
+    """
+    global _lending_flow_cache
+    now = time.time()
+    with _lending_flow_cache_lock:
+        if _lending_flow_cache is not None:
+            cached_at, cached_value = _lending_flow_cache
+            if now - cached_at <= _LENDING_FLOW_CACHE_TTL_SEC:
+                return cached_value
+
+    safe_days = max(1, min(90, int(window_days or 30)))
+    aggregated: defaultdict[tuple[str, str, str], float] = defaultdict(float)
+
+    def add_market_net(protocol: str, symbol: str, inflow_usd: float, outflow_usd: float) -> None:
+        net_usd = float(inflow_usd or 0.0) - float(outflow_usd or 0.0)
+        if net_usd > 0:
+            aggregated[(protocol, "Net Inflow", str(symbol or "UNKNOWN"))] += net_usd
+        elif net_usd < 0:
+            aggregated[(protocol, "Net Outflow", str(symbol or "UNKNOWN"))] += abs(net_usd)
+
+    try:
+        latest_ts = ch.query(
+            """
+            SELECT greatest(
+                ifNull((SELECT max(block_timestamp) FROM aave_events), toDateTime(0)),
+                ifNull((SELECT max(timestamp) FROM morpho_market_events), toDateTime(0)),
+                ifNull((SELECT max(timestamp) FROM euler_vault_events), toDateTime(0)),
+                ifNull((SELECT max(block_timestamp) FROM fluid_events), toDateTime(0))
+            )
+            """
+        ).result_rows[0][0]
+        if not latest_ts:
+            return []
+        latest_ts = latest_ts.replace(tzinfo=None) if getattr(latest_ts, "tzinfo", None) else latest_ts
+
+        aave_prices = {
+            (row[0], str(row[1]).lower()[:42]): float(row[2] or 0.0)
+            for row in ch.query(
+                f"""
+                SELECT toStartOfDay(timestamp) AS day,
+                       lower(substring(entity_id, 1, 42)) AS entity_id,
+                       argMax(price_usd, timestamp) AS price
+                FROM aave_timeseries
+                WHERE timestamp >= %(end)s - INTERVAL {safe_days} DAY
+                  AND timestamp <= %(end)s
+                  AND price_usd > 0
+                GROUP BY day, entity_id
+                """,
+                parameters={"end": latest_ts},
+            ).result_rows
+        }
+        aave_market_totals: dict[str, dict[str, float | str]] = {}
+        aave_rows = ch.query(
+            f"""
+            SELECT
+                day,
+                lower(entity_id) AS entity_id,
+                sumMerge(supply_inflow_raw_state) AS supply_in_raw,
+                sumMerge(supply_outflow_raw_state) AS supply_out_raw,
+                sumMerge(borrow_inflow_raw_state) AS borrow_in_raw,
+                sumMerge(borrow_outflow_raw_state) AS borrow_out_raw
+            FROM api_aave_market_flow_daily_agg
+            WHERE day >= %(end)s - INTERVAL {safe_days} DAY
+              AND day <= %(end)s
+            GROUP BY day, entity_id
+            """,
+            parameters={"end": latest_ts},
+        ).result_rows
+        for day, entity_id, s_in, s_out, b_in, b_out in aave_rows:
+            symbol, decimals = _token_meta_for_entity(entity_id)
+            price = aave_prices.get((day, str(entity_id).lower()), 0.0)
+            denom = float(10 ** decimals)
+            slot = aave_market_totals.setdefault(
+                str(entity_id).lower(),
+                {"symbol": symbol, "inflow_usd": 0.0, "outflow_usd": 0.0},
+            )
+            slot["inflow_usd"] = float(slot["inflow_usd"]) + (float(s_in or 0) + float(b_out or 0)) / denom * price
+            slot["outflow_usd"] = float(slot["outflow_usd"]) + (float(s_out or 0) + float(b_in or 0)) / denom * price
+        for slot in aave_market_totals.values():
+            add_market_net("Aave", str(slot["symbol"]), float(slot["inflow_usd"]), float(slot["outflow_usd"]))
+
+        morpho_rows = ch.query(
+            f"""
+            WITH daily_prices AS (
+                SELECT toStartOfDay(timestamp) AS day,
+                       market_id,
+                       argMax(loan_price_usd, timestamp) AS price
+                FROM morpho_market_metrics
+                WHERE timestamp >= %(end)s - INTERVAL {safe_days} DAY
+                  AND timestamp <= %(end)s
+                  AND loan_price_usd > 0
+                GROUP BY day, market_id
+            ),
+            params AS (
+                SELECT market_id,
+                       argMax(loan_symbol, updated_at) AS symbol,
+                       argMax(loan_decimals, updated_at) AS decimals
+                FROM morpho_market_params
+                GROUP BY market_id
+            )
+            SELECT
+                e.market_id,
+                p.symbol,
+                sumIf(toFloat64(e.assets) / pow(10, p.decimals) * dp.price, e.event_name = 'Supply') AS supply_inflow,
+                sumIf(toFloat64(e.assets) / pow(10, p.decimals) * dp.price, e.event_name = 'Withdraw') AS supply_outflow,
+                sumIf(toFloat64(e.assets) / pow(10, p.decimals) * dp.price, e.event_name = 'Borrow') AS borrow_inflow,
+                sumIf(toFloat64(e.assets) / pow(10, p.decimals) * dp.price, e.event_name = 'Repay') AS borrow_outflow
+            FROM morpho_market_events AS e
+            INNER JOIN params AS p ON e.market_id = p.market_id
+            LEFT JOIN daily_prices AS dp ON e.market_id = dp.market_id AND toStartOfDay(e.timestamp) = dp.day
+            WHERE e.timestamp >= %(end)s - INTERVAL {safe_days} DAY
+              AND e.timestamp <= %(end)s
+              AND e.event_name IN ('Supply', 'Withdraw', 'Borrow', 'Repay')
+            GROUP BY e.market_id, p.symbol
+            """,
+            parameters={"end": latest_ts},
+        ).result_rows
+        for _market_id, symbol, s_in, s_out, b_in, b_out in morpho_rows:
+            add_market_net(
+                "Morpho",
+                str(symbol or "UNKNOWN"),
+                float(s_in or 0.0) + float(b_out or 0.0),
+                float(s_out or 0.0) + float(b_in or 0.0),
+            )
+
+        euler_rows = ch.query(
+            f"""
+            WITH registry AS (
+                SELECT vault_address,
+                       argMax(asset_symbol, updated_at) AS symbol,
+                       argMax(asset_decimals, updated_at) AS decimals,
+                       argMax(verified, updated_at) AS verified
+                FROM euler_vault_registry
+                GROUP BY vault_address
+            ),
+            prices AS (
+                SELECT toStartOfDay(timestamp) AS day,
+                       vault_address,
+                       argMax(price_usd, timestamp) AS price
+                FROM euler_vault_metrics
+                WHERE timestamp >= %(end)s - INTERVAL {safe_days} DAY
+                  AND timestamp <= %(end)s
+                  AND price_usd > 0
+                GROUP BY day, vault_address
+            )
+            SELECT
+                e.vault_address,
+                r.symbol,
+                sumIf(toFloat64(e.assets) / pow(10, r.decimals) * p.price, e.event_name = 'Deposit') AS supply_inflow,
+                sumIf(toFloat64(e.assets) / pow(10, r.decimals) * p.price, e.event_name = 'Withdraw') AS supply_outflow,
+                sumIf(toFloat64(e.assets) / pow(10, r.decimals) * p.price, e.event_name = 'Borrow') AS borrow_inflow,
+                sumIf(toFloat64(e.assets) / pow(10, r.decimals) * p.price, e.event_name = 'Repay') AS borrow_outflow
+            FROM euler_vault_events AS e
+            INNER JOIN registry AS r ON e.vault_address = r.vault_address AND r.verified = 1
+            LEFT JOIN prices AS p ON e.vault_address = p.vault_address AND toStartOfDay(e.timestamp) = p.day
+            WHERE e.timestamp >= %(end)s - INTERVAL {safe_days} DAY
+              AND e.timestamp <= %(end)s
+              AND e.event_name IN ('Deposit', 'Withdraw', 'Borrow', 'Repay')
+            GROUP BY e.vault_address, r.symbol
+            """,
+            parameters={"end": latest_ts},
+        ).result_rows
+        for _vault_address, symbol, s_in, s_out, b_in, b_out in euler_rows:
+            add_market_net(
+                "Euler",
+                str(symbol or "UNKNOWN"),
+                float(s_in or 0.0) + float(b_out or 0.0),
+                float(s_out or 0.0) + float(b_in or 0.0),
+            )
+
+        fluid_rows = ch.query(
+            f"""
+            WITH daily_prices AS (
+                SELECT toStartOfDay(timestamp) AS day,
+                       entity_id,
+                       argMax(price_usd, timestamp) AS price
+                FROM fluid_reserve_metrics
+                WHERE timestamp >= %(end)s - INTERVAL {safe_days} DAY
+                  AND timestamp <= %(end)s
+                  AND price_usd > 0
+                GROUP BY day, entity_id
+            ),
+            params AS (
+                SELECT token,
+                       argMax(symbol, updated_at) AS symbol,
+                       argMax(decimals, updated_at) AS decimals
+                FROM fluid_reserve_state
+                GROUP BY token
+            ),
+            markets AS (
+                SELECT entity_id,
+                       argMax(symbol, inserted_at) AS symbol
+                FROM api_market_latest FINAL
+                WHERE protocol = 'FLUID_MARKET'
+                GROUP BY entity_id
+            ),
+            decoded AS (
+                SELECT
+                    toStartOfDay(block_timestamp) AS day,
+                    lower(concat('0x', substring(topic2, 27))) AS token,
+                    reinterpretAsInt256(reverse(unhex(substring(data, 3, 64)))) AS supply_amount,
+                    reinterpretAsInt256(reverse(unhex(substring(data, 67, 64)))) AS borrow_amount
+                FROM fluid_events
+                WHERE block_timestamp >= %(end)s - INTERVAL {safe_days} DAY
+                  AND block_timestamp <= %(end)s
+                  AND event_name IN ('Operate', 'LogOperate')
+                  AND length(ifNull(topic2, '')) >= 66
+                  AND length(ifNull(data, '')) >= 130
+            )
+            SELECT
+                d.token,
+                if(m.symbol != '', m.symbol, p.symbol) AS symbol,
+                sumIf(toFloat64(d.supply_amount) / pow(10, p.decimals) * dp.price, d.supply_amount > 0) AS supply_inflow,
+                sumIf(toFloat64(-d.supply_amount) / pow(10, p.decimals) * dp.price, d.supply_amount < 0) AS supply_outflow,
+                sumIf(toFloat64(d.borrow_amount) / pow(10, p.decimals) * dp.price, d.borrow_amount > 0) AS borrow_inflow,
+                sumIf(toFloat64(-d.borrow_amount) / pow(10, p.decimals) * dp.price, d.borrow_amount < 0) AS borrow_outflow
+            FROM decoded AS d
+            INNER JOIN params AS p ON p.token = d.token
+            INNER JOIN markets AS m ON m.entity_id = d.token
+            LEFT JOIN daily_prices AS dp ON dp.entity_id = d.token AND dp.day = d.day
+            GROUP BY d.token, symbol
+            """,
+            parameters={"end": latest_ts},
+        ).result_rows
+        for _token, symbol, s_in, s_out, b_in, b_out in fluid_rows:
+            add_market_net(
+                "Fluid",
+                str(symbol or "UNKNOWN"),
+                float(s_in or 0.0) + float(b_out or 0.0),
+                float(s_out or 0.0) + float(b_in or 0.0),
+            )
+    except Exception as exc:
+        logger.warning("Lending alluvial flow query unavailable: %s", exc)
+        return []
+
+    links = [
+        LendingFlowAlluvialLink(protocol=protocol, action=action, asset=asset, value_usd=float(value))
+        for (protocol, action, asset), value in aggregated.items()
+        if value > 0
+    ]
+    links.sort(key=lambda item: item.value_usd, reverse=True)
+    links = links[:96]
+    with _lending_flow_cache_lock:
+        _lending_flow_cache = (time.time(), links)
+    return links
+
+
 def _query_lending_data_page(ch, display_in: str) -> LendingDataPagePayload:
     return _build_lending_data_page_payload(
         _freshness_payload(),
         _query_lending_data_market_snapshots(ch),
         _query_protocol_tvl_history(ch, display_in),
         _query_protocol_apy_history(ch, AAVE_MARKET, "1W", 5000),
+        _query_lending_unique_users(ch),
+        _query_lending_flow_alluvial(ch),
     )
 
 
@@ -4046,6 +4416,12 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
             if protocol == AAVE_MARKET
             else "WHERE supply_usd >= 1000 OR borrow_usd >= 1000"
         )
+        if protocol == "EULER_MARKET":
+            loan_price_expr = "m.price_usd"
+            oracle_support_expr = "if(m.price_usd > 0, 'CHAINLINK_SUPPORTED', '')"
+        else:
+            loan_price_expr = "if(cp.feed != '', cp.price, 0.0)"
+            oracle_support_expr = "if(cp.feed != '', 'CHAINLINK_SUPPORTED', '')"
         query = f"""
         SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
                supply_apy, borrow_apy, utilization,
@@ -4065,8 +4441,8 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
                    m.supply_apy AS supply_apy,
                    m.borrow_apy AS borrow_apy,
                    m.utilization AS utilization,
-                   if(cp.feed != '', cp.price, 0.0) AS loan_price_usd,
-                   if(cp.feed != '', 'CHAINLINK_SUPPORTED', '') AS oracle_support,
+                   {loan_price_expr} AS loan_price_usd,
+                   {oracle_support_expr} AS oracle_support,
                    if(rr.entity_id != '', rr.ltv, 0.0) AS lltv
             FROM api_market_latest AS m FINAL
             LEFT JOIN (
@@ -4327,10 +4703,10 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
             converted.append(
                 ProtocolTvlPoint(
                     date=point.date,
-                aave=0.0,
-                euler=0.0,
-                fluid=0.0,
-                morpho=0.0,
+                    aave=0.0,
+                    euler=0.0,
+                    fluid=0.0,
+                    morpho=0.0,
                 )
             )
             continue

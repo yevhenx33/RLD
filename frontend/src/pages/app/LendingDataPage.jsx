@@ -26,6 +26,16 @@ const BORROW_APY_AREA = {
   format: "percent",
   yAxisId: "right",
 };
+const FLOW_PROTOCOL_COLORS = {
+  Aave: "#998EFF",
+  Morpho: "#2973FF",
+  Fluid: "#00D395",
+  Euler: "#23C09B",
+};
+const NET_FLOW_COLORS = {
+  Inflow: "#34d399",
+  Outflow: "#fb7185",
+};
 
 const finiteNumber = (value, fallback = 0) => {
   const number = Number(value);
@@ -40,12 +50,297 @@ const formatCurrency = (value) => {
   return `$${amount.toFixed(0)}`;
 };
 
+const formatSignedCurrency = (value) => {
+  const amount = finiteNumber(value);
+  if (Math.abs(amount) < 1) return "$0";
+  return `${amount < 0 ? "-" : "+"}${formatCurrency(Math.abs(amount))}`;
+};
+
 const formatApy = (value) => {
   return `${(finiteNumber(value) * 100).toFixed(2)}%`;
 };
 
 const formatPercent = (value, digits = 1) => {
   return `${(finiteNumber(value) * 100).toFixed(digits)}%`;
+};
+
+const formatCount = (value) => {
+  const count = finiteNumber(value);
+  if (count >= 1e6) return `${(count / 1e6).toFixed(2)}M`;
+  if (count >= 1e3) return `${(count / 1e3).toFixed(1)}K`;
+  return `${Math.round(count)}`;
+};
+
+const sumBy = (rows, key) => {
+  const totals = new Map();
+  rows.forEach((row) => {
+    const id = row[key] || "UNKNOWN";
+    totals.set(id, (totals.get(id) || 0) + finiteNumber(row.valueUsd));
+  });
+  return totals;
+};
+
+const displayProtocolName = (protocol) => {
+  const group = protocolGroup(protocol);
+  if (group === "AAVE") return "Aave";
+  if (group === "MORPHO") return "Morpho";
+  if (group === "EULER") return "Euler";
+  if (group === "FLUID") return "Fluid";
+  return protocol || "UNKNOWN";
+};
+
+const flowDirection = (action) => {
+  if (action === "Supply Inflow" || action === "Borrow Outflow" || action === "Net Inflow") return "Inflow";
+  if (action === "Supply Outflow" || action === "Borrow Inflow" || action === "Net Outflow") return "Outflow";
+  return null;
+};
+
+const aggregateAlluvialFlows = (flows) => {
+  const assetTotals = sumBy(flows, "asset");
+  const topAssets = new Set(
+    [...assetTotals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 12)
+      .map(([asset]) => asset)
+  );
+  const grouped = new Map();
+  flows.forEach((flow) => {
+    const protocol = displayProtocolName(flow.protocol);
+    const direction = flowDirection(flow.action);
+    if (!direction) return;
+    const asset = topAssets.has(flow.asset) ? flow.asset : "Other";
+    const key = `${protocol}|${asset}`;
+    const current = grouped.get(key) || { protocol, asset, inflowUsd: 0, outflowUsd: 0 };
+    const value = finiteNumber(flow.valueUsd);
+    if (direction === "Inflow") {
+      current.inflowUsd += value;
+    } else {
+      current.outflowUsd += value;
+    }
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].flatMap((row) => {
+    const rows = [];
+    if (row.inflowUsd > 0) rows.push({
+      protocol: row.protocol,
+      asset: row.asset,
+      direction: "Inflow",
+      valueUsd: row.inflowUsd,
+    });
+    if (row.outflowUsd > 0) rows.push({
+      protocol: row.protocol,
+      asset: row.asset,
+      direction: "Outflow",
+      valueUsd: row.outflowUsd,
+    });
+    return rows;
+  });
+};
+
+const evenlySpacedSlots = (items, totals, top, bottom, height, nodeHeight = 26) => {
+  const available = Math.max(1, height - top - bottom - nodeHeight);
+  const slots = new Map();
+  items.forEach((item, index) => {
+    const y = top + (items.length <= 1 ? available / 2 : (available * index) / (items.length - 1));
+    slots.set(item, {
+      y,
+      h: nodeHeight,
+      center: y + nodeHeight / 2,
+      total: totals.get(item) || 0,
+    });
+  });
+  return slots;
+};
+
+const proportionalSlots = (items, totals, top, bottom, height, minNodeHeight = 18, gap = 38) => {
+  const slots = new Map();
+  if (!items.length) return slots;
+  const total = items.reduce((sum, item) => sum + finiteNumber(totals.get(item)), 0);
+  const available = Math.max(1, height - top - bottom - gap * (items.length - 1));
+  const rawHeights = items.map((item) => {
+    if (total <= 0) return available / items.length;
+    return (available * finiteNumber(totals.get(item))) / total;
+  });
+  const visibleHeights = rawHeights.map((slotHeight) => Math.max(minNodeHeight, slotHeight));
+  const visibleTotal = visibleHeights.reduce((sum, slotHeight) => sum + slotHeight, 0);
+  const scale = visibleTotal > available ? available / visibleTotal : 1;
+  const heights = visibleHeights.map((slotHeight) => Math.max(10, slotHeight * scale));
+  const used = heights.reduce((sum, slotHeight) => sum + slotHeight, 0) + gap * (items.length - 1);
+  let y = top + Math.max(0, (height - top - bottom - used) / 2);
+  items.forEach((item, index) => {
+    const h = heights[index];
+    slots.set(item, {
+      y,
+      h,
+      center: y + h / 2,
+      total: totals.get(item) || 0,
+    });
+    y += h + gap;
+  });
+  return slots;
+};
+
+const sortFlowItems = (totals) => (a, b) => {
+  if (a === "Other" && b !== "Other") return 1;
+  if (b === "Other" && a !== "Other") return -1;
+  return totals.get(b) - totals.get(a);
+};
+
+const AlluvialFlowChart = ({ flows = [], loading = false }) => {
+  const model = useMemo(() => {
+    const rows = aggregateAlluvialFlows(flows);
+    const protocolFlowTotals = sumBy(rows, "protocol");
+    const protocolNetTotals = new Map();
+    rows.forEach((row) => {
+      const signedValue = row.direction === "Inflow" ? row.valueUsd : -row.valueUsd;
+      protocolNetTotals.set(row.protocol, (protocolNetTotals.get(row.protocol) || 0) + signedValue);
+    });
+    const inflowRows = rows.filter((row) => row.direction === "Inflow");
+    const outflowRows = rows.filter((row) => row.direction === "Outflow");
+    const protocolInflowTotals = sumBy(inflowRows, "protocol");
+    const protocolOutflowTotals = sumBy(outflowRows, "protocol");
+    const inflowAssetTotals = sumBy(inflowRows, "asset");
+    const outflowAssetTotals = sumBy(outflowRows, "asset");
+    const protocols = [...protocolFlowTotals.keys()].sort(sortFlowItems(protocolFlowTotals));
+    const inflowAssets = [...inflowAssetTotals.keys()].sort(sortFlowItems(inflowAssetTotals));
+    const outflowAssets = [...outflowAssetTotals.keys()].sort(sortFlowItems(outflowAssetTotals));
+    const total = [...protocolFlowTotals.values()].reduce((sum, value) => sum + value, 0);
+    const maxLinkValue = rows.reduce((max, row) => Math.max(max, row.valueUsd), 0);
+    return {
+      rows,
+      inflowRows,
+      outflowRows,
+      protocolFlowTotals,
+      protocolInflowTotals,
+      protocolOutflowTotals,
+      protocolNetTotals,
+      inflowAssetTotals,
+      outflowAssetTotals,
+      protocols,
+      inflowAssets,
+      outflowAssets,
+      total,
+      maxLinkValue,
+    };
+  }, [flows]);
+
+  if (loading && flows.length === 0) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Loader2 className="w-6 h-6 text-cyan-500 animate-spin" />
+      </div>
+    );
+  }
+  if (!model.rows.length) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-600 uppercase tracking-widest">
+        No flow data
+      </div>
+    );
+  }
+
+  const width = 1120;
+  const height = 390;
+  const top = 20;
+  const bottom = 20;
+  const nodeWidth = 12;
+  const xInflowAsset = 165;
+  const xProtocol = 555;
+  const xOutflowAsset = 930;
+
+  const inflowAssetLayout = proportionalSlots(model.inflowAssets, model.inflowAssetTotals, top + 22, bottom + 8, height, 10, 9);
+  const protocolLayout = proportionalSlots(model.protocols, model.protocolFlowTotals, top + 64, bottom + 38, height, 14, 42);
+  const outflowAssetLayout = proportionalSlots(model.outflowAssets, model.outflowAssetTotals, top + 22, bottom + 8, height, 10, 9);
+  const headerY = 14;
+  const ribbonPath = (x1, source, x2, target) => {
+    const mid = (x1 + x2) / 2;
+    return [
+      `M ${x1.toFixed(2)} ${source.y0.toFixed(2)}`,
+      `C ${mid.toFixed(2)} ${source.y0.toFixed(2)}, ${mid.toFixed(2)} ${target.y0.toFixed(2)}, ${x2.toFixed(2)} ${target.y0.toFixed(2)}`,
+      `L ${x2.toFixed(2)} ${target.y1.toFixed(2)}`,
+      `C ${mid.toFixed(2)} ${target.y1.toFixed(2)}, ${mid.toFixed(2)} ${source.y1.toFixed(2)}, ${x1.toFixed(2)} ${source.y1.toFixed(2)}`,
+      "Z",
+    ].join(" ");
+  };
+  const linkSegment = (layout, totals, offsets, key, value) => {
+    const slot = layout.get(key);
+    if (!slot) return null;
+    const total = Math.max(1, finiteNumber(totals.get(key)));
+    const dy = (slot.h * finiteNumber(value)) / total;
+    const offset = offsets.get(key) || 0;
+    offsets.set(key, offset + dy);
+    return {
+      y0: slot.y + offset,
+      y1: slot.y + offset + dy,
+    };
+  };
+
+  const inflowAssetOffsets = new Map();
+  const outflowAssetOffsets = new Map();
+  const protocolInflowOffsets = new Map();
+  const protocolOutflowOffsets = new Map();
+  const inflowLinks = model.inflowRows.sort((a, b) => b.valueUsd - a.valueUsd).map((row) => {
+    const source = linkSegment(inflowAssetLayout, model.inflowAssetTotals, inflowAssetOffsets, row.asset, row.valueUsd);
+    const target = linkSegment(protocolLayout, model.protocolInflowTotals, protocolInflowOffsets, row.protocol, row.valueUsd);
+    if (!source || !target) return null;
+    return {
+      d: ribbonPath(xInflowAsset + nodeWidth, source, xProtocol, target),
+      color: NET_FLOW_COLORS.Inflow,
+      title: `${row.asset} -> ${row.protocol}: ${formatCurrency(row.valueUsd)}`,
+    };
+  }).filter(Boolean);
+
+  const outflowLinks = model.outflowRows.sort((a, b) => b.valueUsd - a.valueUsd).map((row) => {
+    const source = linkSegment(protocolLayout, model.protocolOutflowTotals, protocolOutflowOffsets, row.protocol, row.valueUsd);
+    const target = linkSegment(outflowAssetLayout, model.outflowAssetTotals, outflowAssetOffsets, row.asset, row.valueUsd);
+    if (!source || !target) return null;
+    return {
+      d: ribbonPath(xProtocol + nodeWidth, source, xOutflowAsset, target),
+      color: NET_FLOW_COLORS.Outflow,
+      title: `${row.protocol} -> ${row.asset}: ${formatCurrency(row.valueUsd)}`,
+    };
+  }).filter(Boolean);
+
+  const renderNodes = (items, totals, slots, x, anchor, fallbackColor = "#64748b") => items.map((item) => {
+    const slot = slots.get(item);
+    const color = FLOW_PROTOCOL_COLORS[item] || fallbackColor;
+    const labelX = anchor === "end" ? x - 8 : x + nodeWidth + 8;
+    const textAnchor = anchor === "middle" ? "middle" : anchor;
+    const centeredX = anchor === "middle" ? x + nodeWidth / 2 : labelX;
+    const isProtocolNode = anchor === "middle";
+    return (
+      <g key={item}>
+        <rect x={x} y={slot.y} width={nodeWidth} height={slot.h} fill={color} rx="2" />
+        {isProtocolNode ? (
+          <text x={centeredX} y={slot.y - 8} textAnchor="middle" fill="#e5e7eb" fontSize="12">
+            {`${item}  ${formatSignedCurrency(model.protocolNetTotals.get(item))}`}
+          </text>
+        ) : (
+          <text x={centeredX} y={slot.y + slot.h / 2 + 4} textAnchor={textAnchor} fill="#e5e7eb" fontSize="12">
+            {`${item} ${formatCurrency(totals.get(item))}`}
+          </text>
+        )}
+      </g>
+    );
+  });
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" role="img" aria-label="Last 30 day lending flow alluvial chart">
+      <g>
+        {[...inflowLinks, ...outflowLinks].map((link, index) => (
+          <path key={index} d={link.d} fill={link.color} fillOpacity="0.32" stroke="none">
+            <title>{link.title}</title>
+          </path>
+        ))}
+        <text x={xInflowAsset + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">NET INFLOWS</text>
+        <text x={xProtocol + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">PROTOCOL</text>
+        <text x={xOutflowAsset + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">NET OUTFLOWS</text>
+        {renderNodes(model.inflowAssets, model.inflowAssetTotals, inflowAssetLayout, xInflowAsset, "end", NET_FLOW_COLORS.Inflow)}
+        {renderNodes(model.protocols, model.protocolFlowTotals, protocolLayout, xProtocol, "middle")}
+        {renderNodes(model.outflowAssets, model.outflowAssetTotals, outflowAssetLayout, xOutflowAsset, "start", NET_FLOW_COLORS.Outflow)}
+      </g>
+    </svg>
+  );
 };
 
 const protocolGroup = (protocol) => {
@@ -99,17 +394,21 @@ export default function LendingDataPage() {
     { refreshInterval: REFRESH_INTERVALS.API_PAGE_MS, dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS }
   );
 
-  const { stats, chartData, marketsData } = useMemo(() => {
+  const { stats, chartData, alluvialFlows, marketsData } = useMemo(() => {
     const page = gqlData?.lendingDataPage || {};
     return {
       stats: page.stats || {
         totalSupplyUsd: 0,
         totalBorrowUsd: 0,
+        pooledSupplyUsd: 0,
+        isolatedSupplyUsd: 0,
         averageSupplyApy: 0,
         averageBorrowApy: 0,
         marketCount: 0,
+        totalUsers: 0,
       },
       chartData: page.chartData || [],
+      alluvialFlows: page.alluvialFlows || [],
       marketsData: page.markets || [],
     };
   }, [gqlData]);
@@ -146,25 +445,18 @@ export default function LendingDataPage() {
       return {
         key: "tvl",
         color: "#22d3ee",
-        name: "Protocol TVL",
+        name: "Total TVL",
         format: "dollar",
       };
     }
     return {
       key: "tvl",
       color: "#22d3ee",
-      name: `Protocol TVL (${displayUnit})`,
+      name: `Total TVL (${displayUnit})`,
       format: "asset",
       unit: displayUnit,
     };
   }, [displayUnit]);
-
-  const chartAreas = useMemo(() => {
-    const areas = [tvlArea];
-    if (showSupplyApyHistory) areas.push(SUPPLY_APY_AREA);
-    if (showBorrowApyHistory) areas.push(BORROW_APY_AREA);
-    return areas;
-  }, [showBorrowApyHistory, showSupplyApyHistory, tvlArea]);
 
   return (
     <div className="min-h-screen bg-[#050505] text-gray-300 font-mono">
@@ -211,10 +503,10 @@ export default function LendingDataPage() {
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
                   <div className="flex flex-col justify-end">
-                    <StatItem label="POOLED" value={formatCurrency(stats.totalSupplyUsd)} />
+                    <StatItem label="POOLED" value={formatCurrency(stats.pooledSupplyUsd)} />
                   </div>
                   <div className="flex flex-col justify-end border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
-                    <StatItem label="ISOLATED" value="N/A" />
+                    <StatItem label="ISOLATED" value={formatCurrency(stats.isolatedSupplyUsd)} />
                   </div>
                 </div>
               }
@@ -229,7 +521,7 @@ export default function LendingDataPage() {
                     <StatItem label="MARKETS" value={stats.marketCount} />
                   </div>
                   <div className="flex flex-col justify-end border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
-                    <StatItem label="USERS" value="N/A" />
+                    <StatItem label="USERS" value={formatCount(stats.totalUsers)} />
                   </div>
                 </div>
               }
@@ -276,11 +568,11 @@ export default function LendingDataPage() {
             <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
-                  {`PROTOCOL TVL (${displayUnit})`}
+                  {`TOTAL TVL (${displayUnit})`}
                 </h2>
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2" style={{ backgroundColor: tvlArea.color }} />
-                  <span className="text-[9px] text-gray-500 uppercase tracking-widest">TVL</span>
+                  <span className="text-[9px] text-gray-500 uppercase tracking-widest">USD</span>
                 </div>
               </div>
               <div className="h-[280px] w-full relative mt-auto">
@@ -298,6 +590,25 @@ export default function LendingDataPage() {
               </div>
             </div>
 
+          </div>
+
+          <div className="mt-6 flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
+            <div className="flex items-center justify-between mb-4 gap-4">
+              <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
+                NET 30D LENDING FLOWS
+              </h2>
+              <div className="flex items-center gap-3 flex-wrap justify-end">
+                {Object.entries(NET_FLOW_COLORS).map(([label, color]) => (
+                  <div key={label} className="flex items-center gap-2">
+                    <div className="w-2 h-2" style={{ backgroundColor: color }} />
+                    <span className="text-[9px] text-gray-500 uppercase tracking-widest">{`NET_${label}`}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="h-[390px] w-full relative mt-auto">
+              <AlluvialFlowChart flows={alluvialFlows} loading={loading} />
+            </div>
           </div>
         </section>
 
@@ -322,7 +633,7 @@ export default function LendingDataPage() {
                   LENDING
                 </button>
                 <div className="flex items-center gap-1">
-                  {['AAVE', 'MORPHO', 'FLUID'].map(p => (
+                  {['AAVE', 'MORPHO', 'FLUID', 'EULER'].map(p => (
                     <button
                       key={p}
                       onClick={() => handleProtocolFilter(p)}
@@ -331,9 +642,6 @@ export default function LendingDataPage() {
                       {p}
                     </button>
                   ))}
-                  <button disabled className="text-xs md:text-sm tracking-widest uppercase text-gray-700 px-3 py-1.5 pt-2 cursor-not-allowed border border-transparent">
-                    EULER <span className="text-[9px] opacity-50">(SOON)</span>
-                  </button>
                 </div>
               </div>
 

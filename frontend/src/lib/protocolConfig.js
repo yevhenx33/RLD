@@ -31,7 +31,7 @@ const PROTOCOLS = {
     slug: "euler",
     apiProtocol: "EULER_MARKET",
     displayName: "Euler",
-    supportsMarketPage: false,
+    supportsMarketPage: true,
     stripRoutePrefix: true,
   },
 };
