@@ -14,7 +14,7 @@ const ProtocolMarketsPage = lazy(
   () => import("../features/explore/pages/ProtocolMarketsPage"),
 );
 const AaveMarketPage = lazy(() => import("../pages/app/markets/AaveMarketPage"));
-const MorphoMarketPage = AaveMarketPage;
+const MorphoMarketPage = lazy(() => import("../pages/app/markets/MorphoMarketPage"));
 const FluidMarketPage = AaveMarketPage;
 const PendleMarketPage = lazy(() => import("../pages/app/markets/PendleMarketPage"));
 const UnsupportedMarketPage = lazy(() => import("../pages/app/markets/UnsupportedMarketPage"));

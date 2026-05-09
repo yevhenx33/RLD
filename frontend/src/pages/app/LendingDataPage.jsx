@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
@@ -378,10 +378,26 @@ export default function LendingDataPage() {
                         }`}
                     >
                       <div className="col-span-2 flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
-                          <img src={getTokenIcon(pool.symbol)} alt={pool.symbol} className="w-full h-full object-contain rounded-full" />
-                        </div>
-                        <span className="text-sm text-white font-medium">{pool.symbol}</span>
+                        {pool.collateralSymbol && protocolGroup(pool.protocol) === 'MORPHO' ? (
+                          <>
+                            <div className="flex items-center -space-x-2">
+                              <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm z-10">
+                                <img src={getTokenIcon(pool.collateralSymbol)} alt={pool.collateralSymbol} className="w-full h-full object-contain rounded-full" />
+                              </div>
+                              <div className="w-6 h-6 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
+                                <img src={getTokenIcon(pool.symbol)} alt={pool.symbol} className="w-full h-full object-contain rounded-full" />
+                              </div>
+                            </div>
+                            <span className="text-sm text-white font-medium">{pool.collateralSymbol}<span className="text-gray-500"> / {pool.symbol}</span></span>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
+                              <img src={getTokenIcon(pool.symbol)} alt={pool.symbol} className="w-full h-full object-contain rounded-full" />
+                            </div>
+                            <span className="text-sm text-white font-medium">{pool.symbol}</span>
+                          </>
+                        )}
                       </div>
                       <div className="text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.netWorth)}</div>
                       <div className="text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.supplyUsd)}</div>

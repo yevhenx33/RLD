@@ -27,6 +27,7 @@ from analytics.api.graphql import (  # noqa: E402
     _is_introspection_query,
     _protocol_readiness_items,
     _query_depth,
+    _query_morpho_allocation_timeseries,
     _rate_limit_allowed,
 )
 
@@ -166,6 +167,41 @@ class PageModelTests(unittest.TestCase):
         self.assertEqual(payload.rate_chart[0].borrow_apy, 8.0)
         self.assertEqual(payload.rate_chart[0].utilization, 50.0)
         self.assertEqual(len(payload.flow_chart), 1)
+
+    def test_morpho_allocation_timeseries_is_backend_bucketed(self):
+        class Result:
+            result_rows = [
+                (1_700_000_000, "0xvault", "Vault", 123.45, 0.25),
+            ]
+
+        class FakeClickHouse:
+            sql = ""
+            parameters = {}
+
+            def query(self, sql, parameters=None):
+                self.sql = sql
+                self.parameters = parameters or {}
+                return Result()
+
+        ch = FakeClickHouse()
+        rows = _query_morpho_allocation_timeseries(
+            ch,
+            "0x64d65c9a2d91c36d56fbc42d69e979335320169b3df63bf92789e2c8883fcc64",
+            limit=500,
+        )
+
+        self.assertIn("toStartOfDay(a.timestamp)", ch.sql)
+        self.assertIn("top_vaults", ch.sql)
+        self.assertIn("timestamp >= %(start_ts)s", ch.sql)
+        self.assertEqual(ch.parameters["top_n"], 15)
+        self.assertEqual(
+            ch.parameters["market_id"],
+            "0x64d65c9a2d91c36d56fbc42d69e979335320169b3df63bf92789e2c8883fcc64",
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].timestamp, 1_700_000_000)
+        self.assertEqual(rows[0].vault_address, "0xvault")
+        self.assertEqual(rows[0].supplied_usd, 123.45)
 
     def test_graphql_introspection_detector_ignores_regular_queries(self):
         self.assertFalse(_is_introspection_query("query Market { latestRates { timestamp } }"))

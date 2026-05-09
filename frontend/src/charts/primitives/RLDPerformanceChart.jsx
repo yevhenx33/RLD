@@ -135,7 +135,6 @@ const RLDPerformanceChart = ({
     const shouldPreserve = isSameStart && isSmallChange;
 
     if (shouldPreserve) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setZoomState((prev) => {
         if (!prev) return { start: 0, end: data.length - 1 };
         // Clamp to new bounds
@@ -451,7 +450,7 @@ const RLDPerformanceChart = ({
       className="w-full h-full select-none outline-none focus:outline-none"
       style={{ touchAction: "none" }} // Hint to browser to let us handle touch
     >
-      <ResponsiveContainer width="100%" height="100%">
+      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
         <AreaChart
           data={visibleData} // Use sliced data
           margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
