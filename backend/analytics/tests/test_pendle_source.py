@@ -62,6 +62,7 @@ class PendleSourceTests(unittest.TestCase):
             asset_address="0xabc",
             asset_type="PT",
             symbol="PT-test",
+            expiry=dt.datetime(2026, 7, 1),
             time_frame="hour",
         )
 
@@ -69,7 +70,8 @@ class PendleSourceTests(unittest.TestCase):
         self.assertEqual(rows[0][0], "0xabc")
         self.assertEqual(rows[0][1], ETHEREUM_CHAIN_ID)
         self.assertEqual(rows[0][2], "PT")
-        self.assertEqual(rows[0][6:11], [0.9, 1.0, 0.8, 0.95, 123.4])
+        self.assertEqual(rows[0][4], dt.datetime(2026, 7, 1))
+        self.assertEqual(rows[0][7:12], [0.9, 1.0, 0.8, 0.95, 123.4])
 
     def test_discovery_keeps_only_ethereum_pt_yt_assets(self):
         source = FakePendleSource(
@@ -161,7 +163,7 @@ class PendleSourceTests(unittest.TestCase):
 
         self.assertEqual(inserted, 1)
         self.assertEqual(ch.inserted[0][0], "pendle_eth_price_latest")
-        self.assertEqual(ch.inserted[0][1][0][4], 0.95)
+        self.assertEqual(ch.inserted[0][1][0][5], 0.95)
 
     def test_latest_prices_derive_missing_active_yt_from_pt(self):
         source = FakePendleSource(
@@ -203,9 +205,80 @@ class PendleSourceTests(unittest.TestCase):
             )
 
         self.assertEqual(inserted, 2)
-        prices = {row[2]: row[4] for row in ch.inserted[0][1]}
+        prices = {row[2]: row[5] for row in ch.inserted[0][1]}
         self.assertAlmostEqual(prices["PT"], 0.95)
         self.assertAlmostEqual(prices["YT"], 0.95 * 0.10 * (182 / 365))
+
+    def test_latest_prices_override_active_yt_api_price_with_pt_derivation(self):
+        source = FakePendleSource(
+            [
+                {
+                    "prices": {
+                        "1-0xpt": {"price": 0.95},
+                        "1-0xyt": {"price": 123.0},
+                    }
+                }
+            ]
+        )
+        ch = FakeClickHouse()
+        metadata = json.dumps({"market": {"details": {"impliedApy": 0.10}}})
+
+        with patch("analytics.sources.pendle._utc_now_naive", return_value=dt.datetime(2026, 1, 1)):
+            source._sync_latest_prices(
+                ch,
+                [
+                    {
+                        "asset_address": "0xpt",
+                        "asset_type": "PT",
+                        "symbol": "PT-mainnet",
+                        "market_address": "0xmarket",
+                        "active": 1,
+                        "expiry": dt.datetime(2026, 7, 2),
+                        "raw_metadata_json": metadata,
+                    },
+                    {
+                        "asset_address": "0xyt",
+                        "asset_type": "YT",
+                        "symbol": "YT-mainnet",
+                        "market_address": "0xmarket",
+                        "active": 1,
+                        "expiry": dt.datetime(2026, 7, 2),
+                        "raw_metadata_json": metadata,
+                    },
+                ],
+            )
+
+        prices = {row[2]: row[5] for row in ch.inserted[0][1]}
+        self.assertAlmostEqual(prices["YT"], 0.95 * 0.10 * (182 / 365))
+
+    def test_derive_yt_history_rows_from_pt_ohlcv(self):
+        source = FakePendleSource([])
+        source.time_frame = "hour"
+        ch = FakeClickHouse(
+            [
+                (dt.datetime(2026, 1, 1), 0.90, 1.00, 0.80, 0.95),
+            ]
+        )
+        metadata = json.dumps({"market": {"details": {"impliedApy": 0.10}}})
+
+        rows = source._derive_yt_history_rows(
+            ch,
+            {
+                "asset_address": "0xyt",
+                "asset_type": "YT",
+                "symbol": "YT-mainnet",
+                "expiry": dt.datetime(2026, 7, 2),
+                "raw_metadata_json": metadata,
+            },
+            {"asset_address": "0xpt"},
+            dt.datetime(2026, 1, 1),
+            dt.datetime(2026, 1, 2),
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][4], dt.datetime(2026, 7, 2))
+        self.assertEqual(rows[0][5], "hour")
+        self.assertAlmostEqual(rows[0][10], 0.95 * 0.10 * (182 / 365))
 
     def test_derive_yt_price_from_pt_returns_zero_after_expiry(self):
         price = _derive_yt_price_from_pt(
@@ -258,18 +331,19 @@ class PendleSourceTests(unittest.TestCase):
 
     def test_graphql_latest_and_history_helpers_map_rows(self):
         latest = _query_pendle_eth_latest_prices(
-            FakeClickHouse([("0xpt", 1, "PT", "PT-mainnet", 0.95, dt.datetime(2026, 1, 1))]),
+            FakeClickHouse([("0xpt", 1, "PT", "PT-mainnet", dt.datetime(2026, 7, 1), 0.95, dt.datetime(2026, 1, 1))]),
             ["PT"],
             ["0xpt"],
             10,
         )
         self.assertEqual(latest[0].price_usd, 0.95)
+        self.assertEqual(latest[0].expiry, 1782864000)
 
         history = _query_pendle_eth_price_history(
             FakeClickHouse(
                 [
-                    (dt.datetime(2026, 1, 2), 0.95, 1.0, 0.9, 0.98, 11.0),
-                    (dt.datetime(2026, 1, 1), 0.90, 0.95, 0.85, 0.92, 10.0),
+                    (dt.datetime(2026, 1, 2), dt.datetime(2026, 7, 1), 0.95, 1.0, 0.9, 0.98, 11.0),
+                    (dt.datetime(2026, 1, 1), dt.datetime(2026, 7, 1), 0.90, 0.95, 0.85, 0.92, 10.0),
                 ]
             ),
             "0xpt",
@@ -281,6 +355,7 @@ class PendleSourceTests(unittest.TestCase):
 
         self.assertEqual([point.timestamp for point in history], [1767225600, 1767312000])
         self.assertEqual(history[0].close, 0.92)
+        self.assertEqual(history[0].expiry, 1782864000)
 
 
 if __name__ == "__main__":

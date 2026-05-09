@@ -170,6 +170,28 @@ def cmd_fluid_product_backfill(args) -> int:
     return run_fluid_product_backfill(args)
 
 
+def cmd_fluid_repair(args) -> int:
+    from analytics.scripts.repair_fluid_events import run_repair
+
+    ch = ch_client()
+    try:
+        return run_repair(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_fluid_validate_rpc(args) -> int:
+    from analytics.scripts.repair_fluid_events import run_validate
+
+    ch = ch_client()
+    try:
+        return run_validate(args, ch)
+    finally:
+        ch.close()
+
+
+
+
 def cmd_views(args) -> int:
     from analytics.schema import list_serving_views, rebuild_aggregates
 
@@ -416,6 +438,31 @@ def main() -> int:
     fluid_full.add_argument("--skip-oracles", action="store_true")
     fluid_full.add_argument("--skip-validation", action="store_true")
     fluid_full.set_defaults(func=cmd_fluid_product_backfill)
+
+    fluid_repair = sub.add_parser("fluid-repair", help="Repair missing Fluid raw logs from Ethereum RPC")
+    fluid_repair.add_argument("--rpc-url", default=None)
+    fluid_repair.add_argument("--from-block", type=int, required=True)
+    fluid_repair.add_argument("--to-block", type=int, default=0, help="Inclusive block; defaults to confirmed RPC head")
+    fluid_repair.add_argument("--batch-blocks", type=int, default=200)
+    fluid_repair.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_repair.add_argument("--retries", type=int, default=2)
+    fluid_repair.add_argument("--dry-run", action="store_true")
+    fluid_repair.add_argument("--replay", action="store_true", help="Replay Fluid state and serving rows after inserting missing raw logs")
+    fluid_repair.add_argument("--force-replay", action="store_true", help="Run replay even if no missing logs were found")
+    fluid_repair.add_argument("--replay-from-block", type=int, default=0)
+    fluid_repair.add_argument("--replay-batch-blocks", type=int, default=50000)
+    fluid_repair.set_defaults(func=cmd_fluid_repair)
+
+    fluid_validate = sub.add_parser("fluid-validate-rpc", help="Validate Fluid raw logs and reserve state against Ethereum RPC")
+    fluid_validate.add_argument("--rpc-url", default=None)
+    fluid_validate.add_argument("--from-block", type=int, default=0)
+    fluid_validate.add_argument("--to-block", type=int, default=0, help="Inclusive block; defaults to confirmed RPC head")
+    fluid_validate.add_argument("--recent-blocks", type=int, default=500)
+    fluid_validate.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_validate.add_argument("--batch-blocks", type=int, default=200)
+    fluid_validate.add_argument("--retries", type=int, default=2)
+    fluid_validate.add_argument("--fail-on-drift", action="store_true")
+    fluid_validate.set_defaults(func=cmd_fluid_validate_rpc)
 
     views = sub.add_parser("views", help="Manage serving materialized views")
     views_sub = views.add_subparsers(dest="views_command", required=True)

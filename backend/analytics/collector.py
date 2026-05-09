@@ -69,6 +69,25 @@ def build_block_ts_map(blocks) -> dict:
             ts_map[b.number] = datetime.datetime.fromtimestamp(ts_val, tz=datetime.UTC)
     return ts_map
 
+
+def hypersync_to_block_exclusive(current_start: int, head_block: int, batch_size: int = BATCH_SIZE) -> int:
+    """Return the exclusive HyperSync to_block for an inclusive confirmed head."""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    return min(int(current_start) + int(batch_size), int(head_block) + 1)
+
+
+def scanned_block_from_exclusive(to_block_exclusive: int) -> int:
+    """Convert a non-empty exclusive upper bound to the last scanned block."""
+    return int(to_block_exclusive) - 1
+
+
+def advance_hypersync_cursor(cursor: int, next_block: int) -> int:
+    if int(next_block) <= int(cursor):
+        raise RuntimeError(f"HyperSync cursor did not advance: cursor={cursor} next_block={next_block}")
+    return int(next_block)
+
+
 class ProtocolCollector:
     """
     Vertical Event Collector logic. 
@@ -214,7 +233,8 @@ class ProtocolCollector:
         current_start = from_block
 
         while current_start <= head_block:
-            current_end = min(current_start + BATCH_SIZE - 1, head_block)
+            batch_to_exclusive = hypersync_to_block_exclusive(current_start, head_block)
+            current_end = scanned_block_from_exclusive(batch_to_exclusive)
             
             mempool_logs = []
             mempool_blocks = []
@@ -222,10 +242,10 @@ class ProtocolCollector:
             cursor = current_start
 
             try:
-                while cursor <= current_end:
+                while cursor < batch_to_exclusive:
                     query = hypersync.Query(
                         from_block=cursor,
-                        to_block=current_end,
+                        to_block=batch_to_exclusive,
                         logs=[log_selection],
                         field_selection=hypersync.FieldSelection(
                             log=LOG_FIELDS,
@@ -238,10 +258,7 @@ class ProtocolCollector:
                     mempool_blocks.extend(res.data.blocks)
                     pages += 1
 
-                    nb = res.next_block
-                    if nb <= cursor:
-                        break
-                    cursor = nb
+                    cursor = advance_hypersync_cursor(cursor, res.next_block)
             except Exception:
                 self._reset_clients()
                 raise
@@ -253,7 +270,7 @@ class ProtocolCollector:
                     source_head_block=head_block,
                     last_event_block=self._raw_head(ch),
                 )
-                current_start = current_end + 1
+                current_start = batch_to_exclusive
                 continue
 
             # Route & Write strictly to this protocol's raw_table
@@ -280,4 +297,4 @@ class ProtocolCollector:
             mempool_blocks.clear()
             block_ts_map.clear()
             
-            current_start = current_end + 1
+            current_start = batch_to_exclusive

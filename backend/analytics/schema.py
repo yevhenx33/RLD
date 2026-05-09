@@ -301,6 +301,7 @@ def ensure_schema(ch) -> None:
             chain_id UInt32,
             asset_type LowCardinality(String),
             symbol String,
+            expiry DateTime DEFAULT toDateTime(0),
             price_usd Float64,
             source_timestamp DateTime,
             updated_at DateTime DEFAULT now()
@@ -315,6 +316,7 @@ def ensure_schema(ch) -> None:
             chain_id UInt32,
             asset_type LowCardinality(String),
             symbol String,
+            expiry DateTime DEFAULT toDateTime(0),
             time_frame LowCardinality(String),
             timestamp DateTime,
             open Float64,
@@ -327,6 +329,14 @@ def ensure_schema(ch) -> None:
         PARTITION BY toStartOfMonth(timestamp)
         ORDER BY (asset_address, time_frame, timestamp)
         """
+    )
+    ch.command(
+        f"ALTER TABLE {PENDLE_ETH_PRICE_LATEST_TABLE} "
+        "ADD COLUMN IF NOT EXISTS expiry DateTime DEFAULT toDateTime(0) AFTER symbol"
+    )
+    ch.command(
+        f"ALTER TABLE {PENDLE_ETH_PRICE_OHLCV_TABLE} "
+        "ADD COLUMN IF NOT EXISTS expiry DateTime DEFAULT toDateTime(0) AFTER symbol"
     )
     ch.command(
         f"""

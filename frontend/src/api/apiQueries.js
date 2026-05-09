@@ -56,6 +56,7 @@ export const LENDING_DATA_QUERY = `
         borrowApy
         utilization
         netWorth
+        collateralSymbol
       }
     }
   }
@@ -91,12 +92,13 @@ export const PROTOCOL_MARKETS_QUERY = `
 `;
 
 export const MARKET_PAGE_QUERY = `
-  query MarketPage($protocol: String!, $marketId: String!, $timeseriesLimit: Int!, $flowLimit: Int!) {
+  query MarketPage($protocol: String!, $marketId: String!, $timeseriesLimit: Int!, $flowLimit: Int!, $allocationLimit: Int!) {
     marketPage(
       protocol: $protocol
       marketId: $marketId
       timeseriesLimit: $timeseriesLimit
       flowLimit: $flowLimit
+      allocationLimit: $allocationLimit
     ) {
       freshness { ready status generatedAt }
       market {
@@ -108,6 +110,15 @@ export const MARKET_PAGE_QUERY = `
         supplyApy
         borrowApy
         utilization
+        collateralSymbol
+        lltv
+        collateralUsd
+        oracle
+        loanPriceUsd
+        collateralPriceUsd
+        loanToken
+        collateralToken
+        oracleSupport
       }
       rateChart {
         timestamp
@@ -128,9 +139,15 @@ export const MARKET_PAGE_QUERY = `
         cumulativeSupplyNetInflowUsd
         cumulativeBorrowNetInflowUsd
       }
+      allocationColumnar {
+        timestamps
+        vaults { id address name }
+        suppliedUsd
+      }
     }
   }
 `;
+
 
 export const PENDLE_MARKET_QUERY = `
   query PendleMarket($search: String!) {

@@ -140,6 +140,7 @@ def parse_ohlcv_csv(
     asset_address: str,
     asset_type: str,
     symbol: str,
+    expiry: dt.datetime | None = None,
     time_frame: str,
 ) -> list[list[Any]]:
     if not csv_text or not csv_text.strip():
@@ -156,6 +157,7 @@ def parse_ohlcv_csv(
                 ETHEREUM_CHAIN_ID,
                 asset_type,
                 symbol,
+                expiry or dt.datetime(1970, 1, 1),
                 time_frame,
                 timestamp,
                 _safe_float(item.get("open")),
@@ -216,6 +218,7 @@ class PendleEthereumPtYtSource(BaseSource):
                 chain_id UInt32,
                 asset_type LowCardinality(String),
                 symbol String,
+                expiry DateTime DEFAULT toDateTime(0),
                 price_usd Float64,
                 source_timestamp DateTime,
                 updated_at DateTime DEFAULT now()
@@ -230,6 +233,7 @@ class PendleEthereumPtYtSource(BaseSource):
                 chain_id UInt32,
                 asset_type LowCardinality(String),
                 symbol String,
+                expiry DateTime DEFAULT toDateTime(0),
                 time_frame LowCardinality(String),
                 timestamp DateTime,
                 open Float64,
@@ -254,6 +258,14 @@ class PendleEthereumPtYtSource(BaseSource):
             ) ENGINE = ReplacingMergeTree(updated_at)
             ORDER BY (asset_address, time_frame)
             """
+        )
+        ch.command(
+            "ALTER TABLE pendle_eth_price_latest "
+            "ADD COLUMN IF NOT EXISTS expiry DateTime DEFAULT toDateTime(0) AFTER symbol"
+        )
+        ch.command(
+            "ALTER TABLE pendle_eth_price_ohlcv "
+            "ADD COLUMN IF NOT EXISTS expiry DateTime DEFAULT toDateTime(0) AFTER symbol"
         )
 
     def _get_json(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -430,9 +442,7 @@ class PendleEthereumPtYtSource(BaseSource):
         derived_yt_prices = 0
         for asset in assets:
             price = prices_by_address.get(asset["asset_address"])
-            if asset.get("asset_type") == "YT" and (
-                price is None or (price <= 0 and int(asset.get("active") or 0) == 1)
-            ):
+            if asset.get("asset_type") == "YT" and int(asset.get("active") or 0) == 1:
                 pair = by_market.get(str(asset.get("market_address") or ""), {})
                 pt_asset = pair.get("PT")
                 pt_price = prices_by_address.get(pt_asset["asset_address"]) if pt_asset else None
@@ -449,6 +459,7 @@ class PendleEthereumPtYtSource(BaseSource):
                     ETHEREUM_CHAIN_ID,
                     asset["asset_type"],
                     asset["symbol"],
+                    asset.get("expiry") or dt.datetime(1970, 1, 1),
                     price,
                     now,
                 ]
@@ -461,7 +472,7 @@ class PendleEthereumPtYtSource(BaseSource):
             ch,
             "pendle_eth_price_latest",
             rows,
-            ["asset_address", "chain_id", "asset_type", "symbol", "price_usd", "source_timestamp"],
+            ["asset_address", "chain_id", "asset_type", "symbol", "expiry", "price_usd", "source_timestamp"],
         )
 
     def _existing_history_cursor(self, ch, asset_address: str, time_frame: str) -> Optional[dt.datetime]:
@@ -508,16 +519,76 @@ class PendleEthereumPtYtSource(BaseSource):
             return min(now, expiry + dt.timedelta(days=1))
         return now
 
+    @staticmethod
+    def _sql_datetime(value: dt.datetime) -> str:
+        return value.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+
+    def _derive_yt_history_rows(
+        self,
+        ch,
+        yt_asset: dict[str, Any],
+        pt_asset: dict[str, Any] | None,
+        start_ts: dt.datetime,
+        end_ts: dt.datetime,
+    ) -> list[list[Any]]:
+        if not pt_asset:
+            return []
+        pt_address = str(pt_asset.get("asset_address") or "")
+        if not pt_address:
+            return []
+        sql = (
+            "SELECT timestamp, open, high, low, close "
+            "FROM pendle_eth_price_ohlcv FINAL "
+            f"WHERE asset_address = '{pt_address}' "
+            f"AND time_frame = '{self.time_frame}' "
+            f"AND timestamp >= toDateTime('{self._sql_datetime(start_ts)}') "
+            f"AND timestamp <= toDateTime('{self._sql_datetime(end_ts)}') "
+            "ORDER BY timestamp"
+        )
+        pt_rows = ch.query(sql).result_rows
+        expiry = yt_asset.get("expiry") or dt.datetime(1970, 1, 1)
+        rows: list[list[Any]] = []
+        for timestamp, open_, high, low, close in pt_rows:
+            ts = _parse_datetime(timestamp)
+            if ts is None:
+                continue
+            derived_prices = [
+                _derive_yt_price_from_pt(yt_asset, _safe_float(value), ts)
+                for value in (open_, high, low, close)
+            ]
+            if any(value is None for value in derived_prices):
+                continue
+            rows.append(
+                [
+                    yt_asset["asset_address"],
+                    ETHEREUM_CHAIN_ID,
+                    yt_asset["asset_type"],
+                    yt_asset["symbol"],
+                    expiry,
+                    self.time_frame,
+                    ts,
+                    float(derived_prices[0]),
+                    float(derived_prices[1]),
+                    float(derived_prices[2]),
+                    float(derived_prices[3]),
+                    0.0,
+                ]
+            )
+        return rows
+
     def _sync_historical_prices(self, ch, assets: list[dict[str, Any]]) -> int:
         if not assets or self.max_backfill_calls <= 0:
             return 0
         inserted = 0
         calls = 0
+        by_market: dict[str, dict[str, dict[str, Any]]] = {}
+        for asset in assets:
+            market_address = str(asset.get("market_address") or "")
+            if market_address:
+                by_market.setdefault(market_address, {})[str(asset.get("asset_type"))] = asset
         step_seconds = _time_frame_step_seconds(self.time_frame)
         window_seconds = _history_window_seconds(self.time_frame)
         for asset in sorted(assets, key=lambda item: (item["active"] == 0, item["symbol"], item["asset_address"])):
-            if calls >= self.max_backfill_calls:
-                break
             cursor = self._existing_history_cursor(ch, asset["asset_address"], self.time_frame)
             start_ts = (
                 cursor + dt.timedelta(seconds=step_seconds)
@@ -528,34 +599,47 @@ class PendleEthereumPtYtSource(BaseSource):
             if start_ts is None or start_ts >= end_cap:
                 continue
             end_ts = min(end_cap, start_ts + dt.timedelta(seconds=window_seconds - step_seconds))
-            calls += 1
-            try:
-                payload = self._get_json(
-                    f"/v4/{ETHEREUM_CHAIN_ID}/prices/{asset['asset_address']}/ohlcv",
-                    {
-                        "time_frame": self.time_frame,
-                        "timestamp_start": start_ts.replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-                        "timestamp_end": end_ts.replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-                    },
-                )
-            except Exception as exc:
-                log.warning(
-                    "[%s] skipping failed OHLCV window asset=%s frame=%s start=%s end=%s error=%s",
-                    self.name,
-                    asset["asset_address"],
-                    self.time_frame,
+            rows: list[list[Any]] = []
+            if asset.get("asset_type") == "YT" and int(asset.get("active") or 0) == 1:
+                rows = self._derive_yt_history_rows(
+                    ch,
+                    asset,
+                    by_market.get(str(asset.get("market_address") or ""), {}).get("PT"),
                     start_ts,
                     end_ts,
-                    exc,
                 )
-                continue
-            rows = parse_ohlcv_csv(
-                str(payload.get("results") or ""),
-                asset_address=asset["asset_address"],
-                asset_type=asset["asset_type"],
-                symbol=asset["symbol"],
-                time_frame=self.time_frame,
-            )
+            if not rows:
+                if calls >= self.max_backfill_calls:
+                    continue
+                calls += 1
+                try:
+                    payload = self._get_json(
+                        f"/v4/{ETHEREUM_CHAIN_ID}/prices/{asset['asset_address']}/ohlcv",
+                        {
+                            "time_frame": self.time_frame,
+                            "timestamp_start": start_ts.replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+                            "timestamp_end": end_ts.replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+                        },
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "[%s] skipping failed OHLCV window asset=%s frame=%s start=%s end=%s error=%s",
+                        self.name,
+                        asset["asset_address"],
+                        self.time_frame,
+                        start_ts,
+                        end_ts,
+                        exc,
+                    )
+                    continue
+                rows = parse_ohlcv_csv(
+                    str(payload.get("results") or ""),
+                    asset_address=asset["asset_address"],
+                    asset_type=asset["asset_type"],
+                    symbol=asset["symbol"],
+                    expiry=asset.get("expiry") or dt.datetime(1970, 1, 1),
+                    time_frame=self.time_frame,
+                )
             if not rows:
                 self._update_history_progress(ch, asset["asset_address"], self.time_frame, end_ts)
                 continue
@@ -568,6 +652,7 @@ class PendleEthereumPtYtSource(BaseSource):
                     "chain_id",
                     "asset_type",
                     "symbol",
+                    "expiry",
                     "time_frame",
                     "timestamp",
                     "open",
@@ -577,7 +662,7 @@ class PendleEthereumPtYtSource(BaseSource):
                     "volume",
                 ],
             )
-            self._update_history_progress(ch, asset["asset_address"], self.time_frame, rows[-1][5])
+            self._update_history_progress(ch, asset["asset_address"], self.time_frame, rows[-1][6])
         return inserted
 
     async def poll_and_insert(self, ch: clickhouse_connect.driver.Client) -> int:
