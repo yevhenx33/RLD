@@ -1,0 +1,40 @@
+name: astrid-nats
+
+services:
+  nats:
+    image: nats:2.12-alpine
+    container_name: astrid_nats
+    command:
+      [
+        "-js",
+        "-sd",
+        "/data",
+        "-m",
+        "8222"
+      ]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4222:4222"
+      - "127.0.0.1:8222:8222"
+    volumes:
+      - astrid_nats_data:/data
+    networks:
+      - astrid_shared
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8222/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    labels:
+      com.astrid.owner: "data-platform"
+      com.astrid.service: "astrid-nats"
+      com.astrid.tier: "data-distribution"
+      com.astrid.persistence: "jetstream"
+
+volumes:
+  astrid_nats_data:
+
+networks:
+  astrid_shared:
+    name: ${ASTRID_DOCKER_NETWORK:-rld_shared}
+    external: true

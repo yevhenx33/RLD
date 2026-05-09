@@ -113,6 +113,50 @@
   - `null` = No debt (infinite health factor)
 - **Display:** Show `∞` or `—` for null values
 
+### `deploymentId`
+- **Type:** `String`
+- **Default:** `"ethereum:aave-v3-core"`
+- **Meaning:** Identifies which Aave deployment the data comes from (allows future multi-chain support)
+- **Available on:** `AaveAccount`, `AaveAccountStats`
+
+### `weightedLiquidationThreshold`
+- **Type:** `Float64`
+- **Unit:** Ratio (0–1)
+- **Meaning:** Collateral-weighted average liquidation threshold across all positions
+- **Available on:** `AaveAccount`, `AaveAccountProfilePoint`
+
+### `scaledSupplyRaw` / `scaledVariableDebtRaw`
+- **Type:** `String` (int256-scale raw values)
+- **Meaning:** Scaled (index-normalized) token balances before index multiplication
+- **Available on:** `AaveAccountPosition`
+- **Use case:** Precise on-chain position reconstruction. Multiply by current liquidity/borrow index to get actual token amounts.
+
+### `debtPositionCount` / `collateralPositionCount`
+- **Type:** `Int`
+- **Meaning:** Number of reserves with non-zero debt / collateral-enabled supply
+- **Available on:** `AaveAccountProfilePoint`
+
+### `lastEventBlock`
+- **Type:** `Int` (block number)
+- **Meaning:** The most recent on-chain block that modified this profile snapshot
+- **Available on:** `AaveAccountProfilePoint`
+
+### `latestPriceTimestamp` (freshness)
+- **Type:** `Int` (Unix seconds)
+- **Meaning:** Timestamp of the most recent price data used in account reconstruction
+- **Available on:** `AaveAccountFreshness`
+
+### `lastRpcAuditTimestamp` (freshness)
+- **Type:** `Int` (Unix seconds)
+- **Meaning:** When the last RPC validation audit was run
+- **Available on:** `AaveAccountFreshness`
+
+### `auditPrecisionStatus` (freshness)
+- **Type:** `String`
+- **Values:** `"PASS"`, `"FAIL"`, `"PENDING"`, `"UNKNOWN"`
+- **Meaning:** Whether the most recent RPC audit confirmed reconstruction accuracy within tolerance
+- **Available on:** `AaveAccountFreshness`
+
 ---
 
 ## Morpho-Specific Fields

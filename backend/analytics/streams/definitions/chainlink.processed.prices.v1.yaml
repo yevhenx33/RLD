@@ -1,0 +1,19 @@
+id: chainlink.processed.prices.v1
+subject: astrid.data.v1.chainlink.ethereum.processed.prices
+schema: astrid.chainlink.price.v1
+protocol: chainlink
+deployment_id: ethereum:chainlink
+mode: processed
+source_table: chainlink_prices
+local_table: astrid_chainlink.prices
+schema_version: 1.0.0
+identity_columns:
+  - feed
+  - round_id
+  - timestamp
+cursor_column: timestamp
+timestamp_column: timestamp
+block_column: block_number
+chunk:
+  partition: month
+  format: parquet

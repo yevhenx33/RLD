@@ -1,0 +1,39 @@
+name: astrid-node-local
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3.7.8
+    container_name: astrid_node_clickhouse
+    environment:
+      CLICKHOUSE_USER: ${ASTRID_NODE_CLICKHOUSE_USER:-astrid}
+      CLICKHOUSE_PASSWORD: ${ASTRID_NODE_CLICKHOUSE_PASSWORD:-astrid}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "127.0.0.1:8124:8123"
+      - "127.0.0.1:9001:9000"
+    volumes:
+      - astrid_node_clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2.12-alpine
+    container_name: astrid_node_nats
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "127.0.0.1:4223:4222"
+      - "127.0.0.1:8223:8222"
+    volumes:
+      - astrid_node_nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  astrid_node_clickhouse_data:
+  astrid_node_nats_data:

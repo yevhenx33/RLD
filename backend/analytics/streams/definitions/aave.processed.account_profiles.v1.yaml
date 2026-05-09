@@ -1,0 +1,33 @@
+id: aave.processed.account_profiles.v1
+subject: astrid.data.v1.aave.ethereum.processed.account_profiles
+schema: astrid.aave.account_profile.v1
+protocol: aave
+deployment_id: ethereum:aave-v3-core
+mode: processed
+source_table: aave_account_profile_timeseries
+local_table: astrid_aave.account_profiles
+schema_version: 1.0.0
+identity_columns:
+  - deployment_id
+  - timestamp
+  - user
+cursor_column: timestamp
+timestamp_column: timestamp
+block_column: last_event_block
+chunk:
+  partition: month
+  format: parquet
+columns:
+  - deployment_id:String
+  - timestamp:DateTime
+  - user:String
+  - total_collateral_usd:Float64
+  - total_debt_usd:Float64
+  - net_worth_usd:Float64
+  - weighted_liquidation_threshold:Float64
+  - health_factor:Float64
+  - emode_category:UInt16
+  - position_count:UInt16
+  - debt_position_count:UInt16
+  - collateral_position_count:UInt16
+  - last_event_block:UInt64

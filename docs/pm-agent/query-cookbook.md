@@ -431,14 +431,21 @@ const variables = {
 |-----------|-------------------|-------------------|
 | `lendingDataPage` | `displayIn: String!` | — |
 | `protocolMarketsPage` | `protocol: String!` | — |
-| `marketPage` | `protocol`, `marketId`, `timeseriesLimit`, `flowLimit` | — |
+| `markets` | `protocol: String!` | `first`, `after`, `filter` |
+| `market` | `protocol: String!`, `marketId: String!` | — |
+| `marketPage` | `protocol`, `marketId` | `timeseriesLimit`, `flowLimit` |
+| `lendingPoolPage` | `protocol`, `entityId` | `timeseriesLimit`, `flowLimit` |
 | `historicalRates` | `resolution: String!`, `limit: Int!` | — |
 | `latestRates` | — | — |
 | `protocolTvlHistory` | — | `displayIn` |
+| `protocolApyHistory` | `protocol: String!` | `resolution`, `limit` |
 | `marketTimeseries` | `entityId: String!` | `resolution`, `limit` |
+| `marketSeries` | `protocol: String!`, `marketId: String!` | `resolution`, `startTs`, `endTs`, `first`, `after` |
 | `marketFlowTimeseries` | `entityId: String!` | `resolution`, `limit` |
-| `aaveAccounts` | — | `first`, `after`, `orderBy`, `minDebtUsd`, `maxHealthFactor` |
+| `aaveAccountStats` | — | `deploymentId`, `minDebtUsd`, `minCollateralUsd` |
+| `aaveAccounts` | — | `first`, `after`, `orderBy`, `minDebtUsd`, `maxHealthFactor`, `deploymentId` |
 | `aaveAccount` | `address: String!` | `deploymentId` |
+| `aaveAccountProfileHistory` | `address: String!` | `deploymentId`, `startTs`, `endTs`, `limit` |
 | `morphoMarketEvents` | — | `marketId`, `eventName`, `limit` |
 | `morphoMarketPositions` | — | `marketId`, `user`, `limit` |
 | `metamorphoVaults` | — | `vaultAddress`, `limit` |

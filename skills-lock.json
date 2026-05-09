@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "oauth": {
+      "source": "vercel-labs/portless",
+      "sourceType": "github",
+      "skillPath": "skills/oauth/SKILL.md",
+      "computedHash": "9dbf0a5cc15d805924816a4df6654b105a163618ff986c79f6974211164b34a7"
+    },
+    "portless": {
+      "source": "vercel-labs/portless",
+      "sourceType": "github",
+      "skillPath": "skills/portless/SKILL.md",
+      "computedHash": "1499785783105a3f3f020bae6fedf7b8ba9e3ee8c32dcab1d7dfc2d663ea72c2"
+    }
+  }
+}

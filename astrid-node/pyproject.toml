@@ -1,0 +1,20 @@
+[project]
+name = "astrid-node"
+version = "0.1.0"
+description = "Local-first Astrid protocol data node"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "RLD" }]
+keywords = ["defi", "clickhouse", "nats", "jetstream", "analytics"]
+dependencies = [
+    "clickhouse-connect>=0.15.1",
+    "nats-py>=2.10.0,<3",
+    "pyarrow>=23.0.1",
+]
+
+[project.scripts]
+astrid-node = "astrid_node.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

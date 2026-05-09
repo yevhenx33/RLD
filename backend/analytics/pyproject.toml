@@ -12,6 +12,9 @@ dependencies = [
     "asyncpg>=0.29.0",
 ]
 
+[project.scripts]
+astrid-publish = "analytics.streams.cli:main"
+
 
 [tool.coverage.run]
 omit = [

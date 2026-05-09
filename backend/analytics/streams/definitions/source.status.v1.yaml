@@ -1,0 +1,18 @@
+id: source.status.v1
+subject: astrid.data.v1.source.status
+schema: astrid.source_status.v1
+protocol: astrid
+deployment_id: astrid:analytics
+mode: processed
+source_table: source_status
+local_table: astrid_meta.source_status
+schema_version: 1.0.0
+identity_columns:
+  - source
+  - kind
+cursor_column: updated_at
+timestamp_column: updated_at
+block_column: last_scanned_block
+chunk:
+  partition: latest
+  format: parquet

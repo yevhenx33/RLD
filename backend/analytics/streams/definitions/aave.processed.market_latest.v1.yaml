@@ -1,0 +1,18 @@
+id: aave.processed.market_latest.v1
+subject: astrid.data.v1.aave.ethereum.processed.market_latest
+schema: astrid.aave.market_latest.v1
+protocol: aave
+deployment_id: ethereum:aave-v3-core
+mode: processed
+source_table: api_market_latest
+local_table: astrid_aave.market_latest
+schema_version: 1.0.0
+identity_columns:
+  - protocol
+  - entity_id
+timestamp_column: timestamp
+cursor_column: timestamp
+block_column: timestamp
+chunk:
+  partition: latest
+  format: parquet

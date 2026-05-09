@@ -71,6 +71,14 @@ def apply_env_from_config(path: str | None = None) -> dict[str, Any]:
     if migration_password_env and migration_password_env in os.environ:
         _setdefault("CLICKHOUSE_MIGRATION_PASSWORD", os.environ[migration_password_env])
 
+    jetstream = cfg.get("jetstream", {})
+    publisher = cfg.get("publisher", {})
+    _setdefault("ASTRID_NATS_URL", jetstream.get("url"))
+    _setdefault("ASTRID_PUBLISHER_NAME", jetstream.get("publisher_name"))
+    _setdefault("ASTRID_PUBLISHER_BATCH_SIZE", publisher.get("batch_size"))
+    _setdefault("ASTRID_PUBLISHER_POLL_INTERVAL_SEC", publisher.get("poll_interval_sec"))
+    _setdefault("ASTRID_PUBLISHER_ENABLED_STREAMS", publisher.get("enabled_streams"))
+
     pendle = (cfg.get("sources", {}) or {}).get("PENDLE_ETHEREUM_PT_YT_PRICES", {})
     _setdefault("PENDLE_POLL_INTERVAL_SEC", pendle.get("poll_interval_sec"))
     _setdefault("PENDLE_BACKFILL_START", pendle.get("backfill_start"))

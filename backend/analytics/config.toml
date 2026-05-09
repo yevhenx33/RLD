@@ -24,6 +24,15 @@ worker_password_env = "CLICKHOUSE_WORKER_PASSWORD"
 migration_user = "migration_admin"
 migration_password_env = "CLICKHOUSE_MIGRATION_PASSWORD"
 
+[jetstream]
+url = "nats://127.0.0.1:4222"
+publisher_name = "astrid-canonical-publisher"
+
+[publisher]
+batch_size = 1000
+poll_interval_sec = 1
+enabled_streams = ["aave.processed.market_latest.v1"]
+
 [sources.AAVE_MARKET]
 enabled = true
 poll_interval_sec = 30

@@ -18,13 +18,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from analytics.config import apply_env_from_config, source_poll_interval
-from analytics.schema import (
-    backfill_serving_tables,
-    ensure_schema,
-    list_serving_views,
-    rebuild_aggregates,
-)
-
 
 def ch_client():
     settings = {}
@@ -55,6 +48,8 @@ def fetch_json(path: str):
 
 
 def cmd_migrate(args) -> int:
+    from analytics.schema import backfill_serving_tables, ensure_schema, rebuild_aggregates
+
     ch = ch_client()
     try:
         ensure_schema(ch)
@@ -176,6 +171,8 @@ def cmd_fluid_product_backfill(args) -> int:
 
 
 def cmd_views(args) -> int:
+    from analytics.schema import list_serving_views, rebuild_aggregates
+
     ch = ch_client()
     try:
         if args.views_command == "list":
@@ -185,6 +182,110 @@ def cmd_views(args) -> int:
             print("serving views rebuilt")
     finally:
         ch.close()
+    return 0
+
+
+def _stream_by_id(stream_id: str):
+    from analytics.streams.registry import load_registry
+
+    streams = load_registry()
+    for stream in streams:
+        if stream.id == stream_id:
+            return stream
+    raise SystemExit(f"Unknown Astrid stream {stream_id}. Valid streams: {', '.join(s.id for s in streams)}")
+
+
+def cmd_streams(args) -> int:
+    from analytics.streams.publisher import apply_streams, load_chunk_sidecars, manifest_with_chunks
+    from analytics.streams.registry import load_registry, registry_manifest
+
+    streams = load_registry()
+    if args.streams_command == "check":
+        payload = {"status": "OK", "streams": [stream.to_manifest() for stream in streams]}
+        print(json.dumps(payload, indent=2 if args.json else None, sort_keys=True))
+        return 0
+    if args.streams_command == "manifest":
+        payload = (
+            manifest_with_chunks(streams, load_chunk_sidecars(args.chunks_dir))
+            if args.chunks_dir
+            else registry_manifest(streams)
+        )
+        rendered = json.dumps(payload, indent=2, sort_keys=True)
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as fh:
+                fh.write(rendered + "\n")
+        else:
+            print(rendered)
+        return 0
+    if args.streams_command == "apply":
+        result = asyncio.run(apply_streams(os.getenv("ASTRID_NATS_URL", "nats://127.0.0.1:4222"), streams))
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    raise SystemExit(f"Unknown streams command {args.streams_command}")
+
+
+def cmd_publisher(args) -> int:
+    from analytics.streams.publisher import export_jsonl_chunk, publish_once
+
+    if args.publisher_command == "status":
+        ch = ch_client()
+        try:
+            rows = ch.query(
+                """
+                SELECT stream_id, last_cursor, last_block, last_timestamp, last_nats_sequence, updated_at
+                FROM stream_publisher_state FINAL
+                ORDER BY stream_id
+                """
+            ).result_rows
+            payload = [
+                {
+                    "streamId": row[0],
+                    "lastCursor": row[1],
+                    "lastBlock": row[2],
+                    "lastTimestamp": str(row[3]),
+                    "lastNatsSequence": row[4],
+                    "updatedAt": str(row[5]),
+                }
+                for row in rows
+            ]
+        finally:
+            ch.close()
+        print(json.dumps(payload, indent=2 if args.json else None, sort_keys=True))
+        return 0
+
+    stream = _stream_by_id(args.stream)
+    if args.publisher_command == "export-chunk":
+        ch = ch_client()
+        try:
+            result = export_jsonl_chunk(
+                ch,
+                stream,
+                args.out_dir,
+                base_uri=args.base_uri,
+                from_value=args.from_value,
+                limit=args.limit,
+                processor_version=os.getenv("INDEXER_VERSION", "dev"),
+            )
+        finally:
+            ch.close()
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+
+    ch = ch_client()
+    try:
+        result = asyncio.run(
+            publish_once(
+                ch,
+                os.getenv("ASTRID_NATS_URL", "nats://127.0.0.1:4222"),
+                stream,
+                from_value=getattr(args, "from_value", None),
+                limit=args.limit,
+                processor_version=os.getenv("INDEXER_VERSION", "dev"),
+            )
+        )
+    finally:
+        ch.close()
+    print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 
 
@@ -322,6 +423,40 @@ def main() -> int:
     views_list.set_defaults(func=cmd_views)
     views_rebuild = views_sub.add_parser("rebuild")
     views_rebuild.set_defaults(func=cmd_views)
+
+    streams = sub.add_parser("streams", help="Manage Astrid canonical stream registry")
+    streams_sub = streams.add_subparsers(dest="streams_command", required=True)
+    streams_check = streams_sub.add_parser("check", help="Validate stream registry")
+    streams_check.add_argument("--json", action="store_true")
+    streams_check.set_defaults(func=cmd_streams)
+    streams_apply = streams_sub.add_parser("apply", help="Apply JetStream stream definitions and publish manifest")
+    streams_apply.set_defaults(func=cmd_streams)
+    streams_manifest = streams_sub.add_parser("manifest", help="Render Astrid stream manifest")
+    streams_manifest.add_argument("--out", default=None)
+    streams_manifest.add_argument("--chunks-dir", default=None, help="Directory containing *.chunk.json sidecars to embed")
+    streams_manifest.set_defaults(func=cmd_streams)
+
+    publisher = sub.add_parser("publisher", help="Publish canonical ClickHouse rows to Astrid streams")
+    publisher_sub = publisher.add_subparsers(dest="publisher_command", required=True)
+    publisher_run = publisher_sub.add_parser("run", help="Publish the next batch for a stream")
+    publisher_run.add_argument("--stream", required=True)
+    publisher_run.add_argument("--limit", type=int, default=int(os.getenv("ASTRID_PUBLISHER_BATCH_SIZE", "1000")))
+    publisher_run.set_defaults(func=cmd_publisher)
+    publisher_backfill = publisher_sub.add_parser("backfill", help="Publish from an explicit stream cursor")
+    publisher_backfill.add_argument("--stream", required=True)
+    publisher_backfill.add_argument("--from", dest="from_value", default=None)
+    publisher_backfill.add_argument("--limit", type=int, default=int(os.getenv("ASTRID_PUBLISHER_BATCH_SIZE", "1000")))
+    publisher_backfill.set_defaults(func=cmd_publisher)
+    publisher_export_chunk = publisher_sub.add_parser("export-chunk", help="Export a stream batch as an Astrid JSONL chunk")
+    publisher_export_chunk.add_argument("--stream", required=True)
+    publisher_export_chunk.add_argument("--out-dir", required=True)
+    publisher_export_chunk.add_argument("--base-uri", default=None)
+    publisher_export_chunk.add_argument("--from", dest="from_value", default=None)
+    publisher_export_chunk.add_argument("--limit", type=int, default=int(os.getenv("ASTRID_PUBLISHER_BATCH_SIZE", "1000")))
+    publisher_export_chunk.set_defaults(func=cmd_publisher)
+    publisher_status = publisher_sub.add_parser("status", help="Show Astrid publisher cursors")
+    publisher_status.add_argument("--json", action="store_true")
+    publisher_status.set_defaults(func=cmd_publisher)
 
     args = parser.parse_args()
     apply_env_from_config(args.config)

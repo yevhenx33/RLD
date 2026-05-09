@@ -1,0 +1,20 @@
+id: aave.processed.account_positions.v1
+subject: astrid.data.v1.aave.ethereum.processed.account_positions
+schema: astrid.aave.account_position.v1
+protocol: aave
+deployment_id: ethereum:aave-v3-core
+mode: processed
+source_table: aave_account_position_timeseries
+local_table: astrid_aave.account_positions
+schema_version: 1.0.0
+identity_columns:
+  - deployment_id
+  - timestamp
+  - user
+  - reserve
+cursor_column: timestamp
+timestamp_column: timestamp
+block_column: last_event_block
+chunk:
+  partition: month
+  format: parquet

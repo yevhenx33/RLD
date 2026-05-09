@@ -1,0 +1,42 @@
+{
+  "product": "astrid",
+  "version": 1,
+  "streams": [
+    {
+      "id": "aave.processed.account_profiles.v1",
+      "subject": "astrid.data.v1.aave.ethereum.processed.account_profiles",
+      "schema": "astrid.aave.account_profile.v1",
+      "protocol": "aave",
+      "deployment_id": "ethereum:aave-v3-core",
+      "mode": "processed",
+      "source_table": "aave_account_profile_timeseries",
+      "local_table": "astrid_aave.account_profiles",
+      "schema_version": "1.0.0",
+      "schema_hash": "example",
+      "identity_columns": ["deployment_id", "timestamp", "user"],
+      "cursor_column": "timestamp",
+      "timestamp_column": "timestamp",
+      "block_column": "last_event_block",
+      "chunk": { "partition": "month", "format": "jsonl" },
+      "chunks": []
+    },
+    {
+      "id": "aave.raw.account_events.v1",
+      "subject": "astrid.data.v1.aave.ethereum.raw.account_events",
+      "schema": "astrid.aave.account_event.v1",
+      "protocol": "aave",
+      "deployment_id": "ethereum:aave-v3-core",
+      "mode": "raw",
+      "source_table": "aave_account_events",
+      "local_table": "astrid_aave_raw.account_events",
+      "schema_version": "1.0.0",
+      "schema_hash": "example",
+      "identity_columns": ["deployment_id", "block_number", "tx_hash", "log_index", "user"],
+      "cursor_column": "block_number",
+      "timestamp_column": "block_timestamp",
+      "block_column": "block_number",
+      "chunk": { "partition": "month", "format": "jsonl" },
+      "chunks": []
+    }
+  ]
+}

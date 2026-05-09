@@ -608,6 +608,67 @@ services:
       start_period: 20s
       retries: 3
 
+  nats_stream_registry:
+    <<: *rld-indexer-service
+    container_name: astrid_nats_stream_registry
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - ASTRID_NATS_URL=${ASTRID_NATS_URL:-nats://astrid_nats:4222}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "streams", "apply"]
+    restart: "no"
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "astrid-stream-registry"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "nats"
+      com.rld.description: "One-shot Astrid JetStream stream and manifest registration"
+
+  canonical_publisher:
+    <<: *rld-indexer-service
+    container_name: astrid_canonical_publisher
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+      nats_stream_registry:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - ASTRID_NATS_URL=${ASTRID_NATS_URL:-nats://astrid_nats:4222}
+      - ASTRID_PUBLISHER_STREAM=${ASTRID_PUBLISHER_STREAM:-aave.processed.market_latest.v1}
+      - ASTRID_PUBLISHER_LIMIT=${ASTRID_PUBLISHER_LIMIT:-1000}
+      - ASTRID_PUBLISHER_POLL_INTERVAL_SEC=${ASTRID_PUBLISHER_POLL_INTERVAL_SEC:-1}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command:
+      [
+        "sh",
+        "-c",
+        "while true; do python -m analytics.scripts.rld_indexer publisher run --stream $${ASTRID_PUBLISHER_STREAM} --limit $${ASTRID_PUBLISHER_LIMIT}; sleep $${ASTRID_PUBLISHER_POLL_INTERVAL_SEC}; done"
+      ]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "astrid-canonical-publisher"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse,nats"
+      com.rld.description: "Astrid canonical ClickHouse-to-JetStream publisher"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'publisher run' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
 networks:
   default:
     name: rld_shared

@@ -10,6 +10,7 @@ from analytics.morpho_oracle_snapshots import ensure_morpho_oracle_snapshot_tabl
 from analytics.oracle_snapshots import ensure_oracle_snapshot_tables
 from analytics.fluid_full_coverage import ensure_fluid_full_coverage_tables, seed_core_fluid_contracts
 from analytics.aave_accounts import ensure_aave_account_tables
+from analytics.streams.state import ensure_publisher_state_tables
 
 
 API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
@@ -82,6 +83,7 @@ def ensure_schema(ch) -> None:
     ensure_morpho_oracle_snapshot_tables(ch)
     ensure_oracle_snapshot_tables(ch)
     ensure_aave_account_tables(ch)
+    ensure_publisher_state_tables(ch)
     ensure_fluid_full_coverage_tables(ch)
     seed_core_fluid_contracts(ch)
     ch.command(

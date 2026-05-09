@@ -138,7 +138,7 @@ query MarketPage($protocol: String!, $marketId: String!, $timeseriesLimit: Int!,
 **Variables:** `{ "protocol": "AAVE_MARKET", "marketId": "0x...", "timeseriesLimit": 500, "flowLimit": 500 }`
 
 > [!NOTE]
-> `flowChart` returns meaningful data only for Aave markets. Morpho/Fluid markets return empty arrays for flow data — the events table structure differs.
+> **Aave markets** get precise event-level flow decomposition (from `aave_events` raw logs or the `api_aave_market_flow_daily_agg` pre-aggregated table). **Non-Aave markets** (Morpho, Fluid) receive synthetic flow data computed from balance deltas (`supplyUsd[t] - supplyUsd[t-1]`). This is a coarser approximation — it cannot distinguish deposits from interest accrual — but it does return data, not empty arrays.
 
 ---
 
@@ -303,7 +303,7 @@ query {
 
 ```graphql
 query {
-  aaveAccountStats(minDebtUsd: 100) {
+  aaveAccountStats(minDebtUsd: 100, minCollateralUsd: 0) {
     deploymentId
     activeAccounts
     debtAccounts
@@ -316,7 +316,10 @@ query {
     freshness {
       latestEventBlock
       latestIndexTimestamp
+      latestPriceTimestamp
       reconstructionStatus
+      lastRpcAuditTimestamp
+      auditPrecisionStatus
     }
   }
 }
@@ -333,14 +336,18 @@ query {
     maxHealthFactor: 1.5
   ) {
     nodes {
+      deploymentId
       address
       totalCollateralUsd
       totalDebtUsd
+      weightedLiquidationThreshold
       healthFactor
       emodeCategory
       positions {
         reserve
         symbol
+        scaledSupplyRaw
+        scaledVariableDebtRaw
         supplyUsd
         debtUsd
         collateralEnabled
@@ -358,12 +365,31 @@ query {
 ```graphql
 query {
   aaveAccount(address: "0x...") {
+    deploymentId
     address
     totalCollateralUsd
     totalDebtUsd
+    weightedLiquidationThreshold
     healthFactor
     emodeCategory
-    positions { reserve symbol supplyUsd debtUsd collateralEnabled liquidationThreshold }
+    positions {
+      reserve
+      symbol
+      scaledSupplyRaw
+      scaledVariableDebtRaw
+      supplyUsd
+      debtUsd
+      collateralEnabled
+      liquidationThreshold
+    }
+    freshness {
+      latestEventBlock
+      latestIndexTimestamp
+      latestPriceTimestamp
+      reconstructionStatus
+      lastRpcAuditTimestamp
+      auditPrecisionStatus
+    }
   }
 }
 ```
@@ -372,14 +398,18 @@ query {
 
 ```graphql
 query {
-  aaveAccountProfileHistory(address: "0x...", limit: 500) {
+  aaveAccountProfileHistory(address: "0x...", startTs: 0, endTs: 9999999999, limit: 500) {
     timestamp
     totalCollateralUsd
     totalDebtUsd
     netWorthUsd
+    weightedLiquidationThreshold
     healthFactor
     emodeCategory
     positionCount
+    debtPositionCount
+    collateralPositionCount
+    lastEventBlock
   }
 }
 ```
@@ -634,16 +664,124 @@ query ApiStatus {
 
 ---
 
+## 15. Additional Queries (Not Page-Bound)
+
+**Use case:** Programmatic access, pagination, single-entity lookups.
+
+### GraphQL Query: `markets` (Paginated Market Listing)
+
+```graphql
+query {
+  markets(protocol: "AAVE_MARKET", first: 20, after: "cursor...", filter: "USDC") {
+    nodes {
+      entityId
+      symbol
+      protocol
+      supplyUsd
+      borrowUsd
+      supplyApy
+      borrowApy
+      utilization
+    }
+    pageInfo { hasNextPage endCursor }
+    totalCount
+  }
+}
+```
+
+### GraphQL Query: `market` (Single Market Lookup)
+
+```graphql
+query {
+  market(protocol: "AAVE_MARKET", marketId: "0x...") {
+    entityId
+    symbol
+    protocol
+    supplyUsd
+    borrowUsd
+    supplyApy
+    borrowApy
+    utilization
+  }
+}
+```
+
+### GraphQL Query: `marketSeries` (Paginated Timeseries)
+
+```graphql
+query {
+  marketSeries(protocol: "AAVE_MARKET", marketId: "0x...", resolution: "1D", startTs: 0, endTs: 9999999999, first: 100, after: "cursor...") {
+    nodes {
+      timestamp
+      supplyApy
+      borrowApy
+      utilization
+      supplyUsd
+      borrowUsd
+    }
+    pageInfo { hasNextPage endCursor }
+    totalCount
+  }
+}
+```
+
+### GraphQL Query: `protocolApyHistory`
+
+```graphql
+query {
+  protocolApyHistory(protocol: "AAVE_MARKET", resolution: "1W", limit: 500) {
+    timestamp
+    supplyApy
+    borrowApy
+  }
+}
+```
+
+### GraphQL Query: `lendingPoolPage` (Legacy Alias)
+
+> [!NOTE]
+> `lendingPoolPage` is a legacy alias for `marketPage` with slightly different parameter names (`entityId` instead of `marketId`). Prefer `marketPage` for new code.
+
+```graphql
+query {
+  lendingPoolPage(protocol: "AAVE_MARKET", entityId: "0x...", timeseriesLimit: 500, flowLimit: 500) {
+    # Same shape as marketPage response
+  }
+}
+```
+
+### REST Endpoint: USDC Borrow APY Oracle
+
+```
+GET /api/v1/oracle/usdc-borrow-apy
+
+Response:
+{
+  "symbol": "USDC",
+  "borrow_apy": 0.0523,
+  "timestamp": 1715087363,
+  "age_seconds": 42
+}
+```
+
+**Use case:** On-chain oracle contract reads the latest Aave USDC borrow rate.
+
+---
+
 ## Data Availability Matrix
 
 | Data Domain | Query | Aave | Morpho | Fluid | Pendle | Cross-Protocol |
 |------------|-------|------|--------|-------|--------|----------------|
 | Market listing | `lendingDataPage` | ✅ | ✅ | ✅ | — | ✅ |
 | Protocol markets | `protocolMarketsPage` | ✅ | ✅ | ✅ | — | — |
+| Paginated markets | `markets` | ✅ | ✅ | ✅ | — | — |
+| Single market | `market` | ✅ | ✅ | ✅ | — | — |
 | Rate timeseries | `marketTimeseries` | ✅ | ✅ | ✅ | — | — |
-| Flow timeseries | `marketFlowTimeseries` | ✅ | ❌ | ❌ | — | — |
+| Paginated timeseries | `marketSeries` | ✅ | ✅ | ✅ | — | — |
+| Flow timeseries | `marketFlowTimeseries` | ✅ (event-level) | ⚠️ (balance-delta) | ⚠️ (balance-delta) | — | — |
 | Full pool page | `marketPage` | ✅ | ✅ | ✅ | — | — |
 | TVL history | `protocolTvlHistory` | ✅ | ✅ | ✅ | — | ✅ |
+| Protocol APY history | `protocolApyHistory` | ✅ | ✅ | ✅ | — | — |
 | Account-level | `aaveAccount*` | ✅ | — | — | — | — |
 | Market positions | `morphoMarketPositions` | — | ✅ | — | — | — |
 | Vault lifecycle | `metamorphoVault*` | — | ✅ | — | — | — |
@@ -652,3 +790,4 @@ query ApiStatus {
 | Risk params | `protocolMarkets` | ✅ (LTV, e-mode) | ✅ (LLTV) | ✅ (LTV) | — | — |
 | Oracle health | `protocolMarkets` | — | ✅ | ✅ | — | — |
 | Latest rates | `latestRates` | ✅ | — | — | — | ✅ (SOFR, sUSDe) |
+| USDC borrow oracle | REST `/api/v1/oracle/usdc-borrow-apy` | ✅ | — | — | — | — |
