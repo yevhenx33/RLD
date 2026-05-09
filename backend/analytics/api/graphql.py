@@ -262,6 +262,8 @@ class MarketDetail:
     collateral_symbol: Optional[str] = strawberry.field(name="collateralSymbol", default=None)
     collateral_usd: Optional[float] = strawberry.field(name="collateralUsd", default=None)
     lltv: Optional[float] = None
+    lltv_min: Optional[float] = strawberry.field(name="lltvMin", default=None)
+    lltv_max: Optional[float] = strawberry.field(name="lltvMax", default=None)
     oracle: Optional[str] = None
     pricing_status: Optional[str] = strawberry.field(name="pricingStatus", default=None)
     loan_asset: Optional[str] = strawberry.field(name="loanAsset", default=None)
@@ -764,6 +766,19 @@ class LendingPoolRatePoint:
 
 
 @strawberry.type
+class FluidVaultRow:
+    vault: str
+    vault_id: str = strawberry.field(name="vaultId", default="")
+    collateral: str = strawberry.field(name="collateral")
+    debt: str = strawberry.field(name="debt")
+    ltv: float
+    supply_apy: float = strawberry.field(name="supplyApy", default=0.0)
+    borrow_apy: float = strawberry.field(name="borrowApy", default=0.0)
+    supply_usd: float = strawberry.field(name="supplyUsd")
+    borrow_usd: float = strawberry.field(name="borrowUsd")
+
+
+@strawberry.type
 class LendingPoolPagePayload:
     freshness: AnalyticsFreshness
     market: Optional[MarketDetail]
@@ -771,6 +786,7 @@ class LendingPoolPagePayload:
     flow_chart: list[MarketFlowPoint] = strawberry.field(name="flowChart")
     allocation_chart: Optional[list[MorphoAllocationPoint]] = strawberry.field(name="allocationChart", default=None)
     allocation_columnar: Optional[MorphoAllocationColumnar] = strawberry.field(name="allocationColumnar", default=None)
+    vault_breakdown: Optional[list[FluidVaultRow]] = strawberry.field(name="vaultBreakdown", default=None)
 
 
 def _new_clickhouse_client():
@@ -3301,8 +3317,181 @@ def _query_lending_pool_page(
         payload.allocation_chart = alloc_rows
         payload.allocation_columnar = alloc_columnar
 
+    if protocol.upper() == "FLUID_MARKET":
+        try:
+            escaped_entity = entity_id.replace("'", "")
+            vault_rows = ch.query(f"""
+                SELECT v.product_id, v.symbol, v.collateral_token, v.debt_token, v.ltv,
+                       v.supply_usd, v.borrow_usd,
+                       coalesce(rs.supply_apy, 0) AS supply_apy,
+                       coalesce(rd.borrow_apy, 0) AS borrow_apy
+                FROM (
+                    SELECT product_id, symbol, collateral_token, debt_token,
+                           max(ltv) AS ltv,
+                           argMax(supply_usd, timestamp) AS supply_usd,
+                           argMax(borrow_usd, timestamp) AS borrow_usd
+                    FROM fluid_product_snapshots
+                    WHERE product_type = 'VAULT'
+                      AND debt_token = '{escaped_entity}'
+                    GROUP BY product_id, symbol, collateral_token, debt_token
+                    HAVING supply_usd + borrow_usd > 100
+                ) AS v
+                LEFT JOIN (
+                    SELECT entity_id, argMax(supply_apy, timestamp) AS supply_apy
+                    FROM fluid_timeseries
+                    WHERE protocol = 'FLUID_MARKET'
+                    GROUP BY entity_id
+                ) AS rs ON rs.entity_id = v.collateral_token
+                LEFT JOIN (
+                    SELECT entity_id, argMax(borrow_apy, timestamp) AS borrow_apy
+                    FROM fluid_timeseries
+                    WHERE protocol = 'FLUID_MARKET'
+                    GROUP BY entity_id
+                ) AS rd ON rd.entity_id = v.debt_token
+            """).result_rows
+            if vault_rows:
+                payload.vault_breakdown = [
+                    FluidVaultRow(
+                        vault=str(row[1] or ""),
+                        vault_id=str(row[0] or ""),
+                        collateral=str(row[1] or "").split("/")[0] if "/" in str(row[1] or "") else str(row[1] or ""),
+                        debt=str(row[1] or "").split("/")[-1] if "/" in str(row[1] or "") else str(row[1] or ""),
+                        ltv=float(row[4] or 0),
+                        supply_usd=float(row[5] or 0),
+                        borrow_usd=float(row[6] or 0),
+                        supply_apy=float(row[7] or 0),
+                        borrow_apy=float(row[8] or 0),
+                    )
+                    for row in vault_rows
+                ]
+        except Exception:
+            pass
+
     _market_page_cache_set(cache_key, payload)
     return payload
+
+
+def _query_fluid_vault_page(
+    ch, vault_id: str, timeseries_limit: int, flow_limit: int
+) -> LendingPoolPagePayload:
+    """Build a vault-level detail page from fluid_vault_timeseries."""
+    escaped = vault_id.replace("'", "").lower()
+
+    # 1. Timeseries (rates + TVL)
+    ts_rows = ch.query(f"""
+        SELECT toUnixTimestamp(timestamp) AS ts,
+               supply_usd, borrow_usd, supply_apy, borrow_apy, utilization
+        FROM fluid_vault_timeseries FINAL
+        WHERE vault_id = '{escaped}'
+        ORDER BY timestamp DESC
+        LIMIT {int(timeseries_limit)}
+    """).result_rows
+    rate_chart = [
+        LendingPoolRatePoint(
+            timestamp=int(row[0]),
+            supply_apy=_finite_non_negative(row[3]) * 100.0,
+            borrow_apy=_finite_non_negative(row[4]) * 100.0,
+            utilization=_finite_non_negative(row[5]) * 100.0,
+            supply_usd=_finite_non_negative(row[1]),
+            borrow_usd=_finite_non_negative(row[2]),
+        )
+        for row in ts_rows
+        if int(row[0]) > 0
+    ]
+    rate_chart.sort(key=lambda p: p.timestamp)
+
+    # 2. Flows
+    flow_rows = ch.query(f"""
+        SELECT toUnixTimestamp(timestamp) AS ts,
+               supply_inflow_usd, supply_outflow_usd,
+               borrow_inflow_usd, borrow_outflow_usd,
+               net_supply_flow_usd, net_borrow_flow_usd
+        FROM fluid_vault_timeseries FINAL
+        WHERE vault_id = '{escaped}'
+        ORDER BY timestamp DESC
+        LIMIT {int(flow_limit)}
+    """).result_rows
+    flow_chart = [
+        MarketFlowPoint(
+            timestamp=int(row[0]),
+            supply_inflow_usd=_finite_non_negative(row[1]),
+            supply_outflow_usd=_finite_non_negative(row[2]),
+            borrow_inflow_usd=_finite_non_negative(row[3]),
+            borrow_outflow_usd=_finite_non_negative(row[4]),
+            net_supply_flow_usd=float(row[5] or 0),
+            net_borrow_flow_usd=float(row[6] or 0),
+        )
+        for row in flow_rows
+        if int(row[0]) > 0
+    ]
+    flow_chart.sort(key=lambda p: p.timestamp)
+
+    # 3. Market detail from product_snapshots
+    meta_rows = ch.query(f"""
+        SELECT symbol, collateral_token, debt_token,
+               argMax(supply_usd, timestamp) AS supply_usd,
+               argMax(borrow_usd, timestamp) AS borrow_usd,
+               max(ltv) AS ltv
+        FROM fluid_product_snapshots
+        WHERE product_type = 'VAULT' AND product_id = '{escaped}'
+          AND symbol != 'VAULT' AND symbol != ''
+        GROUP BY symbol, collateral_token, debt_token
+        ORDER BY supply_usd + borrow_usd DESC
+        LIMIT 1
+    """).result_rows
+    market = None
+    if meta_rows:
+        row = meta_rows[0]
+        symbol = str(row[0] or "")
+        col_sym = symbol.split("/")[0] if "/" in symbol else symbol
+        debt_sym = symbol.split("/")[-1] if "/" in symbol else symbol
+
+        # Resolve collateral price from Chainlink
+        _SYM_TO_FEED = {
+            "ETH": "ETH / USD", "WETH": "ETH / USD", "wstETH": "ETH / USD",
+            "weETH": "ETH / USD", "WBTC": "BTC / USD", "cbBTC": "BTC / USD",
+            "tBTC": "BTC / USD", "USDC": "USDC / USD", "USDT": "USDT / USD",
+        }
+        col_feed = _SYM_TO_FEED.get(col_sym)
+        col_price = None
+        if col_feed:
+            price_rows = ch.query(f"""
+                SELECT argMax(price, timestamp) FROM chainlink_prices
+                WHERE feed = '{col_feed}'
+            """).result_rows
+            if price_rows and price_rows[0][0]:
+                col_price = float(price_rows[0][0])
+                # Apply approximate multiplier for wrapped tokens
+                if col_sym == "wstETH":
+                    col_price *= 1.18
+                elif col_sym == "weETH":
+                    col_price *= 1.05
+        elif col_sym.upper() in ("USDC", "USDT", "DAI", "GHO", "USDE", "FDUSD"):
+            col_price = 1.0
+
+        market = MarketDetail(
+            entity_id=escaped,
+            protocol="FLUID_VAULT",
+            symbol=symbol,
+            collateral_symbol=col_sym,
+            loan_asset=debt_sym,
+            supply_usd=float(row[3] or 0),
+            borrow_usd=float(row[4] or 0),
+            supply_apy=rate_chart[-1].supply_apy / 100.0 if rate_chart else 0.0,
+            borrow_apy=rate_chart[-1].borrow_apy / 100.0 if rate_chart else 0.0,
+            utilization=rate_chart[-1].utilization / 100.0 if rate_chart else 0.0,
+            lltv_min=float(row[5] or 0),
+            lltv_max=float(row[5] or 0),
+            collateral_price_usd=col_price,
+            oracle_support="Chainlink",
+        )
+
+    return LendingPoolPagePayload(
+        freshness=_freshness_payload(),
+        market=market,
+        rate_chart=rate_chart,
+        flow_chart=flow_chart,
+    )
 
 
 def _query_latest_rates(ch) -> Optional[LatestRates]:
@@ -3810,6 +3999,47 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
         )
         ORDER BY supply_usd DESC, borrow_usd DESC, entity_id ASC
         """
+    elif protocol == FLUID_MARKET:
+        value_filter = "WHERE supply_usd >= 1000 OR borrow_usd >= 1000"
+        query = f"""
+        SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
+               supply_apy, borrow_apy, utilization,
+               '' AS collateral_symbol, 0 AS collateral_usd, 0 AS lltv, '' AS oracle,
+               oracle_support AS pricing_status,
+               '' AS loan_asset, '' AS loan_token, 0 AS loan_decimals,
+               '' AS collateral_asset, '' AS collateral_token, 0 AS collateral_decimals,
+               loan_price_usd, 0 AS collateral_price_usd,
+               '' AS supply_assets, '' AS borrow_assets, '' AS collateral_assets,
+               '' AS irm, oracle_support
+        FROM (
+            SELECT m.entity_id AS entity_id,
+                   m.symbol AS symbol,
+                   '{escaped_protocol}' AS proto,
+                   m.supply_usd AS supply_usd,
+                   m.borrow_usd AS borrow_usd,
+                   m.supply_apy AS supply_apy,
+                   m.borrow_apy AS borrow_apy,
+                   m.utilization AS utilization,
+                   if(fr.entity_id != '', fr.price_usd, 0.0) AS loan_price_usd,
+                   if(fo.token != '', fo.oracle_support, '') AS oracle_support
+            FROM api_market_latest AS m FINAL
+            LEFT JOIN (
+                SELECT entity_id, argMax(price_usd, timestamp) AS price_usd
+                FROM fluid_reserve_metrics
+                GROUP BY entity_id
+                HAVING price_usd > 0
+            ) AS fr ON fr.entity_id = m.entity_id
+            LEFT JOIN (
+                SELECT token, argMax(oracle_support, updated_at) AS oracle_support
+                FROM fluid_reserve_oracle_support
+                GROUP BY token
+            ) AS fo ON fo.token = m.entity_id
+            WHERE m.protocol = '{escaped_protocol}'
+            {entity_filter.replace('entity_id', 'm.entity_id')}
+        )
+        {value_filter}
+        ORDER BY supply_usd DESC
+        """
     else:
         value_filter = (
             ""
@@ -3819,26 +4049,53 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
         query = f"""
         SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
                supply_apy, borrow_apy, utilization,
-               '' AS collateral_symbol, 0 AS collateral_usd, 0 AS lltv, '' AS oracle, '' AS oracle_support
+               '' AS collateral_symbol, 0 AS collateral_usd, lltv, '' AS oracle,
+               oracle_support AS pricing_status,
+               '' AS loan_asset, '' AS loan_token, 0 AS loan_decimals,
+               '' AS collateral_asset, '' AS collateral_token, 0 AS collateral_decimals,
+               loan_price_usd, 0 AS collateral_price_usd,
+               '' AS supply_assets, '' AS borrow_assets, '' AS collateral_assets,
+               '' AS irm, oracle_support
         FROM (
-            SELECT entity_id,
-                   symbol,
+            SELECT m.entity_id AS entity_id,
+                   m.symbol AS symbol,
                    '{escaped_protocol}' AS proto,
-                   supply_usd,
-                   borrow_usd,
-                   supply_apy,
-                   borrow_apy,
-                   utilization
-            FROM api_market_latest FINAL
-            WHERE protocol = '{escaped_protocol}'
-            {entity_filter}
+                   m.supply_usd AS supply_usd,
+                   m.borrow_usd AS borrow_usd,
+                   m.supply_apy AS supply_apy,
+                   m.borrow_apy AS borrow_apy,
+                   m.utilization AS utilization,
+                   if(cp.feed != '', cp.price, 0.0) AS loan_price_usd,
+                   if(cp.feed != '', 'CHAINLINK_SUPPORTED', '') AS oracle_support,
+                   if(rr.entity_id != '', rr.ltv, 0.0) AS lltv
+            FROM api_market_latest AS m FINAL
+            LEFT JOIN (
+                SELECT feed, argMax(price, timestamp) AS price
+                FROM chainlink_prices
+                WHERE feed LIKE '%/ USD'
+                GROUP BY feed
+            ) AS cp ON cp.feed = concat(
+                multiIf(
+                    m.symbol = 'WETH', 'ETH',
+                    m.symbol = 'WBTC', 'BTC',
+                    m.symbol = 'wstETH', 'STETH',
+                    m.symbol
+                ), ' / USD'
+            )
+            LEFT JOIN (
+                SELECT entity_id, argMax(ltv, updated_at) AS ltv
+                FROM aave_reserve_risk_state
+                GROUP BY entity_id
+            ) AS rr ON rr.entity_id = m.entity_id
+            WHERE m.protocol = '{escaped_protocol}'
+            {entity_filter.replace('entity_id', 'm.entity_id')}
         )
         {value_filter}
         ORDER BY supply_usd DESC
         """
 
     res = ch.query(query)
-    return [
+    markets = [
         MarketDetail(
             entity_id=str(row[0]),
             symbol=str(row[1]),
@@ -3850,7 +4107,7 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
             utilization=float(row[7]),
             collateral_symbol=str(row[8]) if row[8] else None,
             collateral_usd=float(row[9]) if row[9] is not None else None,
-            lltv=float(row[10]) if row[10] else None,
+            lltv=float(row[10]) if row[10] is not None else None,
             oracle=str(row[11]) if row[11] else None,
             pricing_status=str(row[12]) if row[12] else None,
             loan_asset=str(row[13]) if len(row) > 13 and row[13] else None,
@@ -3876,6 +4133,34 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
         )
         for row in res.result_rows
     ]
+
+    # Enrich Fluid markets with vault-level LTV range from product snapshots
+    if protocol == FLUID_MARKET and markets:
+        try:
+            ltv_rows = ch.query("""
+                SELECT debt_token,
+                       min(ltv) AS ltv_min,
+                       max(ltv) AS ltv_max
+                FROM (
+                    SELECT product_id, debt_token,
+                           argMax(ltv, timestamp) AS ltv
+                    FROM fluid_product_snapshots
+                    WHERE product_type = 'VAULT'
+                    GROUP BY product_id, debt_token
+                    HAVING ltv > 0
+                )
+                GROUP BY debt_token
+            """).result_rows
+            ltv_map = {str(row[0]): (float(row[1]), float(row[2])) for row in ltv_rows}
+            for m in markets:
+                rng = ltv_map.get(m.entity_id)
+                if rng:
+                    m.lltv_min = rng[0]
+                    m.lltv_max = rng[1]
+        except Exception:
+            pass
+
+    return markets
 
 def _to_week_date(value) -> date | None:
     if isinstance(value, datetime):
@@ -4344,6 +4629,123 @@ def _query_morpho_event_flow_timeseries(
     return flows
 
 
+def _query_fluid_event_flow_timeseries(
+    ch,
+    entity_id: str,
+    resolution: str,
+    limit: int,
+) -> list[MarketFlowPoint]:
+    """Compute gross supply/borrow inflow+outflow from individual Fluid Operate events.
+
+    Decodes signed int256 ``supplyAmount`` and ``borrowAmount`` from the event
+    data payload of ``Operate`` / ``LogOperate`` events in ``fluid_events``.
+    Joins ``fluid_reserve_state`` (for ``decimals``) and
+    ``fluid_reserve_metrics`` (for daily ``price_usd``) so every event amount
+    is converted to USD.
+
+    The event name changed from ``Operate`` → ``LogOperate`` at block ~25M
+    (Dec 13, 2025). Both share identical topic/data layout.
+    """
+    normalized = _normalize_entity_id(entity_id)
+    if not normalized or not normalized.startswith("0x"):
+        return []
+
+    # token hex without 0x prefix, lowercase — used in topic2 matching
+    token_hex = normalized[2:].lower()
+
+    safe_limit = _safe_limit(limit)
+    trunc = {
+        "1H": "toStartOfHour",
+        "4H": "toStartOfInterval(e.block_timestamp, INTERVAL 4 HOUR)",
+        "1W": "toStartOfWeek",
+    }.get(resolution)
+    if trunc and not trunc.startswith("toStartOf"):
+        bucket_expr = trunc
+    else:
+        bucket_fn = trunc or "toStartOfDay"
+        bucket_expr = f"{bucket_fn}(e.block_timestamp)"
+
+    sql = f"""
+    WITH daily_prices AS (
+        SELECT
+            toStartOfDay(timestamp) AS day,
+            argMax(price_usd, timestamp) AS price
+        FROM fluid_reserve_metrics
+        WHERE entity_id = %(token)s AND price_usd > 0
+        GROUP BY day
+    ),
+    params AS (
+        SELECT argMax(decimals, updated_at) AS decimals
+        FROM fluid_reserve_state
+        WHERE token = %(token)s
+    )
+    SELECT
+        toUnixTimestamp({bucket_expr}) AS ts,
+        -- Supply: positive supplyAmount = deposit (inflow), negative = withdraw (outflow)
+        sumIf(
+            toFloat64(reinterpretAsInt256(reverse(unhex(substring(e.data, 3, 64)))))
+                / pow(10, p.decimals) * dp.price,
+            reinterpretAsInt256(reverse(unhex(substring(e.data, 3, 64)))) > 0
+        ) AS supply_inflow,
+        sumIf(
+            toFloat64(-reinterpretAsInt256(reverse(unhex(substring(e.data, 3, 64)))))
+                / pow(10, p.decimals) * dp.price,
+            reinterpretAsInt256(reverse(unhex(substring(e.data, 3, 64)))) < 0
+        ) AS supply_outflow,
+        -- Borrow: positive borrowAmount = new borrow (inflow), negative = repay (outflow)
+        sumIf(
+            toFloat64(reinterpretAsInt256(reverse(unhex(substring(e.data, 67, 64)))))
+                / pow(10, p.decimals) * dp.price,
+            reinterpretAsInt256(reverse(unhex(substring(e.data, 67, 64)))) > 0
+        ) AS borrow_inflow,
+        sumIf(
+            toFloat64(-reinterpretAsInt256(reverse(unhex(substring(e.data, 67, 64)))))
+                / pow(10, p.decimals) * dp.price,
+            reinterpretAsInt256(reverse(unhex(substring(e.data, 67, 64)))) < 0
+        ) AS borrow_outflow
+    FROM fluid_events AS e
+    CROSS JOIN params AS p
+    LEFT JOIN daily_prices AS dp ON toStartOfDay(e.block_timestamp) = dp.day
+    WHERE e.event_name IN ('Operate', 'LogOperate')
+      AND lower(substring(e.topic2, 27)) = %(token_hex)s
+    GROUP BY ts
+    ORDER BY ts
+    LIMIT %(lim)s
+    """
+    rows = ch.query(
+        sql, parameters={"token": normalized, "token_hex": token_hex, "lim": safe_limit}
+    ).result_rows
+    if not rows:
+        return []
+
+    cumulative_supply = 0.0
+    cumulative_borrow = 0.0
+    flows: list[MarketFlowPoint] = []
+    for ts, s_in, s_out, b_in, b_out in rows:
+        s_in = float(s_in or 0.0)
+        s_out = float(s_out or 0.0)
+        b_in = float(b_in or 0.0)
+        b_out = float(b_out or 0.0)
+        net_supply = s_in - s_out
+        net_borrow = b_in - b_out
+        cumulative_supply += net_supply
+        cumulative_borrow += net_borrow
+        flows.append(
+            MarketFlowPoint(
+                timestamp=int(ts),
+                supply_inflow_usd=s_in,
+                supply_outflow_usd=s_out,
+                borrow_inflow_usd=b_in,
+                borrow_outflow_usd=b_out,
+                net_supply_flow_usd=net_supply,
+                net_borrow_flow_usd=net_borrow,
+                cumulative_supply_net_inflow_usd=cumulative_supply,
+                cumulative_borrow_net_inflow_usd=cumulative_borrow,
+            )
+        )
+    return flows
+
+
 def _query_market_flow_timeseries(
     ch,
     entity_id: str,
@@ -4351,6 +4753,23 @@ def _query_market_flow_timeseries(
     limit: int,
     protocol: Optional[str] = None,
 ) -> list[MarketFlowPoint]:
+    if protocol:
+        if protocol.upper() == "AAVE_MARKET":
+            preaggregated = _query_aave_preaggregated_flow_timeseries(
+                ch, entity_id, resolution, limit
+            )
+            if preaggregated:
+                return preaggregated
+            return _query_aave_event_flow_timeseries(ch, entity_id, resolution, limit)
+        elif protocol.upper() == "MORPHO_MARKET":
+            morpho_flows = _query_morpho_event_flow_timeseries(ch, entity_id, resolution, limit)
+            if morpho_flows:
+                return morpho_flows
+        elif protocol.upper() == "FLUID_MARKET":
+            fluid_flows = _query_fluid_event_flow_timeseries(ch, entity_id, resolution, limit)
+            if fluid_flows:
+                return fluid_flows
+
     if _is_aave_market_entity(ch, entity_id):
         preaggregated = _query_aave_preaggregated_flow_timeseries(
             ch, entity_id, resolution, limit
@@ -4358,10 +4777,7 @@ def _query_market_flow_timeseries(
         if preaggregated:
             return preaggregated
         return _query_aave_event_flow_timeseries(ch, entity_id, resolution, limit)
-    if protocol and protocol.upper() == "MORPHO_MARKET":
-        morpho_flows = _query_morpho_event_flow_timeseries(ch, entity_id, resolution, limit)
-        if morpho_flows:
-            return morpho_flows
+
     return _query_market_flow_timeseries_from_balance_deltas(ch, entity_id, resolution, limit, protocol)
 
 
@@ -4918,6 +5334,16 @@ class Query:
     ) -> LendingPoolPagePayload:
         ch = get_clickhouse_client()
         return _query_lending_pool_page(ch, protocol, entity_id, timeseries_limit, flow_limit)
+
+    @strawberry.field(name="fluidVaultPage")
+    def fluid_vault_page(
+        self,
+        vault_id: str,
+        timeseries_limit: int = 700,
+        flow_limit: int = 700,
+    ) -> LendingPoolPagePayload:
+        ch = get_clickhouse_client()
+        return _query_fluid_vault_page(ch, vault_id, timeseries_limit, flow_limit)
 
     @strawberry.field(name="historicalRates")
     def historical_rates(

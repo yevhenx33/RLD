@@ -23,6 +23,7 @@ log = logging.getLogger("indexer")
 # The Merge-engine 'unified_timeseries' view combines them for reads.
 PROTOCOL_TABLES = {
     "AAVE_MARKET": "aave_timeseries",
+    "EULER_MARKET": "euler_timeseries",
     "FLUID_MARKET": "fluid_timeseries",
     "MORPHO_MARKET": "morpho_chainlink_timeseries",
 }

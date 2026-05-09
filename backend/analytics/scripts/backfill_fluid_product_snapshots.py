@@ -106,9 +106,9 @@ VAULT_TOTALS_TYPE = "(uint256,uint256,uint256,uint256,uint256,uint256)"
 VAULT_LIMITS_TYPE = "(uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
 VAULT_BRANCH_TYPE = "(uint256,int256,uint256,uint256,uint256,uint256,int256)"
 VAULT_STATE_TYPE = f"(uint256,int256,uint256,uint256,uint256,uint256,{VAULT_BRANCH_TYPE})"
-LIQ_USER_SUPPLY_TYPE = "(bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
-LIQ_USER_BORROW_TYPE = "(bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
-VAULT_ENTIRE_TYPE = f"(address,bool,bool,{VAULT_CONSTANTS_TYPE},{VAULT_CONFIGS_TYPE},{VAULT_EXCHANGE_TYPE},{VAULT_TOTALS_TYPE},{VAULT_LIMITS_TYPE},{VAULT_STATE_TYPE},{LIQ_USER_SUPPLY_TYPE},{LIQ_USER_BORROW_TYPE})"
+LIQ_USER_SUPPLY_TYPE = "(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
+LIQ_USER_BORROW_TYPE = "(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
+VAULT_ENTIRE_TYPE = f"(address,uint256,uint256,{VAULT_CONSTANTS_TYPE},{VAULT_CONFIGS_TYPE},{VAULT_EXCHANGE_TYPE},{VAULT_TOTALS_TYPE},{VAULT_LIMITS_TYPE},{VAULT_STATE_TYPE},{LIQ_USER_SUPPLY_TYPE},{LIQ_USER_BORROW_TYPE})"
 DEX_TOTAL_SUPPLY_SHARES_SLOT = 2
 DEX_TOTAL_BORROW_SHARES_SLOT = 4
 DEX_SHARE_DECIMALS = 18
@@ -378,7 +378,7 @@ def call_tuple(rpc: RpcClient, to: str, sig: str, abi_type: str, block: str | in
     if not res.ok:
         return None, res.error
     try:
-        return abi_decode([abi_type], bytes.fromhex(res.result[2:]))[0], ""
+        return abi_decode([abi_type], bytes.fromhex(res.result[2:]), strict=False)[0], ""
     except Exception as exc:
         return None, str(exc)[:500]
 
@@ -413,7 +413,7 @@ def call_tuple_address_arg(rpc: RpcClient, to: str, sig: str, address: str, abi_
     if not res.ok:
         return None, res.error
     try:
-        return abi_decode([abi_type], bytes.fromhex(res.result[2:]))[0], ""
+        return abi_decode([abi_type], bytes.fromhex(res.result[2:]), strict=False)[0], ""
     except Exception as exc:
         return None, str(exc)[:500]
 

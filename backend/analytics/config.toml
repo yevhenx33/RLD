@@ -48,6 +48,11 @@ enabled = true
 poll_interval_sec = 30
 batch_blocks = 100000
 
+[sources.EULER_MARKET]
+enabled = true
+poll_interval_sec = 30
+batch_blocks = 100000
+
 [sources.SOFR_RATES]
 enabled = true
 poll_interval_sec = 300

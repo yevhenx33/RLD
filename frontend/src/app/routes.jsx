@@ -15,7 +15,8 @@ const ProtocolMarketsPage = lazy(
 );
 const AaveMarketPage = lazy(() => import("../pages/app/markets/AaveMarketPage"));
 const MorphoMarketPage = lazy(() => import("../pages/app/markets/MorphoMarketPage"));
-const FluidMarketPage = AaveMarketPage;
+const FluidMarketPage = lazy(() => import("../pages/app/markets/FluidMarketPage"));
+const FluidVaultPage = lazy(() => import("../pages/app/markets/FluidVaultPage"));
 const PendleMarketPage = lazy(() => import("../pages/app/markets/PendleMarketPage"));
 const UnsupportedMarketPage = lazy(() => import("../pages/app/markets/UnsupportedMarketPage"));
 const PortfolioPage = lazy(() => import("../pages/app/PortfolioPage"));
@@ -98,6 +99,7 @@ export default function AppRoutes() {
         />
         <Route path="/data/aave/:marketId" element={renderLazy(AaveMarketPage)} />
         <Route path="/data/morpho/:marketId" element={renderLazy(MorphoMarketPage)} />
+        <Route path="/data/fluid/vault/:vaultId" element={renderLazy(FluidVaultPage)} />
         <Route path="/data/fluid/:marketId" element={renderLazy(FluidMarketPage)} />
         <Route path="/data/pendle/:marketId" element={renderLazy(PendleMarketPage)} />
         <Route path="/data/:protocol/:marketId" element={renderLazy(UnsupportedMarketPage)} />

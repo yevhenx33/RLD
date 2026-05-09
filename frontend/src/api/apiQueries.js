@@ -112,6 +112,8 @@ export const MARKET_PAGE_QUERY = `
         utilization
         collateralSymbol
         lltv
+        lltvMin
+        lltvMax
         collateralUsd
         oracle
         loanPriceUsd
@@ -143,6 +145,62 @@ export const MARKET_PAGE_QUERY = `
         timestamps
         vaults { id address name }
         suppliedUsd
+      }
+      vaultBreakdown {
+        vault
+        vaultId
+        collateral
+        debt
+        ltv
+        supplyApy
+        borrowApy
+        supplyUsd
+        borrowUsd
+      }
+    }
+  }
+`;
+
+export const FLUID_VAULT_PAGE_QUERY = `
+  query FluidVaultPage($vaultId: String!, $timeseriesLimit: Int!, $flowLimit: Int!) {
+    fluidVaultPage(
+      vaultId: $vaultId
+      timeseriesLimit: $timeseriesLimit
+      flowLimit: $flowLimit
+    ) {
+      freshness { ready status generatedAt }
+      market {
+        entityId
+        symbol
+        protocol
+        supplyUsd
+        borrowUsd
+        supplyApy
+        borrowApy
+        utilization
+        collateralSymbol
+        loanAsset
+        collateralPriceUsd
+        oracleSupport
+        lltvMin
+        lltvMax
+      }
+      rateChart {
+        timestamp
+        supplyApy
+        borrowApy
+        utilization
+        supplyUsd
+        borrowUsd
+      }
+      flowChart {
+        timestamp
+        supplyInflowUsd
+        supplyOutflowUsd
+        borrowInflowUsd
+        borrowOutflowUsd
+        netSupplyFlowUsd
+        netBorrowFlowUsd
       }
     }
   }

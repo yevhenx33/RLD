@@ -190,6 +190,24 @@ def cmd_fluid_validate_rpc(args) -> int:
         ch.close()
 
 
+def cmd_euler_refresh_verified(args) -> int:
+    from analytics.scripts.euler_ops import refresh_verified
+
+    return refresh_verified(args)
+
+
+def cmd_euler_replay(args) -> int:
+    from analytics.scripts.euler_ops import replay
+
+    return replay(args)
+
+
+def cmd_euler_anchor(args) -> int:
+    from analytics.scripts.euler_ops import anchor
+
+    return anchor(args)
+
+
 
 
 def cmd_views(args) -> int:
@@ -463,6 +481,48 @@ def main() -> int:
     fluid_validate.add_argument("--retries", type=int, default=2)
     fluid_validate.add_argument("--fail-on-drift", action="store_true")
     fluid_validate.set_defaults(func=cmd_fluid_validate_rpc)
+
+    euler_refresh = sub.add_parser("euler-refresh-verified", help="Refresh Euler governedPerspective verified vault registry")
+    euler_refresh.add_argument("--rpc-url", default=None)
+    euler_refresh.add_argument("--block-number", type=int, default=0, help="Optional fixed Ethereum block tag")
+    euler_refresh.add_argument("--max-vaults", type=int, default=0)
+    euler_refresh.add_argument("--http-timeout-sec", type=int, default=60)
+    euler_refresh.add_argument("--retries", type=int, default=2)
+    euler_refresh.add_argument("--progress-every", type=int, default=25)
+    euler_refresh.add_argument("--dry-run", action="store_true")
+    euler_refresh.set_defaults(func=cmd_euler_refresh_verified)
+
+    euler_replay = sub.add_parser("euler-replay", help="Replay Euler EVault logs for a bounded Ethereum mainnet block range")
+    euler_replay.add_argument("--rpc-url", default=None)
+    euler_replay.add_argument("--from-block", type=int, required=True)
+    euler_replay.add_argument("--to-block", type=int, default=0, help="Inclusive block; defaults to confirmed RPC head")
+    euler_replay.add_argument("--confirmations", type=int, default=12)
+    euler_replay.add_argument("--batch-blocks", type=int, default=500)
+    euler_replay.add_argument("--address-batch-size", type=int, default=100)
+    euler_replay.add_argument("--http-timeout-sec", type=int, default=60)
+    euler_replay.add_argument("--retries", type=int, default=2)
+    euler_replay.add_argument("--verified-only", action=argparse.BooleanOptionalAction, default=True)
+    euler_replay.add_argument("--state-only", action="store_true", help="Replay only state/config events needed for anchoring")
+    euler_replay.add_argument("--discover-factory", action="store_true", help="Also scan EVaultCreated by topic over this range")
+    euler_replay.add_argument("--process", action="store_true", help="Decode and merge this replay range immediately")
+    euler_replay.add_argument("--run-processor", action="store_true", help="Run the normal processor loop after inserting logs")
+    euler_replay.add_argument("--progress-every", action="store_true")
+    euler_replay.add_argument("--dry-run", action="store_true")
+    euler_replay.set_defaults(func=cmd_euler_replay)
+
+    euler_anchor = sub.add_parser("euler-anchor", help="Compare latest indexed Euler state against live Ethereum RPC calls")
+    euler_anchor.add_argument("--rpc-url", default=None)
+    euler_anchor.add_argument("--block-number", type=int, default=0)
+    euler_anchor.add_argument("--confirmations", type=int, default=12)
+    euler_anchor.add_argument("--max-vaults", type=int, default=50)
+    euler_anchor.add_argument("--max-diff-rows", type=int, default=500)
+    euler_anchor.add_argument("--usd-tolerance", type=float, default=1.0)
+    euler_anchor.add_argument("--apy-tolerance", type=float, default=1e-6)
+    euler_anchor.add_argument("--http-timeout-sec", type=int, default=60)
+    euler_anchor.add_argument("--retries", type=int, default=2)
+    euler_anchor.add_argument("--fail-on-drift", action="store_true")
+    euler_anchor.add_argument("--dry-run", action="store_true")
+    euler_anchor.set_defaults(func=cmd_euler_anchor)
 
     views = sub.add_parser("views", help="Manage serving materialized views")
     views_sub = views.add_subparsers(dest="views_command", required=True)

@@ -356,7 +356,7 @@ export default function MorphoMarketPage() {
                       market.collateralPriceUsd != null
                         ? `$${Number(market.collateralPriceUsd).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                         : market.loanPriceUsd != null
-                          ? `$${Number(market.loanPriceUsd).toLocaleString(undefined, { maximumFractionDigits: 4 })}`
+                          ? `$${Number(market.loanPriceUsd).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                           : "—"
                     }
                   />
@@ -452,7 +452,7 @@ export default function MorphoMarketPage() {
             <RLDPerformanceChart data={flowData} resolution={CHART_RESOLUTION} referenceLines={[{ y: 0, stroke: "#52525b" }]} areas={[
               { key: "supplyInflowUsd", color: "#22c55e", name: "Supply Inflow", format: "dollar" },
               { key: "supplyOutflowUsd", color: "#f43f5e", name: "Supply Outflow", format: "dollar" },
-              { key: "netSupplyFlowUsd", color: "#22d3ee", name: "Net Supply Flow", format: "dollar" },
+              { key: "netSupplyFlowUsd", color: "#22d3ee", name: "Net Supply Flow", format: "dollar", noFill: true },
             ]} />
           </ChartCard>
 
@@ -460,7 +460,7 @@ export default function MorphoMarketPage() {
             <RLDPerformanceChart data={flowData} resolution={CHART_RESOLUTION} referenceLines={[{ y: 0, stroke: "#52525b" }]} areas={[
               { key: "borrowInflowUsd", color: "#8b5cf6", name: "Borrow Inflow", format: "dollar" },
               { key: "borrowOutflowUsd", color: "#f97316", name: "Borrow Outflow", format: "dollar" },
-              { key: "netBorrowFlowUsd", color: "#facc15", name: "Net Borrow Flow", format: "dollar" },
+              { key: "netBorrowFlowUsd", color: "#facc15", name: "Net Borrow Flow", format: "dollar", noFill: true },
             ]} />
           </ChartCard>
         </div>

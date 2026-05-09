@@ -9,6 +9,7 @@ from analytics.state import ensure_source_status_table
 from analytics.morpho_oracle_snapshots import ensure_morpho_oracle_snapshot_tables
 from analytics.oracle_snapshots import ensure_oracle_snapshot_tables
 from analytics.fluid_full_coverage import ensure_fluid_full_coverage_tables, seed_core_fluid_contracts
+from analytics.euler_schema import ensure_euler_tables
 from analytics.aave_accounts import ensure_aave_account_tables
 from analytics.streams.state import ensure_publisher_state_tables
 
@@ -23,6 +24,7 @@ PENDLE_ETH_PRICE_LATEST_TABLE = "pendle_eth_price_latest"
 PENDLE_ETH_PRICE_OHLCV_TABLE = "pendle_eth_price_ohlcv"
 PENDLE_ETH_BACKFILL_PROGRESS_TABLE = "pendle_eth_backfill_progress"
 MORPHO_CHAINLINK_TIMESERIES_TABLE = "morpho_chainlink_timeseries"
+EULER_TIMESERIES_TABLE = "euler_timeseries"
 FLUID_TIMESERIES_TABLE = "fluid_timeseries"
 AAVE_TIMESERIES_TABLE = "aave_timeseries"
 
@@ -86,6 +88,7 @@ def ensure_schema(ch) -> None:
     ensure_publisher_state_tables(ch)
     ensure_fluid_full_coverage_tables(ch)
     seed_core_fluid_contracts(ch)
+    ensure_euler_tables(ch)
     ch.command(
         """
         CREATE TABLE IF NOT EXISTS processor_state (

@@ -28,6 +28,7 @@ from analytics.sources.metamorpho import MetaMorphoFactorySource, MetaMorphoSour
 from analytics.sources import (
     FluidSource,
     ChainlinkSource,
+    EulerSource,
     AaveV3Source,
     AaveAccountSource,
     MorphoSource,
@@ -39,6 +40,7 @@ from analytics.sources import (
 from analytics.protocols import (
     AAVE_MARKET,
     AAVE_ACCOUNTS,
+    EULER_MARKET,
     FLUID_MARKET,
     MORPHO_MARKET,
     METAMORPHO_FACTORY,
@@ -60,6 +62,7 @@ INDEXER_VERSION = os.getenv("INDEXER_VERSION", "dev")
 SOURCE_MAP = {
     AAVE_MARKET: AaveV3Source,
     AAVE_ACCOUNTS: AaveAccountSource,
+    EULER_MARKET: EulerSource,
     FLUID_MARKET: FluidSource,
     MORPHO_MARKET: MorphoSource,
     METAMORPHO_FACTORY: MetaMorphoFactorySource,
