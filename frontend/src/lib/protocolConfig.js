@@ -6,6 +6,13 @@ const PROTOCOLS = {
     supportsMarketPage: true,
     stripRoutePrefix: true,
   },
+  spark: {
+    slug: "spark",
+    apiProtocol: "SPARK_MARKET",
+    displayName: "Spark",
+    supportsMarketPage: true,
+    stripRoutePrefix: true,
+  },
   morpho: {
     slug: "morpho",
     apiProtocol: "MORPHO_MARKET",

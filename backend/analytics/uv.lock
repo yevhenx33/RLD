@@ -1381,7 +1381,7 @@ wheels = [
 ]
 
 [[package]]
-name = "rld-backend-analytics"
+name = "rld-analytics"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

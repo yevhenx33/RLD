@@ -13,11 +13,13 @@ combining it with Reserve indices to calculate true accounting TVL organically.
 import datetime
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Optional
 
 from eth_abi import decode as abi_decode
 import pandas as pd
+import requests
 
 from ..base import (
     BaseSource,
@@ -32,6 +34,9 @@ from ..aave_constants import (
     AAVE_V3_POOL,
     AAVE_V3_POOL_CONFIGURATOR,
     AAVE_V3_GENESIS_ANCHOR_BLOCK,
+    SPARK_V3_POOL,
+    SPARK_V3_POOL_CONFIGURATOR,
+    SPARK_V3_GENESIS_ANCHOR_BLOCK,
     AAVE_TOPIC_RESERVE_DATA_UPDATED,
     AAVE_TOPIC_SUPPLY,
     AAVE_TOPIC_WITHDRAW,
@@ -39,6 +44,7 @@ from ..aave_constants import (
     AAVE_TOPIC_REPAY,
     AAVE_TOPIC_LIQUIDATION_CALL,
     AAVE_TOPIC_MINTED_TO_TREASURY,
+    AAVE_TOPIC_RESERVE_INITIALIZED,
     AAVE_TOPIC_RESERVE_CONFIGURATION_CHANGED,
     AAVE_TOPIC_COLLATERAL_CONFIGURATION_CHANGED,
     AAVE_TOPIC_EMODE_CATEGORY_ADDED,
@@ -59,6 +65,7 @@ TOPIC_BORROW = AAVE_TOPIC_BORROW
 TOPIC_REPAY = AAVE_TOPIC_REPAY
 TOPIC_LIQUIDATION_CALL = AAVE_TOPIC_LIQUIDATION_CALL
 TOPIC_MINTED_TO_TREASURY = AAVE_TOPIC_MINTED_TO_TREASURY
+TOPIC_RESERVE_INITIALIZED = AAVE_TOPIC_RESERVE_INITIALIZED
 TOPIC_RESERVE_CONFIGURATION_CHANGED = AAVE_TOPIC_RESERVE_CONFIGURATION_CHANGED
 TOPIC_COLLATERAL_CONFIGURATION_CHANGED = AAVE_TOPIC_COLLATERAL_CONFIGURATION_CHANGED
 TOPIC_EMODE_CATEGORY_ADDED = AAVE_TOPIC_EMODE_CATEGORY_ADDED
@@ -67,6 +74,7 @@ TOPIC_EMODE_ASSET_CATEGORY_CHANGED = AAVE_TOPIC_EMODE_ASSET_CATEGORY_CHANGED
 
 RAY = 10**27
 BPS = 10_000
+SCALED_TOTAL_SUPPLY_SELECTOR = "0xb1bf962d"
 
 EVENT_MAP = {
     TOPIC_RESERVE_DATA_UPDATED: "ReserveDataUpdated",
@@ -76,6 +84,7 @@ EVENT_MAP = {
     TOPIC_REPAY: "Repay",
     TOPIC_LIQUIDATION_CALL: "LiquidationCall",
     TOPIC_MINTED_TO_TREASURY: "MintedToTreasury",
+    TOPIC_RESERVE_INITIALIZED: "ReserveInitialized",
     TOPIC_RESERVE_CONFIGURATION_CHANGED: "ReserveConfigurationChanged",
     TOPIC_COLLATERAL_CONFIGURATION_CHANGED: "CollateralConfigurationChanged",
     TOPIC_EMODE_CATEGORY_ADDED: "EModeCategoryAdded",
@@ -149,17 +158,32 @@ class AaveV3Source(BaseSource):
     topics = list(EVENT_MAP.keys())
     raw_table = "aave_events"
     genesis_block = GENESIS_ANCHOR_BLOCK
+    scaled_state_table = "aave_scaled_state"
+    risk_state_table = "aave_reserve_risk_state"
+    emode_table = "aave_emode_categories"
+    reserve_tokens_table = "aave_reserve_tokens"
+    env_prefix = "AAVE"
+    default_reconcile_scaled_totals = True
+    genesis_seeds = GENESIS_SEEDS
 
     def __init__(self):
         self._reserves: dict[str, AaveReserveState] = {}
         self._emode_categories: dict[int, AaveEModeCategory] = {}
         self._unknown_reserves: set[str] = set()
         self._strict_reserve_coverage = (
-            os.getenv("AAVE_STRICT_RESERVE_COVERAGE", "false").strip().lower()
+            os.getenv(f"{self.env_prefix}_STRICT_RESERVE_COVERAGE", "false").strip().lower()
             in {"1", "true", "yes"}
         )
+        reconcile_default = "true" if self.default_reconcile_scaled_totals else "false"
+        self._rpc_reconcile_enabled = (
+            os.getenv(f"{self.env_prefix}_RECONCILE_SCALED_TOTALS", reconcile_default).strip().lower()
+            in {"1", "true", "yes"}
+        )
+        self._rpc_reconcile_max_rows = int(os.getenv(f"{self.env_prefix}_RECONCILE_MAX_ROWS", "200"))
+        self._rpc_timeout_sec = int(os.getenv(f"{self.env_prefix}_RPC_TIMEOUT_SEC", "20"))
+        self._rpc_retries = int(os.getenv(f"{self.env_prefix}_RPC_RETRIES", "2"))
         # Seed accumulators from on-chain anchor
-        for eid, (sup_seed, bor_seed) in GENESIS_SEEDS.items():
+        for eid, (sup_seed, bor_seed) in self.genesis_seeds.items():
             self._reserves[eid] = AaveReserveState(
                 total_scaled_supply=float(sup_seed),
                 total_scaled_borrow=float(bor_seed),
@@ -168,8 +192,26 @@ class AaveV3Source(BaseSource):
 
     def get_cursor(self, ch) -> int:
         if not self._initialized:
-            ch.command("""
-            CREATE TABLE IF NOT EXISTS aave_scaled_state (
+            ch.command(f"""
+            CREATE TABLE IF NOT EXISTS {self.raw_table} (
+                block_number UInt64,
+                block_timestamp DateTime,
+                tx_hash String,
+                log_index UInt32,
+                contract String,
+                event_name LowCardinality(String),
+                topic0 String,
+                topic1 Nullable(String),
+                topic2 Nullable(String),
+                topic3 Nullable(String),
+                data String,
+                inserted_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(inserted_at)
+            PARTITION BY toStartOfMonth(block_timestamp)
+            ORDER BY (block_number, tx_hash, log_index)
+            """)
+            ch.command(f"""
+            CREATE TABLE IF NOT EXISTS {self.scaled_state_table} (
                 entity_id String,
                 total_scaled_supply Float64,
                 total_scaled_borrow Float64,
@@ -179,8 +221,8 @@ class AaveV3Source(BaseSource):
             ) ENGINE = ReplacingMergeTree(updated_at)
             ORDER BY entity_id
             """)
-            ch.command("""
-            CREATE TABLE IF NOT EXISTS aave_reserve_risk_state (
+            ch.command(f"""
+            CREATE TABLE IF NOT EXISTS {self.risk_state_table} (
                 entity_id String,
                 ltv Float64 DEFAULT 0,
                 liquidation_threshold Float64 DEFAULT 0,
@@ -190,8 +232,8 @@ class AaveV3Source(BaseSource):
             ) ENGINE = ReplacingMergeTree(updated_at)
             ORDER BY entity_id
             """)
-            ch.command("""
-            CREATE TABLE IF NOT EXISTS aave_emode_categories (
+            ch.command(f"""
+            CREATE TABLE IF NOT EXISTS {self.emode_table} (
                 category_id UInt8,
                 ltv Float64 DEFAULT 0,
                 liquidation_threshold Float64 DEFAULT 0,
@@ -202,8 +244,25 @@ class AaveV3Source(BaseSource):
             ) ENGINE = ReplacingMergeTree(updated_at)
             ORDER BY category_id
             """)
-            ch.command("""
-            CREATE TABLE IF NOT EXISTS aave_timeseries (
+            ch.command(f"""
+            CREATE TABLE IF NOT EXISTS {self.reserve_tokens_table} (
+                deployment_id String,
+                chain_id UInt32,
+                reserve String,
+                a_token String,
+                stable_debt_token String DEFAULT '',
+                variable_debt_token String,
+                symbol LowCardinality(String),
+                decimals UInt8,
+                active UInt8 DEFAULT 1,
+                source LowCardinality(String) DEFAULT 'UNKNOWN',
+                block_number UInt64 DEFAULT 0,
+                updated_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(updated_at)
+            ORDER BY (deployment_id, reserve)
+            """)
+            ch.command(f"""
+            CREATE TABLE IF NOT EXISTS {self.output_table} (
                 timestamp DateTime,
                 protocol LowCardinality(String),
                 symbol LowCardinality(String),
@@ -229,7 +288,7 @@ class AaveV3Source(BaseSource):
             ORDER BY (protocol, entity_id, timestamp)
             TTL timestamp + INTERVAL 36 MONTH DELETE
             """)
-            for table in ("aave_timeseries", "market_timeseries", "api_market_latest"):
+            for table in (self.output_table, "market_timeseries", "api_market_latest"):
                 for column, column_type in (
                     ("ltv", "Float64 DEFAULT 0"),
                     ("liquidation_threshold", "Float64 DEFAULT 0"),
@@ -243,7 +302,7 @@ class AaveV3Source(BaseSource):
                     ch.command(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {column_type}")
             
             try:
-                res = ch.query_df("SELECT entity_id, argMax(total_scaled_supply, updated_at) AS sup, argMax(total_scaled_borrow, updated_at) AS bor, argMax(liquidity_index, updated_at) AS li, argMax(variable_borrow_index, updated_at) AS vbi FROM aave_scaled_state GROUP BY entity_id")
+                res = ch.query_df(f"SELECT entity_id, argMax(total_scaled_supply, updated_at) AS sup, argMax(total_scaled_borrow, updated_at) AS bor, argMax(liquidity_index, updated_at) AS li, argMax(variable_borrow_index, updated_at) AS vbi FROM {self.scaled_state_table} GROUP BY entity_id")
                 if not res.empty:
                     for _, row in res.iterrows():
                         self._reserves[row['entity_id']] = AaveReserveState(
@@ -252,7 +311,7 @@ class AaveV3Source(BaseSource):
                             liquidity_index=row['li'],
                             variable_borrow_index=row['vbi']
                         )
-                risk = ch.query_df("SELECT entity_id, argMax(ltv, updated_at) AS ltv, argMax(liquidation_threshold, updated_at) AS lt, argMax(liquidation_penalty, updated_at) AS penalty, argMax(e_mode_category, updated_at) AS emode FROM aave_reserve_risk_state GROUP BY entity_id")
+                risk = ch.query_df(f"SELECT entity_id, argMax(ltv, updated_at) AS ltv, argMax(liquidation_threshold, updated_at) AS lt, argMax(liquidation_penalty, updated_at) AS penalty, argMax(e_mode_category, updated_at) AS emode FROM {self.risk_state_table} GROUP BY entity_id")
                 if not risk.empty:
                     for _, row in risk.iterrows():
                         eid = str(row["entity_id"])
@@ -261,7 +320,7 @@ class AaveV3Source(BaseSource):
                         state.liquidation_threshold = float(row["lt"] or 0.0)
                         state.liquidation_penalty = float(row["penalty"] or 0.0)
                         state.e_mode_category = int(row["emode"] or 0)
-                emode = ch.query_df("SELECT category_id, argMax(ltv, updated_at) AS ltv, argMax(liquidation_threshold, updated_at) AS lt, argMax(liquidation_penalty, updated_at) AS penalty, argMax(price_source, updated_at) AS price_source, argMax(label, updated_at) AS label FROM aave_emode_categories GROUP BY category_id")
+                emode = ch.query_df(f"SELECT category_id, argMax(ltv, updated_at) AS ltv, argMax(liquidation_threshold, updated_at) AS lt, argMax(liquidation_penalty, updated_at) AS penalty, argMax(price_source, updated_at) AS price_source, argMax(label, updated_at) AS label FROM {self.emode_table} GROUP BY category_id")
                 if not emode.empty:
                     for _, row in emode.iterrows():
                         self._emode_categories[int(row["category_id"] or 0)] = AaveEModeCategory(
@@ -271,13 +330,13 @@ class AaveV3Source(BaseSource):
                             price_source=str(row["price_source"] or ""),
                             label=str(row["label"] or ""),
                         )
-                log.info(f"[AAVE_MARKET] State Initialized: Rehydrated {len(self._reserves)} reserves and {len(self._emode_categories)} E-Mode categories from persistence layer.")
+                log.info(f"[{self.name}] State Initialized: Rehydrated {len(self._reserves)} reserves and {len(self._emode_categories)} E-Mode categories from persistence layer.")
             except Exception as e:
-                log.error(f"[AAVE_MARKET] Failed to load state: {e}")
+                log.error(f"[{self.name}] Failed to load state: {e}")
                 
             self._initialized = True
 
-        result = ch.command("SELECT max(block_number) FROM aave_events")
+        result = ch.command(f"SELECT max(block_number) FROM {self.raw_table}")
         return int(result) if result else 0
 
     def _event_name(self, log_entry) -> str:
@@ -308,7 +367,7 @@ class AaveV3Source(BaseSource):
                     bytes.fromhex(raw),
                 )
             except Exception as exc:
-                log.warning("[AAVE_MARKET] Failed to decode EModeCategoryAdded: %s", exc)
+                log.warning("[%s] Failed to decode EModeCategoryAdded: %s", self.name, exc)
                 return None
             category_id = _topic_uint(topics[1])
             self._emode_categories[category_id] = AaveEModeCategory(
@@ -336,6 +395,9 @@ class AaveV3Source(BaseSource):
             state.ltv = _bps(words[0])
             state.liquidation_threshold = _bps(words[1])
             state.liquidation_penalty = _liquidation_penalty(words[2])
+            return None
+
+        if evt == "ReserveInitialized":
             return None
 
         if evt == "EModeAssetCategoryChanged":
@@ -386,7 +448,7 @@ class AaveV3Source(BaseSource):
             if reserve_addr not in self._unknown_reserves:
                 self._unknown_reserves.add(reserve_addr)
                 msg = (
-                    f"[AAVE_MARKET] Unknown reserve detected: {eid}. "
+                    f"[{self.name}] Unknown reserve detected: {eid}. "
                     "Add this asset to indexer/tokens.py to prevent silent coverage gaps."
                 )
                 if self._strict_reserve_coverage:
@@ -464,6 +526,8 @@ class AaveV3Source(BaseSource):
                 "utilization": utilization,
                 "total_supply": scaled_supply_tokens,
                 "total_borrow": scaled_borrow_tokens,
+                "liquidity_index": liquidity_index,
+                "variable_borrow_index": variable_borrow_index,
                 "ltv": state.ltv,
                 "liquidation_threshold": state.liquidation_threshold,
                 "liquidation_penalty": state.liquidation_penalty,
@@ -477,12 +541,160 @@ class AaveV3Source(BaseSource):
 
         return None
 
+    def _rpc_url(self) -> str:
+        return (os.getenv("MAINNET_RPC_URL") or os.getenv("ETH_RPC_URL") or "").strip()
+
+    def _rpc_scaled_total_supply(self, rpc_url: str, token_address: str, block_number: int) -> int:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [
+                {"to": token_address, "data": SCALED_TOTAL_SUPPLY_SELECTOR},
+                hex(int(block_number)),
+            ],
+        }
+        last_error = None
+        for attempt in range(max(1, self._rpc_retries)):
+            try:
+                res = requests.post(rpc_url, json=payload, timeout=self._rpc_timeout_sec)
+                res.raise_for_status()
+                body = res.json()
+                if body.get("error"):
+                    raise RuntimeError(body["error"])
+                raw = str(body.get("result") or "0x0")
+                return int(raw, 16)
+            except Exception as exc:
+                last_error = exc
+                if attempt + 1 < max(1, self._rpc_retries):
+                    time.sleep(0.5 * (attempt + 1))
+        raise RuntimeError(last_error)
+
+    def _reserve_token_map(self, ch, entity_ids: list[str]) -> dict[str, tuple[str, str]]:
+        if not entity_ids:
+            return {}
+        escaped = ", ".join("'" + eid.replace("'", "''") + "'" for eid in entity_ids)
+        try:
+            rows = ch.query(f"""
+                SELECT reserve, a_token, variable_debt_token
+                FROM {self.reserve_tokens_table} FINAL
+                WHERE reserve IN ({escaped})
+                  AND a_token != ''
+            """).result_rows
+        except Exception as exc:
+            log.warning("[%s] Scaled-total reconciliation skipped: reserve token map unavailable: %s", self.name, exc)
+            return {}
+        return {
+            str(reserve).lower(): (str(a_token), str(variable_debt_token))
+            for reserve, a_token, variable_debt_token in rows
+            if reserve and a_token
+        }
+
+    def _reconcile_scaled_totals(self, ch, df: pd.DataFrame) -> pd.DataFrame:
+        if not self._rpc_reconcile_enabled or df.empty:
+            return df
+        rpc_url = self._rpc_url()
+        if not rpc_url:
+            return df
+
+        working = df.copy()
+        entity_ids = sorted(str(eid).lower() for eid in working["entity_id"].dropna().unique())
+        token_map = self._reserve_token_map(ch, entity_ids)
+        if not token_map:
+            return working
+
+        if len(working) <= self._rpc_reconcile_max_rows:
+            target_indexes = list(working.index)
+        else:
+            target_indexes = (
+                working.sort_values(["entity_id", "block_number"])
+                .groupby("entity_id", sort=False)
+                .tail(1)
+                .index
+                .tolist()
+            )
+
+        cache: dict[tuple[str, int], int] = {}
+        reconciled = 0
+        for idx in target_indexes:
+            row = working.loc[idx]
+            eid = str(row["entity_id"]).lower()
+            tokens = token_map.get(eid)
+            if not tokens:
+                continue
+            a_token, variable_debt_token = tokens
+            block_number = int(row["block_number"])
+            state = self._reserves.setdefault(eid, AaveReserveState())
+            try:
+                supply_key = (a_token.lower(), block_number)
+                if supply_key not in cache:
+                    cache[supply_key] = self._rpc_scaled_total_supply(rpc_url, a_token, block_number)
+                borrow_scaled = 0
+                if variable_debt_token:
+                    borrow_key = (variable_debt_token.lower(), block_number)
+                    if borrow_key not in cache:
+                        cache[borrow_key] = self._rpc_scaled_total_supply(rpc_url, variable_debt_token, block_number)
+                    borrow_scaled = cache[borrow_key]
+
+                state.total_scaled_supply = float(cache[supply_key])
+                state.total_scaled_borrow = float(borrow_scaled)
+                state.liquidity_index = float(row.get("liquidity_index", state.liquidity_index))
+                state.variable_borrow_index = float(row.get("variable_borrow_index", state.variable_borrow_index))
+                l_idx = state.liquidity_index / RAY
+                v_idx = state.variable_borrow_index / RAY
+                total_supply = max(0.0, state.total_scaled_supply * l_idx)
+                total_borrow = max(0.0, state.total_scaled_borrow * v_idx)
+                working.at[idx, "total_supply"] = total_supply
+                working.at[idx, "total_borrow"] = total_borrow
+                working.at[idx, "utilization"] = min(1.0, total_borrow / total_supply) if total_supply > 0 else 0.0
+                reconciled += 1
+            except Exception as exc:
+                log.warning(
+                    "[%s] Scaled-total reconciliation failed for %s at block %s: %s",
+                    self.name,
+                    eid,
+                    block_number,
+                    exc,
+                )
+        if reconciled:
+            log.info("[%s] Reconciled scaled totals for %s reserve rows", self.name, reconciled)
+        return working
+
+    def _apply_current_scaled_state(
+        self,
+        df: pd.DataFrame,
+        eth_price: float,
+        btc_price: float,
+    ) -> pd.DataFrame:
+        if df.empty or "timestamp" not in df.columns:
+            return df
+        working = df.copy()
+        latest_ts = working["timestamp"].max()
+        latest_mask = working["timestamp"] == latest_ts
+        for idx, row in working[latest_mask].iterrows():
+            eid = str(row.get("entity_id") or "").lower()
+            symbol = str(row.get("symbol") or "")
+            state = self._reserves.get(eid)
+            if not state or symbol not in SYMBOL_TO_DEC:
+                continue
+            decimals = SYMBOL_TO_DEC[symbol]
+            price = float(row.get("price_usd") or get_usd_price(symbol, eth_price, btc_price))
+            supply_tokens = max(0.0, float(state.total_scaled_supply) * float(state.liquidity_index) / RAY)
+            borrow_tokens = max(0.0, float(state.total_scaled_borrow) * float(state.variable_borrow_index) / RAY)
+            supply_usd = supply_tokens / (10 ** decimals) * price
+            borrow_usd = borrow_tokens / (10 ** decimals) * price
+            working.at[idx, "supply_usd"] = supply_usd
+            working.at[idx, "borrow_usd"] = borrow_usd
+            working.at[idx, "utilization"] = min(1.0, borrow_usd / supply_usd) if supply_usd > 0 else 0.0
+        return working
+
     def merge(self, ch, decoded_rows: list[dict]) -> int:
         if not decoded_rows:
             return 0
 
 
         df = pd.DataFrame(decoded_rows)
+        df = self._reconcile_scaled_totals(ch, df)
         df["ts"] = pd.to_datetime(df["timestamp"]).dt.floor("h")
 
         df.sort_values("block_number", inplace=True)
@@ -500,7 +712,7 @@ class AaveV3Source(BaseSource):
 
         final = pd.DataFrame({
             "timestamp": hourly["ts"],
-            "protocol": "AAVE_MARKET",
+            "protocol": self.name,
             "symbol": hourly["symbol"],
             "entity_id": hourly["entity_id"],
             "target_id": "",
@@ -520,7 +732,8 @@ class AaveV3Source(BaseSource):
             "e_mode_label": hourly["e_mode_label"].fillna("").astype(str),
         })
 
-        final = forward_fill_hourly(final, ch, "AAVE_MARKET", compound=False)
+        final = forward_fill_hourly(final, ch, self.name, compound=False)
+        final = self._apply_current_scaled_state(final, eth_price, btc_price)
         if len(final) > 0:
             def risk_fields(entity_id: str) -> dict:
                 state = self._reserves.get(str(entity_id), AaveReserveState())
@@ -550,7 +763,7 @@ class AaveV3Source(BaseSource):
             rewrite_protocol_window_if_enabled(
                 ch,
                 self.output_table,
-                "AAVE_MARKET",
+                self.name,
                 min_ts,
                 max_ts,
             )
@@ -570,7 +783,7 @@ class AaveV3Source(BaseSource):
                         "variable_borrow_index": float(r.variable_borrow_index)
                     } for eid, r in self._reserves.items()
                 ])
-                insert_df_batched(ch, "aave_scaled_state", state_df)
+                insert_df_batched(ch, self.scaled_state_table, state_df)
                 risk_df = pd.DataFrame([
                     {
                         "entity_id": eid,
@@ -580,7 +793,7 @@ class AaveV3Source(BaseSource):
                         "e_mode_category": int(r.e_mode_category),
                     } for eid, r in self._reserves.items()
                 ])
-                insert_df_batched(ch, "aave_reserve_risk_state", risk_df)
+                insert_df_batched(ch, self.risk_state_table, risk_df)
             if len(self._emode_categories) > 0:
                 emode_df = pd.DataFrame([
                     {
@@ -592,6 +805,20 @@ class AaveV3Source(BaseSource):
                         "label": str(category.label),
                     } for category_id, category in self._emode_categories.items()
                 ])
-                insert_df_batched(ch, "aave_emode_categories", emode_df)
+                insert_df_batched(ch, self.emode_table, emode_df)
 
         return len(final)
+
+
+class SparkLendSource(AaveV3Source):
+    name = "SPARK_MARKET"
+    contracts = [SPARK_V3_POOL, SPARK_V3_POOL_CONFIGURATOR]
+    raw_table = "spark_events"
+    genesis_block = SPARK_V3_GENESIS_ANCHOR_BLOCK
+    scaled_state_table = "spark_scaled_state"
+    risk_state_table = "spark_reserve_risk_state"
+    emode_table = "spark_emode_categories"
+    reserve_tokens_table = "spark_reserve_tokens"
+    env_prefix = "SPARK"
+    default_reconcile_scaled_totals = False
+    genesis_seeds: dict[str, tuple[int, int]] = {}

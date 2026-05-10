@@ -19,7 +19,11 @@ export const queryKeys = {
     { resolution, startDate, endDate, limit },
   ],
   apiSusdeLatest: (url) => [url, "api.latest-susde.v1", null],
-  apiLendingPage: (url, displayIn) => [url, "api.lending-page.v1", { displayIn }],
+  apiLendingPage: (url, displayIn, flowWindowDays = 30) => [
+    url,
+    "api.lending-page.v1",
+    { displayIn, flowWindowDays },
+  ],
   apiProtocolMarkets: (url, protocol) => [url, "api.protocol-markets.v1", { protocol }],
   apiMarketPage: (url, protocol, marketId) =>
     protocol && marketId ? [url, "api.market-page.v1", { protocol, marketId }] : null,

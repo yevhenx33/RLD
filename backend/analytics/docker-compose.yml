@@ -70,8 +70,8 @@ services:
       - CLICKHOUSE_QUERY_RETRIES=1
       - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
       - API_CORS_ORIGINS=${API_CORS_ORIGINS:-${ENVIO_CORS_ORIGINS:-http://localhost:3000,http://localhost:5173,https://rld.fi,https://www.rld.fi}}
-      - INDEXER_READY_PROTOCOLS=${INDEXER_READY_PROTOCOLS:-AAVE_MARKET,EULER_MARKET,MORPHO_MARKET,METAMORPHO_VAULT,FLUID_MARKET,PENDLE_ETHEREUM_PT_YT_PRICES,CHAINLINK_PRICES,SOFR_RATES}
-      - API_PUBLIC_READY_PROTOCOLS=${API_PUBLIC_READY_PROTOCOLS:-AAVE_MARKET,EULER_MARKET,MORPHO_MARKET,METAMORPHO_VAULT,FLUID_MARKET,PENDLE_ETHEREUM_PT_YT_PRICES,CHAINLINK_PRICES,SOFR_RATES}
+      - INDEXER_READY_PROTOCOLS=${INDEXER_READY_PROTOCOLS:-AAVE_MARKET,SPARK_MARKET,EULER_MARKET,MORPHO_MARKET,METAMORPHO_VAULT,FLUID_MARKET,PENDLE_ETHEREUM_PT_YT_PRICES,CHAINLINK_PRICES,SOFR_RATES}
+      - API_PUBLIC_READY_PROTOCOLS=${API_PUBLIC_READY_PROTOCOLS:-AAVE_MARKET,SPARK_MARKET,EULER_MARKET,MORPHO_MARKET,METAMORPHO_VAULT,FLUID_MARKET,PENDLE_ETHEREUM_PT_YT_PRICES,CHAINLINK_PRICES,SOFR_RATES}
       - INDEXER_MAX_READY_LAG_BLOCKS=${INDEXER_MAX_READY_LAG_BLOCKS:-250000}
       - INDEXER_MAX_READY_SOFR_BUSINESS_DAYS=${INDEXER_MAX_READY_SOFR_BUSINESS_DAYS:-3}
       - GRAPHQL_ENABLE_IDE=${GRAPHQL_ENABLE_IDE:-false}
@@ -161,6 +161,41 @@ services:
       com.rld.description: "Aave market rates worker writing processed analytics rows"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'AAVE_MARKET' in c\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  spark_worker:
+    <<: *rld-indexer-service
+    container_name: rld_spark_worker
+    depends_on:
+      migrate_clickhouse:
+        condition: service_completed_successfully
+    environment:
+      - CLICKHOUSE_HOST=rld_clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=${CLICKHOUSE_WORKER_USER:-${CLICKHOUSE_USER:-default}}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_WORKER_PASSWORD:-${CLICKHOUSE_PASSWORD:-}}
+      - CLICKHOUSE_CONNECT_TIMEOUT=5
+      - CLICKHOUSE_SEND_RECEIVE_TIMEOUT=30
+      - CLICKHOUSE_QUERY_RETRIES=1
+      - CLICKHOUSE_AUTOGENERATE_SESSION_ID=false
+      - CLICKHOUSE_INSERT_BATCH_SIZE=${CLICKHOUSE_INSERT_BATCH_SIZE:-20000}
+      - CLICKHOUSE_ASYNC_INSERT=${CLICKHOUSE_ASYNC_INSERT:-true}
+      - CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=${CLICKHOUSE_WAIT_FOR_ASYNC_INSERT:-true}
+      - SPARK_RECONCILE_SCALED_TOTALS=${SPARK_RECONCILE_SCALED_TOTALS:-false}
+      - INDEXER_VERSION=${INDEXER_VERSION:-dev}
+      - PYTHONDONTWRITEBYTECODE=1
+    command: ["python", "-m", "analytics.scripts.rld_indexer", "worker", "--source", "SPARK_MARKET"]
+    labels:
+      com.rld.owner: "data-platform"
+      com.rld.service: "spark-worker"
+      com.rld.tier: "analytics"
+      com.rld.persistence: "clickhouse"
+      com.rld.description: "SparkLend market rates worker writing processed analytics rows"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from pathlib import Path; c=Path('/proc/1/cmdline').read_text(); assert 'SPARK_MARKET' in c\""]
       interval: 30s
       timeout: 5s
       start_period: 20s

@@ -27,6 +27,99 @@ MORPHO_CHAINLINK_TIMESERIES_TABLE = "morpho_chainlink_timeseries"
 EULER_TIMESERIES_TABLE = "euler_timeseries"
 FLUID_TIMESERIES_TABLE = "fluid_timeseries"
 AAVE_TIMESERIES_TABLE = "aave_timeseries"
+SPARK_TIMESERIES_TABLE = "spark_timeseries"
+
+
+def _ensure_raw_event_table(ch, table: str) -> None:
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            block_number UInt64,
+            block_timestamp DateTime,
+            tx_hash String,
+            log_index UInt32,
+            contract String,
+            event_name LowCardinality(String),
+            topic0 String,
+            topic1 Nullable(String),
+            topic2 Nullable(String),
+            topic3 Nullable(String),
+            data String,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(block_timestamp)
+        ORDER BY (block_number, tx_hash, log_index)
+        """
+    )
+
+
+def _ensure_aave_family_state_tables(
+    ch,
+    *,
+    scaled_table: str,
+    risk_table: str,
+    emode_table: str,
+    reserve_tokens_table: str,
+) -> None:
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {scaled_table} (
+            entity_id String,
+            total_scaled_supply Float64,
+            total_scaled_borrow Float64,
+            liquidity_index Float64,
+            variable_borrow_index Float64,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY entity_id
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {risk_table} (
+            entity_id String,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            e_mode_category UInt8 DEFAULT 0,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY entity_id
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {emode_table} (
+            category_id UInt8,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            price_source String DEFAULT '',
+            label String DEFAULT '',
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY category_id
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {reserve_tokens_table} (
+            deployment_id String,
+            chain_id UInt32,
+            reserve String,
+            a_token String,
+            stable_debt_token String DEFAULT '',
+            variable_debt_token String,
+            symbol LowCardinality(String),
+            decimals UInt8,
+            active UInt8 DEFAULT 1,
+            source LowCardinality(String) DEFAULT 'UNKNOWN',
+            block_number UInt64 DEFAULT 0,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY (deployment_id, reserve)
+        """
+    )
 
 
 def _ensure_market_risk_columns(ch, table: str) -> None:
@@ -194,8 +287,46 @@ def ensure_schema(ch) -> None:
         TTL timestamp + INTERVAL 36 MONTH DELETE
         """
     )
-    for table in (MARKET_TIMESERIES_TABLE, "api_market_latest", AAVE_TIMESERIES_TABLE):
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {SPARK_TIMESERIES_TABLE} (
+            timestamp DateTime,
+            protocol LowCardinality(String),
+            symbol LowCardinality(String),
+            entity_id String,
+            target_id String,
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            ltv Float64 DEFAULT 0,
+            liquidation_threshold Float64 DEFAULT 0,
+            liquidation_penalty Float64 DEFAULT 0,
+            e_mode_category UInt8 DEFAULT 0,
+            e_mode_ltv Float64 DEFAULT 0,
+            e_mode_liquidation_threshold Float64 DEFAULT 0,
+            e_mode_liquidation_penalty Float64 DEFAULT 0,
+            e_mode_label String DEFAULT '',
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (protocol, entity_id, timestamp)
+        TTL timestamp + INTERVAL 36 MONTH DELETE
+        """
+    )
+    _ensure_raw_event_table(ch, "aave_events")
+    _ensure_raw_event_table(ch, "spark_events")
+    for table in (MARKET_TIMESERIES_TABLE, "api_market_latest", AAVE_TIMESERIES_TABLE, SPARK_TIMESERIES_TABLE):
         _ensure_market_risk_columns(ch, table)
+    _ensure_aave_family_state_tables(
+        ch,
+        scaled_table="spark_scaled_state",
+        risk_table="spark_reserve_risk_state",
+        emode_table="spark_emode_categories",
+        reserve_tokens_table="spark_reserve_tokens",
+    )
     ch.command(
         """
         CREATE TABLE IF NOT EXISTS aave_reserve_risk_state (
@@ -800,7 +931,7 @@ def ensure_schema(ch) -> None:
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM {MARKET_TIMESERIES_TABLE}
-            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
               AND entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY day, clean_protocol, entity_id
         )
@@ -921,7 +1052,7 @@ def rebuild_aggregates(ch) -> None:
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM {MARKET_TIMESERIES_TABLE}
-            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
               AND entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY day, clean_protocol, entity_id
         )

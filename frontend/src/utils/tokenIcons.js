@@ -34,6 +34,7 @@ const TOKEN_ICONS = {
   SUSDE:    TW("0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"),
 
   // ─── ETH & LSTs ────────────────────────────────────────────
+  ETH:      TW("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
   WETH:     TW("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
   WSTETH:   TW("0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"),
   CBETH:    "/icons/cbETH.png",
@@ -96,7 +97,7 @@ const TOKEN_NAMES = {
   GHO: "Aave GHO", USDS: "Sky Dollar", CRVUSD: "Curve USD",
   SDAI: "Savings DAI", EUSD: "eUSD", EURC: "Euro Coin",
   USDE: "Ethena USDe", SUSDE: "Staked USDe", EUSDE: "Ethena eUSDe",
-  WETH: "Wrapped Ether", WSTETH: "Wrapped stETH", RETH: "Rocket Pool ETH",
+  ETH: "Ether", WETH: "Wrapped Ether", WSTETH: "Wrapped stETH", RETH: "Rocket Pool ETH",
   CBETH: "Coinbase ETH", EZETH: "Renzo ETH", RSETH: "KelpDAO rsETH",
   WEETH: "ether.fi weETH", OSETH: "StakeWise osETH", ETHX: "Stader ETHx",
   MSETH: "Metastreet msETH", TETH: "Treehouse tETH",
@@ -124,6 +125,7 @@ const TOKEN_NAMES = {
  */
 const PROTOCOL_NAMES = {
   AAVE: "Aave V3",
+  SPARK: "Spark",
   EULER: "Euler",
   FLUID: "Fluid",
 };

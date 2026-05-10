@@ -30,6 +30,7 @@ from analytics.sources import (
     ChainlinkSource,
     EulerSource,
     AaveV3Source,
+    SparkLendSource,
     AaveAccountSource,
     MorphoSource,
     LidoRebaseSource,
@@ -40,6 +41,7 @@ from analytics.sources import (
 from analytics.protocols import (
     AAVE_MARKET,
     AAVE_ACCOUNTS,
+    SPARK_MARKET,
     EULER_MARKET,
     FLUID_MARKET,
     MORPHO_MARKET,
@@ -62,6 +64,7 @@ INDEXER_VERSION = os.getenv("INDEXER_VERSION", "dev")
 SOURCE_MAP = {
     AAVE_MARKET: AaveV3Source,
     AAVE_ACCOUNTS: AaveAccountSource,
+    SPARK_MARKET: SparkLendSource,
     EULER_MARKET: EulerSource,
     FLUID_MARKET: FluidSource,
     MORPHO_MARKET: MorphoSource,

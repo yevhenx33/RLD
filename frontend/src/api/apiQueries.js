@@ -30,8 +30,8 @@ export const API_STATUS_QUERY = `
 `;
 
 export const LENDING_DATA_QUERY = `
-  query LendingDataHub($displayIn: String!) {
-    lendingDataPage(displayIn: $displayIn) {
+  query LendingDataHub($displayIn: String!, $flowWindowDays: Int!) {
+    lendingDataPage(displayIn: $displayIn, flowWindowDays: $flowWindowDays) {
       freshness { ready status generatedAt }
       stats {
         totalSupplyUsd
@@ -47,11 +47,13 @@ export const LENDING_DATA_QUERY = `
         timestamp
         tvl
         aaveTvl
+        sparkTvl
         eulerTvl
         fluidTvl
         morphoTvl
         averageSupplyApy
         averageBorrowApy
+        sofrRate
       }
       alluvialFlows {
         protocol

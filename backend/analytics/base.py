@@ -23,6 +23,7 @@ log = logging.getLogger("indexer")
 # The Merge-engine 'unified_timeseries' view combines them for reads.
 PROTOCOL_TABLES = {
     "AAVE_MARKET": "aave_timeseries",
+    "SPARK_MARKET": "spark_timeseries",
     "EULER_MARKET": "euler_timeseries",
     "FLUID_MARKET": "fluid_timeseries",
     "MORPHO_MARKET": "morpho_chainlink_timeseries",
@@ -234,7 +235,7 @@ def ensure_api_preagg_tables(ch) -> None:
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM market_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
             GROUP BY day, clean_protocol, entity_id
         )
@@ -277,7 +278,7 @@ def ensure_api_preagg_tables(ch) -> None:
                     entity_id,
                     argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
                 FROM market_timeseries
-                WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+                WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
                   AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
                 GROUP BY day, clean_protocol, entity_id
             )
@@ -441,7 +442,7 @@ def refresh_api_protocol_tvl_weekly(ch, min_ts, max_ts) -> int:
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM market_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
               AND timestamp >= '{window_start}'
               AND timestamp <= '{window_end}'
