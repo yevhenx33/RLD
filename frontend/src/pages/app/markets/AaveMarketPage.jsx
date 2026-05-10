@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import useSWR from "swr";
 import { Activity, ArrowLeft, Loader2, ExternalLink, Shield, Link2, PieChart as PieChartIcon, Info } from "lucide-react";
 import { MetricCell, StatItem } from "../../../components/pools/MetricsGrid";
@@ -61,10 +61,12 @@ function ChartEmptyState({ label }) {
 export default function AaveMarketPage() {
   const { protocol: protocolSlug, marketId } = useParams();
   const navigate = useNavigate();
-  const protocolKey = apiProtocolForSlug(protocolSlug);
+  const location = useLocation();
+  const resolvedProtocolSlug = protocolSlug || location.pathname.split("/")[2] || "aave";
+  const protocolKey = apiProtocolForSlug(resolvedProtocolSlug);
   const normalizedEntityId = useMemo(() => {
-    return normalizeMarketIdForApi(protocolSlug, marketId);
-  }, [marketId, protocolSlug]);
+    return normalizeMarketIdForApi(resolvedProtocolSlug, marketId);
+  }, [marketId, resolvedProtocolSlug]);
 
   const { data: pageGqlData, isLoading: pageLoading } = useSWR(
     queryKeys.apiMarketPage(API_GRAPHQL_URL, protocolKey, normalizedEntityId),

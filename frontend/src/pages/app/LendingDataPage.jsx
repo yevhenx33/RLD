@@ -26,16 +26,32 @@ const BORROW_APY_AREA = {
   format: "percent",
   yAxisId: "right",
 };
+const SOFR_AREA = {
+  key: "sofrRate",
+  color: "#71717a",
+  name: "SOFR",
+  format: "percent",
+  yAxisId: "right",
+  noFill: true,
+  strokeDasharray: "2 4",
+  strokeWidth: 1.5,
+};
 const FLOW_PROTOCOL_COLORS = {
   Aave: "#998EFF",
+  Spark: "#f97316",
   Morpho: "#2973FF",
-  Fluid: "#00D395",
+  Fluid: "#1D2F55",
   Euler: "#23C09B",
 };
 const NET_FLOW_COLORS = {
   Inflow: "#34d399",
   Outflow: "#fb7185",
 };
+const FLOW_WINDOWS = [
+  { label: "1D", days: 1 },
+  { label: "1W", days: 7 },
+  { label: "1M", days: 30 },
+];
 
 const finiteNumber = (value, fallback = 0) => {
   const number = Number(value);
@@ -83,6 +99,7 @@ const sumBy = (rows, key) => {
 const displayProtocolName = (protocol) => {
   const group = protocolGroup(protocol);
   if (group === "AAVE") return "Aave";
+  if (group === "SPARK") return "Spark";
   if (group === "MORPHO") return "Morpho";
   if (group === "EULER") return "Euler";
   if (group === "FLUID") return "Fluid";
@@ -187,6 +204,7 @@ const sortFlowItems = (totals) => (a, b) => {
 };
 
 const AlluvialFlowChart = ({ flows = [], loading = false }) => {
+  const [flowTooltip, setFlowTooltip] = useState(null);
   const model = useMemo(() => {
     const rows = aggregateAlluvialFlows(flows);
     const protocolFlowTotals = sumBy(rows, "protocol");
@@ -279,6 +297,15 @@ const AlluvialFlowChart = ({ flows = [], loading = false }) => {
   const outflowAssetOffsets = new Map();
   const protocolInflowOffsets = new Map();
   const protocolOutflowOffsets = new Map();
+  const showFlowTooltip = (event, link) => {
+    const bounds = event.currentTarget.ownerSVGElement.getBoundingClientRect();
+    setFlowTooltip({
+      x: event.clientX - bounds.left + 12,
+      y: event.clientY - bounds.top + 12,
+      title: link.title,
+      color: link.color,
+    });
+  };
   const inflowLinks = model.inflowRows.sort((a, b) => b.valueUsd - a.valueUsd).map((row) => {
     const source = linkSegment(inflowAssetLayout, model.inflowAssetTotals, inflowAssetOffsets, row.asset, row.valueUsd);
     const target = linkSegment(protocolLayout, model.protocolInflowTotals, protocolInflowOffsets, row.protocol, row.valueUsd);
@@ -325,27 +352,53 @@ const AlluvialFlowChart = ({ flows = [], loading = false }) => {
   });
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" role="img" aria-label="Last 30 day lending flow alluvial chart">
-      <g>
-        {[...inflowLinks, ...outflowLinks].map((link, index) => (
-          <path key={index} d={link.d} fill={link.color} fillOpacity="0.32" stroke="none">
-            <title>{link.title}</title>
-          </path>
-        ))}
-        <text x={xInflowAsset + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">NET INFLOWS</text>
-        <text x={xProtocol + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">PROTOCOL</text>
-        <text x={xOutflowAsset + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">NET OUTFLOWS</text>
-        {renderNodes(model.inflowAssets, model.inflowAssetTotals, inflowAssetLayout, xInflowAsset, "end", NET_FLOW_COLORS.Inflow)}
-        {renderNodes(model.protocols, model.protocolFlowTotals, protocolLayout, xProtocol, "middle")}
-        {renderNodes(model.outflowAssets, model.outflowAssetTotals, outflowAssetLayout, xOutflowAsset, "start", NET_FLOW_COLORS.Outflow)}
-      </g>
-    </svg>
+    <div className="relative w-full h-full">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full h-full"
+        role="img"
+        aria-label="Selected window lending flow alluvial chart"
+      >
+        <g>
+          {[...inflowLinks, ...outflowLinks].map((link, index) => (
+            <path
+              key={index}
+              d={link.d}
+              fill={link.color}
+              fillOpacity="0.32"
+              stroke="none"
+              onMouseMove={(event) => showFlowTooltip(event, link)}
+              onMouseLeave={() => setFlowTooltip(null)}
+              className="transition-opacity hover:opacity-80 cursor-default"
+            />
+          ))}
+          <text x={xInflowAsset + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">NET INFLOWS</text>
+          <text x={xProtocol + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">PROTOCOL</text>
+          <text x={xOutflowAsset + nodeWidth / 2} y={headerY} textAnchor="middle" fill="#6b7280" fontSize="10">NET OUTFLOWS</text>
+          {renderNodes(model.inflowAssets, model.inflowAssetTotals, inflowAssetLayout, xInflowAsset, "end", NET_FLOW_COLORS.Inflow)}
+          {renderNodes(model.protocols, model.protocolFlowTotals, protocolLayout, xProtocol, "middle")}
+          {renderNodes(model.outflowAssets, model.outflowAssetTotals, outflowAssetLayout, xOutflowAsset, "start", NET_FLOW_COLORS.Outflow)}
+        </g>
+      </svg>
+      {flowTooltip && (
+        <div
+          className="absolute z-20 pointer-events-none rounded-sm border border-zinc-800 bg-[#0a0a0a] px-3 py-2 text-xs font-mono text-zinc-200 shadow-2xl"
+          style={{ left: flowTooltip.x, top: flowTooltip.y }}
+        >
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: flowTooltip.color }} />
+            <span>{flowTooltip.title}</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
 const protocolGroup = (protocol) => {
   const normalized = String(protocol || "").toUpperCase();
   if (normalized === "AAVE" || normalized === "AAVE_MARKET") return "AAVE";
+  if (normalized === "SPARK" || normalized === "SPARK_MARKET") return "SPARK";
   if (normalized === "MORPHO" || normalized === "MORPHO_MARKET") return "MORPHO";
   if (normalized === "FLUID" || normalized === "FLUID_MARKET") return "FLUID";
   if (normalized === "EULER" || normalized === "EULER_MARKET") return "EULER";
@@ -356,6 +409,7 @@ const protocolGroup = (protocol) => {
 const protocolLabel = (protocol) => {
   const group = protocolGroup(protocol);
   if (group === "AAVE") return "AAVE_V3";
+  if (group === "SPARK") return "SPARK";
   if (group === "MORPHO") return "MORPHO";
   if (group === "FLUID") return "FLUID";
   if (group === "EULER") return "EULER";
@@ -384,8 +438,10 @@ export default function LendingDataPage() {
   const [showBorrowApyHistory, setShowBorrowApyHistory] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [protocolFilter, setProtocolFilter] = useState('ALL');
+  const [flowWindowDays, setFlowWindowDays] = useState(30);
+  const activeFlowWindow = FLOW_WINDOWS.find((window) => window.days === flowWindowDays) || FLOW_WINDOWS[2];
   const { data: gqlData, error: _error, isLoading: loading } = useSWR(
-    queryKeys.apiLendingPage(API_GRAPHQL_URL, displayUnit),
+    queryKeys.apiLendingPage(API_GRAPHQL_URL, displayUnit, flowWindowDays),
     ([, , variables]) =>
       apiGraphQL("LendingDataHub", {
         query: LENDING_DATA_QUERY,
@@ -423,7 +479,7 @@ export default function LendingDataPage() {
       if (protocolFilter === 'ALL') return true;
       const protocol = protocolGroup(pool.protocol);
       if (protocolFilter === 'LENDING') {
-        return ['AAVE', 'MORPHO', 'FLUID', 'EULER'].includes(protocol);
+        return ['AAVE', 'SPARK', 'MORPHO', 'FLUID', 'EULER'].includes(protocol);
       }
       return protocol === protocolFilter;
     });
@@ -439,6 +495,23 @@ export default function LendingDataPage() {
   }, [filteredMarkets, safeCurrentPage]);
 
   const totalPages = maxPage;
+
+  const interestRateChartData = useMemo(() => {
+    return chartData.filter((point) => {
+      const hasSupplyApy =
+        point.averageSupplyApy !== null &&
+        point.averageSupplyApy !== undefined &&
+        Number.isFinite(Number(point.averageSupplyApy));
+      const hasBorrowApy =
+        point.averageBorrowApy !== null &&
+        point.averageBorrowApy !== undefined &&
+        Number.isFinite(Number(point.averageBorrowApy));
+      return (
+        hasSupplyApy ||
+        hasBorrowApy
+      );
+    });
+  }, [chartData]);
 
   const tvlArea = useMemo(() => {
     if (displayUnit === "USD") {
@@ -536,7 +609,7 @@ export default function LendingDataPage() {
             <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
-                  HISTORICAL INTEREST RATES
+                  WEIGHTED USDC INTEREST RATES
                 </h2>
                 <div className="flex gap-4">
                   <div className="flex items-center gap-2">
@@ -547,17 +620,21 @@ export default function LendingDataPage() {
                     <div className="w-2 h-2" style={{ backgroundColor: BORROW_APY_AREA.color }} />
                     <span className="text-[9px] text-gray-500 uppercase tracking-widest">Borrow</span>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2" style={{ backgroundColor: SOFR_AREA.color }} />
+                    <span className="text-[9px] text-gray-500 uppercase tracking-widest">SOFR</span>
+                  </div>
                 </div>
               </div>
               <div className="h-[280px] w-full relative mt-auto">
-                {loading && chartData.length === 0 ? (
+                {loading && interestRateChartData.length === 0 ? (
                   <div className="absolute inset-0 flex flex-col items-center justify-center">
                     <Loader2 className="w-6 h-6 text-cyan-500 animate-spin mb-2" />
                   </div>
                 ) : (
                   <RLDPerformanceChart
-                    data={chartData}
-                    areas={[SUPPLY_APY_AREA, BORROW_APY_AREA]}
+                    data={interestRateChartData}
+                    areas={[SUPPLY_APY_AREA, BORROW_APY_AREA, SOFR_AREA]}
                     resolution="1D"
                   />
                 )}
@@ -595,15 +672,32 @@ export default function LendingDataPage() {
           <div className="mt-6 flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
             <div className="flex items-center justify-between mb-4 gap-4">
               <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
-                NET 30D LENDING FLOWS
+                {`NET ${activeFlowWindow.label} LENDING FLOWS`}
               </h2>
-              <div className="flex items-center gap-3 flex-wrap justify-end">
-                {Object.entries(NET_FLOW_COLORS).map(([label, color]) => (
-                  <div key={label} className="flex items-center gap-2">
-                    <div className="w-2 h-2" style={{ backgroundColor: color }} />
-                    <span className="text-[9px] text-gray-500 uppercase tracking-widest">{`NET_${label}`}</span>
-                  </div>
-                ))}
+              <div className="flex items-center gap-4 flex-wrap justify-end">
+                <div className="flex items-center gap-1 border border-white/10 bg-[#050505] p-1 rounded-sm">
+                  {FLOW_WINDOWS.map((window) => (
+                    <button
+                      key={window.label}
+                      onClick={() => setFlowWindowDays(window.days)}
+                      className={`px-2.5 py-1 text-[10px] uppercase tracking-widest rounded-sm transition-colors ${
+                        flowWindowDays === window.days
+                          ? "bg-white/10 text-white"
+                          : "text-gray-500 hover:text-gray-300"
+                      }`}
+                    >
+                      {window.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-3">
+                  {Object.entries(NET_FLOW_COLORS).map(([label, color]) => (
+                    <div key={label} className="flex items-center gap-2">
+                      <div className="w-2 h-2" style={{ backgroundColor: color }} />
+                      <span className="text-[9px] text-gray-500 uppercase tracking-widest">{`NET_${label}`}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
             <div className="h-[390px] w-full relative mt-auto">
@@ -633,7 +727,7 @@ export default function LendingDataPage() {
                   LENDING
                 </button>
                 <div className="flex items-center gap-1">
-                  {['AAVE', 'MORPHO', 'FLUID', 'EULER'].map(p => (
+                  {['AAVE', 'SPARK', 'MORPHO', 'FLUID', 'EULER'].map(p => (
                     <button
                       key={p}
                       onClick={() => handleProtocolFilter(p)}

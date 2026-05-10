@@ -115,6 +115,7 @@ TOKENS = {
     "defa4e8a7bcba345f687a2f1456f5edd9ce97202": ("KNC", 18),
     "514910771af9ca656af840dff83e8264ecf986ca": ("LINK", 18),
     "7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9": ("AAVE", 18),
+    "6810e776880c02933d47db1b9fc05908e5386b96": ("GNO", 18),
     "9f8f72aa9304c8b593d555f12ef6589cc3a579a2": ("MKR", 18),
     "1f9840a85d5af5bf1d1762f925bdaddc4201f984": ("UNI", 18),
     "c011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f": ("SNX", 18),
@@ -258,6 +259,8 @@ def get_usd_price(symbol: str, eth_price: float = 2000.0,
         return eth_price * ldo_eth
     if symbol in ("EIGEN",):
         return ep.get("EIGEN / USD", 2.0)
+    if symbol in ("GNO",):
+        return ep.get("GNO / USD", 100.0)
 
     # EUR / CHF pegged
     if symbol in ("EURV", "EURCV", "agEUR", "EURC"):

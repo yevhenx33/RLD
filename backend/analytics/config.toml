@@ -1,7 +1,7 @@
 [api]
 port = 5000
 bind = "0.0.0.0"
-ready_protocols = ["AAVE_MARKET", "CHAINLINK_PRICES", "SOFR_RATES"]
+ready_protocols = ["AAVE_MARKET", "SPARK_MARKET", "CHAINLINK_PRICES", "SOFR_RATES"]
 max_ready_lag_blocks = 250000
 max_ready_sofr_business_days = 3
 cors_origins = ["http://localhost:3000", "http://localhost:5173", "https://rld.fi", "https://www.rld.fi"]
@@ -34,6 +34,11 @@ poll_interval_sec = 1
 enabled_streams = ["aave.processed.market_latest.v1"]
 
 [sources.AAVE_MARKET]
+enabled = true
+poll_interval_sec = 30
+batch_blocks = 100000
+
+[sources.SPARK_MARKET]
 enabled = true
 poll_interval_sec = 30
 batch_blocks = 100000

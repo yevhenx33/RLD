@@ -99,6 +99,7 @@ export default function AppRoutes() {
           element={renderLazy(ProtocolMarketsPage)}
         />
         <Route path="/data/aave/:marketId" element={renderLazy(AaveMarketPage)} />
+        <Route path="/data/spark/:marketId" element={renderLazy(AaveMarketPage)} />
         <Route path="/data/morpho/:marketId" element={renderLazy(MorphoMarketPage)} />
         <Route path="/data/fluid/vault/:vaultId" element={renderLazy(FluidVaultPage)} />
         <Route path="/data/fluid/:marketId" element={renderLazy(FluidMarketPage)} />

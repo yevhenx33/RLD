@@ -141,6 +141,7 @@ class ShadowWatcher:
         # Mapping to deduce raw_table name
         RAW_TABLE_MAP = {
             "AAVE_MARKET": "aave_events",
+            "SPARK_MARKET": "spark_events",
             "FLUID_MARKET": "fluid_events",
             # Add other mappings as necessary
         }
