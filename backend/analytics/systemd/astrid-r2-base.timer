@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Astrid R2 base publisher hourly
+
+[Timer]
+OnCalendar=*-*-* *:00:00 UTC
+Persistent=true
+Unit=astrid-r2-base.service
+
+[Install]
+WantedBy=timers.target

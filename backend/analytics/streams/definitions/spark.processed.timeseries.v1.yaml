@@ -1,0 +1,35 @@
+id: spark.processed.timeseries.v1
+subject: astrid.data.v1.spark.ethereum.processed.timeseries
+schema: astrid.spark.timeseries.v1
+protocol: spark
+deployment_id: ethereum:spark-v3-core
+mode: processed
+source_table: spark_timeseries
+local_table: astrid_spark.timeseries
+schema_version: 1.0.0
+identity_columns:
+  - protocol
+  - entity_id
+  - timestamp
+cursor_column: timestamp
+timestamp_column: timestamp
+block_column: timestamp
+chunk:
+  partition: month
+  format: parquet
+columns:
+  - timestamp:DateTime
+  - protocol:String
+  - symbol:String
+  - entity_id:String
+  - target_id:String
+  - supply_usd:Float64
+  - borrow_usd:Float64
+  - supply_apy:Float64
+  - borrow_apy:Float64
+  - utilization:Float64
+  - price_usd:Float64
+  - ltv:Float64
+  - liquidation_threshold:Float64
+  - liquidation_penalty:Float64
+  - e_mode_category:UInt8

@@ -1,0 +1,3 @@
+display_name: Astrid Data
+short_description: Query Astrid protocol data from R2 locally with DuckDB.
+default_prompt: Use Astrid Data to pull the latest relevant R2 Parquet objects and run local DuckDB analysis.

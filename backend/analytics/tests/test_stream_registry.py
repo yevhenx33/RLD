@@ -16,6 +16,8 @@ class StreamRegistryTests(unittest.TestCase):
         ids = {stream.id for stream in streams}
         self.assertIn("aave.processed.account_profiles.v1", ids)
         self.assertIn("aave.raw.account_events.v1", ids)
+        self.assertIn("spark.serving.market_latest.v1", ids)
+        self.assertIn("spark.status.source.v1", ids)
         self.assertIn("chainlink.processed.prices.v1", ids)
         self.assertTrue(all(stream.subject.startswith("astrid.data.v1.") for stream in streams))
 
@@ -30,6 +32,16 @@ class StreamRegistryTests(unittest.TestCase):
         duplicate = streams[0].__class__(**{**streams[0].__dict__, "id": "duplicate.id"})
         with self.assertRaises(StreamRegistryError):
             validate_registry([streams[0], duplicate])
+
+    def test_spark_streams_have_typed_columns_and_filters(self):
+        streams = {stream.id: stream for stream in load_registry()}
+        latest = streams["spark.serving.market_latest.v1"]
+        self.assertEqual(latest.source_filter, "protocol = 'SPARK_MARKET'")
+        self.assertTrue(any(column.startswith("timestamp:DateTime") for column in latest.columns))
+        status = streams["spark.status.source.v1"]
+        self.assertEqual(status.source_filter, "source = 'SPARK_MARKET'")
+        for stream_id in [stream_id for stream_id in streams if stream_id.startswith("spark.")]:
+            self.assertTrue(streams[stream_id].columns, stream_id)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,31 @@
+id: spark.raw.events.v1
+subject: astrid.data.v1.spark.ethereum.raw.events
+schema: astrid.spark.raw_event.v1
+protocol: spark
+deployment_id: ethereum:spark-v3-core
+mode: raw
+source_table: spark_events
+local_table: astrid_spark_raw.events
+schema_version: 1.0.0
+identity_columns:
+  - block_number
+  - tx_hash
+  - log_index
+cursor_column: block_number
+timestamp_column: block_timestamp
+block_column: block_number
+chunk:
+  partition: month
+  format: parquet
+columns:
+  - block_number:UInt64
+  - block_timestamp:DateTime
+  - tx_hash:String
+  - log_index:UInt32
+  - contract:String
+  - event_name:String
+  - topic0:String
+  - topic1:String
+  - topic2:String
+  - topic3:String
+  - data:String

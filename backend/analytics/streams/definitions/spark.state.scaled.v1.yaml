@@ -1,0 +1,24 @@
+id: spark.state.scaled.v1
+subject: astrid.data.v1.spark.ethereum.state.scaled
+schema: astrid.spark.scaled_state.v1
+protocol: spark
+deployment_id: ethereum:spark-v3-core
+mode: processed
+source_table: spark_scaled_state
+local_table: astrid_spark.scaled_state
+schema_version: 1.0.0
+identity_columns:
+  - entity_id
+cursor_column: updated_at
+timestamp_column: updated_at
+block_column: updated_at
+chunk:
+  partition: latest
+  format: parquet
+columns:
+  - entity_id:String
+  - total_scaled_supply:Float64
+  - total_scaled_borrow:Float64
+  - liquidity_index:Float64
+  - variable_borrow_index:Float64
+  - updated_at:DateTime

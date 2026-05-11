@@ -1,0 +1,30 @@
+id: spark.status.source.v1
+subject: astrid.data.v1.spark.ethereum.status.source
+schema: astrid.spark.source_status.v1
+protocol: spark
+deployment_id: ethereum:spark-v3-core
+mode: processed
+source_table: source_status
+source_filter: source = 'SPARK_MARKET'
+local_table: astrid_spark.source_status
+schema_version: 1.0.0
+identity_columns:
+  - source
+  - kind
+cursor_column: updated_at
+timestamp_column: updated_at
+block_column: last_scanned_block
+chunk:
+  partition: latest
+  format: parquet
+columns:
+  - source:String
+  - kind:String
+  - last_scanned_block:UInt64
+  - last_event_block:UInt64
+  - last_processed_block:UInt64
+  - source_head_block:UInt64
+  - last_data_timestamp:DateTime
+  - last_success_at:DateTime
+  - last_error:String
+  - updated_at:DateTime

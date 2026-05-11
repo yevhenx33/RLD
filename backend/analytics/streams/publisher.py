@@ -22,17 +22,89 @@ def _escape_sql(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "''")
 
 
+def _order_columns(stream: StreamDefinition) -> list[str]:
+    return list(dict.fromkeys([stream.cursor_column, stream.timestamp_column, *stream.identity_columns]))
+
+
+def _cursor_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, dt.datetime):
+        return {"type": "datetime", "value": value.strftime("%Y-%m-%d %H:%M:%S")}
+    if isinstance(value, dt.date):
+        return {"type": "date", "value": value.isoformat()}
+    if isinstance(value, bool):
+        return {"type": "bool", "value": value}
+    if isinstance(value, int):
+        return {"type": "int", "value": value}
+    if isinstance(value, float):
+        return {"type": "float", "value": value}
+    return {"type": "str", "value": "" if value is None else str(value)}
+
+
+def _cursor_payload(stream: StreamDefinition, row: dict[str, Any]) -> str:
+    columns = _order_columns(stream)
+    return json.dumps(
+        {
+            "version": 1,
+            "columns": columns,
+            "values": [_cursor_value(row.get(column)) for column in columns],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _cursor_sql_literal(value: dict[str, Any]) -> str:
+    value_type = value.get("type")
+    raw = value.get("value")
+    if value_type == "datetime":
+        return f"toDateTime('{_escape_sql(str(raw))}')"
+    if value_type == "date":
+        return f"toDate('{_escape_sql(str(raw))}')"
+    if value_type in {"int", "float"}:
+        return str(raw)
+    if value_type == "bool":
+        return "1" if raw else "0"
+    return f"'{_escape_sql(str(raw))}'"
+
+
+def _cursor_predicate(stream: StreamDefinition, cursor: str) -> str:
+    try:
+        payload = json.loads(cursor)
+    except json.JSONDecodeError:
+        return f"{stream.cursor_column} > '{_escape_sql(str(cursor))}'"
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        return f"{stream.cursor_column} > '{_escape_sql(str(cursor))}'"
+    columns = payload.get("columns")
+    values = payload.get("values")
+    if not isinstance(columns, list) or not isinstance(values, list) or len(columns) != len(values):
+        return f"{stream.cursor_column} > '{_escape_sql(str(cursor))}'"
+    expected_columns = _order_columns(stream)
+    if [str(column) for column in columns] != expected_columns:
+        return f"{stream.cursor_column} > '{_escape_sql(str(cursor))}'"
+    left = ", ".join(expected_columns)
+    literals = [_cursor_sql_literal(value) for value in values if isinstance(value, dict)]
+    if len(literals) != len(expected_columns):
+        return f"{stream.cursor_column} > '{_escape_sql(str(cursor))}'"
+    right = ", ".join(literals)
+    return f"tuple({left}) > tuple({right})"
+
+
 def _where_clause(stream: StreamDefinition, *, from_value: str | None = None, last_cursor: str | None = None) -> str:
-    column = stream.cursor_column
-    value = last_cursor or from_value
-    if not value:
+    predicates: list[str] = []
+    if stream.source_filter:
+        predicates.append(f"({stream.source_filter})")
+    if last_cursor:
+        predicates.append(_cursor_predicate(stream, last_cursor))
+    elif from_value:
+        predicates.append(f"{stream.cursor_column} > '{_escape_sql(str(from_value))}'")
+    if not predicates:
         return ""
-    return f"WHERE {column} > '{_escape_sql(str(value))}'"
+    return "WHERE " + " AND ".join(predicates)
 
 
 def select_rows_query(stream: StreamDefinition, *, from_value: str | None = None, last_cursor: str | None = None, limit: int = DEFAULT_BATCH_SIZE) -> str:
     where = _where_clause(stream, from_value=from_value, last_cursor=last_cursor)
-    order = ", ".join(dict.fromkeys([stream.cursor_column, stream.timestamp_column, *stream.identity_columns]))
+    order = ", ".join(_order_columns(stream))
     return f"SELECT * FROM {stream.source_table} {where} ORDER BY {order} LIMIT {int(limit)}"
 
 
@@ -180,6 +252,7 @@ async def apply_streams(nats_url: str, streams: list[StreamDefinition] | None = 
             "astrid.data.v1.registry.streams",
             manifest_payload,
             message_id="astrid-registry-manifest-v1",
+            stream_name="ASTRID_REGISTRY",
             headers={"Astrid-Message-Type": "registry-manifest"},
         )
         return {"status": "OK", "streams": len(streams), "registry_sequence": ack.seq}
@@ -214,6 +287,7 @@ async def publish_once(
                 stream.subject,
                 encode_envelope(payload),
                 message_id=message_id(stream, row),
+                stream_name="ASTRID_DATA",
                 headers={
                     "Astrid-Stream-Id": stream.id,
                     "Astrid-Schema-Version": stream.schema_version,
@@ -233,7 +307,7 @@ async def publish_once(
         upsert_cursor(
             ch,
             stream_id=stream.id,
-            last_cursor=str(last.get(stream.cursor_column)),
+            last_cursor=_cursor_payload(stream, last),
             last_block=last_block,
             last_timestamp=ts,
             last_nats_sequence=last_ack_seq,

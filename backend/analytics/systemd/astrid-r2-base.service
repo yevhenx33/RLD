@@ -1,0 +1,10 @@
+[Unit]
+Description=Astrid hourly R2 base publisher
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/RLD/backend/analytics
+EnvironmentFile=/home/ubuntu/RLD/backend/analytics/.env
+ExecStart=/usr/bin/env astrid-publish r2-base --all-streams --prefix v2

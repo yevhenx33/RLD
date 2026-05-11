@@ -1,0 +1,31 @@
+id: spark.state.reserve_tokens.v1
+subject: astrid.data.v1.spark.ethereum.state.reserve_tokens
+schema: astrid.spark.reserve_token_state.v1
+protocol: spark
+deployment_id: ethereum:spark-v3-core
+mode: processed
+source_table: spark_reserve_tokens
+local_table: astrid_spark.reserve_tokens
+schema_version: 1.0.0
+identity_columns:
+  - deployment_id
+  - reserve
+cursor_column: updated_at
+timestamp_column: updated_at
+block_column: block_number
+chunk:
+  partition: latest
+  format: parquet
+columns:
+  - deployment_id:String
+  - chain_id:UInt32
+  - reserve:String
+  - a_token:String
+  - stable_debt_token:String
+  - variable_debt_token:String
+  - symbol:String
+  - decimals:UInt8
+  - active:UInt8
+  - source:String
+  - block_number:UInt64
+  - updated_at:DateTime

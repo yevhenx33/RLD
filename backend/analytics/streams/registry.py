@@ -38,6 +38,7 @@ class StreamDefinition:
     timestamp_column: str
     block_column: str
     chunk: ChunkPolicy = ChunkPolicy()
+    source_filter: str = ""
     columns: tuple[str, ...] = ()
 
     @property
@@ -161,6 +162,7 @@ def load_definition(path: Path) -> StreamDefinition:
             partition=str(chunk_raw.get("partition", "month")),
             format=str(chunk_raw.get("format", "parquet")),
         ),
+        source_filter=str(raw.get("source_filter", "") or ""),
         columns=tuple(str(c) for c in raw.get("columns", [])),
     )
 
@@ -177,6 +179,10 @@ def validate_registry(streams: list[StreamDefinition]) -> None:
             raise StreamRegistryError(f"{stream.id}: subject must start with astrid.data.v1.")
         if stream.mode not in {"raw", "processed", "full"}:
             raise StreamRegistryError(f"{stream.id}: invalid mode {stream.mode!r}")
+        if any(token in stream.source_filter for token in (";", "--", "/*", "*/")):
+            raise StreamRegistryError(
+                f"{stream.id}: source_filter may not contain SQL statement separators or comments"
+            )
         ids.add(stream.id)
         subjects.add(stream.subject)
 

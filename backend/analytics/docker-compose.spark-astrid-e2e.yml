@@ -1,0 +1,114 @@
+name: spark-astrid-e2e
+
+services:
+  source_clickhouse:
+    image: clickhouse/clickhouse-server:26.3.7.8
+    container_name: spark_astrid_e2e_source_clickhouse
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "127.0.0.1:18123:8123"
+      - "127.0.0.1:19000:9000"
+    volumes:
+      - spark_astrid_e2e_source_clickhouse:/var/lib/clickhouse
+    networks:
+      - rld_shared
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  sink_clickhouse:
+    image: clickhouse/clickhouse-server:26.3.7.8
+    container_name: spark_astrid_e2e_sink_clickhouse
+    environment:
+      CLICKHOUSE_USER: astrid
+      CLICKHOUSE_PASSWORD: astrid
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "127.0.0.1:18124:8123"
+      - "127.0.0.1:19001:9000"
+    volumes:
+      - spark_astrid_e2e_sink_clickhouse:/var/lib/clickhouse
+    networks:
+      - rld_shared
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  nats:
+    image: nats:2.12-alpine
+    container_name: spark_astrid_e2e_nats
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "127.0.0.1:14222:4222"
+      - "127.0.0.1:18222:8222"
+    volumes:
+      - spark_astrid_e2e_nats:/data
+    networks:
+      - rld_shared
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  harness:
+    image: ${RLD_INDEXER_IMAGE:-rld_indexer_node:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["runner"]
+    user: "0:0"
+    depends_on:
+      source_clickhouse:
+        condition: service_healthy
+      sink_clickhouse:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    environment:
+      PYTHONPATH: /app:/app/astrid-node/src
+      ASTRID_NODE_CLICKHOUSE_HOST: sink_clickhouse
+      ASTRID_NODE_CLICKHOUSE_PORT: "8123"
+      ASTRID_NODE_CLICKHOUSE_USER: astrid
+      ASTRID_NODE_CLICKHOUSE_PASSWORD: astrid
+      ASTRID_NODE_NATS_URL: nats://spark_astrid_e2e_nats:4222
+    volumes:
+      - ../../astrid-node/src:/app/astrid-node/src:ro
+    command:
+      [
+        "python",
+        "-m",
+        "analytics.scripts.spark_astrid_e2e",
+        "--no-compose",
+        "--skip-clone",
+        "--source-host",
+        "spark_astrid_e2e_source_clickhouse",
+        "--source-port",
+        "8123",
+        "--sink-host",
+        "spark_astrid_e2e_sink_clickhouse",
+        "--sink-port",
+        "8123",
+        "--nats-url",
+        "nats://spark_astrid_e2e_nats:4222",
+        "--batch-size",
+        "50000",
+        "--live-seconds",
+        "0"
+      ]
+    networks:
+      - rld_shared
+
+volumes:
+  spark_astrid_e2e_source_clickhouse:
+  spark_astrid_e2e_sink_clickhouse:
+  spark_astrid_e2e_nats:
+
+networks:
+  rld_shared:
+    external: true

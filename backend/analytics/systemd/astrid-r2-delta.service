@@ -1,0 +1,12 @@
+[Unit]
+Description=Astrid 15-second R2 delta publisher
+After=network-online.target docker.service astrid-r2-base.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/RLD/backend/analytics
+EnvironmentFile=/home/ubuntu/RLD/backend/analytics/.env
+ExecStart=/usr/bin/env astrid-publish r2-delta --all-streams --prefix v2
+Restart=always
+RestartSec=5

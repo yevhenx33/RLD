@@ -88,14 +88,24 @@ def cmd_export(args) -> int:
     return 0
 
 
-def cmd_status(_args) -> int:
-    ch = _ch()
+def cmd_status(args) -> int:
+    from astrid_node.pull import cache_status
+    from pathlib import Path
+
+    data_dir = Path(args.data_dir) if getattr(args, "data_dir", None) else None
+    payload = {"cache": cache_status(data_dir) if data_dir else cache_status()}
     try:
-        result = ch.query("SELECT stream_id, local_table, installed_at FROM astrid_meta.installed_streams FINAL ORDER BY stream_id")
-        rows = getattr(result, "result_rows", [])
-    finally:
-        ch.close()
-    print(json.dumps({"installedStreams": len(rows), "streams": [list(row) for row in rows]}, default=str, indent=2))
+        ch = _ch()
+        try:
+            result = ch.query("SELECT stream_id, local_table, installed_at FROM astrid_meta.installed_streams FINAL ORDER BY stream_id")
+            rows = getattr(result, "result_rows", [])
+            payload["installedStreams"] = len(rows)
+            payload["streams"] = [list(row) for row in rows]
+        finally:
+            ch.close()
+    except Exception as exc:  # ClickHouse is optional for v3 local data mode.
+        payload["clickhouse"] = {"available": False, "error": str(exc)}
+    print(json.dumps(payload, default=str, indent=2, sort_keys=True))
     return 0
 
 
@@ -111,6 +121,157 @@ def cmd_sync(args) -> int:
         ch.close()
     print(json.dumps({"status": "OK", "stream": stream.id, **result}, indent=2, sort_keys=True))
     return 0
+
+
+def cmd_sync_fast(args) -> int:
+    """v2 fast sync: download Parquet snapshot → native HTTP POST import."""
+    import base64
+    import time as _time
+
+    manifest_path = Path(args.manifest)
+    if not manifest_path.exists():
+        raise SystemExit(f"Manifest not found: {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    data_dir = manifest_path.parent / "markets"
+    if not data_dir.exists():
+        data_dir = manifest_path.parent  # fallback: flat layout
+
+    config = load_config()
+    ch_url = f"http://{config.clickhouse_host}:{config.clickhouse_port}"
+    auth = base64.b64encode(f"{config.clickhouse_user}:{config.clickhouse_password}".encode()).decode()
+    target_db = args.target_db or "astrid_data"
+
+    symbols = args.symbols.split(",") if args.symbols else None
+
+    from astrid_node.native_import import sync_from_manifest
+
+    t0 = _time.time()
+    result = sync_from_manifest(
+        ch_url, manifest, data_dir,
+        target_db=target_db,
+        auth=auth,
+        symbols=symbols,
+        workers=args.workers,
+    )
+    elapsed = _time.time() - t0
+
+    print(f"\u2713 {result['rows_imported']:,} rows synced in {elapsed:.1f}s")
+    print(f"  Table:   {result['table']}")
+    print(f"  Markets: {result['markets_synced']}")
+    print(f"  Import:  {result['elapsed_s']}s ({result['throughput_mbps']} MB/s)")
+    print(f"  Verify:  {result['verify_ms']}ms")
+    return 0
+
+
+def cmd_query(args) -> int:
+    """Query local Parquet files with DuckDB (zero ClickHouse dependency)."""
+    from astrid_node.duckdb_mode import describe_parquet, query_parquet, query_parquet_files, query_parquet_glob
+    from astrid_node.pull import local_parquet_files, pull_streams
+    from pathlib import Path
+    import time as _time
+
+    data_dir = Path(args.data_dir) if args.data_dir else None
+    stream_ids = [args.stream] if args.stream else None
+    symbols = args.symbols if args.symbols else None
+
+    if args.pull:
+        pull_kwargs = {}
+        if args.base_url:
+            pull_kwargs["base_url"] = args.base_url
+        if data_dir:
+            pull_kwargs["data_dir"] = data_dir
+        pulled = pull_streams(stream_ids, symbols=symbols, since=args.since, **pull_kwargs)
+        if pulled.get("errors"):
+            raise SystemExit("pull failed: " + "; ".join(pulled["errors"]))
+
+    if args.stream:
+        files, _manifest, stream_manifest = local_parquet_files(data_dir=data_dir or Path(__import__('os').path.expanduser('~/.astrid/data/v2')), stream_ids=stream_ids, symbols=symbols, since=args.since)
+        if not files:
+            raise SystemExit("no cached files match query; run astrid-node pull first or pass --pull")
+        if args.describe:
+            print(json.dumps({"files": files, "stream": args.stream}, indent=2, default=str))
+            return 0
+        sql = args.sql
+        if not sql:
+            raise SystemExit("--sql is required")
+        t0 = _time.time()
+        rows = query_parquet_files(files, sql, stream_manifest=stream_manifest, dedupe=not args.no_dedupe)
+        elapsed = _time.time() - t0
+    else:
+        if not args.parquet:
+            raise SystemExit("query requires a parquet path or --stream")
+        if args.describe:
+            info = describe_parquet(args.parquet)
+            print(json.dumps(info, indent=2, default=str))
+            return 0
+        sql = args.sql
+        if not sql:
+            raise SystemExit("--sql is required (or use --describe)")
+        t0 = _time.time()
+        if "*" in args.parquet:
+            rows = query_parquet_glob(args.parquet, sql)
+        else:
+            rows = query_parquet(args.parquet, sql)
+        elapsed = _time.time() - t0
+
+    if args.format == "json":
+        print(json.dumps(rows, indent=2, default=str))
+    elif rows:
+        cols = list(rows[0].keys())
+        print("\t".join(cols))
+        for row in rows:
+            print("\t".join(str(row.get(c, "")) for c in cols))
+    print(f"\n({len(rows)} rows, {elapsed*1000:.0f}ms)", file=__import__('sys').stderr)
+    return 0
+
+
+def cmd_pull(args) -> int:
+    """Download market data from Astrid R2."""
+    from astrid_node.pull import pull_markets, pull_full, pull_streams, list_cached
+    from pathlib import Path
+    import time as _time
+
+    data_dir = Path(args.data_dir) if args.data_dir else None
+    kwargs = {}
+    if args.base_url:
+        kwargs["base_url"] = args.base_url
+    if data_dir:
+        kwargs["data_dir"] = data_dir
+
+    if args.list:
+        cached = list_cached(data_dir) if data_dir else list_cached()
+        if not cached:
+            print("No cached data. Run: astrid-node pull WETH")
+            return 0
+        total = 0
+        for f in cached:
+            print(f"  {f['filename']:50s}  {f['bytes']/1024:>8.0f} KB")
+            total += f['bytes']
+        print(f"  {'TOTAL':50s}  {total/1024/1024:>8.1f} MB")
+        return 0
+
+    if args.full:
+        result = pull_full(**kwargs)
+        print(f"\u2713 Downloaded {result['bytes']/1024/1024:.1f} MB in {result['elapsed_s']}s")
+        print(f"  Path: {result['path']}")
+        return 0
+
+    symbols = args.symbols if args.symbols else None
+
+    t0 = _time.time()
+    if args.stream:
+        result = pull_streams(args.stream, symbols=symbols, since=args.since, force=args.force, **kwargs)
+    else:
+        result = pull_streams(None, symbols=symbols, since=args.since, force=args.force, **kwargs)
+    elapsed = _time.time() - t0
+
+    print(f"\u2713 {result['downloaded']} downloaded, {result['skipped']} cached ({elapsed:.1f}s)")
+    print(f"  Data: {result['data_dir']}")
+    if result['errors']:
+        for e in result['errors']:
+            print(f"  ERROR: {e}")
+    return 1 if result['errors'] else 0
 
 
 def cmd_consume(args) -> int:
@@ -200,7 +361,9 @@ def main() -> int:
     sub.add_parser("up").set_defaults(func=cmd_up)
     sub.add_parser("down").set_defaults(func=cmd_down)
     sub.add_parser("migrate").set_defaults(func=cmd_migrate)
-    sub.add_parser("status").set_defaults(func=cmd_status)
+    status = sub.add_parser("status")
+    status.add_argument("--data-dir", default=None)
+    status.set_defaults(func=cmd_status)
 
     streams = sub.add_parser("streams")
     streams_sub = streams.add_subparsers(dest="streams_command", required=True)
@@ -242,6 +405,41 @@ def main() -> int:
     processor_run.add_argument("--limit", type=int, default=1000)
     processor_run.add_argument("--write", action="store_true", help="Write processor output rows to ClickHouse")
     processor_run.set_defaults(func=cmd_processor)
+
+    # sync-fast (v2)
+    sync_fast = sub.add_parser("sync-fast", help="Fast sync: Parquet snapshot → native ClickHouse import")
+    sync_fast.add_argument("--manifest", required=True, help="Path to manifest.json")
+    sync_fast.add_argument("--target-db", default=None, help="Target database (default: astrid_data)")
+    sync_fast.add_argument("--symbols", default=None, help="Comma-separated symbols to sync (default: all)")
+    sync_fast.add_argument("--workers", type=int, default=16, help="Parallel import workers")
+    sync_fast.set_defaults(func=cmd_sync_fast)
+
+    # query (v2 — DuckDB)
+    qry = sub.add_parser("query", help="Query local Parquet with DuckDB (no ClickHouse needed)")
+    qry.add_argument("parquet", nargs="?", help="Path to .parquet file (or glob pattern)")
+    qry.add_argument("--sql", default=None, help="SQL query (table is aliased as 'data')")
+    qry.add_argument("--describe", action="store_true", help="Show schema and stats")
+    qry.add_argument("--format", choices=["table", "json"], default="table")
+    qry.add_argument("--stream", default=None, help="Manifest stream id to query from the local Astrid cache")
+    qry.add_argument("--symbol", dest="symbols", action="append", default=None, help="Optional symbol filter for selecting cached objects")
+    qry.add_argument("--since", default=None, help="Only select cached objects whose max timestamp is at or after this ISO timestamp")
+    qry.add_argument("--pull", action="store_true", help="Pull matching R2 objects before querying")
+    qry.add_argument("--base-url", default=None, help="Astrid R2 base URL")
+    qry.add_argument("--data-dir", default=None, help="Local data directory")
+    qry.add_argument("--no-dedupe", action="store_true", help="Disable identity/cursor de-duplication for base+delta queries")
+    qry.set_defaults(func=cmd_query)
+
+    # pull (v2 — R2 download)
+    pull = sub.add_parser("pull", help="Download market data from Astrid R2")
+    pull.add_argument("symbols", nargs="*", help="Symbols to download (e.g. WETH USDC). Omit for all.")
+    pull.add_argument("--full", action="store_true", help="Download single all_markets.parquet")
+    pull.add_argument("--list", action="store_true", help="List cached data")
+    pull.add_argument("--force", action="store_true", help="Re-download even if cached")
+    pull.add_argument("--base-url", default=None, help="Data source URL")
+    pull.add_argument("--data-dir", default=None, help="Local data directory (default: ~/.astrid/data/v2)")
+    pull.add_argument("--stream", action="append", default=None, help="Stream id to pull; can be repeated")
+    pull.add_argument("--since", default=None, help="Only pull objects whose max timestamp is at or after this ISO timestamp")
+    pull.set_defaults(func=cmd_pull)
 
     args = parser.parse_args()
     return args.func(args)

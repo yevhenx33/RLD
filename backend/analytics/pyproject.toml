@@ -10,6 +10,7 @@ dependencies = [
     "tqdm>=4.66.2",
     "web3>=6.15.0",
     "asyncpg>=0.29.0",
+    "boto3>=1.40.0,<2",
 ]
 
 [project.scripts]
@@ -28,6 +29,7 @@ omit = [
 pythonpath = [".."]
 markers = [
     "live: tests that require a live Ethereum mainnet RPC endpoint",
+    "r2_e2e: tests that write to a real Cloudflare R2 test prefix",
 ]
 
 [tool.ruff.lint.per-file-ignores]

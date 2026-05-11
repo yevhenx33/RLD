@@ -1,0 +1,25 @@
+id: spark.state.emode_categories.v1
+subject: astrid.data.v1.spark.ethereum.state.emode_categories
+schema: astrid.spark.emode_category_state.v1
+protocol: spark
+deployment_id: ethereum:spark-v3-core
+mode: processed
+source_table: spark_emode_categories
+local_table: astrid_spark.emode_categories
+schema_version: 1.0.0
+identity_columns:
+  - category_id
+cursor_column: updated_at
+timestamp_column: updated_at
+block_column: updated_at
+chunk:
+  partition: latest
+  format: parquet
+columns:
+  - category_id:UInt8
+  - ltv:Float64
+  - liquidation_threshold:Float64
+  - liquidation_penalty:Float64
+  - price_source:String
+  - label:String
+  - updated_at:DateTime

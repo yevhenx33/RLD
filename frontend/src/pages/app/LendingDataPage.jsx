@@ -40,7 +40,7 @@ const FLOW_PROTOCOL_COLORS = {
   Aave: "#998EFF",
   Spark: "#f97316",
   Morpho: "#2973FF",
-  Fluid: "#1D2F55",
+  Fluid: "#4E80EE",
   Euler: "#23C09B",
 };
 const NET_FLOW_COLORS = {
@@ -680,11 +680,10 @@ export default function LendingDataPage() {
                     <button
                       key={window.label}
                       onClick={() => setFlowWindowDays(window.days)}
-                      className={`px-2.5 py-1 text-[10px] uppercase tracking-widest rounded-sm transition-colors ${
-                        flowWindowDays === window.days
+                      className={`px-2.5 py-1 text-[10px] uppercase tracking-widest rounded-sm transition-colors ${flowWindowDays === window.days
                           ? "bg-white/10 text-white"
                           : "text-gray-500 hover:text-gray-300"
-                      }`}
+                        }`}
                     >
                       {window.label}
                     </button>

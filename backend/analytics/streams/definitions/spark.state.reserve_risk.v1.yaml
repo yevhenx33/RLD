@@ -1,0 +1,24 @@
+id: spark.state.reserve_risk.v1
+subject: astrid.data.v1.spark.ethereum.state.reserve_risk
+schema: astrid.spark.reserve_risk_state.v1
+protocol: spark
+deployment_id: ethereum:spark-v3-core
+mode: processed
+source_table: spark_reserve_risk_state
+local_table: astrid_spark.reserve_risk_state
+schema_version: 1.0.0
+identity_columns:
+  - entity_id
+cursor_column: updated_at
+timestamp_column: updated_at
+block_column: updated_at
+chunk:
+  partition: latest
+  format: parquet
+columns:
+  - entity_id:String
+  - ltv:Float64
+  - liquidation_threshold:Float64
+  - liquidation_penalty:Float64
+  - e_mode_category:UInt8
+  - updated_at:DateTime

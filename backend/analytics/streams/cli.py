@@ -167,6 +167,101 @@ def cmd_manifest(args) -> int:
     return 0
 
 
+def cmd_snapshot(args) -> int:
+    """Export per-market Parquet snapshots with manifest."""
+    from analytics.streams.snapshot import export_snapshot
+
+    t0 = time.time()
+    manifest = export_snapshot(
+        args.source_table,
+        args.out,
+        compress=args.compress,
+        workers=args.workers,
+    )
+    elapsed = time.time() - t0
+    stats = manifest["stats"]
+    print(f"Exported {stats['market_count']} markets, {stats['total_rows']:,} rows")
+    print(f"  Per-market: {stats['total_bytes']/1024/1024:.1f} MB in {stats['export_ms']}ms")
+    print(f"  Full file:  {manifest['full_snapshot']['bytes']/1024/1024:.1f} MB in {stats['full_export_ms']}ms")
+    print(f"  Manifest:   {args.out}/manifest.json")
+    print(f"  Total:      {elapsed:.1f}s")
+    return 0
+
+
+def cmd_upload(args) -> int:
+    """Upload snapshot to Cloudflare R2."""
+    from analytics.streams.upload import upload_snapshot
+
+    kwargs = {"prefix": args.prefix}
+    if args.bucket:
+        kwargs["bucket"] = args.bucket
+    if args.public_url:
+        kwargs["public_url"] = args.public_url
+
+    result = upload_snapshot(args.snapshot_dir, **kwargs)
+    print(f"Uploaded {result['files_uploaded']} files ({result['total_bytes']/1024/1024:.1f} MB)")
+    print(f"  Bucket:   {result['bucket']}")
+    print(f"  Prefix:   {result['prefix']}")
+    print(f"  Manifest: {result['manifest_url']}")
+    print(f"  Time:     {result['elapsed_s']}s ({result['throughput_mbps']} MB/s)")
+    return 0
+
+
+def _selected_r2_streams(args):
+    from analytics.streams.r2_delta import _select_streams
+
+    return _select_streams(bool(args.all_streams), list(args.stream_id or []))
+
+
+def cmd_r2_base(args) -> int:
+    """Export and upload an hourly immutable R2 base snapshot for registered streams."""
+    from analytics.streams.r2_delta import R2Uploader, publish_base
+
+    streams = _selected_r2_streams(args)
+    ch = _ch_client()
+    try:
+        result = publish_base(
+            ch,
+            R2Uploader(bucket=args.bucket, public_base_url=args.public_url),
+            prefix=args.prefix,
+            streams=streams,
+            out_dir=args.out_dir,
+        )
+    finally:
+        ch.close()
+    print(json.dumps(result, indent=2, sort_keys=True, default=str))
+    return 0
+
+
+def cmd_r2_delta(args) -> int:
+    """Export and upload append-only R2 deltas for registered streams."""
+    from analytics.streams.r2_delta import R2Uploader, publish_delta, run_delta_loop
+
+    streams = _selected_r2_streams(args)
+    uploader = R2Uploader(bucket=args.bucket, public_base_url=args.public_url)
+    if not args.once:
+        def _factory():
+            return _ch_client()
+
+        run_delta_loop(
+            _factory,
+            uploader,
+            prefix=args.prefix,
+            all_streams=bool(args.all_streams),
+            stream_ids=list(args.stream_id or []),
+            interval_seconds=args.interval,
+        )
+        return 0
+
+    ch = _ch_client()
+    try:
+        result = publish_delta(ch, uploader, prefix=args.prefix, streams=streams, out_dir=args.out_dir)
+    finally:
+        ch.close()
+    print(json.dumps(result, indent=2, sort_keys=True, default=str))
+    return 0
+
+
 def cmd_list(args) -> int:
     """List all registered stream definitions."""
     from analytics.streams.registry import load_registry
@@ -232,6 +327,44 @@ def main() -> int:
     manifest.add_argument("--chunks-dir", default=None, help="Directory with .chunk.json sidecars")
     manifest.add_argument("--out", default=None, help="Output file (stdout if omitted)")
     manifest.set_defaults(func=cmd_manifest)
+
+    # snapshot (v2)
+    snap = sub.add_parser("snapshot", help="Export per-market Parquet snapshots")
+    snap.add_argument("source_table", help="Source ClickHouse table (e.g. market_timeseries)")
+    snap.add_argument("--out", required=True, help="Output directory")
+    snap.add_argument("--compress", default="zstd", choices=["zstd", "lz4", "snappy", "none"])
+    snap.add_argument("--workers", type=int, default=8, help="Parallel export workers")
+    snap.set_defaults(func=cmd_snapshot)
+
+    # upload (v2 — R2)
+    upload = sub.add_parser("upload", help="Upload snapshot to Cloudflare R2")
+    upload.add_argument("snapshot_dir", help="Snapshot directory (from 'snapshot' command)")
+    upload.add_argument("--prefix", default="v2", help="R2 key prefix")
+    upload.add_argument("--bucket", default=None, help="R2 bucket name")
+    upload.add_argument("--public-url", default=None, help="Public URL base (e.g. https://data.astrid.dev)")
+    upload.set_defaults(func=cmd_upload)
+
+    # r2-base (manifest v3)
+    r2_base = sub.add_parser("r2-base", help="Publish hourly immutable R2 base snapshots")
+    r2_base.add_argument("stream_id", nargs="*", help="Stream id(s) to export")
+    r2_base.add_argument("--all-streams", action="store_true", help="Export every registered stream")
+    r2_base.add_argument("--prefix", default="v2", help="R2 key prefix")
+    r2_base.add_argument("--bucket", default=None, help="R2 bucket name")
+    r2_base.add_argument("--public-url", default=None, help="Public URL base (e.g. https://astrid.rld.fi)")
+    r2_base.add_argument("--out-dir", default="/tmp/astrid-r2-publish", help="Local staging directory")
+    r2_base.set_defaults(func=cmd_r2_base)
+
+    # r2-delta (manifest v3)
+    r2_delta = sub.add_parser("r2-delta", help="Publish append-only R2 deltas")
+    r2_delta.add_argument("stream_id", nargs="*", help="Stream id(s) to export")
+    r2_delta.add_argument("--all-streams", action="store_true", help="Export every registered stream")
+    r2_delta.add_argument("--once", action="store_true", help="Run one delta publish and exit")
+    r2_delta.add_argument("--interval", type=float, default=15.0, help="Loop interval in seconds")
+    r2_delta.add_argument("--prefix", default="v2", help="R2 key prefix")
+    r2_delta.add_argument("--bucket", default=None, help="R2 bucket name")
+    r2_delta.add_argument("--public-url", default=None, help="Public URL base (e.g. https://astrid.rld.fi)")
+    r2_delta.add_argument("--out-dir", default="/tmp/astrid-r2-publish", help="Local staging directory")
+    r2_delta.set_defaults(func=cmd_r2_delta)
 
     args = parser.parse_args()
     return args.func(args)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,13 +37,37 @@ class AstridJetStreamClient:
             await self._nc.drain()
             await self._nc.close()
 
-    async def publish(self, subject: str, payload: bytes, *, message_id: str, headers: dict[str, str] | None = None) -> PublishAck:
+    async def publish(
+        self,
+        subject: str,
+        payload: bytes,
+        *,
+        message_id: str,
+        headers: dict[str, str] | None = None,
+        stream_name: str | None = None,
+    ) -> PublishAck:
         if self._js is None:
             raise JetStreamUnavailable("JetStream client is not connected")
         nats_headers = dict(headers or {})
         nats_headers["Nats-Msg-Id"] = message_id
-        ack: Any = await self._js.publish(subject, payload, headers=nats_headers)
-        return PublishAck(stream=getattr(ack, "stream", ""), seq=int(getattr(ack, "seq", 0) or 0))
+        last_exc: Exception | None = None
+        for attempt in range(12):
+            try:
+                ack: Any = await self._js.publish(
+                    subject,
+                    payload,
+                    timeout=30,
+                    stream=stream_name,
+                    headers=nats_headers,
+                )
+                return PublishAck(stream=getattr(ack, "stream", ""), seq=int(getattr(ack, "seq", 0) or 0))
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 11:
+                    break
+                await asyncio.sleep(min(5.0, 0.5 * (attempt + 1)))
+        assert last_exc is not None
+        raise last_exc
 
     async def ensure_stream(self, name: str, subjects: list[str]) -> None:
         if self._js is None:
