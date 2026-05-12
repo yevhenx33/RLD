@@ -27,6 +27,8 @@ PROTOCOL_TABLES = {
     "EULER_MARKET": "euler_timeseries",
     "FLUID_MARKET": "fluid_timeseries",
     "MORPHO_MARKET": "morpho_chainlink_timeseries",
+    "COMPOUND_V2_MARKET": "compound_v2_timeseries",
+    "COMPOUND_V3_MARKET": "compound_v3_timeseries",
 }
 
 DEFAULT_INSERT_BATCH_SIZE = int(os.getenv("CLICKHOUSE_INSERT_BATCH_SIZE", "20000"))
@@ -231,11 +233,11 @@ def ensure_api_preagg_tables(ch) -> None:
         FROM (
             SELECT
                 toStartOfWeek(timestamp) AS day,
-                splitByChar('_', protocol)[1] AS clean_protocol,
+                multiIf(protocol = 'COMPOUND_V2_MARKET', 'COMPOUND_V2', protocol = 'COMPOUND_V3_MARKET', 'COMPOUND_V3', splitByChar('_', protocol)[1]) AS clean_protocol,
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM market_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET', 'COMPOUND_V2_MARKET', 'COMPOUND_V3_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
             GROUP BY day, clean_protocol, entity_id
         )
@@ -274,11 +276,11 @@ def ensure_api_preagg_tables(ch) -> None:
             FROM (
                 SELECT
                     toStartOfWeek(timestamp) AS day,
-                    splitByChar('_', protocol)[1] AS clean_protocol,
+                    multiIf(protocol = 'COMPOUND_V2_MARKET', 'COMPOUND_V2', protocol = 'COMPOUND_V3_MARKET', 'COMPOUND_V3', splitByChar('_', protocol)[1]) AS clean_protocol,
                     entity_id,
                     argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
                 FROM market_timeseries
-                WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+                WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET', 'COMPOUND_V2_MARKET', 'COMPOUND_V3_MARKET')
                   AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
                 GROUP BY day, clean_protocol, entity_id
             )
@@ -438,11 +440,11 @@ def refresh_api_protocol_tvl_weekly(ch, min_ts, max_ts) -> int:
         FROM (
             SELECT
                 toStartOfWeek(timestamp) AS day,
-                splitByChar('_', protocol)[1] AS clean_protocol,
+                multiIf(protocol = 'COMPOUND_V2_MARKET', 'COMPOUND_V2', protocol = 'COMPOUND_V3_MARKET', 'COMPOUND_V3', splitByChar('_', protocol)[1]) AS clean_protocol,
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM market_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET', 'COMPOUND_V2_MARKET', 'COMPOUND_V3_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
               AND timestamp >= '{window_start}'
               AND timestamp <= '{window_end}'
@@ -473,6 +475,19 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
     """
     if df.empty:
         return df
+
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["_source_timestamp"] = df["timestamp"]
+    df["_hour"] = df["timestamp"].dt.floor("h")
+    df = (
+        df.sort_values(["entity_id", "_hour", "_source_timestamp"])
+        .groupby(["entity_id", "_hour"], as_index=False)
+        .tail(1)
+        .copy()
+    )
+    df["timestamp"] = df["_hour"]
+    df = df.drop(columns=["_source_timestamp", "_hour"])
 
     entity_ids = df["entity_id"].unique().tolist()
     batch_max_ts = df["timestamp"].max()
@@ -533,6 +548,9 @@ def forward_fill_hourly(df: pd.DataFrame, ch, protocol: str, compound: bool = Tr
                 if eid_rows.empty or last_ts < fill_start:
                     fill_start = last_ts + pd.Timedelta(hours=1)
                     seed_row = lk.iloc[0]
+
+        if eid_rows.empty and fill_start.floor("h") >= batch_max_ts.floor("h"):
+            continue
 
         if eid_rows.empty and seed_row is None:
             continue

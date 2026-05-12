@@ -208,6 +208,36 @@ def cmd_euler_anchor(args) -> int:
     return anchor(args)
 
 
+def cmd_compound_bootstrap(args) -> int:
+    from analytics.scripts.compound_ops import bootstrap
+
+    ch = ch_client()
+    try:
+        return bootstrap(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_compound_anchor(args) -> int:
+    from analytics.scripts.compound_ops import anchor
+
+    ch = ch_client()
+    try:
+        return anchor(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_compound_e2e(args) -> int:
+    from analytics.scripts.compound_ops import e2e
+
+    ch = ch_client()
+    try:
+        return e2e(args, ch)
+    finally:
+        ch.close()
+
+
 
 
 def cmd_views(args) -> int:
@@ -394,7 +424,9 @@ def main() -> int:
     morpho_repair.add_argument("--batch-blocks", type=int, default=500)
     morpho_repair.add_argument("--skip-repair", action="store_true")
     morpho_repair.add_argument("--rebuild-state", action="store_true")
+    morpho_repair.add_argument("--rebuild-history", action="store_true")
     morpho_repair.add_argument("--sync-rpc-state", action="store_true")
+    morpho_repair.add_argument("--rewind-after-block", type=int, default=0)
     morpho_repair.add_argument("--replay-batch-blocks", type=int, default=50000)
     morpho_repair.add_argument("--max-markets", type=int, default=0)
     morpho_repair.add_argument("--sleep-sec", type=float, default=0.0)
@@ -523,6 +555,48 @@ def main() -> int:
     euler_anchor.add_argument("--fail-on-drift", action="store_true")
     euler_anchor.add_argument("--dry-run", action="store_true")
     euler_anchor.set_defaults(func=cmd_euler_anchor)
+
+    compound_bootstrap = sub.add_parser("compound-bootstrap", help="Seed Compound v2/v3 registries and initial state from Ethereum RPC")
+    compound_bootstrap.add_argument("--rpc-url", default=None)
+    compound_bootstrap.add_argument("--protocol", choices=["v2", "v3", "both"], default="both")
+    compound_bootstrap.add_argument("--anchor-block", type=int, default=0, help="Block for initial state; defaults to confirmed RPC head")
+    compound_bootstrap.add_argument("--confirmations", type=int, default=12)
+    compound_bootstrap.add_argument("--http-timeout-sec", type=int, default=60)
+    compound_bootstrap.add_argument("--retries", type=int, default=2)
+    compound_bootstrap.add_argument("--set-cursors", action="store_true", help="Start collectors/processors after the seeded block")
+    compound_bootstrap.set_defaults(func=cmd_compound_bootstrap)
+
+    compound_anchor = sub.add_parser("compound-anchor", help="Compare indexed Compound state against direct Ethereum RPC calls")
+    compound_anchor.add_argument("--rpc-url", default=None)
+    compound_anchor.add_argument("--protocol", choices=["v2", "v3", "both"], default="both")
+    compound_anchor.add_argument("--block-number", type=int, default=0)
+    compound_anchor.add_argument("--block-mode", choices=["processed", "latest"], default="processed")
+    compound_anchor.add_argument("--confirmations", type=int, default=12)
+    compound_anchor.add_argument("--notional-threshold", type=float, default=0.001)
+    compound_anchor.add_argument("--apy-threshold", type=float, default=1e-6)
+    compound_anchor.add_argument("--http-timeout-sec", type=int, default=60)
+    compound_anchor.add_argument("--retries", type=int, default=2)
+    compound_anchor.add_argument("--fail-on-drift", action="store_true")
+    compound_anchor.set_defaults(func=cmd_compound_anchor)
+
+    compound_e2e = sub.add_parser("compound-e2e", help="Run bounded Compound HyperSync replay, serving smoke, and final RPC anchor")
+    compound_e2e.add_argument("--rpc-url", default=None)
+    compound_e2e.add_argument("--protocol", choices=["v2", "v3", "both"], default="both")
+    compound_e2e.add_argument("--anchor-block", type=int, default=0)
+    compound_e2e.add_argument("--from-block", type=int, default=0, help="Inclusive HyperSync replay start block")
+    compound_e2e.add_argument("--to-block", type=int, default=0, help="Inclusive HyperSync replay end block")
+    compound_e2e.add_argument("--batch-blocks", type=int, default=5_000)
+    compound_e2e.add_argument("--block-number", type=int, default=0)
+    compound_e2e.add_argument("--block-mode", choices=["processed", "latest"], default="processed")
+    compound_e2e.add_argument("--confirmations", type=int, default=12)
+    compound_e2e.add_argument("--notional-threshold", type=float, default=0.001)
+    compound_e2e.add_argument("--apy-threshold", type=float, default=1e-6)
+    compound_e2e.add_argument("--http-timeout-sec", type=int, default=60)
+    compound_e2e.add_argument("--retries", type=int, default=2)
+    compound_e2e.add_argument("--set-cursors", action="store_true")
+    compound_e2e.add_argument("--bootstrap", action=argparse.BooleanOptionalAction, default=True)
+    compound_e2e.add_argument("--fail-on-drift", action="store_true")
+    compound_e2e.set_defaults(func=cmd_compound_e2e)
 
     views = sub.add_parser("views", help="Manage serving materialized views")
     views_sub = views.add_subparsers(dest="views_command", required=True)

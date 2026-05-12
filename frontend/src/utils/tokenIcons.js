@@ -86,6 +86,11 @@ const TOKEN_ICONS = {
   TETH:     "/icons/TETH.png",
   USDG:     "/icons/USDG.png",
   USDTB:    "/icons/USDTB.png",
+  WSRUSD:   AVATAR("wsrUSD"),
+  AA_FALCONXUSDC: AVATAR("AA"),
+  STCUSD:   AVATAR("stcUSD"),
+  STUSDS:   AVATAR("stUSDS"),
+  MSY:      AVATAR("msY"),
 };
 
 /**
@@ -118,6 +123,87 @@ const TOKEN_NAMES = {
   ZCHF: "Frankencoin", XAUT: "Tether Gold", SYRUPUSDT: "Syrup USDT",
   PAXG: "Paxos Gold", SUSDS: "Staked Sky Dollar", SYRUPUSDC: "Syrup USDC",
   BONDUSD: "BondUSD",
+  WSRUSD: "Wrapped Savings rUSD",
+  AA_FALCONXUSDC: "Pareto AA Tranche - FalconXUSDC",
+  STCUSD: "Staked cap USD",
+  STUSDS: "Staked USDS",
+  MSY: "msY",
+};
+
+/**
+ * Primary brand colors for token symbols (muted for dark UI).
+ * Used across charts, breakdowns, and composition visualizations.
+ */
+const TOKEN_COLORS = {
+  // ─── Stablecoins ───────────────────────────────────────────
+  USDC:     "#2775ca",  // Circle blue
+  USDT:     "#26a17b",  // Tether green
+  DAI:      "#f5ac37",  // MakerDAO amber
+  FRAX:     "#1a1a1a",  // Frax black
+  LUSD:     "#2eb6ea",  // Liquity blue
+  PYUSD:    "#0070e0",  // PayPal blue
+  GHO:      "#9b72cb",  // Aave GHO purple
+  USDS:     "#1bab6b",  // Sky green
+  CRVUSD:   "#a56729",  // Curve brown-gold
+  SDAI:     "#c9a227",  // Savings DAI gold
+  EURC:     "#1e56a0",  // Euro Coin navy
+  USDE:     "#1a1a2e",  // Ethena dark
+  SUSDE:    "#2d2d44",  // Staked USDe dark purple
+  EUSDE:    "#3a3a55",  // Ethena eUSDe
+  FRXUSD:   "#1a1a1a",  // Frax USD
+  RLUSD:    "#005b99",  // Ripple USD blue
+  USD0:     "#3c3c5a",  // Usual USD0
+  USUAL:    "#4b4b6a",  // Usual purple
+  USDTB:    "#1a1a2e",  // Ethena USDtb
+  USDG:     "#0058a3",  // Paxos USDG
+  MUSD:     "#1e1e3a",  // mStable
+  USDF:     "#4682b4",  // Fractal
+  BONDUSD:  "#5a5a7a",  // BondUSD
+  AUSD:     "#3a6ea5",  // Agora
+  LVLUSD:   "#4a7a8a",  // Level
+  USR:      "#3d8a6e",  // Resolv
+  WSRUSD:   "#5b8fd9",
+  AA_FALCONXUSDC: "#6d8fb3",
+  STCUSD:   "#4c8f78",
+  STUSDS:   "#2f9f72",
+  MSY:      "#7c8594",
+
+  // ─── ETH & LSTs ────────────────────────────────────────────
+  ETH:      "#627eea",  // Ethereum blue
+  WETH:     "#627eea",  // Wrapped Ether blue
+  WSTETH:   "#00a3ff",  // Lido sky blue
+  CBETH:    "#0052ff",  // Coinbase blue
+  RETH:     "#f5a623",  // Rocket Pool orange
+  EZETH:    "#69d2a0",  // Renzo green
+  WEETH:    "#7c3aed",  // ether.fi violet
+  OSETH:    "#2dd4bf",  // StakeWise teal
+  RSETH:    "#3b9e6f",  // KelpDAO green
+  TETH:     "#4a7a6a",  // Treehouse
+
+  // ─── BTC Variants ─────────────────────────────────────────
+  WBTC:     "#f09242",  // Wrapped BTC orange
+  TBTC:     "#48466d",  // tBTC purple-gray
+  EBTC:     "#7c5e2e",  // eBTC brown
+  CBBTC:    "#0052ff",  // Coinbase blue
+  LBTC:     "#c9a227",  // Lombard gold
+  FBTC:     "#e88a3e",  // Ignition orange
+
+  // ─── DeFi Blue Chips ──────────────────────────────────────
+  AAVE:     "#b6509e",  // Aave magenta
+  LINK:     "#2a5ada",  // Chainlink blue
+  UNI:      "#ff007a",  // Uniswap hot pink
+  CRV:      "#a56729",  // Curve brown
+  SNX:      "#1e1a31",  // Synthetix dark
+  BAL:      "#1e1e1e",  // Balancer black
+  LDO:      "#00a3ff",  // Lido blue
+  RPL:      "#f5a623",  // Rocket Pool orange
+  ENS:      "#5298ff",  // ENS blue
+  MKR:      "#1aab9b",  // Maker teal
+  FLUID:    "#6366f1",  // Fluid indigo
+
+  // ─── Gold & Commodities ───────────────────────────────────
+  XAUT:     "#c9a227",  // Tether Gold
+  PAXG:     "#e6c465",  // Paxos Gold
 };
 
 /**
@@ -126,8 +212,69 @@ const TOKEN_NAMES = {
 const PROTOCOL_NAMES = {
   AAVE: "Aave V3",
   SPARK: "Spark",
+  MORPHO: "Morpho",
   EULER: "Euler",
   FLUID: "Fluid",
+  COMPOUND_V3: "Compound V3",
+};
+
+const PROTOCOL_ICONS = {
+  AAVE: "https://icons.llama.fi/aave-v3.png",
+  SPARK: "https://icons.llama.fi/sparklend.jpg",
+  MORPHO: "https://icons.llama.fi/morpho-blue.png",
+  FLUID: "https://icons.llama.fi/fluid-lending.png",
+  EULER: "https://icons.llama.fi/euler-v2.png",
+  COMPOUND_V3: "https://icons.llama.fi/compound-v3.png",
+};
+
+const CURATOR_ICONS = {
+  ALPHA: "https://icons.llama.fi/alpha.jpg",
+  APOSTRO: "https://icons.llama.fi/apostro.jpg",
+  CLEARSTAR: "https://icons.llama.fi/clearstar.jpg",
+  DFORCE: "https://icons.llama.fi/dforce.jpg",
+  GAUNTLET: "https://icons.llama.fi/gauntlet.jpg",
+  HAKUTORA: "https://icons.llama.fi/hakutora.jpg",
+  HYPERITHM: "https://icons.llama.fi/hyperithm.jpg",
+  KPK: "https://icons.llama.fi/kpk.jpg",
+  LULO: "https://icons.llama.fi/lulo.png",
+  PARITY: "https://icons.llama.fi/parity.jpg",
+  SENTORA: "https://icons.llama.fi/sentora.jpg",
+  SINGULARV: "https://icons.llama.fi/singularv.jpg",
+  SPARK: "https://icons.llama.fi/sparklend.jpg",
+  STEAKHOUSE: "https://icons.llama.fi/steakhouse-financial.jpg",
+  SWISSBORG: "https://icons.llama.fi/swissborg.png",
+  YEARN: "https://icons.llama.fi/yearn.jpg",
+};
+
+const CURATOR_ADDRESS_ICONS = {
+  "0x0f963a8a8c01042b69054e787e5763abbb0646a3": CURATOR_ICONS.SPARK,
+  "0x2413a57fbd695f6b13c1d8d7d30ee10fa61b1b02": CURATOR_ICONS.HAKUTORA,
+  "0x37f170e090b64bd277e604af359fb5b675ad10ce": CURATOR_ICONS.LULO,
+  "0x6788c8ad65e85cca7224a0b46d061ef7d81f9da5": CURATOR_ICONS.ALPHA,
+  "0x72882eb5d27c7088dfa6dde941dd42e5d184f0ef": CURATOR_ICONS.CLEARSTAR,
+  "0x75178137d3b4b9a0f771e0e149b00fb8167ba325": CURATOR_ICONS.HYPERITHM,
+  "0x7e43df1c1c5a2245858b60d4655fda83704e4171": CURATOR_ICONS.KPK,
+  "0x827e86072b06674a077f592a531dce4590adecdb": CURATOR_ICONS.STEAKHOUSE,
+  "0x834e1c1ea40173b82106f9177646b66d96ae7de8": CURATOR_ICONS.KPK,
+  "0x90d0f26025571295d18a6c041e47450b81886b51": CURATOR_ICONS.YEARN,
+  "0x982032cd3c37f6733190db966db7db2e0d630715": CURATOR_ICONS.PARITY,
+  "0x9e33faae38ff641094fa68c65c2ce600b3410585": CURATOR_ICONS.GAUNTLET,
+  "0x9e396de3312d373b87f9bd8763fb48184b42aac0": CURATOR_ICONS.SENTORA,
+  "0xc266b1181a80e84edc2c6596718e88e8115c1eaa": CURATOR_ICONS.KPK,
+  "0xc684c6587712e5e7bdf9fd64415f23bd2b05faec": CURATOR_ICONS.SWISSBORG,
+  "0xc8f742c45c7fc91fa8627f3135986cbf48c4dd43": CURATOR_ICONS.DFORCE,
+  "0xc91578e51bce35844e345cc7f733b4bbf6721734": CURATOR_ICONS.APOSTRO,
+  "0xd15f11b334e1e233127302e5f759c17da1260df5": CURATOR_ICONS.KPK,
+  "0xe5aec7d0e795456f90cebefba56470f0e5dfc075": CURATOR_ICONS.KPK,
+  "0xf8182e5827c06a47a985ec565a3bcd56437a97be": CURATOR_ICONS.KPK,
+};
+
+const protocolDisplayKey = (protocol) => {
+  const normalized = String(protocol || "").toUpperCase();
+  if (PROTOCOL_NAMES[normalized] || PROTOCOL_ICONS[normalized]) return normalized;
+  if (normalized.startsWith("COMPOUND_V3")) return "COMPOUND_V3";
+  if (normalized === "COMPOUND V3") return "COMPOUND_V3";
+  return normalized.split("_")[0];
 };
 
 /**
@@ -168,6 +315,45 @@ export function getTokenName(symbol) {
  */
 export function getProtocolDisplayName(protocol) {
   if (!protocol) return "Unknown";
-  const prefix = protocol.split("_")[0];
-  return PROTOCOL_NAMES[prefix] || prefix;
+  const key = protocolDisplayKey(protocol);
+  return PROTOCOL_NAMES[key] || key;
+}
+
+export function getProtocolIcon(protocol) {
+  if (!protocol) return AVATAR("?");
+  const key = protocolDisplayKey(protocol);
+  return PROTOCOL_ICONS[key] || AVATAR(key || "?");
+}
+
+export function getCuratorIcon(curator, curatorAddress) {
+  const address = String(curatorAddress || "").trim().toLowerCase();
+  if (CURATOR_ADDRESS_ICONS[address]) return CURATOR_ADDRESS_ICONS[address];
+
+  const name = String(curator || "").trim();
+  if (!name) return AVATAR("?");
+  const key = name.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return CURATOR_ICONS[key] || AVATAR(name);
+}
+
+/**
+ * Returns the primary brand color for a token symbol.
+ * Falls back to a deterministic hue derived from the symbol string.
+ */
+const FALLBACK_HUES = [
+  "#6b7280", "#7c8594", "#5a6370", "#8a8f96", "#4b5563",
+  "#6e7681", "#586572", "#7a8490", "#4f5b66", "#647080",
+];
+export function getTokenColor(symbol) {
+  if (!symbol) return FALLBACK_HUES[0];
+  const upper = symbol.toUpperCase();
+  if (TOKEN_COLORS[upper]) return TOKEN_COLORS[upper];
+  // Pendle PT tokens → use underlying color
+  if (upper.startsWith("PT-")) {
+    const underlying = upper.replace("PT-", "").replace(/-\d+\w+\d{4}$/i, "");
+    if (TOKEN_COLORS[underlying]) return TOKEN_COLORS[underlying];
+  }
+  // Deterministic fallback from symbol hash
+  let hash = 0;
+  for (let i = 0; i < upper.length; i++) hash = (hash * 31 + upper.charCodeAt(i)) | 0;
+  return FALLBACK_HUES[Math.abs(hash) % FALLBACK_HUES.length];
 }

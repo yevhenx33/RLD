@@ -2,14 +2,14 @@ import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { MetricCell, StatItem } from "../../components/pools/MetricsGrid";
-import { Activity, PieChart as PieChartIcon, Layers, Users, Check, Loader2 } from "lucide-react";
+import { Activity, PieChart as PieChartIcon, Layers, Users, Check, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import RLDPerformanceChart from "../../charts/primitives/RLDPerformanceChart";
 import { API_GRAPHQL_URL } from "../../api/endpoints";
 import { apiGraphQL } from "../../api/apiClient";
 import { LENDING_DATA_QUERY } from "../../api/apiQueries";
 import { queryKeys } from "../../api/queryKeys";
-import { marketRouteFor } from "../../lib/protocolConfig";
-import { getTokenIcon } from "../../utils/tokenIcons";
+import { marketRouteFor, protocolSlugForApiProtocol } from "../../lib/protocolConfig";
+import { getProtocolIcon, getTokenIcon } from "../../utils/tokenIcons";
 import { REFRESH_INTERVALS } from "../../config/refreshIntervals";
 
 const SUPPLY_APY_AREA = {
@@ -42,6 +42,7 @@ const FLOW_PROTOCOL_COLORS = {
   Morpho: "#2973FF",
   Fluid: "#4E80EE",
   Euler: "#23C09B",
+  "Compound V3": "#00D395",
 };
 const NET_FLOW_COLORS = {
   Inflow: "#34d399",
@@ -103,6 +104,7 @@ const displayProtocolName = (protocol) => {
   if (group === "MORPHO") return "Morpho";
   if (group === "EULER") return "Euler";
   if (group === "FLUID") return "Fluid";
+  if (group === "COMPOUND_V3") return "Compound V3";
   return protocol || "UNKNOWN";
 };
 
@@ -154,21 +156,6 @@ const aggregateAlluvialFlows = (flows) => {
   });
 };
 
-const evenlySpacedSlots = (items, totals, top, bottom, height, nodeHeight = 26) => {
-  const available = Math.max(1, height - top - bottom - nodeHeight);
-  const slots = new Map();
-  items.forEach((item, index) => {
-    const y = top + (items.length <= 1 ? available / 2 : (available * index) / (items.length - 1));
-    slots.set(item, {
-      y,
-      h: nodeHeight,
-      center: y + nodeHeight / 2,
-      total: totals.get(item) || 0,
-    });
-  });
-  return slots;
-};
-
 const proportionalSlots = (items, totals, top, bottom, height, minNodeHeight = 18, gap = 38) => {
   const slots = new Map();
   if (!items.length) return slots;
@@ -203,7 +190,7 @@ const sortFlowItems = (totals) => (a, b) => {
   return totals.get(b) - totals.get(a);
 };
 
-const AlluvialFlowChart = ({ flows = [], loading = false }) => {
+const AlluvialFlowChart = ({ flows = [], protocolStats = [], loading = false }) => {
   const [flowTooltip, setFlowTooltip] = useState(null);
   const model = useMemo(() => {
     const rows = aggregateAlluvialFlows(flows);
@@ -219,7 +206,17 @@ const AlluvialFlowChart = ({ flows = [], loading = false }) => {
     const protocolOutflowTotals = sumBy(outflowRows, "protocol");
     const inflowAssetTotals = sumBy(inflowRows, "asset");
     const outflowAssetTotals = sumBy(outflowRows, "asset");
-    const protocols = [...protocolFlowTotals.keys()].sort(sortFlowItems(protocolFlowTotals));
+
+    const protocolSupplyTotals = new Map();
+    protocolStats.forEach(row => {
+      protocolSupplyTotals.set(displayProtocolName(row.protocol), row.supplyUsd);
+    });
+
+    const protocols = [...protocolFlowTotals.keys()].sort((a, b) => {
+      const supplyA = protocolSupplyTotals.get(a) || 0;
+      const supplyB = protocolSupplyTotals.get(b) || 0;
+      return supplyB - supplyA;
+    });
     const inflowAssets = [...inflowAssetTotals.keys()].sort(sortFlowItems(inflowAssetTotals));
     const outflowAssets = [...outflowAssetTotals.keys()].sort(sortFlowItems(outflowAssetTotals));
     const total = [...protocolFlowTotals.values()].reduce((sum, value) => sum + value, 0);
@@ -232,6 +229,7 @@ const AlluvialFlowChart = ({ flows = [], loading = false }) => {
       protocolInflowTotals,
       protocolOutflowTotals,
       protocolNetTotals,
+      protocolSupplyTotals,
       inflowAssetTotals,
       outflowAssetTotals,
       protocols,
@@ -240,7 +238,7 @@ const AlluvialFlowChart = ({ flows = [], loading = false }) => {
       total,
       maxLinkValue,
     };
-  }, [flows]);
+  }, [flows, protocolStats]);
 
   if (loading && flows.length === 0) {
     return (
@@ -267,7 +265,7 @@ const AlluvialFlowChart = ({ flows = [], loading = false }) => {
   const xOutflowAsset = 930;
 
   const inflowAssetLayout = proportionalSlots(model.inflowAssets, model.inflowAssetTotals, top + 22, bottom + 8, height, 10, 9);
-  const protocolLayout = proportionalSlots(model.protocols, model.protocolFlowTotals, top + 64, bottom + 38, height, 14, 42);
+  const protocolLayout = proportionalSlots(model.protocols, model.protocolSupplyTotals, top + 64, bottom + 38, height, 14, 42);
   const outflowAssetLayout = proportionalSlots(model.outflowAssets, model.outflowAssetTotals, top + 22, bottom + 8, height, 10, 9);
   const headerY = 14;
   const ribbonPath = (x1, source, x2, target) => {
@@ -402,6 +400,7 @@ const protocolGroup = (protocol) => {
   if (normalized === "MORPHO" || normalized === "MORPHO_MARKET") return "MORPHO";
   if (normalized === "FLUID" || normalized === "FLUID_MARKET") return "FLUID";
   if (normalized === "EULER" || normalized === "EULER_MARKET") return "EULER";
+  if (normalized === "COMPOUND_V3" || normalized === "COMPOUND_V3_MARKET" || normalized === "COMPOUND V3") return "COMPOUND_V3";
   if (normalized.startsWith("PENDLE")) return "PENDLE";
   return normalized;
 };
@@ -413,7 +412,92 @@ const protocolLabel = (protocol) => {
   if (group === "MORPHO") return "MORPHO";
   if (group === "FLUID") return "FLUID";
   if (group === "EULER") return "EULER";
+  if (group === "COMPOUND_V3") return "COMPOUND V3";
   return group || "UNKNOWN";
+};
+
+const LENDING_PROTOCOL_GROUPS = ["AAVE", "SPARK", "MORPHO", "FLUID", "EULER", "COMPOUND_V3"];
+const API_PROTOCOL_BY_GROUP = {
+  AAVE: "AAVE_MARKET",
+  SPARK: "SPARK_MARKET",
+  MORPHO: "MORPHO_MARKET",
+  FLUID: "FLUID_MARKET",
+  EULER: "EULER_MARKET",
+  COMPOUND_V3: "COMPOUND_V3_MARKET",
+};
+
+const PROTOCOL_FILTER_LABELS = {
+  COMPOUND_V3: "COMPOUND V3",
+};
+
+const aggregateLendingProtocols = (markets) => {
+  const groups = new Map(
+    LENDING_PROTOCOL_GROUPS.map((group) => [
+      group,
+      {
+        group,
+        protocol: API_PROTOCOL_BY_GROUP[group],
+        marketCount: 0,
+        netWorth: 0,
+        supplyUsd: 0,
+        borrowUsd: 0,
+        supplyApyWeighted: 0,
+        supplyWeight: 0,
+        borrowApyWeighted: 0,
+        borrowWeight: 0,
+      },
+    ]),
+  );
+
+  markets.forEach((market) => {
+    const group = protocolGroup(market.protocol);
+    const row = groups.get(group);
+    if (!row) return;
+
+    const supplyUsd = Math.max(0, finiteNumber(market.supplyUsd));
+    const borrowUsd = Math.max(0, finiteNumber(market.borrowUsd));
+    const netWorth = supplyUsd - borrowUsd;
+    const supplyApy = Math.max(0, finiteNumber(market.supplyApy));
+    const borrowApy = Math.max(0, finiteNumber(market.borrowApy));
+
+    row.marketCount += 1;
+    row.supplyUsd += supplyUsd;
+    row.borrowUsd += borrowUsd;
+    row.netWorth += netWorth;
+    row.supplyApyWeighted += supplyApy * supplyUsd;
+    row.supplyWeight += supplyUsd;
+    row.borrowApyWeighted += borrowApy * borrowUsd;
+    row.borrowWeight += borrowUsd;
+  });
+
+  return [...groups.values()]
+    .filter((row) => row.marketCount > 0)
+    .map((row) => ({
+      isProtocolAggregate: true,
+      entityId: null,
+      symbol: protocolLabel(row.protocol),
+      protocol: row.protocol,
+      marketCount: row.marketCount,
+      netWorth: row.netWorth,
+      supplyUsd: row.supplyUsd,
+      borrowUsd: row.borrowUsd,
+      supplyApy: row.supplyWeight > 0 ? row.supplyApyWeighted / row.supplyWeight : 0,
+      borrowApy: row.borrowWeight > 0 ? row.borrowApyWeighted / row.borrowWeight : 0,
+      utilization: row.supplyUsd > 0 ? row.borrowUsd / row.supplyUsd : 0,
+    }))
+    .sort((a, b) => b.supplyUsd - a.supplyUsd);
+};
+
+const tableSortValue = (row, key) => {
+  if (key === "name") {
+    if (row.isProtocolAggregate) return protocolLabel(row.protocol);
+    if (row.collateralSymbol && protocolGroup(row.protocol) === "MORPHO") {
+      return `${row.collateralSymbol} / ${row.symbol}`;
+    }
+    return row.symbol || "";
+  }
+  if (key === "protocol") return protocolLabel(row.protocol);
+  return finiteNumber(row[key]);
 };
 
 const CustomCheckbox = ({ label, checked = false, disabled = false, onClick }) => (
@@ -433,11 +517,10 @@ const CustomCheckbox = ({ label, checked = false, disabled = false, onClick }) =
 
 export default function LendingDataPage() {
   const navigate = useNavigate();
-  const [displayUnit, setDisplayUnit] = useState("USD");
-  const [showSupplyApyHistory, setShowSupplyApyHistory] = useState(false);
-  const [showBorrowApyHistory, setShowBorrowApyHistory] = useState(false);
+  const [displayUnit] = useState("USD");
   const [currentPage, setCurrentPage] = useState(1);
-  const [protocolFilter, setProtocolFilter] = useState('ALL');
+  const [protocolFilter, setProtocolFilter] = useState('LENDING');
+  const [sortConfig, setSortConfig] = useState({ key: "supplyUsd", direction: "desc" });
   const [flowWindowDays, setFlowWindowDays] = useState(30);
   const activeFlowWindow = FLOW_WINDOWS.find((window) => window.days === flowWindowDays) || FLOW_WINDOWS[2];
   const { data: gqlData, error: _error, isLoading: loading } = useSWR(
@@ -474,27 +557,73 @@ export default function LendingDataPage() {
     setCurrentPage(1);
   };
 
-  const filteredMarkets = useMemo(() => {
+  const handleSort = (key) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === "desc" ? "asc" : "desc",
+    }));
+    setCurrentPage(1);
+  };
+
+  const lendingProtocolRows = useMemo(() => {
+    return aggregateLendingProtocols(marketsData);
+  }, [marketsData]);
+
+  const tableRows = useMemo(() => {
+    if (protocolFilter === 'LENDING') return lendingProtocolRows;
     return marketsData.filter(pool => {
-      if (protocolFilter === 'ALL') return true;
       const protocol = protocolGroup(pool.protocol);
-      if (protocolFilter === 'LENDING') {
-        return ['AAVE', 'SPARK', 'MORPHO', 'FLUID', 'EULER'].includes(protocol);
-      }
+      if (protocol === 'PENDLE') return false;
+      if (protocolFilter === 'ALL') return true;
       return protocol === protocolFilter;
     });
-  }, [marketsData, protocolFilter]);
+  }, [lendingProtocolRows, marketsData, protocolFilter]);
+
+  const sortedTableRows = useMemo(() => {
+    const direction = sortConfig.direction === "asc" ? 1 : -1;
+    return tableRows
+      .map((row, index) => ({ row, index }))
+      .sort((a, b) => {
+        const aValue = tableSortValue(a.row, sortConfig.key);
+        const bValue = tableSortValue(b.row, sortConfig.key);
+        if (typeof aValue === "string" || typeof bValue === "string") {
+          const compared = String(aValue).localeCompare(String(bValue));
+          return compared === 0 ? a.index - b.index : compared * direction;
+        }
+        if (aValue === bValue) return a.index - b.index;
+        return (aValue - bValue) * direction;
+      })
+      .map(({ row }) => row);
+  }, [sortConfig, tableRows]);
 
   const ITEMS_PER_PAGE = 10;
-  const maxPage = Math.ceil(filteredMarkets.length / ITEMS_PER_PAGE) || 1;
+  const maxPage = Math.ceil(sortedTableRows.length / ITEMS_PER_PAGE) || 1;
   const safeCurrentPage = Math.min(currentPage, maxPage);
 
   const paginatedMarkets = useMemo(() => {
     const startIndex = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
-    return filteredMarkets.slice(startIndex, startIndex + ITEMS_PER_PAGE);
-  }, [filteredMarkets, safeCurrentPage]);
+    return sortedTableRows.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [safeCurrentPage, sortedTableRows]);
 
   const totalPages = maxPage;
+
+  const renderSortHeader = (key, label, className = "text-center justify-center") => {
+    const active = sortConfig.key === key;
+    const Icon = active && sortConfig.direction === "asc" ? ChevronUp : ChevronDown;
+    return (
+      <button
+        type="button"
+        onClick={() => handleSort(key)}
+        className={`group flex w-full items-center gap-1.5 transition-colors hover:text-gray-300 ${className} ${active ? "text-cyan-400" : "text-gray-500"}`}
+      >
+        <span>{label}</span>
+        <Icon
+          size={13}
+          className={`shrink-0 transition-opacity ${active ? "opacity-100" : "opacity-35 group-hover:opacity-70"}`}
+        />
+      </button>
+    );
+  };
 
   const interestRateChartData = useMemo(() => {
     return chartData.filter((point) => {
@@ -570,7 +699,7 @@ export default function LendingDataPage() {
               }
             />
             <MetricCell
-              label="TVL_BY_TYPE"
+              label="TVL BY TYPE"
               Icon={Layers}
               hideLabelOnMobile={true}
               content={
@@ -590,11 +719,13 @@ export default function LendingDataPage() {
               hideLabelOnMobile={true}
               content={
                 <div className="flex flex-col md:grid md:grid-cols-2 gap-4 mt-auto">
-                  <div className="flex flex-col justify-end">
+                  <div className="flex flex-col justify-end gap-2">
+                    <StatItem label="PROTOCOLS" value={lendingProtocolRows.length} />
                     <StatItem label="MARKETS" value={stats.marketCount} />
                   </div>
-                  <div className="flex flex-col justify-end border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
-                    <StatItem label="USERS" value={formatCount(stats.totalUsers)} />
+                  <div className="flex flex-col justify-end gap-2 border-t md:border-t-0 md:border-l border-white/10 pt-3 md:pt-0 md:pl-4">
+                    <StatItem label="USERS (1M)" value="-" />
+                    <StatItem label="USERS (1Y)" value={formatCount(stats.totalUsers)} />
                   </div>
                 </div>
               }
@@ -681,8 +812,8 @@ export default function LendingDataPage() {
                       key={window.label}
                       onClick={() => setFlowWindowDays(window.days)}
                       className={`px-2.5 py-1 text-[10px] uppercase tracking-widest rounded-sm transition-colors ${flowWindowDays === window.days
-                          ? "bg-white/10 text-white"
-                          : "text-gray-500 hover:text-gray-300"
+                        ? "bg-white/10 text-white"
+                        : "text-gray-500 hover:text-gray-300"
                         }`}
                     >
                       {window.label}
@@ -700,7 +831,7 @@ export default function LendingDataPage() {
               </div>
             </div>
             <div className="h-[390px] w-full relative mt-auto">
-              <AlluvialFlowChart flows={alluvialFlows} loading={loading} />
+              <AlluvialFlowChart flows={alluvialFlows} protocolStats={lendingProtocolRows} loading={loading} />
             </div>
           </div>
         </section>
@@ -726,13 +857,13 @@ export default function LendingDataPage() {
                   LENDING
                 </button>
                 <div className="flex items-center gap-1">
-                  {['AAVE', 'SPARK', 'MORPHO', 'FLUID', 'EULER'].map(p => (
+                  {LENDING_PROTOCOL_GROUPS.map(p => (
                     <button
                       key={p}
                       onClick={() => handleProtocolFilter(p)}
                       className={`text-xs md:text-sm tracking-widest uppercase transition-colors px-3 py-1.5 rounded-sm border ${protocolFilter === p ? 'text-cyan-400 border-cyan-400/30 bg-cyan-400/5' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}
                     >
-                      {p}
+                      {PROTOCOL_FILTER_LABELS[p] || p}
                     </button>
                   ))}
                 </div>
@@ -741,10 +872,10 @@ export default function LendingDataPage() {
               <div className="h-4 w-px bg-white/10 shrink-0 mx-1" />
 
               <button
-                onClick={() => handleProtocolFilter('PENDLE')}
-                className={`text-xs md:text-sm tracking-widest uppercase transition-colors px-3 py-1.5 rounded-sm border shrink-0 ${protocolFilter === 'PENDLE' ? 'text-cyan-400 border-cyan-400/30 bg-cyan-400/5' : 'text-gray-500 border-transparent hover:text-gray-300 hover:bg-white/5'}`}
+                disabled
+                className="text-xs md:text-sm tracking-widest uppercase px-3 py-1.5 rounded-sm border shrink-0 text-gray-600 border-transparent cursor-not-allowed opacity-50"
               >
-                PENDLE
+                YIELDS (SOON)
               </button>
             </div>
           </div>
@@ -753,14 +884,14 @@ export default function LendingDataPage() {
             <div className="min-w-[1000px] flex flex-col">
               {/* Table Header */}
               <div className="grid grid-cols-9 gap-4 px-4 md:px-6 py-3 text-[11px] md:text-[13px] text-gray-500 uppercase tracking-widest border-b border-white/10 bg-[#050505]">
-                <div className="col-span-2">Asset</div>
-                <div className="text-center">Liquidity</div>
-                <div className="text-center">Total Supply</div>
-                <div className="text-center">Total Borrow</div>
-                <div className="text-center">Supply APY</div>
-                <div className="text-center">Borrow APY</div>
-                <div className="text-center">Utilization</div>
-                <div className="text-center">Protocol</div>
+                <div className="col-span-2">{renderSortHeader("name", protocolFilter === 'LENDING' ? 'Protocol' : 'Asset', "justify-start text-left")}</div>
+                <div>{renderSortHeader("netWorth", "Liquidity")}</div>
+                <div>{renderSortHeader("supplyUsd", "Total Supply")}</div>
+                <div>{renderSortHeader("borrowUsd", "Total Borrow")}</div>
+                <div>{renderSortHeader("supplyApy", "Supply APY")}</div>
+                <div>{renderSortHeader("borrowApy", "Borrow APY")}</div>
+                <div>{renderSortHeader("utilization", "Utilization")}</div>
+                <div>{renderSortHeader("protocol", "Protocol")}</div>
 
               </div>
 
@@ -771,44 +902,70 @@ export default function LendingDataPage() {
                     <Loader2 className="w-6 h-6 text-cyan-500 animate-spin mb-2" />
                   </div>
                 ) : (
-                  paginatedMarkets.map((pool, idx) => (
-                    <div
-                      key={`${pool.protocol}-${pool.entityId || pool.symbol}-${idx}`}
-                      onClick={() => pool.entityId && navigate(marketRouteFor(pool.protocol, pool.entityId))}
-                      className={`grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center transition-colors ${pool.entityId ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
-                        }`}
-                    >
-                      <div className="col-span-2 flex items-center gap-3">
-                        {pool.collateralSymbol && protocolGroup(pool.protocol) === 'MORPHO' ? (
-                          <>
-                            <div className="flex items-center -space-x-2">
-                              <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm z-10">
-                                <img src={getTokenIcon(pool.collateralSymbol)} alt={pool.collateralSymbol} className="w-full h-full object-contain rounded-full" />
+                  paginatedMarkets.map((pool, idx) => {
+                    const isAggregate = Boolean(pool.isProtocolAggregate);
+                    const canNavigate = isAggregate || Boolean(pool.entityId);
+                    return (
+                      <div
+                        key={`${pool.protocol}-${pool.entityId || pool.symbol}-${idx}`}
+                        onClick={() => {
+                          if (isAggregate) {
+                            navigate(`/data/${protocolSlugForApiProtocol(pool.protocol)}`);
+                            return;
+                          }
+                          if (pool.entityId) navigate(marketRouteFor(pool.protocol, pool.entityId));
+                        }}
+                        className={`grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center transition-colors ${canNavigate ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
+                          }`}
+                      >
+                        <div className="col-span-2 flex items-center gap-3">
+                          {isAggregate ? (
+                            <>
+                              <div className="w-8 h-8 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-1 shadow-sm">
+                                <img
+                                  src={getProtocolIcon(pool.protocol)}
+                                  alt={`${protocolLabel(pool.protocol)} logo`}
+                                  className="w-full h-full object-contain rounded-full"
+                                />
                               </div>
-                              <div className="w-6 h-6 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
+                              <div className="flex flex-col">
+                                <span className="text-sm text-white font-medium">{protocolLabel(pool.protocol)}</span>
+                                <span className="text-[10px] text-gray-600 uppercase tracking-widest">
+                                  {pool.marketCount} markets
+                                </span>
+                              </div>
+                            </>
+                          ) : pool.collateralSymbol && protocolGroup(pool.protocol) === 'MORPHO' ? (
+                            <>
+                              <div className="flex items-center -space-x-2">
+                                <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm z-10">
+                                  <img src={getTokenIcon(pool.collateralSymbol)} alt={pool.collateralSymbol} className="w-full h-full object-contain rounded-full" />
+                                </div>
+                                <div className="w-6 h-6 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
+                                  <img src={getTokenIcon(pool.symbol)} alt={pool.symbol} className="w-full h-full object-contain rounded-full" />
+                                </div>
+                              </div>
+                              <span className="text-sm text-white font-medium">{pool.collateralSymbol}<span className="text-gray-500"> / {pool.symbol}</span></span>
+                            </>
+                          ) : (
+                            <>
+                              <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
                                 <img src={getTokenIcon(pool.symbol)} alt={pool.symbol} className="w-full h-full object-contain rounded-full" />
                               </div>
-                            </div>
-                            <span className="text-sm text-white font-medium">{pool.collateralSymbol}<span className="text-gray-500"> / {pool.symbol}</span></span>
-                          </>
-                        ) : (
-                          <>
-                            <div className="w-8 h-8 rounded-full bg-[#151515] border border-[#0a0a0a] flex items-center justify-center p-0.5 shadow-sm">
-                              <img src={getTokenIcon(pool.symbol)} alt={pool.symbol} className="w-full h-full object-contain rounded-full" />
-                            </div>
-                            <span className="text-sm text-white font-medium">{pool.symbol}</span>
-                          </>
-                        )}
+                              <span className="text-sm text-white font-medium">{pool.symbol}</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex justify-center text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.netWorth)}</div>
+                        <div className="flex justify-center text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.supplyUsd)}</div>
+                        <div className="flex justify-center text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.borrowUsd)}</div>
+                        <div className="flex justify-center text-center text-[10px] md:text-[13px] text-green-500 tracking-widest">{formatApy(pool.supplyApy)}</div>
+                        <div className="flex justify-center text-center text-[10px] md:text-[13px] text-cyan-500 tracking-widest">{formatApy(pool.borrowApy)}</div>
+                        <div className="flex justify-center text-center text-[10px] md:text-[13px] text-gray-300 tracking-widest">{formatPercent(pool.utilization)}</div>
+                        <div className="flex justify-center text-center text-[10px] md:text-[13px] text-gray-400 tracking-widest">{protocolLabel(pool.protocol)}</div>
                       </div>
-                      <div className="text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.netWorth)}</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.supplyUsd)}</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-white tracking-widest">{formatCurrency(pool.borrowUsd)}</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-green-500 tracking-widest">{formatApy(pool.supplyApy)}</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-cyan-500 tracking-widest">{formatApy(pool.borrowApy)}</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-gray-300 tracking-widest">{formatPercent(pool.utilization)}</div>
-                      <div className="text-center text-[10px] md:text-[13px] text-gray-400 tracking-widest">{protocolLabel(pool.protocol)}</div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 

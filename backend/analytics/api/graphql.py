@@ -8,6 +8,7 @@ import logging
 import json
 import time
 import uuid
+import hashlib
 from collections import defaultdict, deque
 from bisect import bisect_left
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -29,6 +30,8 @@ apply_env_from_config()
 from analytics.protocols import (  # noqa: E402
     AAVE_MARKET,
     CHAINLINK_PRICES,
+    COMPOUND_V2_MARKET,
+    COMPOUND_V3_MARKET,
     FLUID_MARKET,
     METAMORPHO_VAULT,
     MORPHO_MARKET,
@@ -41,7 +44,7 @@ from analytics.protocols import (  # noqa: E402
     PROCESSOR_STATE_ALIASES,
 )
 from analytics.state import get_source_status  # noqa: E402
-from analytics.tokens import TOKENS, get_usd_price  # noqa: E402
+from analytics.tokens import TOKENS, get_chainlink_prices, get_usd_price  # noqa: E402
 from analytics.aave_accounts import AAVE_DEPLOYMENT_ID, ensure_aave_account_tables  # noqa: E402
 
 logger = logging.getLogger("rld.clickhouse_api")
@@ -124,6 +127,8 @@ API_PUBLIC_READY_PROTOCOLS = tuple(
                 AAVE_MARKET,
                 SPARK_MARKET,
                 MORPHO_MARKET,
+                COMPOUND_V2_MARKET,
+                COMPOUND_V3_MARKET,
                 METAMORPHO_VAULT,
                 FLUID_MARKET,
                 PENDLE_ETHEREUM_PT_YT_PRICES,
@@ -152,11 +157,21 @@ API_MARKET_TIMESERIES_AGG_TABLE = "api_market_timeseries_hourly_agg"
 API_PROTOCOL_TVL_AGG_TABLE = "api_protocol_tvl_entity_weekly_agg"
 AAVE_FLOW_DAILY_AGG_TABLE = "api_aave_market_flow_daily_agg"
 API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE = "api_chainlink_price_weekly_agg"
+COMPOUND_V3_LATEST_ENRICHED_TABLE = "api_compound_v3_market_latest_enriched"
+COMPOUND_V3_COLLATERAL_LATEST_TABLE = "api_compound_v3_collateral_latest"
+COMPOUND_V3_FLOW_DAILY_TABLE = "api_compound_v3_market_flow_daily_agg"
 AAVE_SERIES_TABLE = "market_timeseries"
-TVL_PROTOCOLS = ("AAVE", "SPARK", "EULER", "FLUID", "MORPHO")
+TVL_PROTOCOLS = ("AAVE", "SPARK", "EULER", "FLUID", "MORPHO", "COMPOUND_V2", "COMPOUND_V3")
 MORPHO_ALLOCATION_DEFAULT_LIMIT = 500
 TVL_SYNTHETIC_ENTITY_IDS = {"AAVE_MARKET_SYNTHETIC"}
-LENDING_DATA_MARKET_PROTOCOLS = (AAVE_MARKET, SPARK_MARKET, "EULER_MARKET", MORPHO_MARKET, FLUID_MARKET)
+LENDING_DATA_MARKET_PROTOCOLS = (
+    AAVE_MARKET,
+    SPARK_MARKET,
+    "EULER_MARKET",
+    MORPHO_MARKET,
+    FLUID_MARKET,
+    COMPOUND_V3_MARKET,
+)
 AAVE_FLOW_EVENT_NAMES = (
     "Supply",
     "Withdraw",
@@ -327,15 +342,26 @@ class MorphoMarketPosition:
 
 
 @strawberry.type
+class MetaMorphoVaultExposure:
+    symbol: str
+    value_usd: float = strawberry.field(name="valueUsd")
+
+
+@strawberry.type
 class MetaMorphoVault:
     vault_address: str = strawberry.field(name="vaultAddress")
     name: str
     asset_symbol: str = strawberry.field(name="assetSymbol")
     asset_address: str = strawberry.field(name="assetAddress")
+    curator_address: str = strawberry.field(name="curatorAddress")
+    curator: str
     total_assets: str = strawberry.field(name="totalAssets")
     total_supply: str = strawberry.field(name="totalSupply")
     share_price_usd: float = strawberry.field(name="sharePriceUsd")
+    share_price_assets: Optional[float] = strawberry.field(name="sharePriceAssets", default=None)
     tvl_usd: float = strawberry.field(name="tvlUsd")
+    apy: Optional[float] = None
+    exposure: list[MetaMorphoVaultExposure]
     is_canonical_tvl: bool = strawberry.field(name="isCanonicalTvl")
     last_snapshot_timestamp: int = strawberry.field(name="lastSnapshotTimestamp")
 
@@ -365,6 +391,49 @@ class MetaMorphoVaultFlow:
     withdraw_usd: float = strawberry.field(name="withdrawUsd")
     net_flow_usd: float = strawberry.field(name="netFlowUsd")
     event_count: int = strawberry.field(name="eventCount")
+
+
+@strawberry.type
+class MetaMorphoVaultFlowLink:
+    action: str
+    asset: str
+    value_usd: float = strawberry.field(name="valueUsd")
+
+
+@strawberry.type
+class MetaMorphoVaultHistoryPoint:
+    timestamp: int
+    total_deposits_usd: float = strawberry.field(name="totalDepositsUsd")
+    allocated_usd: float = strawberry.field(name="allocatedUsd")
+    liquidity_usd: float = strawberry.field(name="liquidityUsd")
+    utilization: float
+    share_price_usd: float = strawberry.field(name="sharePriceUsd")
+    net_apy: float = strawberry.field(name="netApy")
+
+
+@strawberry.type
+class MetaMorphoVaultMarketExposure:
+    market_id: str = strawberry.field(name="marketId")
+    market_label: str = strawberry.field(name="marketLabel")
+    loan_symbol: str = strawberry.field(name="loanSymbol")
+    collateral_symbol: Optional[str] = strawberry.field(name="collateralSymbol", default=None)
+    supplied_usd: float = strawberry.field(name="suppliedUsd")
+    allocation_share: float = strawberry.field(name="allocationShare")
+    liquidity_usd: float = strawberry.field(name="liquidityUsd")
+    supply_apy: float = strawberry.field(name="supplyApy")
+    borrow_apy: float = strawberry.field(name="borrowApy")
+    utilization: float
+    lltv: Optional[float] = None
+
+
+@strawberry.type
+class MetaMorphoVaultPagePayload:
+    freshness: AnalyticsFreshness
+    vault: Optional[MetaMorphoVault]
+    history: list[MetaMorphoVaultHistoryPoint]
+    flow_chart: list[MetaMorphoVaultFlow] = strawberry.field(name="flowChart")
+    flow_links: list[MetaMorphoVaultFlowLink] = strawberry.field(name="flowLinks")
+    exposures: list[MetaMorphoVaultMarketExposure]
 
 
 @strawberry.type
@@ -438,6 +507,8 @@ class ProtocolTvlPoint:
     euler: float = 0.0
     fluid: float = 0.0
     morpho: float = 0.0
+    compound_v2: float = strawberry.field(name="compoundV2", default=0.0)
+    compound_v3: float = strawberry.field(name="compoundV3", default=0.0)
 
 
 @strawberry.type
@@ -445,6 +516,17 @@ class ProtocolApyPoint:
     timestamp: int
     average_supply_apy: float = strawberry.field(name="averageSupplyApy")
     average_borrow_apy: float = strawberry.field(name="averageBorrowApy")
+    supply_usd: float = strawberry.field(name="supplyUsd", default=0.0)
+    borrow_usd: float = strawberry.field(name="borrowUsd", default=0.0)
+    sofr_rate: Optional[float] = strawberry.field(name="sofrRate", default=None)
+
+
+@strawberry.type
+class ProtocolAssetApyPoint:
+    timestamp: int
+    symbol: str
+    supply_apy: float = strawberry.field(name="supplyApy")
+    borrow_apy: float = strawberry.field(name="borrowApy")
     sofr_rate: Optional[float] = strawberry.field(name="sofrRate", default=None)
 
 
@@ -490,6 +572,7 @@ class MorphoAllocationVault:
     id: int
     address: str
     name: str
+    curator: str = ""
 
 
 @strawberry.type
@@ -706,6 +789,7 @@ class LendingDataChartPoint:
     euler_tvl: float = strawberry.field(name="eulerTvl", default=0.0)
     fluid_tvl: float = strawberry.field(name="fluidTvl", default=0.0)
     morpho_tvl: float = strawberry.field(name="morphoTvl", default=0.0)
+    compound_v3_tvl: float = strawberry.field(name="compoundV3Tvl", default=0.0)
     average_supply_apy: Optional[float] = strawberry.field(name="averageSupplyApy", default=None)
     average_borrow_apy: Optional[float] = strawberry.field(name="averageBorrowApy", default=None)
     sofr_rate: Optional[float] = strawberry.field(name="sofrRate", default=None)
@@ -731,6 +815,23 @@ class LendingFlowAlluvialLink:
     action: str
     asset: str
     value_usd: float = strawberry.field(name="valueUsd")
+
+
+@strawberry.type
+class MorphoCuratorFlowLink:
+    action: str
+    asset: str
+    curator: str
+    curator_address: str = strawberry.field(name="curatorAddress")
+    value_usd: float = strawberry.field(name="valueUsd")
+
+
+@strawberry.type
+class MorphoCuratorAllocationPoint:
+    timestamp: int
+    curator: str
+    curator_address: str = strawberry.field(name="curatorAddress")
+    supplied_usd: float = strawberry.field(name="suppliedUsd")
 
 
 @strawberry.type
@@ -765,6 +866,8 @@ class ProtocolMarketRow:
     collateral_symbol: Optional[str] = strawberry.field(name="collateralSymbol", default=None)
     collateral_usd: Optional[float] = strawberry.field(name="collateralUsd", default=None)
     lltv: Optional[float] = None
+    lltv_min: Optional[float] = strawberry.field(name="lltvMin", default=None)
+    lltv_max: Optional[float] = strawberry.field(name="lltvMax", default=None)
     oracle: Optional[str] = None
     pricing_status: Optional[str] = strawberry.field(name="pricingStatus", default=None)
     is_trapped: bool = strawberry.field(name="isTrapped", default=False)
@@ -775,6 +878,16 @@ class ProtocolMarketsPagePayload:
     freshness: AnalyticsFreshness
     stats: ProtocolMarketsStats
     rows: list[ProtocolMarketRow]
+
+
+@strawberry.type
+class CompoundV3ProtocolPagePayload:
+    freshness: AnalyticsFreshness
+    stats: ProtocolMarketsStats
+    rows: list[ProtocolMarketRow]
+    apy_history: list[ProtocolApyPoint] = strawberry.field(name="apyHistory")
+    asset_apy_history: list[ProtocolAssetApyPoint] = strawberry.field(name="assetApyHistory")
+    alluvial_flows: list[LendingFlowAlluvialLink] = strawberry.field(name="alluvialFlows")
 
 
 @strawberry.type
@@ -801,6 +914,22 @@ class FluidVaultRow:
 
 
 @strawberry.type
+class MarketCollateralAssetRow:
+    asset: str
+    symbol: str
+    price_feed: Optional[str] = strawberry.field(name="priceFeed", default=None)
+    borrow_collateral_factor: float = strawberry.field(name="borrowCollateralFactor")
+    liquidate_collateral_factor: float = strawberry.field(name="liquidateCollateralFactor")
+    liquidation_factor: float = strawberry.field(name="liquidationFactor")
+    supply_cap: str = strawberry.field(name="supplyCap")
+    supply_cap_tokens: float = strawberry.field(name="supplyCapTokens")
+    total_collateral: str = strawberry.field(name="totalCollateral")
+    total_collateral_tokens: float = strawberry.field(name="totalCollateralTokens")
+    collateral_usd: float = strawberry.field(name="collateralUsd", default=0.0)
+    borrow_enabled: bool = strawberry.field(name="borrowEnabled", default=False)
+
+
+@strawberry.type
 class LendingPoolPagePayload:
     freshness: AnalyticsFreshness
     market: Optional[MarketDetail]
@@ -809,6 +938,7 @@ class LendingPoolPagePayload:
     allocation_chart: Optional[list[MorphoAllocationPoint]] = strawberry.field(name="allocationChart", default=None)
     allocation_columnar: Optional[MorphoAllocationColumnar] = strawberry.field(name="allocationColumnar", default=None)
     vault_breakdown: Optional[list[FluidVaultRow]] = strawberry.field(name="vaultBreakdown", default=None)
+    collateral_breakdown: Optional[list[MarketCollateralAssetRow]] = strawberry.field(name="collateralBreakdown", default=None)
 
 
 def _new_clickhouse_client():
@@ -920,6 +1050,79 @@ def _ensure_support_tables(ch) -> None:
     )
     ch.command(
         f"""
+        CREATE TABLE IF NOT EXISTS {COMPOUND_V3_LATEST_ENRICHED_TABLE} (
+            timestamp DateTime,
+            entity_id String,
+            symbol LowCardinality(String),
+            protocol LowCardinality(String),
+            supply_usd Float64,
+            borrow_usd Float64,
+            supply_apy Float64,
+            borrow_apy Float64,
+            utilization Float64,
+            price_usd Float64,
+            base_token String,
+            base_symbol LowCardinality(String),
+            base_decimals UInt8,
+            total_supply_base String,
+            total_borrow_base String,
+            lltv_min Float64,
+            lltv_max Float64,
+            is_active UInt8,
+            has_supply UInt8,
+            has_borrow UInt8,
+            last_event_timestamp DateTime,
+            last_priced_timestamp DateTime,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY entity_id
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {COMPOUND_V3_COLLATERAL_LATEST_TABLE} (
+            comet String,
+            asset String,
+            symbol LowCardinality(String),
+            price_feed String,
+            oracle_name LowCardinality(String),
+            token_decimals UInt8,
+            price_usd Float64,
+            borrow_collateral_factor Float64,
+            liquidate_collateral_factor Float64,
+            liquidation_factor Float64,
+            supply_cap String,
+            supply_cap_tokens Float64,
+            total_collateral String,
+            total_collateral_tokens Float64,
+            collateral_usd Float64,
+            borrow_enabled UInt8,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY (comet, asset)
+        """
+    )
+    ch.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {COMPOUND_V3_FLOW_DAILY_TABLE} (
+            day DateTime,
+            entity_id String,
+            symbol LowCardinality(String),
+            supply_inflow_usd Float64,
+            supply_outflow_usd Float64,
+            borrow_inflow_usd Float64,
+            borrow_outflow_usd Float64,
+            net_supply_flow_usd Float64,
+            net_borrow_flow_usd Float64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(day)
+        ORDER BY (entity_id, day)
+        TTL day + INTERVAL 36 MONTH DELETE
+        """
+    )
+    ch.command(
+        f"""
         CREATE TABLE IF NOT EXISTS {API_CHAINLINK_WEEKLY_PRICE_AGG_TABLE} (
             day DateTime,
             feed LowCardinality(String),
@@ -957,11 +1160,11 @@ def _ensure_support_tables(ch) -> None:
         FROM (
             SELECT
                 toStartOfWeek(timestamp) AS day,
-                splitByChar('_', protocol)[1] AS clean_protocol,
+                multiIf(protocol = 'COMPOUND_V2_MARKET', 'COMPOUND_V2', protocol = 'COMPOUND_V3_MARKET', 'COMPOUND_V3', splitByChar('_', protocol)[1]) AS clean_protocol,
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM market_timeseries
-            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET', 'COMPOUND_V2_MARKET', 'COMPOUND_V3_MARKET')
               AND entity_id NOT IN ('AAVE_MARKET_SYNTHETIC')
             GROUP BY day, clean_protocol, entity_id
         )
@@ -1055,11 +1258,11 @@ def _ensure_support_tables(ch) -> None:
             FROM (
                 SELECT
                     toStartOfWeek(timestamp) AS day,
-                    splitByChar('_', protocol)[1] AS clean_protocol,
+                    multiIf(protocol = 'COMPOUND_V2_MARKET', 'COMPOUND_V2', protocol = 'COMPOUND_V3_MARKET', 'COMPOUND_V3', splitByChar('_', protocol)[1]) AS clean_protocol,
                     entity_id,
                     argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
                 FROM market_timeseries
-                WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+                WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET', 'COMPOUND_V2_MARKET', 'COMPOUND_V3_MARKET')
                   AND entity_id != 'AAVE_MARKET_SYNTHETIC'
                 GROUP BY day, clean_protocol, entity_id
             )
@@ -1681,7 +1884,7 @@ def _protocol_coverage(ch, protocol: str) -> ProtocolCoverage:
             unpriced = max(0, total - priced)
             unsupported = 0
             partial = 0
-        elif protocol in {AAVE_MARKET, SPARK_MARKET, "EULER_MARKET"}:
+        elif protocol in {AAVE_MARKET, SPARK_MARKET, "EULER_MARKET", COMPOUND_V2_MARKET, COMPOUND_V3_MARKET}:
             total = _query_int(
                 ch,
                 f"SELECT count() FROM api_market_latest FINAL WHERE protocol = '{_escape_sql_string(protocol)}'",
@@ -1805,6 +2008,42 @@ def _safe_limit(limit: int) -> int:
 
 def _escape_sql_string(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "''")
+
+
+def _safe_max_borrow_apy(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric) or numeric <= 0:
+        return None
+    return numeric
+
+
+def _token_symbol_from_address(address: object) -> Optional[str]:
+    normalized = str(address or "").strip().lower()
+    if normalized in {"0x0000000000000000000000000000000000000000", "0000000000000000000000000000000000000000"}:
+        return "ETH"
+    if normalized.startswith("0x"):
+        normalized = normalized[2:]
+    token = TOKENS.get(normalized)
+    return str(token[0]) if token else None
+
+
+def _morpho_display_symbol(symbol: object, token_address: object = None) -> Optional[str]:
+    resolved = _token_symbol_from_address(token_address)
+    if resolved:
+        return resolved
+
+    raw = str(symbol or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("0x") and len(raw) >= 10:
+        resolved = _token_symbol_from_address(raw)
+        return resolved or raw[:10]
+    return raw
 
 
 def _normalize_rate_symbol(symbol: str) -> str:
@@ -2451,6 +2690,45 @@ def _query_historical_rates(ch, symbols: list[str], resolution: str, limit: int)
 
 def _query_market_snapshots(ch, protocol: Optional[str] = None) -> list[MarketSnapshot]:
     if protocol:
+        if protocol == COMPOUND_V3_MARKET:
+            sql = f"""
+            SELECT
+                l.entity_id,
+                l.symbol,
+                '{_escape_sql_string(COMPOUND_V3_MARKET)}' AS protocol,
+                l.supply_usd,
+                l.borrow_usd,
+                l.supply_apy,
+                l.borrow_apy,
+                if(l.supply_usd > 0, l.borrow_usd / l.supply_usd, 0.0) AS utilization
+            FROM (
+                SELECT
+                    entity_id,
+                    argMax(symbol, tuple(timestamp, inserted_at)) AS symbol,
+                    argMax(toFloat64(supply_usd), tuple(timestamp, inserted_at)) AS supply_usd,
+                    argMax(toFloat64(borrow_usd), tuple(timestamp, inserted_at)) AS borrow_usd,
+                    argMax(toFloat64(supply_apy), tuple(timestamp, inserted_at)) AS supply_apy,
+                    argMax(toFloat64(borrow_apy), tuple(timestamp, inserted_at)) AS borrow_apy
+                FROM compound_v3_comet_metrics FINAL
+                GROUP BY entity_id
+                HAVING supply_usd >= 1000 OR borrow_usd >= 1000
+            ) AS l
+            ORDER BY supply_usd DESC
+            """
+            res = ch.query(sql)
+            return [
+                MarketSnapshot(
+                    entity_id=str(row[0]),
+                    symbol=str(row[1]),
+                    protocol=str(row[2]),
+                    supply_usd=float(row[3]),
+                    borrow_usd=float(row[4]),
+                    supply_apy=float(row[5]),
+                    borrow_apy=float(row[6]),
+                    utilization=float(row[7]),
+                )
+                for row in res.result_rows
+            ]
         sql = """
         SELECT
             entity_id,
@@ -2498,8 +2776,13 @@ def _query_market_snapshots(ch, protocol: Optional[str] = None) -> list[MarketSn
 
 
 def _query_lending_data_market_snapshots(ch) -> list[MarketSnapshot]:
-    protocol_names = ", ".join(f"'{_escape_sql_string(protocol)}'" for protocol in LENDING_DATA_MARKET_PROTOCOLS)
+    api_protocols = tuple(
+        protocol for protocol in LENDING_DATA_MARKET_PROTOCOLS if protocol != COMPOUND_V3_MARKET
+    )
+    protocol_names = ", ".join(f"'{_escape_sql_string(protocol)}'" for protocol in api_protocols)
     sql = f"""
+    SELECT *
+    FROM (
         SELECT
             entity_id,
             symbol,
@@ -2522,7 +2805,40 @@ def _query_lending_data_market_snapshots(ch) -> list[MarketSnapshot]:
             protocol = '{_escape_sql_string(MORPHO_MARKET)}'
             AND supply_apy > 1.0
           )
-        ORDER BY borrow_usd DESC, supply_usd DESC, protocol ASC, entity_id ASC
+
+        UNION ALL
+
+        SELECT
+            l.entity_id,
+            l.symbol,
+            '{_escape_sql_string(COMPOUND_V3_MARKET)}' AS protocol,
+            l.supply_usd,
+            l.borrow_usd,
+            l.supply_apy,
+            l.borrow_apy,
+            if(l.supply_usd > 0, l.borrow_usd / l.supply_usd, 0.0) AS utilization,
+            if(r.comet != '', r.base_token, l.base_token) AS target_id
+        FROM (
+            SELECT
+                entity_id,
+                argMax(symbol, tuple(timestamp, inserted_at)) AS symbol,
+                argMax(base_token, tuple(timestamp, inserted_at)) AS base_token,
+                argMax(toFloat64(supply_usd), tuple(timestamp, inserted_at)) AS supply_usd,
+                argMax(toFloat64(borrow_usd), tuple(timestamp, inserted_at)) AS borrow_usd,
+                argMax(toFloat64(supply_apy), tuple(timestamp, inserted_at)) AS supply_apy,
+                argMax(toFloat64(borrow_apy), tuple(timestamp, inserted_at)) AS borrow_apy
+            FROM compound_v3_comet_metrics FINAL
+            GROUP BY entity_id
+            HAVING supply_usd >= 1000 OR borrow_usd >= 1000
+        ) AS l
+        LEFT JOIN (
+            SELECT comet, argMax(base_token, updated_at) AS base_token
+            FROM compound_v3_comet_registry FINAL
+            WHERE active = 1
+            GROUP BY comet
+        ) AS r ON r.comet = l.entity_id
+    ) AS markets
+    ORDER BY borrow_usd DESC, supply_usd DESC, protocol ASC, entity_id ASC
     """
     res = ch.query(sql)
     return [
@@ -3006,7 +3322,7 @@ def _build_lending_data_page_payload(
         )
 
     pooled_protocols = {AAVE_MARKET, SPARK_MARKET, FLUID_MARKET}
-    isolated_protocols = {"EULER_MARKET", MORPHO_MARKET}
+    isolated_protocols = {"EULER_MARKET", MORPHO_MARKET, COMPOUND_V3_MARKET}
     totals_supply = sum(row.supply_usd for row in normalized_markets)
     totals_borrow = sum(row.borrow_usd for row in normalized_markets)
     pooled_supply = sum(
@@ -3056,14 +3372,16 @@ def _build_lending_data_page_payload(
         euler_tvl = _finite_non_negative(row.euler)
         fluid_tvl = _finite_non_negative(row.fluid)
         morpho_tvl = _finite_non_negative(row.morpho)
+        compound_v3_tvl = _finite_non_negative(row.compound_v3)
         chart_by_ts[ts] = LendingDataChartPoint(
             timestamp=ts,
-            tvl=aave_tvl + spark_tvl + euler_tvl + fluid_tvl + morpho_tvl,
+            tvl=aave_tvl + spark_tvl + euler_tvl + fluid_tvl + morpho_tvl + compound_v3_tvl,
             aave_tvl=aave_tvl,
             spark_tvl=spark_tvl,
             euler_tvl=euler_tvl,
             fluid_tvl=fluid_tvl,
             morpho_tvl=morpho_tvl,
+            compound_v3_tvl=compound_v3_tvl,
         )
 
     for row in apy_history:
@@ -3117,6 +3435,8 @@ def _build_protocol_markets_page_payload(
                 collateral_symbol=market.collateral_symbol,
                 collateral_usd=market.collateral_usd,
                 lltv=market.lltv,
+                lltv_min=market.lltv_min,
+                lltv_max=market.lltv_max,
                 oracle=market.oracle,
                 pricing_status=market.pricing_status,
                 is_trapped=is_trapped,
@@ -3189,12 +3509,14 @@ def _query_morpho_allocation_timeseries(
         toUnixTimestamp(bucket_ts) AS ts,
         vault_address,
         vault_name,
+        vault_curator,
         supplied_usd
     FROM (
         SELECT
             {bucket_expr} AS bucket_ts,
             a.vault_address AS vault_address,
             argMax(r.name, r.updated_at) AS vault_name,
+            argMax(r.curator, r.updated_at) AS vault_curator,
             argMax(a.supplied_usd, tuple(a.timestamp, a.block_number)) AS supplied_usd
         FROM metamorpho_vault_allocations AS a
         LEFT JOIN metamorpho_vault_registry AS r ON a.vault_address = r.vault_address
@@ -3220,11 +3542,12 @@ def _query_morpho_allocation_timeseries(
     row_points: list[MorphoAllocationPoint] = []
     # Collect data for columnar pivot
     ts_set: dict[int, int] = {}  # ts -> index
-    vault_set: dict[str, tuple[int, str]] = {}  # addr -> (index, name)
-    for ts, vault_address, vault_name, supplied_usd in rows:
+    vault_set: dict[str, tuple[int, str, str]] = {}  # addr -> (index, name, curator)
+    for ts, vault_address, vault_name, vault_curator, supplied_usd in rows:
         ts_val = int(ts or 0)
         addr = str(vault_address or "")
         name = str(vault_name or addr[:10] if addr else "")
+        curator = str(vault_curator or "")
         usd = float(supplied_usd or 0.0)
         row_points.append(
             MorphoAllocationPoint(
@@ -3238,7 +3561,7 @@ def _query_morpho_allocation_timeseries(
         if ts_val not in ts_set:
             ts_set[ts_val] = len(ts_set)
         if addr not in vault_set:
-            vault_set[addr] = (len(vault_set), name)
+            vault_set[addr] = (len(vault_set), name, curator)
 
     # Build columnar format
     timestamps = sorted(ts_set.keys())
@@ -3246,7 +3569,7 @@ def _query_morpho_allocation_timeseries(
     vault_list = sorted(vault_set.items(), key=lambda x: x[1][0])
     n_ts = len(timestamps)
     supplied_matrix: list[list[float]] = [[0.0] * n_ts for _ in range(len(vault_list))]
-    for ts, vault_address, _vault_name, supplied_usd in rows:
+    for ts, vault_address, _vault_name, _vault_curator, supplied_usd in rows:
         ts_val = int(ts or 0)
         addr = str(vault_address or "")
         vi = vault_set[addr][0]
@@ -3256,8 +3579,8 @@ def _query_morpho_allocation_timeseries(
     columnar = MorphoAllocationColumnar(
         timestamps=timestamps,
         vaults=[
-            MorphoAllocationVault(id=idx, address=addr, name=name)
-            for addr, (idx, name) in vault_list
+            MorphoAllocationVault(id=idx, address=addr, name=name, curator=curator)
+            for addr, (idx, name, curator) in vault_list
         ],
         supplied_usd=supplied_matrix,
     )
@@ -3375,6 +3698,71 @@ def _token_meta_for_entity(entity_id: str) -> tuple[str, int]:
     return str(symbol), int(decimals)
 
 
+def _token_amount_from_raw(raw_value: object, decimals: int) -> float:
+    try:
+        raw_int = int(str(raw_value or "0"))
+    except (TypeError, ValueError):
+        return 0.0
+    scale = 10 ** max(0, int(decimals or 0))
+    return float(raw_int / scale) if scale else float(raw_int)
+
+
+def _latest_feed_prices(ch, feeds: tuple[str, ...]) -> dict[str, float]:
+    if not feeds:
+        return {}
+    escaped_feeds = ", ".join(f"'{_escape_sql_string(feed)}'" for feed in feeds)
+    try:
+        rows = ch.query(f"""
+            SELECT feed, argMax(price, timestamp) AS price
+            FROM chainlink_prices
+            WHERE feed IN ({escaped_feeds})
+            GROUP BY feed
+            HAVING price > 0
+        """).result_rows
+    except Exception:
+        return {}
+    return {str(row[0]): float(row[1] or 0.0) for row in rows}
+
+
+def _query_compound_v3_collateral_breakdown(ch, comet: str) -> list[MarketCollateralAssetRow]:
+    normalized_comet = _normalize_entity_id(comet)
+    if not normalized_comet:
+        return []
+    escaped_comet = _escape_sql_string(normalized_comet)
+    rows = ch.query(f"""
+        SELECT asset, price_feed, borrow_collateral_factor,
+               liquidate_collateral_factor, liquidation_factor,
+               supply_cap, total_collateral, symbol,
+               supply_cap_tokens, total_collateral_tokens,
+               collateral_usd, borrow_enabled
+        FROM {COMPOUND_V3_COLLATERAL_LATEST_TABLE} FINAL
+        WHERE comet = '{escaped_comet}'
+        ORDER BY collateral_usd DESC, borrow_collateral_factor DESC, asset ASC
+    """).result_rows
+    result: list[MarketCollateralAssetRow] = []
+    for row in rows:
+        asset = str(row[0] or "")
+        supply_cap = str(row[5] or "0")
+        total_collateral = str(row[6] or "0")
+        result.append(
+            MarketCollateralAssetRow(
+                asset=asset,
+                symbol=str(row[7] or "UNKNOWN"),
+                price_feed=str(row[1]) if row[1] else None,
+                borrow_collateral_factor=float(row[2] or 0.0),
+                liquidate_collateral_factor=float(row[3] or 0.0),
+                liquidation_factor=float(row[4] or 0.0),
+                supply_cap=supply_cap,
+                supply_cap_tokens=float(row[8] or 0.0),
+                total_collateral=total_collateral,
+                total_collateral_tokens=float(row[9] or 0.0),
+                collateral_usd=float(row[10] or 0.0),
+                borrow_enabled=bool(row[11]),
+            )
+        )
+    return result
+
+
 def _query_lending_flow_alluvial(ch, window_days: int = 30) -> list[LendingFlowAlluvialLink]:
     """Return last-N-day market-net USD flow links for the data page alluvial chart.
     """
@@ -3405,7 +3793,8 @@ def _query_lending_flow_alluvial(ch, window_days: int = 30) -> list[LendingFlowA
                 ifNull((SELECT max(block_timestamp) FROM spark_events), toDateTime(0)),
                 ifNull((SELECT max(timestamp) FROM morpho_market_events), toDateTime(0)),
                 ifNull((SELECT max(timestamp) FROM euler_vault_events), toDateTime(0)),
-                ifNull((SELECT max(block_timestamp) FROM fluid_events), toDateTime(0))
+                ifNull((SELECT max(block_timestamp) FROM fluid_events), toDateTime(0)),
+                ifNull((SELECT max(timestamp) FROM compound_v3_comet_metrics), toDateTime(0))
             )
             """
         ).result_rows[0][0]
@@ -3715,6 +4104,30 @@ def _query_lending_flow_alluvial(ch, window_days: int = 30) -> list[LendingFlowA
                 float(s_in or 0.0) + float(b_out or 0.0),
                 float(s_out or 0.0) + float(b_in or 0.0),
             )
+
+        compound_v3_rows = ch.query(
+            f"""
+            SELECT
+                entity_id,
+                argMax(symbol, day) AS symbol,
+                sum(supply_inflow_usd) AS supply_inflow,
+                sum(supply_outflow_usd) AS supply_outflow,
+                sum(borrow_inflow_usd) AS borrow_inflow,
+                sum(borrow_outflow_usd) AS borrow_outflow
+            FROM {COMPOUND_V3_FLOW_DAILY_TABLE} FINAL
+            WHERE day >= %(end)s - INTERVAL {safe_days} DAY
+              AND day <= %(end)s
+            GROUP BY entity_id
+            """,
+            parameters={"end": latest_ts},
+        ).result_rows
+        for _entity_id, symbol, s_in, s_out, b_in, b_out in compound_v3_rows:
+            add_market_net(
+                "Compound V3",
+                str(symbol or "UNKNOWN"),
+                float(s_in or 0.0) + float(b_out or 0.0),
+                float(s_out or 0.0) + float(b_in or 0.0),
+            )
     except Exception as exc:
         logger.warning("Lending alluvial flow query unavailable: %s", exc)
         return []
@@ -3731,6 +4144,346 @@ def _query_lending_flow_alluvial(ch, window_days: int = 30) -> list[LendingFlowA
     return links
 
 
+MORPHO_CURATOR_LABELS = {
+    "0x827e86072b06674a077f592a531dce4590adecdb": "Steakhouse",
+    "0x9e33faae38ff641094fa68c65c2ce600b3410585": "Gauntlet",
+    "0x9e396de3312d373b87f9bd8763fb48184b42aac0": "Sentora",
+    "0xc684c6587712e5e7bdf9fd64415f23bd2b05faec": "SwissBorg",
+    "0x90d0f26025571295d18a6c041e47450b81886b51": "Yearn",
+    "0x0f963a8a8c01042b69054e787e5763abbb0646a3": "Spark",
+    "0x37f170e090b64bd277e604af359fb5b675ad10ce": "Lulo",
+    "0xf8182e5827c06a47a985ec565a3bcd56437a97be": "kpk",
+    "0xc266b1181a80e84edc2c6596718e88e8115c1eaa": "kpk",
+    "0x7e43df1c1c5a2245858b60d4655fda83704e4171": "kpk",
+    "0xd15f11b334e1e233127302e5f759c17da1260df5": "kpk",
+    "0xe5aec7d0e795456f90cebefba56470f0e5dfc075": "kpk",
+    "0x834e1c1ea40173b82106f9177646b66d96ae7de8": "kpk",
+    "0x982032cd3c37f6733190db966db7db2e0d630715": "Parity",
+    "0x6788c8ad65e85cca7224a0b46d061ef7d81f9da5": "ALPHA",
+    "0x7ae0c0a7800466a6738e8a41dfc0cdd854abf017": "August",
+    "0xc68733779a1738fdd743667f8714ad33d4a92453": "August",
+    "0x72882eb5d27c7088dfa6dde941dd42e5d184f0ef": "Clearstar",
+    "0x75178137d3b4b9a0f771e0e149b00fb8167ba325": "Hyperithm",
+    "0x2413a57fbd695f6b13c1d8d7d30ee10fa61b1b02": "Hakutora",
+    "0x46057881e0b9d190920fb823f840b837f65745d5": "SingularV",
+    "0xc8f742c45c7fc91fa8627f3135986cbf48c4dd43": "dForce",
+    "0x0a0e559bc3b0950a7e448f0d4894db195b9cf8dd": "Coinshift",
+    "0x79c93b25c845d1f0406369d05d59262d0b0e00f8": "Philidor",
+    "0xc91578e51bce35844e345cc7f733b4bbf6721734": "Apostro",
+}
+
+
+def _curator_label(address: str) -> str:
+    raw = str(address or "").lower()
+    if raw == "direct":
+        return "Direct"
+    if raw == "other":
+        return "Other"
+    if not raw or raw == "unassigned" or raw == "0x0000000000000000000000000000000000000000":
+        return "Other"
+    if raw in MORPHO_CURATOR_LABELS:
+        return MORPHO_CURATOR_LABELS[raw]
+    return f"{raw[:6]}...{raw[-4:]}" if len(raw) > 12 else raw
+
+
+def _query_morpho_curator_flows(
+    ch,
+    window_days: int = 7,
+    top_n: int = 10,
+    max_borrow_apy: Optional[float] = None,
+) -> list[MorphoCuratorFlowLink]:
+    safe_days = max(1, min(90, int(window_days or 7)))
+    safe_top_n = max(1, min(25, int(top_n or 10)))
+    safe_max_borrow_apy = _safe_max_borrow_apy(max_borrow_apy)
+    vault_filter = ""
+    if safe_max_borrow_apy is not None:
+        vault_filter = f"""
+              AND lower(f.vault_address) IN (
+                  SELECT lower(vault_address)
+                  FROM (
+                      SELECT vault_address, market_id,
+                             argMax(toFloat64(supplied_usd), tuple(timestamp, block_number)) AS supplied_usd
+                      FROM metamorpho_vault_allocations FINAL
+                      WHERE market_id IN (
+                          SELECT entity_id
+                          FROM api_market_latest FINAL
+                          WHERE protocol = '{MORPHO_MARKET}'
+                            AND toFloat64(borrow_apy) < {safe_max_borrow_apy}
+                      )
+                      GROUP BY vault_address, market_id
+                      HAVING supplied_usd > 0
+                  )
+              )
+        """
+    rows = ch.query(
+        f"""
+        WITH (
+            SELECT max(timestamp) FROM metamorpho_vault_flows_hourly FINAL
+        ) AS latest_ts,
+        flow_rows AS (
+            SELECT
+                if(r.curator = '' OR r.curator = '0x0000000000000000000000000000000000000000', 'Unassigned', lower(r.curator)) AS curator_address,
+                f.asset_symbol AS asset,
+                sum(toFloat64(f.deposit_usd)) AS deposit_usd,
+                sum(toFloat64(f.withdraw_usd)) AS withdraw_usd
+            FROM (SELECT * FROM metamorpho_vault_flows_hourly FINAL) AS f
+            LEFT JOIN (SELECT * FROM metamorpho_vault_registry FINAL) AS r ON f.vault_address = r.vault_address
+            WHERE f.timestamp >= latest_ts - INTERVAL {safe_days} DAY
+              AND f.timestamp <= latest_ts
+              {vault_filter}
+            GROUP BY curator_address, asset
+        ),
+        top_curators AS (
+            SELECT curator_address
+            FROM flow_rows
+            GROUP BY curator_address
+            ORDER BY sum(abs(deposit_usd - withdraw_usd)) DESC
+            LIMIT {safe_top_n}
+        )
+        SELECT curator_address, asset, deposit_usd, withdraw_usd
+        FROM flow_rows
+        WHERE curator_address IN (SELECT curator_address FROM top_curators)
+        ORDER BY abs(deposit_usd - withdraw_usd) DESC
+        """
+    ).result_rows
+    links: list[MorphoCuratorFlowLink] = []
+    for curator_address, asset, deposit_usd, withdraw_usd in rows:
+        net_usd = float(deposit_usd or 0.0) - float(withdraw_usd or 0.0)
+        if abs(net_usd) < 1:
+            continue
+        raw_curator = str(curator_address or "")
+        links.append(
+            MorphoCuratorFlowLink(
+                action="Net Inflow" if net_usd > 0 else "Net Outflow",
+                asset=str(asset or "UNKNOWN"),
+                curator=_curator_label(raw_curator),
+                curator_address=raw_curator,
+                value_usd=abs(net_usd),
+            )
+        )
+    direct_market_filter = ""
+    if safe_max_borrow_apy is not None:
+        direct_market_filter = f"""
+              AND e.market_id IN (
+                  SELECT entity_id
+                  FROM api_market_latest FINAL
+                  WHERE protocol = '{MORPHO_MARKET}'
+                    AND toFloat64(borrow_apy) < {safe_max_borrow_apy}
+              )
+        """
+    direct_rows = ch.query(
+        f"""
+        WITH (
+            SELECT max(timestamp) FROM morpho_market_events FINAL
+        ) AS latest_ts,
+        vaults AS (
+            SELECT lower(vault_address) AS vault_address
+            FROM metamorpho_vault_registry FINAL
+            GROUP BY vault_address
+        ),
+        daily_prices AS (
+            SELECT toStartOfDay(timestamp) AS day,
+                   market_id,
+                   argMax(loan_price_usd, timestamp) AS price
+            FROM morpho_market_metrics
+            WHERE timestamp >= latest_ts - INTERVAL {safe_days} DAY
+              AND timestamp <= latest_ts
+              AND loan_price_usd > 0
+            GROUP BY day, market_id
+        ),
+        params AS (
+            SELECT market_id,
+                   argMax(loan_symbol, updated_at) AS symbol,
+                   argMax(loan_decimals, updated_at) AS decimals
+            FROM morpho_market_params
+            GROUP BY market_id
+        )
+        SELECT
+            p.symbol AS asset,
+            sumIf(toFloat64(e.assets) / pow(10, p.decimals) * dp.price, e.event_name = 'Supply') AS deposit_usd,
+            sumIf(toFloat64(e.assets) / pow(10, p.decimals) * dp.price, e.event_name = 'Withdraw') AS withdraw_usd
+        FROM (SELECT * FROM morpho_market_events FINAL) AS e
+        INNER JOIN params AS p ON e.market_id = p.market_id
+        LEFT JOIN daily_prices AS dp ON e.market_id = dp.market_id AND toStartOfDay(e.timestamp) = dp.day
+        LEFT JOIN vaults AS v ON lower(e.on_behalf) = v.vault_address
+        WHERE e.timestamp >= latest_ts - INTERVAL {safe_days} DAY
+          AND e.timestamp <= latest_ts
+          AND e.event_name IN ('Supply', 'Withdraw')
+          AND ifNull(v.vault_address, '') = ''
+          {direct_market_filter}
+        GROUP BY asset
+        ORDER BY abs(deposit_usd - withdraw_usd) DESC
+        """
+    ).result_rows
+    for asset, deposit_usd, withdraw_usd in direct_rows:
+        net_usd = float(deposit_usd or 0.0) - float(withdraw_usd or 0.0)
+        if abs(net_usd) < 1:
+            continue
+        links.append(
+            MorphoCuratorFlowLink(
+                action="Net Inflow" if net_usd > 0 else "Net Outflow",
+                asset=str(asset or "UNKNOWN"),
+                curator="Direct",
+                curator_address="direct",
+                value_usd=abs(net_usd),
+            )
+        )
+    links.sort(key=lambda item: item.value_usd, reverse=True)
+    return links
+
+
+def _query_euler_channel_flows(
+    ch,
+    window_days: int = 7,
+    top_n: int = 10,
+    max_borrow_apy: Optional[float] = None,
+) -> list[MorphoCuratorFlowLink]:
+    safe_days = max(1, min(90, int(window_days or 7)))
+    safe_top_n = max(1, min(25, int(top_n or 10)))
+    safe_max_borrow_apy = _safe_max_borrow_apy(max_borrow_apy)
+    vault_filter = ""
+    if safe_max_borrow_apy is not None:
+        vault_filter = f"""
+              AND lower(e.vault_address) IN (
+                  SELECT lower(entity_id)
+                  FROM api_market_latest FINAL
+                  WHERE protocol = 'EULER_MARKET'
+                    AND toFloat64(borrow_apy) < {safe_max_borrow_apy}
+              )
+        """
+    rows = ch.query(
+        f"""
+        WITH (
+            SELECT max(timestamp) FROM euler_vault_events FINAL
+        ) AS latest_ts,
+        registry AS (
+            SELECT
+                vault_address,
+                argMax(asset_symbol, updated_at) AS symbol,
+                argMax(asset_decimals, updated_at) AS decimals,
+                argMax(verified, updated_at) AS verified
+            FROM euler_vault_registry FINAL
+            GROUP BY vault_address
+        ),
+        prices AS (
+            SELECT
+                toStartOfDay(timestamp) AS day,
+                vault_address,
+                argMax(price_usd, timestamp) AS price
+            FROM euler_vault_metrics
+            WHERE timestamp >= latest_ts - INTERVAL {safe_days} DAY
+              AND timestamp <= latest_ts
+              AND price_usd > 0
+            GROUP BY day, vault_address
+        )
+        SELECT
+            r.symbol AS asset,
+            sumIf(toFloat64(e.assets) / pow(10, r.decimals) * p.price, e.event_name = 'Deposit') AS deposit_usd,
+            sumIf(toFloat64(e.assets) / pow(10, r.decimals) * p.price, e.event_name = 'Withdraw') AS withdraw_usd
+        FROM (SELECT * FROM euler_vault_events FINAL) AS e
+        INNER JOIN registry AS r ON e.vault_address = r.vault_address AND r.verified = 1
+        LEFT JOIN prices AS p ON e.vault_address = p.vault_address AND toStartOfDay(e.timestamp) = p.day
+        WHERE e.timestamp >= latest_ts - INTERVAL {safe_days} DAY
+          AND e.timestamp <= latest_ts
+          AND e.event_name IN ('Deposit', 'Withdraw')
+          {vault_filter}
+        GROUP BY asset
+        ORDER BY abs(deposit_usd - withdraw_usd) DESC
+        LIMIT {safe_top_n}
+        """
+    ).result_rows
+    links: list[MorphoCuratorFlowLink] = []
+    for asset, deposit_usd, withdraw_usd in rows:
+        net_usd = float(deposit_usd or 0.0) - float(withdraw_usd or 0.0)
+        if abs(net_usd) < 1:
+            continue
+        links.append(
+            MorphoCuratorFlowLink(
+                action="Net Inflow" if net_usd > 0 else "Net Outflow",
+                asset=str(asset or "UNKNOWN"),
+                curator="Direct",
+                curator_address="direct",
+                value_usd=abs(net_usd),
+            )
+        )
+    links.sort(key=lambda item: item.value_usd, reverse=True)
+    return links
+
+
+def _query_morpho_curator_allocation_history(
+    ch,
+    resolution: str = "1D",
+    limit: int = 500,
+    top_n: int = 15,
+    max_borrow_apy: Optional[float] = None,
+) -> list[MorphoCuratorAllocationPoint]:
+    safe_limit = _safe_limit(limit)
+    safe_top_n = max(1, min(25, int(top_n or 15)))
+    safe_max_borrow_apy = _safe_max_borrow_apy(max_borrow_apy)
+    market_filter = ""
+    if safe_max_borrow_apy is not None:
+        market_filter = f"""
+              AND a.market_id IN (
+                  SELECT entity_id
+                  FROM api_market_latest FINAL
+                  WHERE protocol = '{MORPHO_MARKET}'
+                    AND toFloat64(borrow_apy) < {safe_max_borrow_apy}
+              )
+        """
+    bucket_seconds = _bucket_seconds(resolution)
+    now_dt = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    window_start = now_dt - timedelta(seconds=(safe_limit + 2) * bucket_seconds)
+    bucket_expr = _time_bucket_expr(resolution, "a.timestamp")
+    rows = ch.query(
+        f"""
+        WITH daily_market AS (
+            SELECT
+                {bucket_expr} AS bucket_ts,
+                if(r.curator = '' OR r.curator = '0x0000000000000000000000000000000000000000', 'Unassigned', lower(r.curator)) AS curator_address,
+                a.vault_address,
+                a.market_id,
+                argMax(a.supplied_usd, tuple(a.timestamp, a.block_number)) AS supplied_usd
+            FROM metamorpho_vault_allocations AS a
+            LEFT JOIN metamorpho_vault_registry AS r ON a.vault_address = r.vault_address
+            WHERE a.timestamp >= %(start_ts)s
+              AND a.timestamp <= %(end_ts)s
+              {market_filter}
+            GROUP BY bucket_ts, curator_address, a.vault_address, a.market_id
+        ),
+        daily_curator AS (
+            SELECT bucket_ts, curator_address, sum(supplied_usd) AS supplied_usd
+            FROM daily_market
+            GROUP BY bucket_ts, curator_address
+        ),
+        top_curators AS (
+            SELECT curator_address
+            FROM daily_curator
+            GROUP BY curator_address
+            ORDER BY avg(supplied_usd) DESC
+            LIMIT {safe_top_n}
+        )
+        SELECT
+            toUnixTimestamp(bucket_ts) AS ts,
+            if(curator_address IN (SELECT curator_address FROM top_curators), curator_address, 'Other') AS curator_address,
+            sum(supplied_usd) AS supplied_usd
+        FROM daily_curator
+        GROUP BY bucket_ts, curator_address
+        ORDER BY ts ASC, supplied_usd DESC
+        """,
+        parameters={"start_ts": window_start, "end_ts": now_dt},
+    ).result_rows
+    return [
+        MorphoCuratorAllocationPoint(
+            timestamp=int(row[0] or 0),
+            curator=_curator_label(str(row[1] or "")),
+            curator_address=str(row[1] or ""),
+            supplied_usd=float(row[2] or 0.0),
+        )
+        for row in rows
+        if int(row[0] or 0) > 0 and float(row[2] or 0.0) > 0
+    ]
+
+
 def _query_lending_data_page(ch, display_in: str, flow_window_days: int = 30) -> LendingDataPagePayload:
     return _build_lending_data_page_payload(
         _freshness_payload(),
@@ -3742,11 +4495,120 @@ def _query_lending_data_page(ch, display_in: str, flow_window_days: int = 30) ->
     )
 
 
-def _query_protocol_markets_page(ch, protocol: str) -> ProtocolMarketsPagePayload:
+def _query_protocol_markets_page(
+    ch,
+    protocol: str,
+    max_borrow_apy: Optional[float] = None,
+) -> ProtocolMarketsPagePayload:
     return _build_protocol_markets_page_payload(
         _freshness_payload(),
-        _query_protocol_markets(ch, protocol),
+        _query_protocol_markets(ch, protocol, max_borrow_apy=max_borrow_apy),
     )
+
+
+_COMPOUND_V3_PROTOCOL_PAGE_CACHE_TTL_SEC = 60
+_compound_v3_protocol_page_cache: dict[str, tuple[float, CompoundV3ProtocolPagePayload]] = {}
+_compound_v3_protocol_page_cache_lock = threading.Lock()
+
+
+def _compound_v3_protocol_page_cache_key(
+    flow_window_days: int,
+    timeseries_limit: int,
+    asset_symbols: list[str],
+) -> str:
+    symbols = ",".join(symbol.upper() for symbol in asset_symbols)
+    return f"{flow_window_days}|{timeseries_limit}|{symbols}"
+
+
+def _compound_v3_protocol_page_cache_get(
+    key: str,
+) -> Optional[CompoundV3ProtocolPagePayload]:
+    with _compound_v3_protocol_page_cache_lock:
+        entry = _compound_v3_protocol_page_cache.get(key)
+        if entry is None:
+            return None
+        ts, payload = entry
+        if time.time() - ts > _COMPOUND_V3_PROTOCOL_PAGE_CACHE_TTL_SEC:
+            del _compound_v3_protocol_page_cache[key]
+            return None
+        return payload
+
+
+def _compound_v3_protocol_page_cache_set(
+    key: str,
+    payload: CompoundV3ProtocolPagePayload,
+) -> None:
+    with _compound_v3_protocol_page_cache_lock:
+        _compound_v3_protocol_page_cache[key] = (time.time(), payload)
+        if len(_compound_v3_protocol_page_cache) > 50:
+            now = time.time()
+            expired = [
+                k
+                for k, (t, _) in _compound_v3_protocol_page_cache.items()
+                if now - t > _COMPOUND_V3_PROTOCOL_PAGE_CACHE_TTL_SEC
+            ]
+            for k in expired:
+                _compound_v3_protocol_page_cache.pop(k, None)
+
+
+def _query_compound_v3_flow_alluvial(ch, window_days: int = 7) -> list[LendingFlowAlluvialLink]:
+    safe_days = max(1, min(90, int(window_days or 7)))
+    try:
+        rows = ch.query(
+            f"""
+            SELECT
+                argMax(symbol, day) AS symbol,
+                sum(supply_inflow_usd) AS supply_inflow,
+                sum(supply_outflow_usd) AS supply_outflow,
+                sum(borrow_inflow_usd) AS borrow_inflow,
+                sum(borrow_outflow_usd) AS borrow_outflow
+            FROM {COMPOUND_V3_FLOW_DAILY_TABLE} FINAL
+            WHERE day >= now() - INTERVAL {safe_days} DAY
+            GROUP BY entity_id
+            """
+        ).result_rows
+    except Exception:
+        return []
+    links: list[LendingFlowAlluvialLink] = []
+    for symbol, s_in, s_out, b_in, b_out in rows:
+        inflow = float(s_in or 0.0) + float(b_out or 0.0)
+        outflow = float(s_out or 0.0) + float(b_in or 0.0)
+        net = inflow - outflow
+        if net > 0:
+            links.append(LendingFlowAlluvialLink(protocol="Compound V3", action="Net Inflow", asset=str(symbol or "UNKNOWN"), value_usd=net))
+        elif net < 0:
+            links.append(LendingFlowAlluvialLink(protocol="Compound V3", action="Net Outflow", asset=str(symbol or "UNKNOWN"), value_usd=abs(net)))
+    links.sort(key=lambda item: item.value_usd, reverse=True)
+    return links
+
+
+def _query_compound_v3_protocol_page(
+    ch,
+    flow_window_days: int = 7,
+    timeseries_limit: int = 5000,
+    asset_symbols: Optional[list[str]] = None,
+) -> CompoundV3ProtocolPagePayload:
+    symbols = asset_symbols or ["USDC", "WETH"]
+    cache_key = _compound_v3_protocol_page_cache_key(
+        max(1, min(90, int(flow_window_days or 7))),
+        timeseries_limit,
+        symbols,
+    )
+    cached = _compound_v3_protocol_page_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
+    markets_page = _query_protocol_markets_page(ch, COMPOUND_V3_MARKET)
+    payload = CompoundV3ProtocolPagePayload(
+        freshness=markets_page.freshness,
+        stats=markets_page.stats,
+        rows=markets_page.rows,
+        apy_history=_query_protocol_apy_history(ch, COMPOUND_V3_MARKET, "1D", timeseries_limit),
+        asset_apy_history=_query_protocol_asset_apy_history(ch, COMPOUND_V3_MARKET, symbols, "1D", timeseries_limit * 2),
+        alluvial_flows=_query_compound_v3_flow_alluvial(ch, flow_window_days),
+    )
+    _compound_v3_protocol_page_cache_set(cache_key, payload)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -3866,6 +4728,14 @@ def _query_lending_pool_page(
                     )
                     for row in vault_rows
                 ]
+        except Exception:
+            pass
+
+    if protocol.upper() == COMPOUND_V3_MARKET:
+        try:
+            payload.collateral_breakdown = _query_compound_v3_collateral_breakdown(
+                ch, entity_id
+            )
         except Exception:
             pass
 
@@ -4395,13 +5265,19 @@ def _query_aave_account_profile_history(
     return points
 
 
-def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) -> list[MarketDetail]:
+def _query_protocol_markets(
+    ch,
+    protocol: str,
+    entity_id: Optional[str] = None,
+    max_borrow_apy: Optional[float] = None,
+) -> list[MarketDetail]:
     allowed = {
         AAVE_MARKET,
         SPARK_MARKET,
         "EULER_MARKET",
         FLUID_MARKET,
         MORPHO_MARKET,
+        COMPOUND_V3_MARKET,
     }
     if protocol not in allowed:
         return []
@@ -4417,6 +5293,12 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
             entity_filter = f" AND entity_id = '{escaped_entity}'"
 
     if protocol == MORPHO_MARKET:
+        safe_max_borrow_apy = _safe_max_borrow_apy(max_borrow_apy)
+        morpho_borrow_apy_filter = (
+            f" AND borrow_apy < {safe_max_borrow_apy}"
+            if safe_max_borrow_apy is not None
+            else ""
+        )
         morpho_entity_filter = ""
         if normalized_entity_id:
             escaped_entity = _escape_sql_string(normalized_entity_id)
@@ -4497,9 +5379,66 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
               ON support.market_id = p.market_id
             LEFT JOIN (SELECT * FROM morpho_market_state FINAL) AS state
               ON state.market_id = p.market_id
+            LEFT JOIN (
+                SELECT lower(vault_address) AS vault_address
+                FROM metamorpho_vault_registry FINAL
+                GROUP BY vault_address
+            ) AS loan_vault
+              ON lower(p.loan_token) = loan_vault.vault_address
+            LEFT JOIN (
+                SELECT lower(vault_address) AS vault_address
+                FROM metamorpho_vault_registry FINAL
+                GROUP BY vault_address
+            ) AS collateral_vault
+              ON lower(p.collateral_token) = collateral_vault.vault_address
             WHERE 1 = 1
+              AND ifNull(loan_vault.vault_address, '') = ''
+              AND ifNull(collateral_vault.vault_address, '') = ''
             {morpho_entity_filter}
+            {morpho_borrow_apy_filter}
         )
+        ORDER BY supply_usd DESC, borrow_usd DESC, entity_id ASC
+        """
+    elif protocol == COMPOUND_V3_MARKET:
+        compound_entity_filter = entity_filter.replace("entity_id", "m.entity_id")
+        query = f"""
+        SELECT entity_id, symbol, proto, supply_usd, borrow_usd,
+               supply_apy, borrow_apy, utilization,
+               '' AS collateral_symbol, 0 AS collateral_usd, 0 AS lltv, '' AS oracle,
+               'PRICED' AS pricing_status,
+               loan_asset, loan_token, loan_decimals,
+               '' AS collateral_asset, '' AS collateral_token, 0 AS collateral_decimals,
+               loan_price_usd, 0 AS collateral_price_usd,
+               supply_assets, borrow_assets, '' AS collateral_assets,
+               '' AS irm, 'Compound Price Feed' AS oracle_support,
+               '' AS pricing_error, is_active, has_supply, has_borrow, false AS has_collateral,
+               last_event_ts, last_priced_ts
+        FROM (
+            SELECT
+                m.entity_id AS entity_id,
+                m.symbol AS symbol,
+                '{escaped_protocol}' AS proto,
+                m.supply_usd AS supply_usd,
+                m.borrow_usd AS borrow_usd,
+                m.supply_apy AS supply_apy,
+                m.borrow_apy AS borrow_apy,
+                m.utilization AS utilization,
+                if(m.base_symbol != '', m.base_symbol, m.symbol) AS loan_asset,
+                m.base_token AS loan_token,
+                toUInt64(m.base_decimals) AS loan_decimals,
+                m.price_usd AS loan_price_usd,
+                m.total_supply_base AS supply_assets,
+                m.total_borrow_base AS borrow_assets,
+                m.is_active > 0 AS is_active,
+                m.has_supply > 0 AS has_supply,
+                m.has_borrow > 0 AS has_borrow,
+                toUnixTimestamp(m.last_event_timestamp) AS last_event_ts,
+                toUnixTimestamp(m.last_priced_timestamp) AS last_priced_ts
+            FROM (SELECT * FROM {COMPOUND_V3_LATEST_ENRICHED_TABLE} FINAL) AS m
+            WHERE 1 = 1
+            {compound_entity_filter}
+        )
+        WHERE supply_usd >= 1000 OR borrow_usd >= 1000
         ORDER BY supply_usd DESC, borrow_usd DESC, entity_id ASC
         """
     elif protocol == FLUID_MARKET:
@@ -4615,7 +5554,11 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
             supply_apy=float(row[5]),
             borrow_apy=float(row[6]),
             utilization=float(row[7]),
-            collateral_symbol=str(row[8]) if row[8] else None,
+            collateral_symbol=(
+                _morpho_display_symbol(row[8], row[17])
+                if protocol == MORPHO_MARKET
+                else (str(row[8]) if row[8] else None)
+            ),
             collateral_usd=float(row[9]) if row[9] is not None else None,
             lltv=float(row[10]) if row[10] is not None else None,
             oracle=str(row[11]) if row[11] else None,
@@ -4623,7 +5566,11 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
             loan_asset=str(row[13]) if len(row) > 13 and row[13] else None,
             loan_token=str(row[14]) if len(row) > 14 and row[14] else None,
             loan_decimals=int(row[15]) if len(row) > 15 and row[15] is not None else None,
-            collateral_asset=str(row[16]) if len(row) > 16 and row[16] else None,
+            collateral_asset=(
+                _morpho_display_symbol(row[16], row[17])
+                if protocol == MORPHO_MARKET
+                else (str(row[16]) if len(row) > 16 and row[16] else None)
+            ),
             collateral_token=str(row[17]) if len(row) > 17 and row[17] else None,
             collateral_decimals=int(row[18]) if len(row) > 18 and row[18] is not None else None,
             loan_price_usd=float(row[19]) if len(row) > 19 and row[19] is not None else None,
@@ -4667,6 +5614,25 @@ def _query_protocol_markets(ch, protocol: str, entity_id: Optional[str] = None) 
                 if rng:
                     m.lltv_min = rng[0]
                     m.lltv_max = rng[1]
+        except Exception:
+            pass
+
+    if protocol == COMPOUND_V3_MARKET and markets:
+        try:
+            ltv_rows = ch.query("""
+                SELECT entity_id, lltv_min, lltv_max
+                FROM api_compound_v3_market_latest_enriched FINAL
+            """).result_rows
+            ltv_map = {
+                str(row[0]): (float(row[1] or 0.0), float(row[2] or 0.0))
+                for row in ltv_rows
+            }
+            for m in markets:
+                rng = ltv_map.get(m.entity_id)
+                if rng:
+                    m.lltv_min = rng[0]
+                    m.lltv_max = rng[1]
+                    m.lltv = rng[1]
         except Exception:
             pass
 
@@ -4780,6 +5746,8 @@ def _forward_fill_protocol_tvl(rows) -> list[ProtocolTvlPoint]:
                 euler=totals_by_protocol.get("EULER", 0.0),
                 fluid=totals_by_protocol.get("FLUID", 0.0),
                 morpho=totals_by_protocol.get("MORPHO", 0.0),
+                compound_v2=totals_by_protocol.get("COMPOUND_V2", 0.0),
+                compound_v3=totals_by_protocol.get("COMPOUND_V3", 0.0),
             )
         )
         cursor += one_week
@@ -4790,11 +5758,24 @@ def _forward_fill_protocol_tvl(rows) -> list[ProtocolTvlPoint]:
 def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvlPoint]:
     res = ch.query(
         f"""
-        SELECT day, protocol, entity_id, argMaxMerge(supply_usd_state) AS supply_usd
-        FROM {API_PROTOCOL_TVL_AGG_TABLE}
-        WHERE protocol IN ('AAVE', 'SPARK', 'EULER', 'FLUID', 'MORPHO')
-          AND entity_id != 'AAVE_MARKET_SYNTHETIC'
-        GROUP BY day, protocol, entity_id
+        SELECT day, protocol, entity_id, supply_usd
+        FROM (
+            SELECT day, protocol, entity_id, argMaxMerge(supply_usd_state) AS supply_usd
+            FROM {API_PROTOCOL_TVL_AGG_TABLE}
+            WHERE protocol IN ('AAVE', 'SPARK', 'EULER', 'FLUID', 'MORPHO', 'COMPOUND_V2')
+              AND entity_id != 'AAVE_MARKET_SYNTHETIC'
+            GROUP BY day, protocol, entity_id
+
+            UNION ALL
+
+            SELECT
+                toStartOfWeek(timestamp) AS day,
+                'COMPOUND_V3' AS protocol,
+                entity_id,
+                argMax(toFloat64(supply_usd), tuple(timestamp, inserted_at)) AS supply_usd
+            FROM compound_v3_comet_metrics FINAL
+            GROUP BY day, protocol, entity_id
+        )
         ORDER BY day ASC, protocol ASC, entity_id ASC
         """
     )
@@ -4843,6 +5824,8 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
                     euler=0.0,
                     fluid=0.0,
                     morpho=0.0,
+                    compound_v2=0.0,
+                    compound_v3=0.0,
                 )
             )
             continue
@@ -4855,72 +5838,266 @@ def _query_protocol_tvl_history(ch, display_in: str = "USD") -> list[ProtocolTvl
                 euler=float(point.euler / divisor),
                 fluid=float(point.fluid / divisor),
                 morpho=float(point.morpho / divisor),
+                compound_v2=float(point.compound_v2 / divisor),
+                compound_v3=float(point.compound_v3 / divisor),
             )
         )
     return converted
 
 
 def _query_protocol_apy_history(
-    ch, protocol: str, resolution: str, limit: int
+    ch,
+    protocol: str,
+    resolution: str,
+    limit: int,
+    max_borrow_apy: Optional[float] = None,
 ) -> list[ProtocolApyPoint]:
-    allowed = {AAVE_MARKET, SPARK_MARKET, "EULER_MARKET", FLUID_MARKET, MORPHO_MARKET}
+    allowed = {AAVE_MARKET, SPARK_MARKET, "EULER_MARKET", FLUID_MARKET, MORPHO_MARKET, COMPOUND_V2_MARKET, COMPOUND_V3_MARKET}
     if protocol not in allowed:
         return []
 
     safe_limit = _safe_limit(limit)
     escaped_protocol = _escape_sql_string(protocol)
+    safe_max_borrow_apy = _safe_max_borrow_apy(max_borrow_apy)
+    latest_borrow_filter = ""
+    historical_entity_filter = ""
+    if protocol == MORPHO_MARKET and safe_max_borrow_apy is not None:
+        latest_borrow_filter = f" AND toFloat64(borrow_apy) < {safe_max_borrow_apy}"
+        historical_entity_filter = f"""
+                      AND entity_id IN (
+                          SELECT entity_id
+                          FROM api_market_latest FINAL
+                          WHERE protocol = '{MORPHO_MARKET}'
+                            AND toFloat64(borrow_apy) < {safe_max_borrow_apy}
+                      )
+        """
     if protocol == AAVE_MARKET:
         # Full history for /data chart should come from canonical raw timeseries,
         # not the hourly API pre-agg table with shorter TTL retention.
         time_expr = _time_bucket_expr(resolution, "timestamp")
+        latest_time_expr = _time_bucket_expr(resolution, "timestamp")
         rows = ch.query(
             f"""
-            SELECT
-                toUnixTimestamp(bucket_ts) AS bucket_ts,
-                if(
-                    sum(supply_usd) > 0,
-                    sum(supply_apy * supply_usd) / sum(supply_usd),
-                    avg(supply_apy)
-                ) AS average_supply_apy,
-                if(
-                    sum(borrow_usd) > 0,
-                    sum(borrow_apy * borrow_usd) / sum(borrow_usd),
-                    avg(borrow_apy)
-                ) AS average_borrow_apy
+            WITH (
+                SELECT max({latest_time_expr})
+                FROM api_market_latest FINAL
+                WHERE protocol = '{escaped_protocol}'
+                  {latest_borrow_filter}
+            ) AS latest_bucket
+            SELECT *
             FROM (
                 SELECT
-                    entity_id,
-                    {time_expr} AS bucket_ts,
-                    avg(toFloat64(supply_apy)) AS supply_apy,
-                    avg(toFloat64(borrow_apy)) AS borrow_apy,
-                    avg(toFloat64(supply_usd)) AS supply_usd,
-                    avg(toFloat64(borrow_usd)) AS borrow_usd
-                FROM {AAVE_SERIES_TABLE}
+                    toUnixTimestamp(bucket_ts) AS bucket_ts,
+                    if(
+                        sum(bucket_supply_usd) > 0,
+                        sum(supply_apy * bucket_supply_usd) / sum(bucket_supply_usd),
+                        avg(supply_apy)
+                    ) AS average_supply_apy,
+                    if(
+                        sum(bucket_borrow_usd) > 0,
+                        sum(borrow_apy * bucket_borrow_usd) / sum(bucket_borrow_usd),
+                        avg(borrow_apy)
+                    ) AS average_borrow_apy,
+                    sum(bucket_supply_usd) AS supply_usd,
+                    sum(bucket_borrow_usd) AS borrow_usd
+                FROM (
+                    SELECT
+                        entity_id,
+                        {time_expr} AS bucket_ts,
+                        argMax(toFloat64(supply_apy), timestamp) AS supply_apy,
+                        argMax(toFloat64(borrow_apy), timestamp) AS borrow_apy,
+                        argMax(toFloat64(supply_usd), timestamp) AS bucket_supply_usd,
+                        argMax(toFloat64(borrow_usd), timestamp) AS bucket_borrow_usd
+                    FROM {AAVE_SERIES_TABLE}
+                    WHERE protocol = '{escaped_protocol}'
+                      AND entity_id != 'AAVE_MARKET_SYNTHETIC'
+                      {historical_entity_filter}
+                    GROUP BY entity_id, bucket_ts
+                )
+                WHERE bucket_ts < latest_bucket
+                GROUP BY bucket_ts
+
+                UNION ALL
+
+                SELECT
+                    toUnixTimestamp(max({latest_time_expr})) AS bucket_ts,
+                    if(
+                        sum(toFloat64(supply_usd)) > 0,
+                        sum(toFloat64(supply_apy) * toFloat64(supply_usd)) / sum(toFloat64(supply_usd)),
+                        avg(toFloat64(supply_apy))
+                    ) AS average_supply_apy,
+                    if(
+                        sum(toFloat64(borrow_usd)) > 0,
+                        sum(toFloat64(borrow_apy) * toFloat64(borrow_usd)) / sum(toFloat64(borrow_usd)),
+                        avg(toFloat64(borrow_apy))
+                    ) AS average_borrow_apy,
+                    sum(toFloat64(supply_usd)) AS latest_supply_usd,
+                    sum(toFloat64(borrow_usd)) AS latest_borrow_usd
+                FROM api_market_latest FINAL
                 WHERE protocol = '{escaped_protocol}'
-                  AND entity_id != 'AAVE_MARKET_SYNTHETIC'
-                GROUP BY entity_id, bucket_ts
+                  {latest_borrow_filter}
             )
-            GROUP BY bucket_ts
             ORDER BY bucket_ts DESC
             LIMIT {safe_limit}
             """
         ).result_rows
     else:
         time_expr = _time_bucket_expr(resolution, "ts")
+        latest_time_expr = _time_bucket_expr(resolution, "timestamp")
         rows = ch.query(
             f"""
+            WITH (
+                SELECT max({latest_time_expr})
+                FROM api_market_latest FINAL
+                WHERE protocol = '{escaped_protocol}'
+                  {latest_borrow_filter}
+            ) AS latest_bucket
+            SELECT *
+            FROM (
+                SELECT
+                    toUnixTimestamp(bucket_ts) AS bucket_ts,
+                    if(
+                        sum(bucket_supply_usd) > 0,
+                        sum(supply_apy * bucket_supply_usd) / sum(bucket_supply_usd),
+                        avg(supply_apy)
+                    ) AS average_supply_apy,
+                    if(
+                        sum(bucket_borrow_usd) > 0,
+                        sum(borrow_apy * bucket_borrow_usd) / sum(bucket_borrow_usd),
+                        avg(borrow_apy)
+                    ) AS average_borrow_apy,
+                    sum(bucket_supply_usd) AS supply_usd,
+                    sum(bucket_borrow_usd) AS borrow_usd
+                FROM (
+                    SELECT
+                        entity_id,
+                        {time_expr} AS bucket_ts,
+                        argMax(supply_apy, ts) AS supply_apy,
+                        argMax(borrow_apy, ts) AS borrow_apy,
+                        argMax(supply_usd, ts) AS bucket_supply_usd,
+                        argMax(borrow_usd, ts) AS bucket_borrow_usd
+                    FROM (
+                        SELECT
+                            entity_id,
+                            ts,
+                            avgMerge(supply_apy_state) AS supply_apy,
+                            avgMerge(borrow_apy_state) AS borrow_apy,
+                            avgMerge(supply_usd_state) AS supply_usd,
+                            avgMerge(borrow_usd_state) AS borrow_usd
+                        FROM {API_MARKET_TIMESERIES_AGG_TABLE}
+                        WHERE protocol = '{escaped_protocol}'
+                          {historical_entity_filter}
+                        GROUP BY entity_id, ts
+                    )
+                    GROUP BY entity_id, bucket_ts
+                )
+                WHERE bucket_ts < latest_bucket
+                GROUP BY bucket_ts
+
+                UNION ALL
+
+                SELECT
+                    toUnixTimestamp(max({latest_time_expr})) AS bucket_ts,
+                    if(
+                        sum(toFloat64(supply_usd)) > 0,
+                        sum(toFloat64(supply_apy) * toFloat64(supply_usd)) / sum(toFloat64(supply_usd)),
+                        avg(toFloat64(supply_apy))
+                    ) AS average_supply_apy,
+                    if(
+                        sum(toFloat64(borrow_usd)) > 0,
+                        sum(toFloat64(borrow_apy) * toFloat64(borrow_usd)) / sum(toFloat64(borrow_usd)),
+                        avg(toFloat64(borrow_apy))
+                    ) AS average_borrow_apy,
+                    sum(toFloat64(supply_usd)) AS latest_supply_usd,
+                    sum(toFloat64(borrow_usd)) AS latest_borrow_usd
+                FROM api_market_latest FINAL
+                WHERE protocol = '{escaped_protocol}'
+                  {latest_borrow_filter}
+            )
+            ORDER BY bucket_ts DESC
+            LIMIT {safe_limit}
+            """
+        ).result_rows
+    points = [
+        ProtocolApyPoint(
+            timestamp=int(row[0]),
+            average_supply_apy=float(row[1]) if row[1] is not None else 0.0,
+            average_borrow_apy=float(row[2]) if row[2] is not None else 0.0,
+            supply_usd=float(row[3]) if len(row) > 3 and row[3] is not None else 0.0,
+            borrow_usd=float(row[4]) if len(row) > 4 and row[4] is not None else 0.0,
+        )
+        for row in rows
+    ]
+    points.reverse()
+    return points
+
+
+def _query_protocol_asset_apy_history(
+    ch,
+    protocol: str,
+    symbols: list[str],
+    resolution: str,
+    limit: int,
+    max_borrow_apy: Optional[float] = None,
+) -> list[ProtocolAssetApyPoint]:
+    allowed = {AAVE_MARKET, SPARK_MARKET, "EULER_MARKET", FLUID_MARKET, MORPHO_MARKET, COMPOUND_V2_MARKET, COMPOUND_V3_MARKET}
+    if protocol not in allowed:
+        return []
+
+    normalized_symbols = sorted({
+        str(symbol or "").strip().upper()
+        for symbol in symbols
+        if str(symbol or "").strip()
+    })
+    if not normalized_symbols:
+        return []
+
+    safe_limit = _safe_limit(limit)
+    escaped_protocol = _escape_sql_string(protocol)
+    symbol_filter = ", ".join(f"'{_escape_sql_string(symbol)}'" for symbol in normalized_symbols)
+    time_expr = _time_bucket_expr(resolution, "timestamp" if protocol == AAVE_MARKET else "ts")
+    safe_max_borrow_apy = _safe_max_borrow_apy(max_borrow_apy)
+    latest_borrow_filter = ""
+    historical_entity_filter = ""
+    if protocol == MORPHO_MARKET and safe_max_borrow_apy is not None:
+        latest_borrow_filter = f" AND toFloat64(borrow_apy) < {safe_max_borrow_apy}"
+        historical_entity_filter = f"""
+              AND entity_id IN (
+                  SELECT entity_id
+                  FROM api_market_latest FINAL
+                  WHERE protocol = '{MORPHO_MARKET}'
+                    AND toFloat64(borrow_apy) < {safe_max_borrow_apy}
+              )
+        """
+
+    if protocol == AAVE_MARKET:
+        source_sql = f"""
             SELECT
-                toUnixTimestamp({time_expr}) AS bucket_ts,
-                if(
-                    sum(supply_usd) > 0,
-                    sum(supply_apy * supply_usd) / sum(supply_usd),
-                    avg(supply_apy)
-                ) AS average_supply_apy,
-                if(
-                    sum(borrow_usd) > 0,
-                    sum(borrow_apy * borrow_usd) / sum(borrow_usd),
-                    avg(borrow_apy)
-                ) AS average_borrow_apy
+                entity_id,
+                upper(symbol) AS symbol,
+                {time_expr} AS bucket_ts,
+                avg(toFloat64(supply_apy)) AS bucket_supply_apy,
+                avg(toFloat64(borrow_apy)) AS bucket_borrow_apy,
+                avg(toFloat64(supply_usd)) AS bucket_supply_usd,
+                avg(toFloat64(borrow_usd)) AS bucket_borrow_usd
+            FROM {AAVE_SERIES_TABLE}
+            WHERE protocol = '{escaped_protocol}'
+              AND upper(symbol) IN ({symbol_filter})
+              AND entity_id != 'AAVE_MARKET_SYNTHETIC'
+              {historical_entity_filter}
+            GROUP BY entity_id, symbol, bucket_ts
+        """
+    else:
+        agg_time_expr = _time_bucket_expr(resolution, "agg.ts")
+        source_sql = f"""
+            SELECT
+                agg.entity_id,
+                latest.symbol,
+                {agg_time_expr} AS bucket_ts,
+                avg(agg.supply_apy) AS bucket_supply_apy,
+                avg(agg.borrow_apy) AS bucket_borrow_apy,
+                avg(agg.supply_usd) AS bucket_supply_usd,
+                avg(agg.borrow_usd) AS bucket_borrow_usd
             FROM (
                 SELECT
                     entity_id,
@@ -4931,18 +6108,78 @@ def _query_protocol_apy_history(
                     avgMerge(borrow_usd_state) AS borrow_usd
                 FROM {API_MARKET_TIMESERIES_AGG_TABLE}
                 WHERE protocol = '{escaped_protocol}'
+                  {historical_entity_filter}
                 GROUP BY entity_id, ts
-            )
-            GROUP BY bucket_ts
-            ORDER BY bucket_ts DESC
-            LIMIT {safe_limit}
-            """
-        ).result_rows
+            ) AS agg
+            INNER JOIN (
+                SELECT
+                    entity_id,
+                    upper(any(symbol)) AS symbol
+                FROM api_market_latest FINAL
+                WHERE protocol = '{escaped_protocol}'
+                  {latest_borrow_filter}
+                GROUP BY entity_id
+            ) AS latest
+            ON agg.entity_id = latest.entity_id
+            WHERE latest.symbol IN ({symbol_filter})
+            GROUP BY agg.entity_id, latest.symbol, bucket_ts
+        """
+
+    rows = ch.query(
+        f"""
+        WITH asset_rates AS (
+            SELECT
+                bucket_ts,
+                symbol,
+                if(
+                    sum(bucket_supply_usd) > 0,
+                    sum(bucket_supply_apy * bucket_supply_usd) / sum(bucket_supply_usd),
+                    avg(bucket_supply_apy)
+                ) AS supply_apy,
+                if(
+                    sum(bucket_borrow_usd) > 0,
+                    sum(bucket_borrow_apy * bucket_borrow_usd) / sum(bucket_borrow_usd),
+                    avg(bucket_borrow_apy)
+                ) AS borrow_apy
+            FROM ({source_sql})
+            GROUP BY bucket_ts, symbol
+        )
+        SELECT
+            toUnixTimestamp(asset_rates.bucket_ts) AS bucket_ts,
+            asset_rates.symbol,
+            asset_rates.supply_apy,
+            asset_rates.borrow_apy,
+            sofr.sofr_rate
+        FROM (
+            SELECT
+                1 AS join_key,
+                bucket_ts,
+                symbol,
+                supply_apy,
+                borrow_apy
+            FROM asset_rates
+            ORDER BY join_key, bucket_ts
+        ) AS asset_rates
+        ASOF LEFT JOIN (
+            SELECT
+                1 AS join_key,
+                timestamp AS sofr_ts,
+                toFloat64(apy) AS sofr_rate
+            FROM raw_sofr_rates FINAL
+            ORDER BY join_key, sofr_ts
+        ) AS sofr
+        ON asset_rates.join_key = sofr.join_key AND asset_rates.bucket_ts >= sofr.sofr_ts
+        ORDER BY bucket_ts DESC, symbol ASC
+        LIMIT {safe_limit}
+        """
+    ).result_rows
     points = [
-        ProtocolApyPoint(
+        ProtocolAssetApyPoint(
             timestamp=int(row[0]),
-            average_supply_apy=float(row[1]) if row[1] is not None else 0.0,
-            average_borrow_apy=float(row[2]) if row[2] is not None else 0.0,
+            symbol=str(row[1]),
+            supply_apy=_finite_non_negative(row[2]),
+            borrow_apy=_finite_non_negative(row[3]),
+            sofr_rate=_finite_non_negative(row[4]) if len(row) > 4 and row[4] is not None else None,
         )
         for row in rows
     ]
@@ -4988,6 +6225,20 @@ def _query_usdc_lending_apy_history(
                       AND upper(symbol) = 'USDC'
                       AND entity_id != 'AAVE_MARKET_SYNTHETIC'
                       AND NOT (protocol = '{_escape_sql_string(MORPHO_MARKET)}' AND toFloat64(supply_apy) > 1.0)
+                    GROUP BY protocol, entity_id, bucket_ts
+
+                    UNION ALL
+
+                    SELECT
+                        '{_escape_sql_string(COMPOUND_V3_MARKET)}' AS protocol,
+                        entity_id,
+                        {time_expr} AS bucket_ts,
+                        argMax(toFloat64(supply_apy), tuple(timestamp, inserted_at)) AS bucket_supply_apy,
+                        argMax(toFloat64(borrow_apy), tuple(timestamp, inserted_at)) AS bucket_borrow_apy,
+                        argMax(toFloat64(supply_usd), tuple(timestamp, inserted_at)) AS supply_usd,
+                        argMax(toFloat64(borrow_usd), tuple(timestamp, inserted_at)) AS borrow_usd
+                    FROM compound_v3_comet_metrics FINAL
+                    WHERE upper(symbol) = 'USDC'
                     GROUP BY protocol, entity_id, bucket_ts
                 )
                 GROUP BY bucket_ts
@@ -5042,6 +6293,79 @@ def _query_market_timeseries(
     normalized_entity_id = _normalize_entity_id(entity_id)
     if not normalized_entity_id:
         return []
+
+    if protocol == COMPOUND_V3_MARKET:
+        time_expr = _time_bucket_expr(resolution, "ts")
+        latest_time_expr = _time_bucket_expr(resolution, "timestamp")
+        res = ch.query(
+            f"""
+            WITH (
+                SELECT max({latest_time_expr})
+                FROM api_market_latest FINAL
+                WHERE protocol = '{COMPOUND_V3_MARKET}'
+                  AND entity_id LIKE %(eid_prefix)s
+            ) AS latest_bucket
+            SELECT *
+            FROM (
+            SELECT
+                toUnixTimestamp(bucket_ts) AS ts,
+                avg(supply_apy) AS supply_apy,
+                avg(borrow_apy) AS borrow_apy,
+                avg(utilization) AS utilization,
+                avg(supply_usd) AS supply_usd,
+                avg(borrow_usd) AS borrow_usd
+            FROM (
+                SELECT
+                    entity_id,
+                    {time_expr} AS bucket_ts,
+                    avgMerge(supply_apy_state) AS supply_apy,
+                    avgMerge(borrow_apy_state) AS borrow_apy,
+                    avgMerge(utilization_state) AS utilization,
+                    avgMerge(supply_usd_state) AS supply_usd,
+                    avgMerge(borrow_usd_state) AS borrow_usd
+                FROM {API_MARKET_TIMESERIES_AGG_TABLE}
+                WHERE entity_id LIKE %(eid_prefix)s
+                  AND protocol = '{COMPOUND_V3_MARKET}'
+                GROUP BY entity_id, bucket_ts
+            )
+            WHERE bucket_ts < latest_bucket
+            GROUP BY bucket_ts
+
+            UNION ALL
+
+            SELECT
+                toUnixTimestamp(max({latest_time_expr})) AS ts,
+                avg(toFloat64(supply_apy)) AS supply_apy,
+                avg(toFloat64(borrow_apy)) AS borrow_apy,
+                avg(toFloat64(utilization)) AS utilization,
+                avg(toFloat64(supply_usd)) AS supply_usd,
+                avg(toFloat64(borrow_usd)) AS borrow_usd
+            FROM api_market_latest FINAL
+            WHERE protocol = '{COMPOUND_V3_MARKET}'
+              AND entity_id LIKE %(eid_prefix)s
+            )
+            ORDER BY ts DESC
+            LIMIT %(lim)s
+            """,
+            parameters={
+                "eid_prefix": f"{normalized_entity_id}%",
+                "lim": _safe_limit(limit),
+            },
+        )
+        points = [
+            MarketTimeseriesPoint(
+                timestamp=int(row[0]),
+                supply_apy=float(row[1]) if row[1] is not None else None,
+                borrow_apy=float(row[2]) if row[2] is not None else None,
+                utilization=float(row[3]) if row[3] is not None else None,
+                supply_usd=float(row[4]) if row[4] is not None else None,
+                borrow_usd=float(row[5]) if row[5] is not None else None,
+            )
+            for row in res.result_rows
+            if row[0] is not None
+        ]
+        points.reverse()
+        return points
 
     protocol_filter = ""
     params = {
@@ -5135,6 +6459,70 @@ def _query_market_flow_timeseries_from_balance_deltas(
     if len(flows) > safe_limit:
         flows = flows[-safe_limit:]
     return flows
+
+
+def _query_compound_v3_market_flow_timeseries(
+    ch,
+    entity_id: str,
+    resolution: str,
+    limit: int,
+) -> list[MarketFlowPoint]:
+    normalized_entity_id = _normalize_entity_id(entity_id)
+    if not normalized_entity_id:
+        return []
+    safe_limit = _safe_limit(limit)
+    time_expr = _time_bucket_expr(resolution, "day")
+    rows = ch.query(
+        f"""
+        SELECT
+            toUnixTimestamp(bucket_ts) AS ts,
+            sum(supply_inflow_usd) AS supply_inflow_usd,
+            sum(supply_outflow_usd) AS supply_outflow_usd,
+            sum(borrow_inflow_usd) AS borrow_inflow_usd,
+            sum(borrow_outflow_usd) AS borrow_outflow_usd,
+            sum(net_supply_flow_usd) AS net_supply_flow_usd,
+            sum(net_borrow_flow_usd) AS net_borrow_flow_usd
+        FROM (
+            SELECT
+                {time_expr} AS bucket_ts,
+                supply_inflow_usd,
+                supply_outflow_usd,
+                borrow_inflow_usd,
+                borrow_outflow_usd,
+                net_supply_flow_usd,
+                net_borrow_flow_usd
+            FROM {COMPOUND_V3_FLOW_DAILY_TABLE} FINAL
+            WHERE entity_id LIKE %(eid_prefix)s
+        )
+        GROUP BY bucket_ts
+        ORDER BY bucket_ts DESC
+        LIMIT %(lim)s
+        """,
+        parameters={"eid_prefix": f"{normalized_entity_id}%", "lim": safe_limit},
+    ).result_rows
+    rows = list(reversed(rows))
+    cumulative_supply = 0.0
+    cumulative_borrow = 0.0
+    points: list[MarketFlowPoint] = []
+    for row in rows:
+        net_supply = float(row[5] or 0.0)
+        net_borrow = float(row[6] or 0.0)
+        cumulative_supply += net_supply
+        cumulative_borrow += net_borrow
+        points.append(
+            MarketFlowPoint(
+                timestamp=int(row[0]),
+                supply_inflow_usd=_finite_non_negative(row[1]),
+                supply_outflow_usd=_finite_non_negative(row[2]),
+                borrow_inflow_usd=_finite_non_negative(row[3]),
+                borrow_outflow_usd=_finite_non_negative(row[4]),
+                net_supply_flow_usd=net_supply,
+                net_borrow_flow_usd=net_borrow,
+                cumulative_supply_net_inflow_usd=cumulative_supply,
+                cumulative_borrow_net_inflow_usd=cumulative_borrow,
+            )
+        )
+    return points
 
 
 def _query_morpho_event_flow_timeseries(
@@ -5368,6 +6756,10 @@ def _query_market_flow_timeseries(
             fluid_flows = _query_fluid_event_flow_timeseries(ch, entity_id, resolution, limit)
             if fluid_flows:
                 return fluid_flows
+        elif protocol.upper() == COMPOUND_V3_MARKET:
+            compound_flows = _query_compound_v3_market_flow_timeseries(ch, entity_id, resolution, limit)
+            if compound_flows:
+                return compound_flows
 
     if _is_aave_market_entity(ch, entity_id):
         preaggregated = _query_aave_preaggregated_flow_timeseries(
@@ -5643,6 +7035,7 @@ def _query_metamorpho_vaults(vault_address: Optional[str] = None, limit: int = 5
         rows = ch.query(
             f"""
             SELECT registry.vault_address, registry.name, registry.asset_symbol, registry.asset_address,
+                   lower(if(registry.curator = '' OR registry.curator = '0x0000000000000000000000000000000000000000', 'other', registry.curator)) AS curator_address,
                    if(state.vault_address != '', state.total_assets, '0') AS total_assets,
                    if(state.vault_address != '', state.total_supply, '0') AS total_supply,
                    if(state.vault_address != '', state.share_price_usd, 0.0) AS share_price_usd,
@@ -5668,18 +7061,181 @@ def _query_metamorpho_vaults(vault_address: Optional[str] = None, limit: int = 5
         ).result_rows
     except Exception:
         return []
+
+    def _vault_share_price_assets(total_assets: object, total_supply: object, asset_address: object) -> Optional[float]:
+        try:
+            assets_raw = int(str(total_assets or "0"))
+            supply_raw = int(str(total_supply or "0"))
+        except (TypeError, ValueError):
+            return None
+        if assets_raw <= 0 or supply_raw <= 0:
+            return None
+        normalized = str(asset_address or "").strip().lower().removeprefix("0x")
+        _, asset_decimals = TOKENS.get(normalized, ("UNKNOWN", 18))
+        try:
+            return (assets_raw / (10 ** int(asset_decimals))) / (supply_raw / 1e18)
+        except (OverflowError, ZeroDivisionError, ValueError):
+            return None
+
+    vault_keys = [str(row[0] or "").lower() for row in rows if str(row[0] or "").strip()]
+    exposure_by_vault: dict[str, list[MetaMorphoVaultExposure]] = {key: [] for key in vault_keys}
+    apy_by_vault: dict[str, Optional[float]] = {key: None for key in vault_keys}
+
+    if vault_keys:
+        vault_sql_list = ", ".join(f"'{_escape_sql_string(key)}'" for key in vault_keys)
+        try:
+            exposure_rows = ch.query(
+                f"""
+                WITH latest_alloc AS (
+                    SELECT vault_address, market_id,
+                           argMax(toFloat64(supplied_usd), tuple(timestamp, inserted_at)) AS supplied_usd
+                    FROM metamorpho_vault_allocations FINAL
+                    WHERE lower(vault_address) IN ({vault_sql_list})
+                    GROUP BY vault_address, market_id
+                    HAVING supplied_usd > 0
+                ),
+                market_params AS (
+                    SELECT market_id,
+                           argMax(loan_symbol, updated_at) AS loan_symbol,
+                           argMax(collateral_symbol, updated_at) AS collateral_symbol,
+                           argMax(loan_token, updated_at) AS loan_token,
+                           argMax(collateral_token, updated_at) AS collateral_token
+                    FROM morpho_market_params
+                    GROUP BY market_id
+                )
+                SELECT lower(alloc.vault_address) AS vault_key,
+                       if(params.collateral_symbol = '', params.loan_symbol, params.collateral_symbol) AS symbol,
+                       if(params.collateral_symbol = '', params.loan_token, params.collateral_token) AS token_address,
+                       sum(alloc.supplied_usd) AS value_usd
+                FROM latest_alloc AS alloc
+                LEFT JOIN market_params AS params ON params.market_id = alloc.market_id
+                GROUP BY vault_key, symbol, token_address
+                HAVING value_usd > 0 AND symbol != ''
+                ORDER BY vault_key ASC, value_usd DESC
+                """
+            ).result_rows
+            for exposure_row in exposure_rows:
+                key = str(exposure_row[0] or "").lower()
+                symbol = _morpho_display_symbol(exposure_row[1], exposure_row[2]) or str(exposure_row[1] or "").strip()
+                if not key or not symbol:
+                    continue
+                exposure_by_vault.setdefault(key, []).append(
+                    MetaMorphoVaultExposure(
+                        symbol=symbol,
+                        value_usd=float(exposure_row[3] or 0.0),
+                    )
+                )
+        except Exception:
+            pass
+
+        try:
+            apy_rows = ch.query(
+                f"""
+                WITH latest_alloc AS (
+                    SELECT vault_address AS vault_key,
+                           max(timestamp) AS latest_ts
+                    FROM metamorpho_vault_allocations FINAL
+                    WHERE vault_address IN ({vault_sql_list})
+                    GROUP BY vault_address
+                ),
+                exchange_rates AS (
+                    SELECT vault_key,
+                           timestamp,
+                           block_number,
+                           log_index,
+                           toFloat64OrNull(assets) / toFloat64OrNull(shares) AS exchange_rate
+                    FROM (
+                        SELECT lower(vault_address) AS vault_key,
+                               timestamp,
+                               block_number,
+                               log_index,
+                               assets,
+                               shares
+                        FROM metamorpho_vault_events FINAL
+                        WHERE lower(vault_address) IN ({vault_sql_list})
+                          AND event_name IN ('Deposit', 'Withdraw')
+                          AND toFloat64OrNull(assets) > 0
+                          AND toFloat64OrNull(shares) > 0
+                    )
+                ),
+                end_points AS (
+                    SELECT rates.vault_key,
+                           argMax(rates.timestamp, tuple(rates.timestamp, rates.block_number, rates.log_index)) AS end_ts,
+                           argMax(rates.exchange_rate, tuple(rates.timestamp, rates.block_number, rates.log_index)) AS end_rate
+                    FROM exchange_rates AS rates
+                    LEFT JOIN latest_alloc AS latest ON latest.vault_key = rates.vault_key
+                    WHERE rates.timestamp <= ifNull(latest.latest_ts, now())
+                    GROUP BY rates.vault_key
+                ),
+                start_points AS (
+                    SELECT rates.vault_key,
+                           argMax(rates.timestamp, tuple(rates.timestamp, rates.block_number, rates.log_index)) AS start_ts,
+                           argMax(rates.exchange_rate, tuple(rates.timestamp, rates.block_number, rates.log_index)) AS start_rate
+                    FROM exchange_rates AS rates
+                    INNER JOIN end_points AS end ON end.vault_key = rates.vault_key
+                    WHERE rates.timestamp <= end.end_ts - INTERVAL 30 DAY
+                    GROUP BY rates.vault_key
+                ),
+                metric_hours AS (
+                    SELECT
+                        alloc.vault_address AS vault_key,
+                        countDistinct(alloc.timestamp) AS observed_hours
+                    FROM (SELECT * FROM metamorpho_vault_allocations FINAL) AS alloc
+                    INNER JOIN start_points AS start ON start.vault_key = alloc.vault_address
+                    INNER JOIN end_points AS end ON end.vault_key = alloc.vault_address
+                    INNER JOIN (
+                        SELECT market_id,
+                               toStartOfHour(timestamp) AS ts
+                        FROM morpho_market_metrics FINAL
+                        GROUP BY market_id, ts
+                    ) AS metrics ON metrics.market_id = alloc.market_id AND metrics.ts = alloc.timestamp
+                    WHERE alloc.vault_address IN ({vault_sql_list})
+                      AND alloc.timestamp > start.start_ts
+                      AND alloc.timestamp <= end.end_ts
+                      AND toFloat64(alloc.supplied_usd) > 0
+                    GROUP BY vault_key
+                )
+                SELECT end.vault_key,
+                       if(
+                         end.end_rate > 0
+                           AND ifNull(start.start_rate, 0.0) > 0
+                           AND dateDiff('second', ifNull(start.start_ts, end.end_ts), end.end_ts) > 0
+                           AND ifNull(metrics.observed_hours, 0) > 0,
+                         pow(
+                           end.end_rate / ifNull(start.start_rate, end.end_rate),
+                           31536000.0 / greatest(dateDiff('second', ifNull(start.start_ts, end.end_ts), end.end_ts), 1)
+                         ) - 1.0,
+                         NULL
+                       ) AS apy
+                FROM end_points AS end
+                LEFT JOIN start_points AS start ON start.vault_key = end.vault_key
+                LEFT JOIN metric_hours AS metrics ON metrics.vault_key = end.vault_key
+                """
+            ).result_rows
+            apy_by_vault = {
+                str(apy_row[0] or "").lower(): float(apy_row[1]) if apy_row[1] is not None else None
+                for apy_row in apy_rows
+            }
+        except Exception:
+            pass
+
     return [
         MetaMorphoVault(
             vault_address=str(row[0] or ""),
             name=str(row[1] or ""),
             asset_symbol=str(row[2] or ""),
             asset_address=str(row[3] or ""),
-            total_assets=str(row[4] or "0"),
-            total_supply=str(row[5] or "0"),
-            share_price_usd=float(row[6] or 0.0),
-            tvl_usd=float(row[7] or 0.0),
-            is_canonical_tvl=bool(row[8]),
-            last_snapshot_timestamp=int(row[9] or 0),
+            curator_address=str(row[4] or "other"),
+            curator=_curator_label(str(row[4] or "other")),
+            total_assets=str(row[5] or "0"),
+            total_supply=str(row[6] or "0"),
+            share_price_usd=float(row[7] or 0.0),
+            share_price_assets=_vault_share_price_assets(row[5], row[6], row[3]),
+            tvl_usd=float(row[8] or 0.0),
+            apy=apy_by_vault.get(str(row[0] or "").lower(), 0.0),
+            exposure=exposure_by_vault.get(str(row[0] or "").lower(), []),
+            is_canonical_tvl=bool(row[9]),
+            last_snapshot_timestamp=int(row[10] or 0),
         )
         for row in rows
     ]
@@ -5776,6 +7332,281 @@ def _query_metamorpho_vault_flows(
         )
         for row in rows
     ]
+
+
+def _query_metamorpho_vault_history(
+    ch,
+    vault_address: str,
+    resolution: str = "1D",
+    limit: int = 2000,
+) -> list[MetaMorphoVaultHistoryPoint]:
+    normalized = _normalize_entity_id(vault_address)
+    if not normalized:
+        return []
+
+    safe_limit = _safe_limit(limit)
+    state_bucket = _time_bucket_expr(resolution, "state.timestamp")
+    alloc_bucket = _time_bucket_expr(resolution, "alloc.timestamp")
+    metric_bucket = _time_bucket_expr(resolution, "metrics.timestamp")
+    rows = ch.query(
+        f"""
+        WITH state_rows AS (
+            SELECT
+                {state_bucket} AS bucket_ts,
+                argMax(toFloat64(tvl_usd), tuple(state.timestamp, state.inserted_at)) AS tvl_usd,
+                argMax(toFloat64(share_price_usd), tuple(state.timestamp, state.inserted_at)) AS share_price_usd
+            FROM (SELECT * FROM metamorpho_vault_state FINAL) AS state
+            WHERE lower(state.vault_address) = %(vault)s
+            GROUP BY bucket_ts
+        ),
+        alloc_rows AS (
+            SELECT
+                {alloc_bucket} AS bucket_ts,
+                alloc.market_id AS market_id,
+                argMax(toFloat64(alloc.supplied_usd), tuple(alloc.timestamp, alloc.inserted_at)) AS supplied_usd
+            FROM (SELECT * FROM metamorpho_vault_allocations FINAL) AS alloc
+            WHERE lower(alloc.vault_address) = %(vault)s
+            GROUP BY bucket_ts, alloc.market_id
+            HAVING supplied_usd > 0
+        ),
+        bucket_rows AS (
+            SELECT bucket_ts
+            FROM (
+                SELECT bucket_ts FROM state_rows
+                UNION DISTINCT
+                SELECT bucket_ts FROM alloc_rows
+            )
+            ORDER BY bucket_ts DESC
+            LIMIT %(lim)s
+        ),
+        metric_rows AS (
+            SELECT
+                {metric_bucket} AS bucket_ts,
+                metrics.market_id AS market_id,
+                argMax(toFloat64(metrics.supply_apy), tuple(metrics.timestamp, metrics.inserted_at)) AS supply_apy,
+                argMax(toFloat64(metrics.borrow_apy), tuple(metrics.timestamp, metrics.inserted_at)) AS borrow_apy
+            FROM (SELECT * FROM morpho_market_metrics FINAL) AS metrics
+            WHERE metrics.market_id IN (SELECT DISTINCT market_id FROM alloc_rows)
+              AND metrics.timestamp >= (SELECT min(bucket_ts) FROM bucket_rows)
+            GROUP BY bucket_ts, metrics.market_id
+        ),
+        alloc_agg AS (
+            SELECT
+                alloc_rows.bucket_ts AS bucket_ts,
+                sum(alloc_rows.supplied_usd) AS allocated_usd,
+                if(
+                    sumIf(alloc_rows.supplied_usd, metric_rows.borrow_apy < 1.0) > 0,
+                    sumIf(alloc_rows.supplied_usd * metric_rows.supply_apy, metric_rows.borrow_apy < 1.0)
+                      / sumIf(alloc_rows.supplied_usd, metric_rows.borrow_apy < 1.0),
+                    0.0
+                ) AS net_apy
+            FROM alloc_rows
+            LEFT JOIN metric_rows
+              ON metric_rows.bucket_ts = alloc_rows.bucket_ts
+             AND metric_rows.market_id = alloc_rows.market_id
+            GROUP BY bucket_ts
+        )
+        SELECT
+            toUnixTimestamp(bucket_rows.bucket_ts) AS ts,
+            state_rows.tvl_usd,
+            state_rows.share_price_usd,
+            ifNull(alloc_agg.allocated_usd, 0.0) AS allocated_usd,
+            ifNull(alloc_agg.net_apy, 0.0) AS net_apy
+        FROM bucket_rows
+        LEFT JOIN state_rows ON state_rows.bucket_ts = bucket_rows.bucket_ts
+        LEFT JOIN alloc_agg ON alloc_agg.bucket_ts = bucket_rows.bucket_ts
+        ORDER BY bucket_rows.bucket_ts ASC
+        """,
+        parameters={"vault": normalized, "lim": safe_limit},
+    ).result_rows
+    points: list[MetaMorphoVaultHistoryPoint] = []
+    for ts, tvl_usd, share_price_usd, allocated_usd, net_apy in rows:
+        allocated = _finite_non_negative(allocated_usd)
+        total = _finite_non_negative(tvl_usd)
+        if total <= 0 and allocated > 0:
+            total = allocated
+        liquidity = max(0.0, total - allocated)
+        points.append(
+            MetaMorphoVaultHistoryPoint(
+                timestamp=int(ts or 0),
+                total_deposits_usd=total,
+                allocated_usd=allocated,
+                liquidity_usd=liquidity,
+                utilization=min(1.0, allocated / total) if total > 0 else 0.0,
+                share_price_usd=_finite_non_negative(share_price_usd),
+                net_apy=_finite_non_negative(net_apy),
+            )
+        )
+    return points
+
+
+def _query_metamorpho_vault_flow_links(
+    ch,
+    vault_address: str,
+    window_days: int = 7,
+) -> list[MetaMorphoVaultFlowLink]:
+    normalized = _normalize_entity_id(vault_address)
+    if not normalized:
+        return []
+    safe_days = max(1, min(90, int(window_days or 7)))
+    rows = ch.query(
+        f"""
+        WITH (
+            SELECT max(timestamp)
+            FROM metamorpho_vault_flows_hourly FINAL
+            WHERE lower(vault_address) = %(vault)s
+        ) AS latest_ts
+        SELECT
+            asset_symbol,
+            sum(toFloat64(deposit_usd)) AS deposit_usd,
+            sum(toFloat64(withdraw_usd)) AS withdraw_usd
+        FROM metamorpho_vault_flows_hourly FINAL
+        WHERE lower(vault_address) = %(vault)s
+          AND timestamp >= latest_ts - INTERVAL {safe_days} DAY
+          AND timestamp <= latest_ts
+        GROUP BY asset_symbol
+        ORDER BY abs(deposit_usd - withdraw_usd) DESC
+        """,
+        parameters={"vault": normalized},
+    ).result_rows
+    links: list[MetaMorphoVaultFlowLink] = []
+    for asset, deposit_usd, withdraw_usd in rows:
+        inflow = _finite_non_negative(deposit_usd)
+        outflow = _finite_non_negative(withdraw_usd)
+        symbol = str(asset or "UNKNOWN")
+        if inflow >= 1:
+            links.append(MetaMorphoVaultFlowLink(action="Net Inflow", asset=symbol, value_usd=inflow))
+        if outflow >= 1:
+            links.append(MetaMorphoVaultFlowLink(action="Net Outflow", asset=symbol, value_usd=outflow))
+    links.sort(key=lambda row: row.value_usd, reverse=True)
+    return links
+
+
+def _query_metamorpho_vault_market_exposures(
+    ch,
+    vault_address: str,
+    limit: int = 100,
+) -> list[MetaMorphoVaultMarketExposure]:
+    normalized = _normalize_entity_id(vault_address)
+    if not normalized:
+        return []
+    safe_limit = max(1, min(int(limit or 100), 500))
+    rows = ch.query(
+        f"""
+        WITH latest_alloc AS (
+            SELECT
+                market_id,
+                argMax(toFloat64(supplied_usd), tuple(timestamp, inserted_at)) AS supplied_usd
+            FROM metamorpho_vault_allocations FINAL
+            WHERE lower(vault_address) = %(vault)s
+            GROUP BY market_id
+            HAVING supplied_usd > 0
+        ),
+        vault_state AS (
+            SELECT argMax(toFloat64(tvl_usd), tuple(timestamp, inserted_at)) AS tvl_usd
+            FROM metamorpho_vault_state FINAL
+            WHERE lower(vault_address) = %(vault)s
+        ),
+        market_params AS (
+            SELECT
+                market_id,
+                argMax(loan_symbol, updated_at) AS loan_symbol,
+                argMax(collateral_symbol, updated_at) AS collateral_symbol,
+                argMax(loan_token, updated_at) AS loan_token,
+                argMax(collateral_token, updated_at) AS collateral_token
+            FROM morpho_market_params
+            WHERE market_id IN (SELECT market_id FROM latest_alloc)
+            GROUP BY market_id
+        ),
+        market_metrics AS (
+            SELECT
+                market_id,
+                argMax(toFloat64(supply_usd), tuple(timestamp, inserted_at)) AS supply_usd,
+                argMax(toFloat64(borrow_usd), tuple(timestamp, inserted_at)) AS borrow_usd,
+                argMax(toFloat64(supply_apy), tuple(timestamp, inserted_at)) AS supply_apy,
+                argMax(toFloat64(borrow_apy), tuple(timestamp, inserted_at)) AS borrow_apy,
+                argMax(toFloat64(utilization), tuple(timestamp, inserted_at)) AS utilization,
+                argMax(toFloat64(lltv), tuple(timestamp, inserted_at)) AS lltv
+            FROM morpho_market_metrics FINAL
+            WHERE market_id IN (SELECT market_id FROM latest_alloc)
+            GROUP BY market_id
+        )
+        SELECT
+            alloc.market_id,
+            params.loan_symbol,
+            params.collateral_symbol,
+            params.loan_token,
+            params.collateral_token,
+            alloc.supplied_usd,
+            if((SELECT tvl_usd FROM vault_state) > 0, alloc.supplied_usd / (SELECT tvl_usd FROM vault_state), 0.0) AS vault_allocation_share,
+            greatest(0.0, ifNull(metrics.supply_usd, 0.0) - ifNull(metrics.borrow_usd, 0.0)) AS liquidity_usd,
+            ifNull(metrics.supply_apy, 0.0) AS supply_apy,
+            ifNull(metrics.borrow_apy, 0.0) AS borrow_apy,
+            ifNull(metrics.utilization, 0.0) AS utilization,
+            metrics.lltv
+        FROM latest_alloc AS alloc
+        LEFT JOIN market_params AS params ON params.market_id = alloc.market_id
+        LEFT JOIN market_metrics AS metrics ON metrics.market_id = alloc.market_id
+        WHERE ifNull(metrics.borrow_apy, 0.0) < 1.0
+        ORDER BY alloc.supplied_usd DESC
+        LIMIT {safe_limit}
+        """,
+        parameters={"vault": normalized},
+    ).result_rows
+    exposures: list[MetaMorphoVaultMarketExposure] = []
+    for row in rows:
+        market_id = str(row[0] or "")
+        loan_symbol = _morpho_display_symbol(row[1], row[3]) or "UNKNOWN"
+        collateral_symbol = _morpho_display_symbol(row[2], row[4])
+        market_label = f"{collateral_symbol}-{loan_symbol}" if collateral_symbol else loan_symbol
+        exposures.append(
+            MetaMorphoVaultMarketExposure(
+                market_id=market_id,
+                market_label=market_label,
+                loan_symbol=loan_symbol,
+                collateral_symbol=collateral_symbol,
+                supplied_usd=_finite_non_negative(row[5]),
+                allocation_share=_finite_non_negative(row[6]),
+                liquidity_usd=_finite_non_negative(row[7]),
+                supply_apy=_finite_non_negative(row[8]),
+                borrow_apy=_finite_non_negative(row[9]),
+                utilization=min(1.0, _finite_non_negative(row[10])),
+                lltv=_finite_non_negative(row[11]) if row[11] is not None else None,
+            )
+        )
+    return exposures
+
+
+def _query_metamorpho_vault_page(
+    ch,
+    vault_address: str,
+    timeseries_limit: int,
+    flow_limit: int,
+    allocation_limit: int,
+) -> MetaMorphoVaultPagePayload:
+    normalized = _normalize_entity_id(vault_address)
+    if not normalized:
+        return MetaMorphoVaultPagePayload(
+            freshness=_freshness_payload("not_found", False),
+            vault=None,
+            history=[],
+            flow_chart=[],
+            flow_links=[],
+            exposures=[],
+        )
+    vaults = _query_metamorpho_vaults(normalized, 1)
+    vault = vaults[0] if vaults else None
+    history = _query_metamorpho_vault_history(ch, normalized, "1D", timeseries_limit)
+    flows = _query_metamorpho_vault_flows(normalized, flow_limit)
+    flows.sort(key=lambda row: row.timestamp)
+    return MetaMorphoVaultPagePayload(
+        freshness=_freshness_payload("ready" if vault else "not_found", bool(vault)),
+        vault=vault,
+        history=history,
+        flow_chart=flows,
+        flow_links=_query_metamorpho_vault_flow_links(ch, normalized, 7),
+        exposures=_query_metamorpho_vault_market_exposures(ch, normalized, allocation_limit),
+    )
 
 
 def _query_pendle_eth_price_history(
@@ -5923,9 +7754,28 @@ class Query:
         return _query_lending_data_page(ch, display_in, flow_window_days)
 
     @strawberry.field(name="protocolMarketsPage")
-    def protocol_markets_page(self, protocol: str = AAVE_MARKET) -> ProtocolMarketsPagePayload:
+    def protocol_markets_page(
+        self,
+        protocol: str = AAVE_MARKET,
+        max_borrow_apy: Optional[float] = None,
+    ) -> ProtocolMarketsPagePayload:
         ch = get_clickhouse_client()
-        return _query_protocol_markets_page(ch, protocol)
+        return _query_protocol_markets_page(ch, protocol, max_borrow_apy)
+
+    @strawberry.field(name="compoundV3ProtocolPage")
+    def compound_v3_protocol_page(
+        self,
+        flow_window_days: int = 7,
+        timeseries_limit: int = 5000,
+        asset_symbols: Optional[List[str]] = None,
+    ) -> CompoundV3ProtocolPagePayload:
+        ch = get_clickhouse_client()
+        return _query_compound_v3_protocol_page(
+            ch,
+            flow_window_days,
+            _api_page_size(timeseries_limit),
+            asset_symbols or ["USDC", "WETH"],
+        )
 
     @strawberry.field(name="lendingPoolPage")
     def lending_pool_page(
@@ -6064,10 +7914,70 @@ class Query:
 
     @strawberry.field(name="protocolApyHistory")
     def protocol_apy_history(
-        self, protocol: str = AAVE_MARKET, resolution: str = "1W", limit: int = 500
+        self,
+        protocol: str = AAVE_MARKET,
+        resolution: str = "1W",
+        limit: int = 500,
+        max_borrow_apy: Optional[float] = None,
     ) -> list[ProtocolApyPoint]:
         ch = get_clickhouse_client()
-        return _query_protocol_apy_history(ch, protocol, resolution, limit)
+        return _query_protocol_apy_history(ch, protocol, resolution, limit, max_borrow_apy)
+
+    @strawberry.field(name="protocolAssetApyHistory")
+    def protocol_asset_apy_history(
+        self,
+        protocol: str = AAVE_MARKET,
+        symbols: Optional[List[str]] = None,
+        resolution: str = "1W",
+        limit: int = 1000,
+        max_borrow_apy: Optional[float] = None,
+    ) -> list[ProtocolAssetApyPoint]:
+        ch = get_clickhouse_client()
+        return _query_protocol_asset_apy_history(
+            ch,
+            protocol,
+            symbols or ["USDC", "USDT"],
+            resolution,
+            limit,
+            max_borrow_apy,
+        )
+
+    @strawberry.field(name="morphoCuratorFlows")
+    def morpho_curator_flows(
+        self,
+        flow_window_days: int = 7,
+        top_n: int = 10,
+        max_borrow_apy: Optional[float] = None,
+    ) -> list[MorphoCuratorFlowLink]:
+        ch = get_clickhouse_client()
+        return _query_morpho_curator_flows(ch, flow_window_days, top_n, max_borrow_apy)
+
+    @strawberry.field(name="eulerChannelFlows")
+    def euler_channel_flows(
+        self,
+        flow_window_days: int = 7,
+        top_n: int = 10,
+        max_borrow_apy: Optional[float] = None,
+    ) -> list[MorphoCuratorFlowLink]:
+        ch = get_clickhouse_client()
+        return _query_euler_channel_flows(ch, flow_window_days, top_n, max_borrow_apy)
+
+    @strawberry.field(name="morphoCuratorAllocationHistory")
+    def morpho_curator_allocation_history(
+        self,
+        resolution: str = "1D",
+        limit: int = 500,
+        top_n: int = 15,
+        max_borrow_apy: Optional[float] = None,
+    ) -> list[MorphoCuratorAllocationPoint]:
+        ch = get_clickhouse_client()
+        return _query_morpho_curator_allocation_history(
+            ch,
+            resolution,
+            limit,
+            top_n,
+            max_borrow_apy,
+        )
 
     @strawberry.field(name="marketTimeseries")
     def market_timeseries(
@@ -6100,6 +8010,23 @@ class Query:
         self, vault_address: Optional[str] = None, limit: int = 500
     ) -> list[MetaMorphoVault]:
         return _query_metamorpho_vaults(vault_address, limit)
+
+    @strawberry.field(name="metamorphoVaultPage")
+    def metamorpho_vault_page(
+        self,
+        vault_address: str,
+        timeseries_limit: int = 2000,
+        flow_limit: int = 2000,
+        allocation_limit: int = 100,
+    ) -> MetaMorphoVaultPagePayload:
+        ch = get_clickhouse_client()
+        return _query_metamorpho_vault_page(
+            ch,
+            vault_address,
+            _api_page_size(timeseries_limit),
+            _api_page_size(flow_limit),
+            _api_page_size(allocation_limit),
+        )
 
     @strawberry.field(name="metamorphoVaultAllocations")
     def metamorpho_vault_allocations(
@@ -6138,6 +8065,72 @@ graphql_app = GraphQLRouter(
     allow_queries_via_get=GRAPHQL_ALLOW_GET_QUERIES,
 )
 app = FastAPI(title="RLD ClickHouse GraphQL")
+
+_COMPOUND_V3_GRAPHQL_RESPONSE_CACHE_TTL_SEC = 60
+_compound_v3_graphql_response_cache: dict[str, tuple[float, bytes, dict[str, str]]] = {}
+_compound_v3_graphql_response_cache_lock = threading.Lock()
+
+
+def _compound_v3_graphql_response_cache_key(
+    path: str,
+    payload: dict[str, object],
+) -> Optional[str]:
+    query = str(payload.get("query") or "")
+    variables = payload.get("variables") or {}
+    if not isinstance(variables, dict):
+        variables = {}
+    is_compound_protocol_page = "compoundV3ProtocolPage" in query
+    is_compound_market_page = (
+        "marketPage" in query
+        and str(variables.get("protocol") or "").upper() == COMPOUND_V3_MARKET
+    )
+    if not is_compound_protocol_page and not is_compound_market_page:
+        return None
+    normalized = json.dumps(
+        {
+            "path": path,
+            "query": query,
+            "variables": variables,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _compound_v3_graphql_response_cache_get(
+    key: str,
+) -> Optional[tuple[bytes, dict[str, str]]]:
+    with _compound_v3_graphql_response_cache_lock:
+        entry = _compound_v3_graphql_response_cache.get(key)
+        if entry is None:
+            return None
+        ts, body, headers = entry
+        if time.time() - ts > _COMPOUND_V3_GRAPHQL_RESPONSE_CACHE_TTL_SEC:
+            del _compound_v3_graphql_response_cache[key]
+            return None
+        return body, dict(headers)
+
+
+def _compound_v3_graphql_response_cache_set(
+    key: str,
+    body: bytes,
+    headers: dict[str, str],
+) -> None:
+    with _compound_v3_graphql_response_cache_lock:
+        _compound_v3_graphql_response_cache[key] = (time.time(), body, dict(headers))
+        if len(_compound_v3_graphql_response_cache) > 200:
+            now = time.time()
+            expired = [
+                k
+                for k, (t, _, _) in _compound_v3_graphql_response_cache.items()
+                if now - t > _COMPOUND_V3_GRAPHQL_RESPONSE_CACHE_TTL_SEC
+            ]
+            for k in expired:
+                _compound_v3_graphql_response_cache.pop(k, None)
+
+
 _CORS_ORIGINS = _parse_cors_origins(
     "API_CORS_ORIGINS",
     [
@@ -6164,6 +8157,7 @@ async def analytics_api_guard(request: Request, call_next):
     start = time.monotonic()
     response = None
     path = request.url.path
+    graphql_response_cache_key = None
     try:
         if path in {"/status", "/healthz", "/metrics"} and API_PROTECT_ADMIN_ENDPOINTS:
             admin_token = _request_admin_token(request)
@@ -6201,8 +8195,43 @@ async def analytics_api_guard(request: Request, call_next):
                     if depth > GRAPHQL_MAX_DEPTH:
                         response = _graphql_error("GraphQL query is too deep", "QUERY_TOO_DEEP", 400)
                         return response
+                    graphql_response_cache_key = _compound_v3_graphql_response_cache_key(path, payload)
+                    if graphql_response_cache_key:
+                        cached = _compound_v3_graphql_response_cache_get(graphql_response_cache_key)
+                        if cached is not None:
+                            cached_body, cached_headers = cached
+                            cached_headers["X-RLD-Cache"] = "HIT"
+                            response = Response(
+                                content=cached_body,
+                                status_code=200,
+                                headers=cached_headers,
+                                media_type="application/json",
+                            )
+                            return response
 
         response = await call_next(request)
+        if (
+            graphql_response_cache_key
+            and response.status_code == 200
+            and request.method.upper() == "POST"
+        ):
+            body = b""
+            async for chunk in response.body_iterator:
+                body += chunk
+            headers = {
+                key: value
+                for key, value in response.headers.items()
+                if key.lower() != "content-length"
+            }
+            if b'"errors"' not in body[:512]:
+                _compound_v3_graphql_response_cache_set(graphql_response_cache_key, body, headers)
+            headers["X-RLD-Cache"] = "MISS"
+            response = Response(
+                content=body,
+                status_code=response.status_code,
+                headers=headers,
+                media_type="application/json",
+            )
         return response
     finally:
         if response is not None:

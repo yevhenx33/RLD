@@ -32,6 +32,17 @@ const formatApy = (value) => {
   return `${pct.toFixed(2)}%`;
 };
 
+const formatLltvRange = (market) => {
+  const min = Number(market?.lltvMin);
+  const max = Number(market?.lltvMax);
+  if (Number.isFinite(min) && Number.isFinite(max) && max > 0) {
+    if (Math.abs(max - min) < 0.000001) return `${(max * 100).toFixed(2)}%`;
+    return `${(min * 100).toFixed(2)}%-${(max * 100).toFixed(2)}%`;
+  }
+  const lltv = Number(market?.lltv);
+  return Number.isFinite(lltv) && lltv > 0 ? `${(lltv * 100).toFixed(2)}%` : "-";
+};
+
 export default function ProtocolMarkets() {
   const { protocol: protocolSlug } = useParams();
   const navigate = useNavigate();
@@ -67,6 +78,8 @@ export default function ProtocolMarkets() {
       loanIcon: getTokenIcon(r.symbol),
       loanName: getTokenName(r.symbol),
       symbol: r.symbol,
+      marketLabel: r.collateralSymbol ? `${r.collateralSymbol}-${r.symbol}` : r.symbol,
+      marketSubLabel: r.collateralSymbol ? "Collateral-Debt" : getTokenName(r.symbol),
       protocol: r.protocol,
       supplyUsd: r.supplyUsd || 0,
       borrowUsd: r.borrowUsd || 0,
@@ -74,6 +87,8 @@ export default function ProtocolMarkets() {
       borrowApy: r.borrowApy || 0,
       utilization: r.utilization || 0,
       lltv: r.lltv || 0,
+      lltvMin: r.lltvMin,
+      lltvMax: r.lltvMax,
       isTrapped: Boolean(r.isTrapped),
     }));
   }, [data]);
@@ -89,7 +104,7 @@ export default function ProtocolMarkets() {
       return key;
     });
     setCurrentPage(1);
-  }, []);
+  }, [setCurrentPage, setSortDir, setSortKey]);
 
   // --- Memoized sorted + paginated ---
   const sortedData = useMemo(() => {
@@ -122,6 +137,7 @@ export default function ProtocolMarkets() {
     { key: "supplyApy", label: "Supply APY" },
     { key: "borrowApy", label: "Borrow APY" },
     { key: "utilization", label: "Utilization" },
+    { key: "lltv", label: "LLTV" },
   ];
 
   return (
@@ -231,19 +247,29 @@ export default function ProtocolMarkets() {
                         <div className="flex items-center gap-4">
                           <div className="w-10 h-10 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-2 group-hover:border-white/30 transition-colors">
                             <img
-                              src={m.loanIcon}
-                              alt={m.symbol}
+                              src={m.collateralIcon || m.loanIcon}
+                              alt={m.collateralSymbol || m.symbol}
                               className="w-full h-full object-contain rounded-full"
                               loading="lazy"
                               onError={(e) => {
-                                e.target.src = `https://ui-avatars.com/api/?name=${m.symbol}&background=1a1a2e&color=fff&size=64&bold=true&font-size=0.4`;
+                                e.target.src = `https://ui-avatars.com/api/?name=${m.collateralSymbol || m.symbol}&background=1a1a2e&color=fff&size=64&bold=true&font-size=0.4`;
                               }}
                             />
                           </div>
-                          <div>
-                            <div className="text-base font-bold text-white tracking-tight">{m.symbol}</div>
-                            <div className="text-sm text-gray-600 uppercase tracking-widest font-bold">{m.loanName}</div>
-                          </div>
+                          {m.collateralSymbol && (
+                            <div className="w-8 h-8 rounded-full bg-[#151515] border border-white/10 flex items-center justify-center p-1.5 -ml-7 mt-5 group-hover:border-white/30 transition-colors">
+                              <img
+                                src={m.loanIcon}
+                                alt={m.symbol}
+                                className="w-full h-full object-contain rounded-full"
+                                loading="lazy"
+                                onError={(e) => {
+                                  e.target.src = `https://ui-avatars.com/api/?name=${m.symbol}&background=1a1a2e&color=fff&size=64&bold=true&font-size=0.4`;
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div className="flex min-h-10 items-center text-[17px] font-bold text-white leading-none tracking-tight">{m.marketLabel}</div>
                         </div>
                       </td>
                       <td className="p-5 text-center">
@@ -269,6 +295,11 @@ export default function ProtocolMarkets() {
                       <td className="p-5 text-center">
                         <div className={`text-sm font-mono font-bold tracking-widest ${m.utilization >= 0.995 ? "text-red-400" : "text-purple-400"}`}>
                           {(m.utilization * 100).toFixed(2)}%
+                        </div>
+                      </td>
+                      <td className="p-5 text-center">
+                        <div className="text-sm font-mono font-bold tracking-widest text-gray-300">
+                          {formatLltvRange(m)}
                         </div>
                       </td>
                     </tr>

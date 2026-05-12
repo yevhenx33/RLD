@@ -24,6 +24,7 @@ TOKENS = {
     "48f9e38f3070ad8945dfeae3fa70987722e3d89c": ("iUSD", 18),
     "a3931d71877c0e7a3148cb7eb4463524fec27fbd": ("sUSDS", 18),
     "dc035d45d973e3ec169d2276ddab16f1e407384f": ("USDS", 18),
+    "5c5b196abe0d54485975d1ec29617d42d9198326": ("sdeUSD", 18),
     "3d7d6fdf07ee548b939a80edbc9b2256d0cdc003": ("srUSDe", 18),
     "c58d044404d8b14e953c115e67823784dea53d8f": ("jrUSDe", 18),
     "5086bf358635b81d8c47c66d1c8b9e567db70c72": ("reUSD", 18),
@@ -72,6 +73,9 @@ TOKENS = {
     "619d75e3b790ebc21c289f2805bb7177a7d732e2": ("PT-srUSDe-25JUN2026", 18),
     "aebf0bb9f57e89260d57f31af34eb58657d96ce0": ("PT-USDe-7MAY2026", 18),
     "9db38d74a0d29380899ad354121dfb521adb0548": ("PT-USDG-28MAY2026", 6),
+    "3eaa0f0f0a5d3d595ae4e4b0d27f439d01c3e7b2": ("PT-reUSD-25JUN2026", 6),
+    "3365554a61ceff74a76528f9e86c1e87946d16a5": ("PT-apyUSD-18JUN2026", 18),
+    "92a6a01b07984de46c24e8eba248449beb8b1dcb": ("PT-apxUSD-18JUN2026", 18),
     # ETH derivatives
     "c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": ("WETH", 18),
     "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": ("ETH", 18),
@@ -91,6 +95,9 @@ TOKENS = {
     "edfa23602d0ec14714057867a78d01e94176bea0": ("osETH_aave", 18),  # Aave-listed osETH
     "d11c452fc99cf405034ee446803b6f6c1f6d5ed8": ("tETH", 18),
     "5c7e299cf531eb66f2a1df637d37abb78e6200c7": ("WOETH", 18),
+    "d9a442856c234a39a81a089c06451ebaa4306a72": ("pufETH", 18),
+    "dcee70654261af21c44c093c300ed3bb97b78192": ("wOETH", 18),
+    "fae103dc9cf190ed75350761e95403b7b8afa6c0": ("rswETH", 18),
     "7122985931b4d0b1aa7cc69dc3e466fc6c7bca44": ("KSETH", 18),
     "8c1bed5b9a0928467c9b1341da1d7bd5e10b6549": ("lsETH", 18),
     "2416092f143378750bb29b79ed961ab195cceea5": ("ezSOL", 9),
@@ -102,6 +109,7 @@ TOKENS = {
     "657e8c867d8b37dcc18fa4caead9c45eb088c642": ("eBTC", 8),
     "c96de26018a54d51c097160568752c4e3bd6c364": ("FBTC", 8),
     "b0f70c0bd6fd87dbeb7c10dc692a2a6106817072": ("BTC.b", 8),
+    "f469fbd2abcd6b9de8e169d128226c0fc90a012e": ("pumpBTC", 8),
     # Gold
     "45804880de22913dafe09f4980848ece6ecbaf78": ("PAXG", 18),
     "68749665ff8d2d112fa859aa293f07a622782f38": ("XAUt", 6),
@@ -124,14 +132,22 @@ TOKENS = {
     "530824da86689c9c17cdc2871ff29b058345b44a": ("STKAAVE", 18),
     "a663b02cf0a4b149d2ad41910cb81e23e1c41c32": ("sFRX", 18),
     "6f40d4a6237c257fff2db00fa0510deeecd303eb": ("FLUID", 18),
+    "56072c95faa701256059aa122697b133aded9279": ("SKY", 18),
+    "c00e94cb662c3520282e6f5717214004a7f26888": ("COMP", 18),
     "4956b52ae2ff65d74ca2d61207523288e4528f96": ("RLP", 18),
+    "d3fd63209fa2d55b07a0f6db36c2f43900be3094": ("wsrUSD", 18),
+    "c26a6fa2c37b38e549a4a1807543801db684f99c": ("AA_FalconXUSDC", 18),
+    "88887be419578051ff9f4eb6c858a951921d8888": ("stcUSD", 18),
+    "99cd4ec3f88a45940936f469e4bb72a2a701eeb9": ("stUSDS", 18),
+    "890a5122aa1da30fec4286de7904ff808f0bd74a": ("msY", 18),
+    "3d4762b4bb4b4c922377fe5b887e900d7fb64cdf": ("USDT", 6),
 }
 
 # ── Asset classification ───────────────────────────────────
 STABLES = {
     "USDC", "USDT", "DAI", "USDe", "USDtb", "GHO", "USR", "fxUSD", "USD0",
     "USD0pp", "deUSD", "iUSD", "sUSDS", "USDS", "srUSDe", "jrUSDe", "reUSD",
-    "csUSDL", "wstUSR", "syrupUSDC", "syrupUSDT", "PYUSD", "sDAI", "sFRAX",
+    "csUSDL", "wstUSR", "syrupUSDC", "syrupUSDT", "PYUSD", "sdeUSD", "sDAI", "sFRAX",
     "LUSD", "FRAX", "crvUSD", "wUSDM", "Paxos",
     "sUSDe",
     # Additional stablecoins
@@ -146,13 +162,13 @@ STABLES = {
 ETH_ASSETS = {
     "WETH", "ETH", "wstETH", "rETH", "cbETH", "weETH", "weETHs", "ezETH",
     "rsETH", "osETH", "osETH_aave", "mETH", "stETH", "eETH", "frxETH",
-    "sfrxETH", "WOETH", "KSETH", "lsETH",
+    "sfrxETH", "WOETH", "wOETH", "pufETH", "rswETH", "KSETH", "lsETH",
     "tETH", "TETH",
     # Uppercase aliases
     "WSTETH", "WEETH", "MSETH",
 }
 
-BTC_ASSETS = {"WBTC", "cbBTC", "LBTC", "tBTC", "eBTC", "CBBTC", "FBTC", "BTC.b", "BTC.B"}
+BTC_ASSETS = {"WBTC", "cbBTC", "LBTC", "tBTC", "eBTC", "CBBTC", "FBTC", "BTC.b", "BTC.B", "pumpBTC"}
 
 # Fluid-specific: approximate exchange rates vs base asset for LSDs
 PRICE_MULTIPLIERS = {

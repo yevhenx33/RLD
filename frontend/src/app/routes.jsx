@@ -15,6 +15,7 @@ const ProtocolMarketsPage = lazy(
 );
 const AaveMarketPage = lazy(() => import("../pages/app/markets/AaveMarketPage"));
 const MorphoMarketPage = lazy(() => import("../pages/app/markets/MorphoMarketPage"));
+const MetaMorphoVaultPage = lazy(() => import("../pages/app/markets/MetaMorphoVaultPage"));
 const FluidMarketPage = lazy(() => import("../pages/app/markets/FluidMarketPage"));
 const FluidVaultPage = lazy(() => import("../pages/app/markets/FluidVaultPage"));
 const EulerMarketPage = lazy(() => import("../pages/app/markets/EulerMarketPage"));
@@ -31,6 +32,7 @@ const PoolLPPage = lazy(() => import("../pages/app/PoolLPPage"));
 const PoolsDirectoryPage = lazy(() => import("../pages/app/PoolsDirectoryPage"));
 const TwammOrdersPage = lazy(() => import("../pages/app/TwammOrdersPage"));
 const LendingDataPage = lazy(() => import("../pages/app/LendingDataPage"));
+const AaveProtocolPage = lazy(() => import("../pages/app/protocols/AaveProtocolPage"));
 
 function LegacyExploreProtocolRedirect() {
   const { protocol } = useParams();
@@ -94,16 +96,23 @@ export default function AppRoutes() {
 
       <Route element={<ApiShell />}>
         <Route path="/data" element={renderLazy(LendingDataPage)} />
+        <Route path="/data/aave" element={renderLazy(AaveProtocolPage)} />
+        <Route path="/data/spark" element={renderLazy(AaveProtocolPage)} />
+        <Route path="/data/morpho" element={renderLazy(AaveProtocolPage)} />
+        <Route path="/data/euler" element={renderLazy(AaveProtocolPage)} />
+        <Route path="/data/compound-v3" element={renderLazy(AaveProtocolPage)} />
         <Route
           path="/data/:protocol"
           element={renderLazy(ProtocolMarketsPage)}
         />
         <Route path="/data/aave/:marketId" element={renderLazy(AaveMarketPage)} />
         <Route path="/data/spark/:marketId" element={renderLazy(AaveMarketPage)} />
+        <Route path="/data/morpho/vault/:vaultAddress" element={renderLazy(MetaMorphoVaultPage)} />
         <Route path="/data/morpho/:marketId" element={renderLazy(MorphoMarketPage)} />
         <Route path="/data/fluid/vault/:vaultId" element={renderLazy(FluidVaultPage)} />
         <Route path="/data/fluid/:marketId" element={renderLazy(FluidMarketPage)} />
         <Route path="/data/euler/:marketId" element={renderLazy(EulerMarketPage)} />
+        <Route path="/data/compound-v3/:marketId" element={renderLazy(AaveMarketPage)} />
         <Route path="/data/pendle/:marketId" element={renderLazy(PendleMarketPage)} />
         <Route path="/data/:protocol/:marketId" element={renderLazy(UnsupportedMarketPage)} />
       </Route>

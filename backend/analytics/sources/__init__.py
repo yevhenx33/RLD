@@ -4,6 +4,7 @@ from .chainlink import ChainlinkSource
 from .aave_v3 import AaveV3Source, SparkLendSource
 from analytics.aave_accounts import AaveAccountSource
 from .morpho import MorphoSource
+from .compound import CompoundV2Source, CompoundV3Source
 from .lido import LidoRebaseSource
 from .custom_feeds import StaticPegsSource
 from .sofr import SofrSource
@@ -17,6 +18,8 @@ __all__ = [
     "SparkLendSource",
     "AaveAccountSource",
     "MorphoSource",
+    "CompoundV2Source",
+    "CompoundV3Source",
     "LidoRebaseSource",
     "StaticPegsSource",
     "SofrSource",
