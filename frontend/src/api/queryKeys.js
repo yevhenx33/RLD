@@ -24,11 +24,56 @@ export const queryKeys = {
     "api.lending-page.v1",
     { displayIn, flowWindowDays },
   ],
-  apiProtocolMarkets: (url, protocol) => [url, "api.protocol-markets.v1", { protocol }],
+  apiProtocolMarkets: (url, protocol, maxBorrowApy = null) => [
+    url,
+    "api.protocol-markets.v1",
+    { protocol, maxBorrowApy },
+  ],
+  apiCompoundV3ProtocolPage: (url, flowWindowDays, timeseriesLimit, assetSymbols) => [
+    url,
+    "api.compound-v3-protocol-page.v1",
+    { flowWindowDays, timeseriesLimit, assetSymbols },
+  ],
+  apiMetaMorphoVaults: (url, limit = 2000) => [
+    url,
+    "api.metamorpho-vaults.v1",
+    { limit },
+  ],
+  apiMetaMorphoVaultPage: (url, vaultAddress) =>
+    vaultAddress
+      ? [url, "api.metamorpho-vault-page.v1", { vaultAddress: vaultAddress.toLowerCase() }]
+      : null,
   apiMarketPage: (url, protocol, marketId) =>
     protocol && marketId ? [url, "api.market-page.v1", { protocol, marketId }] : null,
   apiPendleMarketPage: (url, marketId) =>
     marketId ? [url, "api.pendle-market-page.v1", { marketId }] : null,
+  apiProtocolApyHistory: (url, protocol, resolution, limit, maxBorrowApy = null) =>
+    protocol
+      ? [url, "api.protocol-apy-history.v1", { protocol, resolution, limit, maxBorrowApy }]
+      : null,
+  apiProtocolAssetApyHistory: (url, protocol, symbols, resolution, limit, maxBorrowApy = null) =>
+    protocol
+      ? [
+        url,
+        "api.protocol-asset-apy-history.v1",
+        { protocol, symbols, resolution, limit, maxBorrowApy },
+      ]
+      : null,
+  apiMorphoCuratorFlows: (url, flowWindowDays, topN, maxBorrowApy = null) => [
+    url,
+    "api.morpho-curator-flows.v1",
+    { flowWindowDays, topN, maxBorrowApy },
+  ],
+  apiEulerChannelFlows: (url, flowWindowDays, topN, maxBorrowApy = null) => [
+    url,
+    "api.euler-channel-flows.v1",
+    { flowWindowDays, topN, maxBorrowApy },
+  ],
+  apiMorphoCuratorAllocationHistory: (url, resolution, limit, topN, maxBorrowApy = null) => [
+    url,
+    "api.morpho-curator-allocation-history.v1",
+    { resolution, limit, topN, maxBorrowApy },
+  ],
 
   twammDashboard: (url, marketId) =>
     marketId ? [url, "simulation.twamm-dashboard.v1", { marketId }] : null,

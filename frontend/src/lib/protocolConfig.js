@@ -41,6 +41,13 @@ const PROTOCOLS = {
     supportsMarketPage: true,
     stripRoutePrefix: true,
   },
+  "compound-v3": {
+    slug: "compound-v3",
+    apiProtocol: "COMPOUND_V3_MARKET",
+    displayName: "Compound V3",
+    supportsMarketPage: true,
+    stripRoutePrefix: true,
+  },
 };
 
 const BY_API_PROTOCOL = Object.values(PROTOCOLS).reduce((acc, config) => {

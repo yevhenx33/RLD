@@ -11,6 +11,7 @@ from analytics.oracle_snapshots import ensure_oracle_snapshot_tables
 from analytics.fluid_full_coverage import ensure_fluid_full_coverage_tables, seed_core_fluid_contracts
 from analytics.euler_schema import ensure_euler_tables
 from analytics.aave_accounts import ensure_aave_account_tables
+from analytics.sources.compound import ensure_compound_tables
 from analytics.streams.state import ensure_publisher_state_tables
 
 
@@ -28,6 +29,8 @@ EULER_TIMESERIES_TABLE = "euler_timeseries"
 FLUID_TIMESERIES_TABLE = "fluid_timeseries"
 AAVE_TIMESERIES_TABLE = "aave_timeseries"
 SPARK_TIMESERIES_TABLE = "spark_timeseries"
+COMPOUND_V2_TIMESERIES_TABLE = "compound_v2_timeseries"
+COMPOUND_V3_TIMESERIES_TABLE = "compound_v3_timeseries"
 
 
 def _ensure_raw_event_table(ch, table: str) -> None:
@@ -178,6 +181,7 @@ def ensure_schema(ch) -> None:
     ensure_morpho_oracle_snapshot_tables(ch)
     ensure_oracle_snapshot_tables(ch)
     ensure_aave_account_tables(ch)
+    ensure_compound_tables(ch)
     ensure_publisher_state_tables(ch)
     ensure_fluid_full_coverage_tables(ch)
     seed_core_fluid_contracts(ch)
@@ -543,6 +547,7 @@ def ensure_schema(ch) -> None:
             last_borrow_rate_wad String,
             last_update_timestamp DateTime DEFAULT toDateTime(0),
             last_event_block UInt64,
+            last_event_log_index UInt32 DEFAULT 0,
             last_event_timestamp DateTime,
             updated_at DateTime DEFAULT now()
         ) ENGINE = ReplacingMergeTree(updated_at)
@@ -550,6 +555,27 @@ def ensure_schema(ch) -> None:
         """
     )
     ch.command("ALTER TABLE morpho_market_state ADD COLUMN IF NOT EXISTS last_update_timestamp DateTime DEFAULT toDateTime(0)")
+    ch.command("ALTER TABLE morpho_market_state ADD COLUMN IF NOT EXISTS last_event_log_index UInt32 DEFAULT 0")
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS morpho_market_state_history (
+            market_id String,
+            total_supply_assets String,
+            total_supply_shares String,
+            total_borrow_assets String,
+            total_borrow_shares String,
+            collateral_assets String,
+            fee_wad String,
+            last_borrow_rate_wad String,
+            last_update_timestamp DateTime DEFAULT toDateTime(0),
+            last_event_block UInt64,
+            last_event_log_index UInt32 DEFAULT 0,
+            last_event_timestamp DateTime,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY (market_id, last_event_block, last_event_log_index)
+        """
+    )
     ch.command(
         """
         CREATE TABLE IF NOT EXISTS morpho_market_positions (
@@ -559,10 +585,28 @@ def ensure_schema(ch) -> None:
             borrow_shares String,
             collateral_assets String,
             last_event_block UInt64,
+            last_event_log_index UInt32 DEFAULT 0,
             last_event_timestamp DateTime,
             updated_at DateTime DEFAULT now()
         ) ENGINE = ReplacingMergeTree(updated_at)
         ORDER BY (market_id, user)
+        """
+    )
+    ch.command("ALTER TABLE morpho_market_positions ADD COLUMN IF NOT EXISTS last_event_log_index UInt32 DEFAULT 0")
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS morpho_market_position_history (
+            market_id String,
+            user String,
+            supply_shares String,
+            borrow_shares String,
+            collateral_assets String,
+            last_event_block UInt64,
+            last_event_log_index UInt32 DEFAULT 0,
+            last_event_timestamp DateTime,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY (market_id, user, last_event_block, last_event_log_index)
         """
     )
     ch.command(
@@ -927,11 +971,11 @@ def ensure_schema(ch) -> None:
         FROM (
             SELECT
                 toStartOfWeek(timestamp) AS day,
-                splitByChar('_', protocol)[1] AS clean_protocol,
+                multiIf(protocol = 'COMPOUND_V2_MARKET', 'COMPOUND_V2', protocol = 'COMPOUND_V3_MARKET', 'COMPOUND_V3', splitByChar('_', protocol)[1]) AS clean_protocol,
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM {MARKET_TIMESERIES_TABLE}
-            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET', 'COMPOUND_V2_MARKET', 'COMPOUND_V3_MARKET')
               AND entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY day, clean_protocol, entity_id
         )
@@ -1048,11 +1092,11 @@ def rebuild_aggregates(ch) -> None:
         FROM (
             SELECT
                 toStartOfWeek(timestamp) AS day,
-                splitByChar('_', protocol)[1] AS clean_protocol,
+                multiIf(protocol = 'COMPOUND_V2_MARKET', 'COMPOUND_V2', protocol = 'COMPOUND_V3_MARKET', 'COMPOUND_V3', splitByChar('_', protocol)[1]) AS clean_protocol,
                 entity_id,
                 argMaxState(toFloat64(supply_usd), inserted_at) AS supply_usd_state
             FROM {MARKET_TIMESERIES_TABLE}
-            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET')
+            WHERE protocol IN ('AAVE_MARKET', 'SPARK_MARKET', 'EULER_MARKET', 'FLUID_MARKET', 'MORPHO_MARKET', 'COMPOUND_V2_MARKET', 'COMPOUND_V3_MARKET')
               AND entity_id != 'AAVE_MARKET_SYNTHETIC'
             GROUP BY day, clean_protocol, entity_id
         )

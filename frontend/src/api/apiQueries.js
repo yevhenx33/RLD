@@ -51,6 +51,7 @@ export const LENDING_DATA_QUERY = `
         eulerTvl
         fluidTvl
         morphoTvl
+        compoundV3Tvl
         averageSupplyApy
         averageBorrowApy
         sofrRate
@@ -78,8 +79,8 @@ export const LENDING_DATA_QUERY = `
 `;
 
 export const PROTOCOL_MARKETS_QUERY = `
-  query ProtocolMarketsByProtocol($protocol: String!) {
-    protocolMarketsPage(protocol: $protocol) {
+  query ProtocolMarketsByProtocol($protocol: String!, $maxBorrowApy: Float) {
+    protocolMarketsPage(protocol: $protocol, maxBorrowApy: $maxBorrowApy) {
       freshness { ready status generatedAt }
       stats {
         totalSupplyUsd
@@ -100,7 +101,152 @@ export const PROTOCOL_MARKETS_QUERY = `
         utilization
         collateralSymbol
         lltv
+        lltvMin
+        lltvMax
         isTrapped
+      }
+    }
+  }
+`;
+
+export const COMPOUND_V3_PROTOCOL_PAGE_QUERY = `
+  query CompoundV3ProtocolPage($flowWindowDays: Int!, $timeseriesLimit: Int!, $assetSymbols: [String!]) {
+    compoundV3ProtocolPage(flowWindowDays: $flowWindowDays, timeseriesLimit: $timeseriesLimit, assetSymbols: $assetSymbols) {
+      freshness { ready status generatedAt }
+      stats {
+        totalSupplyUsd
+        totalBorrowUsd
+        averageUtilization
+        averageSupplyApy
+        averageBorrowApy
+        marketCount
+      }
+      rows {
+        entityId
+        symbol
+        protocol
+        supplyUsd
+        borrowUsd
+        supplyApy
+        borrowApy
+        utilization
+        collateralSymbol
+        lltv
+        lltvMin
+        lltvMax
+        isTrapped
+      }
+      apyHistory {
+        timestamp
+        averageSupplyApy
+        averageBorrowApy
+        supplyUsd
+        borrowUsd
+        sofrRate
+      }
+      assetApyHistory {
+        timestamp
+        symbol
+        supplyApy
+        borrowApy
+        sofrRate
+      }
+      alluvialFlows {
+        protocol
+        action
+        asset
+        valueUsd
+      }
+    }
+  }
+`;
+
+export const METAMORPHO_VAULTS_QUERY = `
+  query MetaMorphoVaults($limit: Int!) {
+    metamorphoVaults(limit: $limit) {
+      vaultAddress
+      name
+      assetSymbol
+      assetAddress
+      curatorAddress
+      curator
+      totalAssets
+      totalSupply
+      sharePriceUsd
+      sharePriceAssets
+      tvlUsd
+      apy
+      exposure {
+        symbol
+        valueUsd
+      }
+      isCanonicalTvl
+      lastSnapshotTimestamp
+    }
+  }
+`;
+
+export const METAMORPHO_VAULT_PAGE_QUERY = `
+  query MetaMorphoVaultPage($vaultAddress: String!, $timeseriesLimit: Int!, $flowLimit: Int!, $allocationLimit: Int!) {
+    metamorphoVaultPage(
+      vaultAddress: $vaultAddress
+      timeseriesLimit: $timeseriesLimit
+      flowLimit: $flowLimit
+      allocationLimit: $allocationLimit
+    ) {
+      freshness { ready status generatedAt }
+      vault {
+        vaultAddress
+        name
+        assetSymbol
+        assetAddress
+        curatorAddress
+        curator
+        totalAssets
+        totalSupply
+        sharePriceUsd
+        tvlUsd
+        apy
+        exposure {
+          symbol
+          valueUsd
+        }
+        isCanonicalTvl
+        lastSnapshotTimestamp
+      }
+      history {
+        timestamp
+        totalDepositsUsd
+        allocatedUsd
+        liquidityUsd
+        utilization
+        sharePriceUsd
+        netApy
+      }
+      flowChart {
+        timestamp
+        assetSymbol
+        depositUsd
+        withdrawUsd
+        netFlowUsd
+      }
+      flowLinks {
+        action
+        asset
+        valueUsd
+      }
+      exposures {
+        marketId
+        marketLabel
+        loanSymbol
+        collateralSymbol
+        suppliedUsd
+        allocationShare
+        liquidityUsd
+        supplyApy
+        borrowApy
+        utilization
+        lltv
       }
     }
   }
@@ -158,7 +304,7 @@ export const MARKET_PAGE_QUERY = `
       }
       allocationColumnar {
         timestamps
-        vaults { id address name }
+        vaults { id address name curator }
         suppliedUsd
       }
       vaultBreakdown {
@@ -171,6 +317,20 @@ export const MARKET_PAGE_QUERY = `
         borrowApy
         supplyUsd
         borrowUsd
+      }
+      collateralBreakdown {
+        asset
+        symbol
+        priceFeed
+        borrowCollateralFactor
+        liquidateCollateralFactor
+        liquidationFactor
+        supplyCap
+        supplyCapTokens
+        totalCollateral
+        totalCollateralTokens
+        collateralUsd
+        borrowEnabled
       }
     }
   }
@@ -261,5 +421,65 @@ export const HISTORICAL_RATES_QUERY = `
 export const SUSDE_QUERY = `
   query SusdeLatest {
     latestRates { susde }
+  }
+`;
+
+export const PROTOCOL_APY_HISTORY_QUERY = `
+  query ProtocolApyHistory($protocol: String!, $resolution: String!, $limit: Int!, $maxBorrowApy: Float) {
+    protocolApyHistory(protocol: $protocol, resolution: $resolution, limit: $limit, maxBorrowApy: $maxBorrowApy) {
+      timestamp
+      averageSupplyApy
+      averageBorrowApy
+      supplyUsd
+      borrowUsd
+      sofrRate
+    }
+  }
+`;
+
+export const PROTOCOL_ASSET_APY_HISTORY_QUERY = `
+  query ProtocolAssetApyHistory($protocol: String!, $symbols: [String!]!, $resolution: String!, $limit: Int!, $maxBorrowApy: Float) {
+    protocolAssetApyHistory(protocol: $protocol, symbols: $symbols, resolution: $resolution, limit: $limit, maxBorrowApy: $maxBorrowApy) {
+      timestamp
+      symbol
+      supplyApy
+      borrowApy
+      sofrRate
+    }
+  }
+`;
+
+export const MORPHO_CURATOR_FLOWS_QUERY = `
+  query MorphoCuratorFlows($flowWindowDays: Int!, $topN: Int!, $maxBorrowApy: Float) {
+    morphoCuratorFlows(flowWindowDays: $flowWindowDays, topN: $topN, maxBorrowApy: $maxBorrowApy) {
+      action
+      asset
+      curator
+      curatorAddress
+      valueUsd
+    }
+  }
+`;
+
+export const EULER_CHANNEL_FLOWS_QUERY = `
+  query EulerChannelFlows($flowWindowDays: Int!, $topN: Int!, $maxBorrowApy: Float) {
+    eulerChannelFlows(flowWindowDays: $flowWindowDays, topN: $topN, maxBorrowApy: $maxBorrowApy) {
+      action
+      asset
+      curator
+      curatorAddress
+      valueUsd
+    }
+  }
+`;
+
+export const MORPHO_CURATOR_ALLOCATION_HISTORY_QUERY = `
+  query MorphoCuratorAllocationHistory($resolution: String!, $limit: Int!, $topN: Int!, $maxBorrowApy: Float) {
+    morphoCuratorAllocationHistory(resolution: $resolution, limit: $limit, topN: $topN, maxBorrowApy: $maxBorrowApy) {
+      timestamp
+      curator
+      curatorAddress
+      suppliedUsd
+    }
   }
 `;
