@@ -232,10 +232,27 @@ def _asset_map_sql() -> str:
     return ", ".join(rows)
 
 
+def _quoted_values(values: list[str]) -> str:
+    return ", ".join("'" + value.replace("'", "''") + "'" for value in values)
+
+
 def sync_asset_price_observations(ch) -> dict[str, int]:
     ensure_asset_price_tables(ch)
     feed_map = _feed_map_sql()
     asset_map = _asset_map_sql()
+    snapshot_sources = [
+        str(row[0])
+        for row in ch.query("SELECT DISTINCT source FROM oracle_snapshots WHERE source != ''").result_rows
+        if row and row[0]
+    ]
+    delete_filters = ["source = 'CHAINLINK'"]
+    if snapshot_sources:
+        delete_filters.append(f"source IN ({_quoted_values(snapshot_sources)})")
+    ch.command(
+        "ALTER TABLE asset_price_observations DELETE WHERE "
+        + " OR ".join(delete_filters)
+        + " SETTINGS mutations_sync = 2"
+    )
     chainlink_before = int(ch.command("SELECT count() FROM asset_price_observations WHERE source = 'CHAINLINK'") or 0)
     snapshot_before = int(ch.command("SELECT count() FROM asset_price_observations WHERE source != 'CHAINLINK'") or 0)
     ch.command(
