@@ -100,6 +100,49 @@ def ensure_euler_tables(ch) -> None:
     )
     ch.command(
         """
+        CREATE TABLE IF NOT EXISTS euler_vault_market_params (
+            vault_address String,
+            block_number UInt64,
+            timestamp DateTime,
+            tx_hash String,
+            log_index UInt32,
+            interest_rate_model String,
+            supply_cap_raw String,
+            borrow_cap_raw String,
+            config_flags UInt32,
+            interest_fee UInt16,
+            max_liquidation_discount UInt16,
+            liquidation_cool_off_time UInt16,
+            hook_target String,
+            hooked_ops UInt32,
+            oracle String,
+            unit_of_account String,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY vault_address
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS euler_vault_ltv_config (
+            vault_address String,
+            collateral_address String,
+            block_number UInt64,
+            timestamp DateTime,
+            tx_hash String,
+            log_index UInt32,
+            borrow_ltv UInt16,
+            liquidation_ltv UInt16,
+            initial_liquidation_ltv UInt16,
+            target_timestamp UInt64,
+            ramp_duration UInt32,
+            updated_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(updated_at)
+        ORDER BY (vault_address, collateral_address)
+        """
+    )
+    ch.command(
+        """
         CREATE TABLE IF NOT EXISTS euler_vault_metrics (
             timestamp DateTime,
             vault_address String,

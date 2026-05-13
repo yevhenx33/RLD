@@ -571,7 +571,59 @@ def _backfill_vault_events(ch, rpc: RpcClient, args, head: int) -> int:
     return written_total
 
 
-def _position_allocations(ch, vault: str, asset_decimals: int, asset_price: float) -> dict[str, dict[str, Any]]:
+def _position_allocations(
+    ch,
+    vault: str,
+    asset_decimals: int,
+    asset_price: float,
+    block_number: int | None = None,
+    timestamp: dt.datetime | None = None,
+) -> dict[str, dict[str, Any]]:
+    parameters: dict[str, Any] = {"vault": vault.lower()}
+    if block_number is not None:
+        parameters["block_number"] = int(block_number)
+        parameters["timestamp"] = timestamp or dt.datetime.utcnow()
+        query = """
+        SELECT pos.market_id,
+               toUInt256OrZero(pos.supply_shares) AS supply_shares,
+               toUInt256OrZero(state.total_supply_assets) AS total_supply_assets,
+               toUInt256OrZero(state.total_supply_shares) AS total_supply_shares,
+               metrics.loan_price_usd AS loan_price_usd,
+               any(params.loan_decimals) AS loan_decimals
+        FROM (
+            SELECT market_id, user,
+                   argMax(supply_shares, tuple(last_event_block, last_event_log_index, updated_at)) AS supply_shares
+            FROM morpho_market_position_history
+            WHERE user = %(vault)s
+              AND last_event_block <= %(block_number)s
+            GROUP BY market_id, user
+        ) AS pos
+        INNER JOIN (
+            SELECT market_id,
+                   argMax(total_supply_assets, tuple(last_event_block, last_event_log_index, updated_at)) AS total_supply_assets,
+                   argMax(total_supply_shares, tuple(last_event_block, last_event_log_index, updated_at)) AS total_supply_shares
+            FROM morpho_market_state_history
+            WHERE last_event_block <= %(block_number)s
+            GROUP BY market_id
+        ) AS state USING market_id
+        LEFT JOIN (
+            SELECT market_id,
+                   argMax(loan_price_usd, tuple(timestamp, inserted_at)) AS loan_price_usd
+            FROM morpho_market_metrics
+            WHERE timestamp <= %(timestamp)s
+            GROUP BY market_id
+        ) AS metrics USING market_id
+        LEFT JOIN morpho_market_params AS params USING market_id
+        WHERE toUInt256OrZero(pos.supply_shares) > 0
+        GROUP BY pos.market_id, supply_shares, total_supply_assets, total_supply_shares, metrics.loan_price_usd
+        """
+        try:
+            rows = ch.query(query, parameters=parameters).result_rows
+            if rows:
+                return _allocation_rows_to_map(rows, asset_decimals, asset_price)
+        except Exception:
+            rows = []
+
     rows = ch.query(
         """
         SELECT pos.market_id,
@@ -588,8 +640,12 @@ def _position_allocations(ch, vault: str, asset_decimals: int, asset_price: floa
           AND toUInt256OrZero(pos.supply_shares) > 0
         GROUP BY pos.market_id, supply_shares, total_supply_assets, total_supply_shares
         """,
-        parameters={"vault": vault.lower()},
+        parameters=parameters,
     ).result_rows
+    return _allocation_rows_to_map(rows, asset_decimals, asset_price)
+
+
+def _allocation_rows_to_map(rows: list[tuple[Any, ...]], asset_decimals: int, asset_price: float) -> dict[str, dict[str, Any]]:
     allocations: dict[str, dict[str, Any]] = {}
     for market_id, supply_shares, total_supply_assets, total_supply_shares, loan_price, loan_decimals in rows:
         supplied_raw = 0
@@ -824,7 +880,7 @@ def _snapshot_vaults(ch, rpc: RpcClient, args, block_number: int, timestamp: dt.
             status,
             error,
         ])
-        allocations = _position_allocations(ch, vault, asset_decimals, asset_price)
+        allocations = _position_allocations(ch, vault, asset_decimals, asset_price, block_number, timestamp)
         queue_ids: set[str] = set(allocations)
         for length_key, getter_key in (("supplyQueueLength", "supplyQueue"), ("withdrawQueueLength", "withdrawQueue")):
             length, _ = _call_uint(rpc, vault, length_key, block_number)

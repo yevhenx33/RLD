@@ -39,8 +39,12 @@ TOPIC_REPAY = _topic("Repay(address,uint256)")
 TOPIC_INTEREST_ACCRUED = _topic("InterestAccrued(address,uint256)")
 TOPIC_LIQUIDATE = _topic("Liquidate(address,address,address,uint256,uint256)")
 TOPIC_VAULT_STATUS = _topic("VaultStatus(uint256,uint256,uint256,uint256,uint256,uint256,uint256)")
+TOPIC_GOV_SET_LTV = _topic("GovSetLTV(address,uint16,uint16,uint16,uint48,uint32)")
 TOPIC_GOV_SET_INTEREST_FEE = _topic("GovSetInterestFee(uint16)")
 TOPIC_GOV_SET_INTEREST_RATE_MODEL = _topic("GovSetInterestRateModel(address)")
+TOPIC_GOV_SET_MAX_LIQUIDATION_DISCOUNT = _topic("GovSetMaxLiquidationDiscount(uint16)")
+TOPIC_GOV_SET_LIQUIDATION_COOL_OFF_TIME = _topic("GovSetLiquidationCoolOffTime(uint16)")
+TOPIC_GOV_SET_HOOK_CONFIG = _topic("GovSetHookConfig(address,uint32)")
 TOPIC_GOV_SET_CAPS = _topic("GovSetCaps(uint16,uint16)")
 TOPIC_GOV_SET_CONFIG_FLAGS = _topic("GovSetConfigFlags(uint32)")
 
@@ -53,13 +57,27 @@ EVENT_MAP = {
     TOPIC_INTEREST_ACCRUED: "InterestAccrued",
     TOPIC_LIQUIDATE: "Liquidate",
     TOPIC_VAULT_STATUS: "VaultStatus",
+    TOPIC_GOV_SET_LTV: "GovSetLTV",
     TOPIC_GOV_SET_INTEREST_FEE: "GovSetInterestFee",
     TOPIC_GOV_SET_INTEREST_RATE_MODEL: "GovSetInterestRateModel",
+    TOPIC_GOV_SET_MAX_LIQUIDATION_DISCOUNT: "GovSetMaxLiquidationDiscount",
+    TOPIC_GOV_SET_LIQUIDATION_COOL_OFF_TIME: "GovSetLiquidationCoolOffTime",
+    TOPIC_GOV_SET_HOOK_CONFIG: "GovSetHookConfig",
     TOPIC_GOV_SET_CAPS: "GovSetCaps",
     TOPIC_GOV_SET_CONFIG_FLAGS: "GovSetConfigFlags",
 }
 EULER_VAULT_TOPICS = tuple(EVENT_MAP.keys())
-EULER_STATE_TOPICS = (TOPIC_VAULT_STATUS, TOPIC_GOV_SET_INTEREST_FEE)
+EULER_STATE_TOPICS = (
+    TOPIC_VAULT_STATUS,
+    TOPIC_GOV_SET_LTV,
+    TOPIC_GOV_SET_INTEREST_FEE,
+    TOPIC_GOV_SET_INTEREST_RATE_MODEL,
+    TOPIC_GOV_SET_MAX_LIQUIDATION_DISCOUNT,
+    TOPIC_GOV_SET_LIQUIDATION_COOL_OFF_TIME,
+    TOPIC_GOV_SET_HOOK_CONFIG,
+    TOPIC_GOV_SET_CAPS,
+    TOPIC_GOV_SET_CONFIG_FLAGS,
+)
 
 
 SELECTORS = {

@@ -31,6 +31,7 @@ from ..morpho_oracle_snapshots import (
     collateral_value_usd_from_oracle,
     ensure_morpho_oracle_snapshot_tables,
 )
+from ..oracle_snapshots import dependency_json, ensure_asset_price_tables
 from ..protocols import MORPHO_MARKET
 from ..tokens import BTC_ASSETS, ETH_ASSETS, STABLES, TOKENS
 
@@ -105,6 +106,7 @@ PRICE_FEED_ALIASES = {
     "USD0pp": ("USD0++ / USD",),
     "crvUSD": ("CRVUSD / USD",),
     "CRVUSD": ("CRVUSD / USD",),
+    "EURCV": ("EUR / USD",),
     "frxUSD": ("frxUSD / USD",),
     "FRXUSD": ("frxUSD / USD",),
 }
@@ -156,6 +158,7 @@ class MorphoMarketState:
     last_borrow_rate_wad: int = 0
     last_update_timestamp: datetime.datetime = datetime.datetime(1970, 1, 1)
     last_event_block: int = 0
+    last_event_log_index: int = 0
     last_event_timestamp: datetime.datetime = datetime.datetime(1970, 1, 1)
 
 
@@ -165,7 +168,27 @@ class MorphoUserPosition:
     borrow_shares: int = 0
     collateral_assets: int = 0
     last_event_block: int = 0
+    last_event_log_index: int = 0
     last_event_timestamp: datetime.datetime = datetime.datetime(1970, 1, 1)
+
+
+@dataclass(frozen=True)
+class SharedPricePoint:
+    price_usd: float
+    source: str
+    source_type: str
+    source_id: str
+    method: str
+    confidence: str
+    timestamp: datetime.datetime
+    block_number: int
+
+
+def _asset_key(address: str | None) -> str:
+    value = str(address or "").lower()
+    if not value:
+        return ""
+    return value if value.startswith("0x") else "0x" + value
 
 
 def _word_address(word: str) -> str:
@@ -321,26 +344,34 @@ class MorphoSource(BaseSource):
         self._positions: dict[tuple[str, str], MorphoUserPosition] = {}
         self._oracle_support: dict[str, tuple[str, tuple[str, ...], tuple[str, ...], str]] = {}
         self._available_feeds: set[str] = set()
+        self._shared_price_assets: set[str] = set()
+        self._pendle_assets: dict[str, dict] = {}  # token_address -> {asset_address, symbol, decimals}
         self._touched_markets: set[str] = set()
         self._touched_positions: set[tuple[str, str]] = set()
         self._event_facts: list[dict] = []
+        self._state_history_rows: list[list] = []
+        self._position_history_rows: list[list] = []
         self._initialized = False
 
     def get_cursor(self, ch) -> int:
         if not self._initialized:
             self._ensure_tables(ch)
             self._load_available_feeds(ch)
+            self._load_shared_price_assets(ch)
+            self._load_pendle_address_map(ch)
             self._load_params(ch)
             self._load_state(ch)
             self._load_positions(ch)
             self._initialized = True
             log.info(
-                "[%s] Initialized %s markets, %s durable states, %s positions, %s Chainlink feeds",
+                "[%s] Initialized %s markets, %s durable states, %s positions, %s Chainlink feeds, %s shared price assets, %s Pendle assets",
                 self.name,
                 len(self._params),
                 len(self._markets),
                 len(self._positions),
                 len(self._available_feeds),
+                len(self._shared_price_assets),
+                len(self._pendle_assets),
             )
         result = ch.command("SELECT max(block_number) FROM morpho_events")
         return int(result) if result else 0
@@ -385,7 +416,11 @@ class MorphoSource(BaseSource):
             self._params[market_id] = params
             state = self._markets.setdefault(market_id, MorphoMarketState())
             state.last_update_timestamp = ts
+            state.last_event_block = int(log_entry.block_number)
+            state.last_event_log_index = int(getattr(log_entry, "log_index", 0) or 0)
+            state.last_event_timestamp = ts
             self._touched_markets.add(market_id)
+            self._record_state_history(market_id)
             return {"kind": "market_params", "market_id": market_id}
 
         if len(topics) < 2:
@@ -400,15 +435,19 @@ class MorphoSource(BaseSource):
         repaid_assets = repaid_shares = seized_assets = bad_debt_assets = bad_debt_shares = 0
         interest = fee_shares = 0
         user = on_behalf
+        touched_position_key: tuple[str, str] | None = None
 
         def position_for(position_user: str) -> MorphoUserPosition | None:
+            nonlocal touched_position_key
             if not position_user:
                 return None
             key = (market_id, position_user.lower())
             position = self._positions.setdefault(key, MorphoUserPosition())
             position.last_event_block = int(log_entry.block_number)
+            position.last_event_log_index = int(getattr(log_entry, "log_index", 0) or 0)
             position.last_event_timestamp = ts
             self._touched_positions.add(key)
+            touched_position_key = key
             return position
 
         if event_name == "Supply":
@@ -420,7 +459,10 @@ class MorphoSource(BaseSource):
             if position:
                 position.supply_shares += shares
         elif event_name == "Withdraw":
-            receiver = _word_address(words[0]) if words else ""
+            caller = _word_address(words[0]) if words else ""
+            on_behalf = _topic_address(topics, 2)
+            receiver = _topic_address(topics, 3)
+            user = on_behalf
             assets = _uint(words, 1)
             shares = _uint(words, 2)
             state.total_supply_assets = _clip_nonnegative(state.total_supply_assets - assets)
@@ -429,7 +471,10 @@ class MorphoSource(BaseSource):
             if position:
                 position.supply_shares = _clip_nonnegative(position.supply_shares - shares)
         elif event_name == "Borrow":
-            receiver = _word_address(words[0]) if words else ""
+            caller = _word_address(words[0]) if words else ""
+            on_behalf = _topic_address(topics, 2)
+            receiver = _topic_address(topics, 3)
+            user = on_behalf
             assets = _uint(words, 1)
             shares = _uint(words, 2)
             state.total_borrow_assets += assets
@@ -452,7 +497,10 @@ class MorphoSource(BaseSource):
             if position:
                 position.collateral_assets += collateral_assets
         elif event_name == "WithdrawCollateral":
-            receiver = _word_address(words[0]) if words else ""
+            caller = _word_address(words[0]) if words else ""
+            on_behalf = _topic_address(topics, 2)
+            receiver = _topic_address(topics, 3)
+            user = on_behalf
             collateral_assets = _uint(words, 1)
             state.collateral_assets = _clip_nonnegative(state.collateral_assets - collateral_assets)
             position = position_for(user)
@@ -488,8 +536,12 @@ class MorphoSource(BaseSource):
         if event_name in ACCRUES_INTEREST_EVENTS:
             state.last_update_timestamp = ts
         state.last_event_block = int(log_entry.block_number)
+        state.last_event_log_index = int(getattr(log_entry, "log_index", 0) or 0)
         state.last_event_timestamp = ts
         self._touched_markets.add(market_id)
+        self._record_state_history(market_id)
+        if touched_position_key is not None:
+            self._record_position_history(touched_position_key)
         self._event_facts.append(
             {
                 "block_number": int(log_entry.block_number),
@@ -517,8 +569,18 @@ class MorphoSource(BaseSource):
         return {
             "kind": "snapshot",
             "market_id": market_id,
+            "event_name": event_name,
             "block_number": int(log_entry.block_number),
+            "log_index": int(getattr(log_entry, "log_index", 0) or 0),
             "timestamp": ts,
+            "total_supply_assets": state.total_supply_assets,
+            "total_supply_shares": state.total_supply_shares,
+            "total_borrow_assets": state.total_borrow_assets,
+            "total_borrow_shares": state.total_borrow_shares,
+            "collateral_assets": state.collateral_assets,
+            "fee_wad": state.fee_wad,
+            "last_borrow_rate_wad": state.last_borrow_rate_wad,
+            "last_update_timestamp": state.last_update_timestamp,
         }
 
     def merge(self, ch, decoded_rows: list[dict]) -> int:
@@ -534,6 +596,7 @@ class MorphoSource(BaseSource):
             written = self._write_snapshots(ch, snapshot_rows)
 
         self._persist_event_facts(ch)
+        self._persist_history(ch)
         self._persist_state(ch)
         self._persist_positions(ch)
         return written
@@ -597,6 +660,7 @@ class MorphoSource(BaseSource):
                 last_borrow_rate_wad String,
                 last_update_timestamp DateTime DEFAULT toDateTime(0),
                 last_event_block UInt64,
+                last_event_log_index UInt32 DEFAULT 0,
                 last_event_timestamp DateTime,
                 updated_at DateTime DEFAULT now()
             ) ENGINE = ReplacingMergeTree(updated_at)
@@ -604,6 +668,27 @@ class MorphoSource(BaseSource):
             """
         )
         ch.command("ALTER TABLE morpho_market_state ADD COLUMN IF NOT EXISTS last_update_timestamp DateTime DEFAULT toDateTime(0)")
+        ch.command("ALTER TABLE morpho_market_state ADD COLUMN IF NOT EXISTS last_event_log_index UInt32 DEFAULT 0")
+        ch.command(
+            """
+            CREATE TABLE IF NOT EXISTS morpho_market_state_history (
+                market_id String,
+                total_supply_assets String,
+                total_supply_shares String,
+                total_borrow_assets String,
+                total_borrow_shares String,
+                collateral_assets String,
+                fee_wad String,
+                last_borrow_rate_wad String,
+                last_update_timestamp DateTime DEFAULT toDateTime(0),
+                last_event_block UInt64,
+                last_event_log_index UInt32 DEFAULT 0,
+                last_event_timestamp DateTime,
+                updated_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(updated_at)
+            ORDER BY (market_id, last_event_block, last_event_log_index)
+            """
+        )
         ch.command(
             """
             CREATE TABLE IF NOT EXISTS morpho_market_positions (
@@ -613,10 +698,28 @@ class MorphoSource(BaseSource):
                 borrow_shares String,
                 collateral_assets String,
                 last_event_block UInt64,
+                last_event_log_index UInt32 DEFAULT 0,
                 last_event_timestamp DateTime,
                 updated_at DateTime DEFAULT now()
             ) ENGINE = ReplacingMergeTree(updated_at)
             ORDER BY (market_id, user)
+            """
+        )
+        ch.command("ALTER TABLE morpho_market_positions ADD COLUMN IF NOT EXISTS last_event_log_index UInt32 DEFAULT 0")
+        ch.command(
+            """
+            CREATE TABLE IF NOT EXISTS morpho_market_position_history (
+                market_id String,
+                user String,
+                supply_shares String,
+                borrow_shares String,
+                collateral_assets String,
+                last_event_block UInt64,
+                last_event_log_index UInt32 DEFAULT 0,
+                last_event_timestamp DateTime,
+                updated_at DateTime DEFAULT now()
+            ) ENGINE = ReplacingMergeTree(updated_at)
+            ORDER BY (market_id, user, last_event_block, last_event_log_index)
             """
         )
         ch.command(
@@ -696,6 +799,7 @@ class MorphoSource(BaseSource):
             """
         )
         ensure_morpho_oracle_snapshot_tables(ch)
+        ensure_asset_price_tables(ch)
         ch.command(
             """
             CREATE TABLE IF NOT EXISTS morpho_chainlink_timeseries (
@@ -726,14 +830,68 @@ class MorphoSource(BaseSource):
             log.warning("[%s] Failed to load Chainlink feeds: %s", self.name, exc)
             self._available_feeds = set()
 
+    def _load_shared_price_assets(self, ch) -> None:
+        try:
+            ensure_asset_price_tables(ch)
+            rows = ch.query(
+                """
+                SELECT DISTINCT lower(asset_address)
+                FROM asset_price_observations
+                WHERE status = 'OK'
+                  AND price_usd > 0
+                """
+            ).result_rows
+            self._shared_price_assets = {_asset_key(row[0]) for row in rows if row and row[0]}
+        except Exception as exc:
+            log.warning("[%s] Failed to load shared asset prices: %s", self.name, exc)
+            self._shared_price_assets = set()
+
+    def _load_pendle_address_map(self, ch) -> None:
+        """Build token_address → Pendle asset metadata map from pendle_eth_assets."""
+        try:
+            rows = ch.query(
+                """
+                SELECT asset_address, asset_type, symbol
+                FROM pendle_eth_assets FINAL
+                WHERE chain_id = 1
+                  AND asset_type IN ('PT', 'YT')
+                """
+            ).result_rows
+        except Exception as exc:
+            log.warning("[%s] Failed to load Pendle assets: %s", self.name, exc)
+            self._pendle_assets = {}
+            return
+        mapping: dict[str, dict] = {}
+        for asset_address, asset_type, symbol in rows:
+            addr = str(asset_address or "").lower().removeprefix("0x")
+            if not addr:
+                continue
+            mapping[addr] = {
+                "asset_address": str(asset_address or "").lower(),
+                "asset_type": str(asset_type or ""),
+                "symbol": str(symbol or ""),
+            }
+        self._pendle_assets = mapping
+
     def _load_params(self, ch) -> None:
         try:
             rows = ch.query(
                 """
-                SELECT market_id, loan_token, collateral_token, loan_symbol, collateral_symbol,
-                       loan_decimals, collateral_decimals, oracle, irm, toString(lltv),
-                       creation_block, creation_timestamp
+                SELECT
+                    market_id,
+                    argMax(loan_token, updated_at),
+                    argMax(collateral_token, updated_at),
+                    argMax(loan_symbol, updated_at),
+                    argMax(collateral_symbol, updated_at),
+                    argMax(loan_decimals, updated_at),
+                    argMax(collateral_decimals, updated_at),
+                    argMax(oracle, updated_at),
+                    argMax(irm, updated_at),
+                    toString(argMax(lltv, updated_at)),
+                    argMax(creation_block, updated_at),
+                    argMax(creation_timestamp, updated_at)
                 FROM morpho_market_params
+                GROUP BY market_id
                 """
             ).result_rows
         except Exception:
@@ -758,11 +916,21 @@ class MorphoSource(BaseSource):
         try:
             rows = ch.query(
                 """
-                SELECT market_id, total_supply_assets, total_supply_shares,
-                       total_borrow_assets, total_borrow_shares, collateral_assets,
-                       fee_wad, last_borrow_rate_wad, last_update_timestamp,
-                       last_event_block, last_event_timestamp
-                FROM morpho_market_state FINAL
+                SELECT
+                    market_id,
+                    argMax(total_supply_assets, (last_event_block, last_event_log_index, updated_at)),
+                    argMax(total_supply_shares, (last_event_block, last_event_log_index, updated_at)),
+                    argMax(total_borrow_assets, (last_event_block, last_event_log_index, updated_at)),
+                    argMax(total_borrow_shares, (last_event_block, last_event_log_index, updated_at)),
+                    argMax(collateral_assets, (last_event_block, last_event_log_index, updated_at)),
+                    argMax(fee_wad, (last_event_block, last_event_log_index, updated_at)),
+                    argMax(last_borrow_rate_wad, (last_event_block, last_event_log_index, updated_at)),
+                    argMax(last_update_timestamp, (last_event_block, last_event_log_index, updated_at)),
+                    max(last_event_block),
+                    argMax(last_event_log_index, (last_event_block, last_event_log_index, updated_at)),
+                    argMax(last_event_timestamp, (last_event_block, last_event_log_index, updated_at))
+                FROM morpho_market_state
+                GROUP BY market_id
                 """
             ).result_rows
         except Exception:
@@ -776,18 +944,25 @@ class MorphoSource(BaseSource):
                 collateral_assets=int(row[5] or 0),
                 fee_wad=int(row[6] or 0),
                 last_borrow_rate_wad=int(row[7] or 0),
-                last_update_timestamp=row[8] or row[10] or datetime.datetime(1970, 1, 1),
+                last_update_timestamp=row[8] or row[11] or datetime.datetime(1970, 1, 1),
                 last_event_block=int(row[9] or 0),
-                last_event_timestamp=row[10] or datetime.datetime(1970, 1, 1),
+                last_event_log_index=int(row[10] or 0),
+                last_event_timestamp=row[11] or datetime.datetime(1970, 1, 1),
             )
 
     def _load_positions(self, ch) -> None:
         try:
             rows = ch.query(
                 """
-                SELECT market_id, user, supply_shares, borrow_shares, collateral_assets,
-                       last_event_block, last_event_timestamp
-                FROM morpho_market_positions FINAL
+                SELECT market_id, user,
+                       argMax(supply_shares, (last_event_block, last_event_log_index, updated_at)),
+                       argMax(borrow_shares, (last_event_block, last_event_log_index, updated_at)),
+                       argMax(collateral_assets, (last_event_block, last_event_log_index, updated_at)),
+                       max(last_event_block),
+                       argMax(last_event_log_index, (last_event_block, last_event_log_index, updated_at)),
+                       argMax(last_event_timestamp, (last_event_block, last_event_log_index, updated_at))
+                FROM morpho_market_positions
+                GROUP BY market_id, user
                 """
             ).result_rows
         except Exception:
@@ -798,17 +973,20 @@ class MorphoSource(BaseSource):
                 borrow_shares=int(row[3] or 0),
                 collateral_assets=int(row[4] or 0),
                 last_event_block=int(row[5] or 0),
-                last_event_timestamp=row[6] or datetime.datetime(1970, 1, 1),
+                last_event_log_index=int(row[6] or 0),
+                last_event_timestamp=row[7] or datetime.datetime(1970, 1, 1),
             )
 
     def _support_for(self, params: MorphoMarketParams) -> tuple[str, tuple[str, ...], tuple[str, ...], str]:
         loan_feeds = price_feed_requirements(params.loan_symbol, self._available_feeds)
         collateral_feeds = price_feed_requirements(params.collateral_symbol, self._available_feeds)
-        if not loan_feeds:
+        loan_shared = _asset_key(params.loan_token) in self._shared_price_assets
+        collateral_shared = _asset_key(params.collateral_token) in self._shared_price_assets
+        if not loan_feeds and not loan_shared:
             support = ("UNSUPPORTED_ORACLE", loan_feeds, collateral_feeds, "missing loan feed mapping")
         else:
             missing_loan = [feed for feed in loan_feeds if feed not in self._available_feeds]
-            if missing_loan:
+            if missing_loan and not loan_shared:
                 support = (
                     "UNPRICED",
                     loan_feeds,
@@ -817,22 +995,53 @@ class MorphoSource(BaseSource):
                 )
             elif collateral_feeds:
                 missing_collateral = [feed for feed in collateral_feeds if feed not in self._available_feeds]
-                if missing_collateral:
+                if missing_collateral and collateral_shared:
                     support = (
-                        "UNPRICED",
+                        "SHARED_PRICE_SUPPORTED",
                         loan_feeds,
                         collateral_feeds,
-                        "missing collateral USD conversion feed: " + ", ".join(sorted(set(missing_collateral))),
+                        "collateral priced by shared asset price observations",
+                    )
+                elif missing_collateral:
+                    support = (
+                        "LOAN_ONLY_SUPPORTED",
+                        loan_feeds,
+                        collateral_feeds,
+                        "loan priced; missing collateral USD conversion feed: "
+                        + ", ".join(sorted(set(missing_collateral))),
                     )
                 else:
                     probe_prices = {feed: 1.0 for feed in (*loan_feeds, *collateral_feeds)}
                     if (
-                        resolve_symbol_price(params.loan_symbol, probe_prices) is None
+                        (not loan_shared and resolve_symbol_price(params.loan_symbol, probe_prices) is None)
                         or resolve_symbol_price(params.collateral_symbol, probe_prices) is None
                     ):
-                        support = ("UNSUPPORTED_ORACLE", loan_feeds, collateral_feeds, "missing resolver path")
+                        if collateral_shared:
+                            support = (
+                                "SHARED_PRICE_SUPPORTED",
+                                loan_feeds,
+                                collateral_feeds,
+                                "collateral priced by shared asset price observations",
+                            )
+                        else:
+                            support = ("LOAN_ONLY_SUPPORTED", loan_feeds, collateral_feeds, "loan priced; missing collateral resolver path")
                     else:
-                        support = ("CHAINLINK_SUPPORTED", loan_feeds, collateral_feeds, "")
+                        support = ("SHARED_PRICE_SUPPORTED" if loan_shared else "CHAINLINK_SUPPORTED", loan_feeds, collateral_feeds, "")
+            elif collateral_shared:
+                support = (
+                    "SHARED_PRICE_SUPPORTED",
+                    loan_feeds,
+                    collateral_feeds,
+                    "collateral priced by shared asset price observations",
+                )
+            elif params.collateral_token.lower().removeprefix("0x") in self._pendle_assets:
+                pendle_info = self._pendle_assets[params.collateral_token.lower().removeprefix("0x")]
+                support = (
+                    "PENDLE_SUPPORTED",
+                    loan_feeds,
+                    collateral_feeds,
+                    f"collateral priced by Pendle {pendle_info['asset_type']} data ({pendle_info['symbol']})",
+                )
             elif params.oracle.lower() != ZERO_ADDRESS:
                 support = (
                     "ORACLE_SNAPSHOT_SUPPORTED",
@@ -841,7 +1050,10 @@ class MorphoSource(BaseSource):
                     "collateral priced by Morpho IOracle.price() snapshots",
                 )
             else:
-                support = ("UNSUPPORTED_ORACLE", loan_feeds, collateral_feeds, "missing collateral feed mapping")
+                reason = "loan priced; missing collateral feed mapping"
+                if loan_shared:
+                    reason = "loan priced by shared asset price observations; missing collateral feed mapping"
+                support = ("LOAN_ONLY_SUPPORTED", loan_feeds, collateral_feeds, reason)
         self._oracle_support[params.market_id] = support
         return support
 
@@ -916,6 +1128,95 @@ class MorphoSource(BaseSource):
                 ],
             )
 
+    def _state_row(self, market_id: str, state: MorphoMarketState) -> list:
+        return [
+            market_id,
+            str(state.total_supply_assets),
+            str(state.total_supply_shares),
+            str(state.total_borrow_assets),
+            str(state.total_borrow_shares),
+            str(state.collateral_assets),
+            str(state.fee_wad),
+            str(state.last_borrow_rate_wad),
+            state.last_update_timestamp,
+            state.last_event_block,
+            state.last_event_log_index,
+            state.last_event_timestamp,
+        ]
+
+    def _position_row(self, key: tuple[str, str], position: MorphoUserPosition) -> list:
+        market_id, user = key
+        return [
+            market_id,
+            user,
+            str(position.supply_shares),
+            str(position.borrow_shares),
+            str(position.collateral_assets),
+            position.last_event_block,
+            position.last_event_log_index,
+            position.last_event_timestamp,
+        ]
+
+    def _record_state_history(self, market_id: str) -> None:
+        state = self._markets.get(market_id)
+        if not state:
+            return
+        self._state_history_rows.append(self._state_row(market_id, state))
+
+    def _record_position_history(self, key: tuple[str, str]) -> None:
+        position = self._positions.get(key)
+        if not position:
+            return
+        self._position_history_rows.append(self._position_row(key, position))
+
+    def _state_columns(self) -> list[str]:
+        return [
+            "market_id",
+            "total_supply_assets",
+            "total_supply_shares",
+            "total_borrow_assets",
+            "total_borrow_shares",
+            "collateral_assets",
+            "fee_wad",
+            "last_borrow_rate_wad",
+            "last_update_timestamp",
+            "last_event_block",
+            "last_event_log_index",
+            "last_event_timestamp",
+        ]
+
+    def _position_columns(self) -> list[str]:
+        return [
+            "market_id",
+            "user",
+            "supply_shares",
+            "borrow_shares",
+            "collateral_assets",
+            "last_event_block",
+            "last_event_log_index",
+            "last_event_timestamp",
+        ]
+
+    def _persist_history(self, ch) -> None:
+        if self._state_history_rows:
+            rows = list(self._state_history_rows)
+            insert_rows_batched(
+                ch,
+                "morpho_market_state_history",
+                rows,
+                self._state_columns(),
+            )
+            self._state_history_rows.clear()
+        if self._position_history_rows:
+            rows = list(self._position_history_rows)
+            insert_rows_batched(
+                ch,
+                "morpho_market_position_history",
+                rows,
+                self._position_columns(),
+            )
+            self._position_history_rows.clear()
+
     def _persist_state(self, ch) -> None:
         if not self._touched_markets:
             return
@@ -924,40 +1225,9 @@ class MorphoSource(BaseSource):
             state = self._markets.get(market_id)
             if not state:
                 continue
-            rows.append(
-                [
-                    market_id,
-                    str(state.total_supply_assets),
-                    str(state.total_supply_shares),
-                    str(state.total_borrow_assets),
-                    str(state.total_borrow_shares),
-                    str(state.collateral_assets),
-                    str(state.fee_wad),
-                    str(state.last_borrow_rate_wad),
-                    state.last_update_timestamp,
-                    state.last_event_block,
-                    state.last_event_timestamp,
-                ]
-            )
+            rows.append(self._state_row(market_id, state))
         if rows:
-            insert_rows_batched(
-                ch,
-                "morpho_market_state",
-                rows,
-                [
-                    "market_id",
-                    "total_supply_assets",
-                    "total_supply_shares",
-                    "total_borrow_assets",
-                    "total_borrow_shares",
-                    "collateral_assets",
-                    "fee_wad",
-                    "last_borrow_rate_wad",
-                    "last_update_timestamp",
-                    "last_event_block",
-                    "last_event_timestamp",
-                ],
-            )
+            insert_rows_batched(ch, "morpho_market_state", rows, self._state_columns())
         self._touched_markets.clear()
 
     def _persist_positions(self, ch) -> None:
@@ -968,33 +1238,9 @@ class MorphoSource(BaseSource):
             position = self._positions.get(key)
             if not position:
                 continue
-            market_id, user = key
-            rows.append(
-                [
-                    market_id,
-                    user,
-                    str(position.supply_shares),
-                    str(position.borrow_shares),
-                    str(position.collateral_assets),
-                    position.last_event_block,
-                    position.last_event_timestamp,
-                ]
-            )
+            rows.append(self._position_row(key, position))
         if rows:
-            insert_rows_batched(
-                ch,
-                "morpho_market_positions",
-                rows,
-                [
-                    "market_id",
-                    "user",
-                    "supply_shares",
-                    "borrow_shares",
-                    "collateral_assets",
-                    "last_event_block",
-                    "last_event_timestamp",
-                ],
-            )
+            insert_rows_batched(ch, "morpho_market_positions", rows, self._position_columns())
         self._touched_positions.clear()
 
     def _persist_event_facts(self, ch) -> None:
@@ -1026,6 +1272,80 @@ class MorphoSource(BaseSource):
         pivot = df.pivot_table(index="ts", columns="feed", values="price", aggfunc="last").sort_index()
         return pivot.ffill()
 
+    def _shared_price_frame(self, ch, min_ts: datetime.datetime, max_ts: datetime.datetime, assets: set[str]) -> pd.DataFrame:
+        if not assets:
+            return pd.DataFrame()
+        ensure_asset_price_tables(ch)
+        escaped = ", ".join("'" + _asset_key(asset).replace("'", "''") + "'" for asset in sorted(assets))
+        start = (pd.to_datetime(min_ts) - pd.Timedelta(days=730)).strftime("%Y-%m-%d %H:%M:%S")
+        end = pd.to_datetime(max_ts).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            df = ch.query_df(
+                f"""
+                SELECT toStartOfHour(timestamp) AS ts,
+                       lower(asset_address) AS asset_address,
+                       argMax(observed_price_usd, (timestamp, observed_block_number, inserted_at)) AS price_usd,
+                       argMax(source, (timestamp, observed_block_number, inserted_at)) AS source,
+                       argMax(source_type, (timestamp, observed_block_number, inserted_at)) AS source_type,
+                       argMax(source_id, (timestamp, observed_block_number, inserted_at)) AS source_id,
+                       argMax(method, (timestamp, observed_block_number, inserted_at)) AS method,
+                       argMax(confidence, (timestamp, observed_block_number, inserted_at)) AS confidence,
+                       max(timestamp) AS price_timestamp,
+                       argMax(observed_block_number, (timestamp, observed_block_number, inserted_at)) AS block_number
+                FROM (
+                    SELECT
+                        timestamp,
+                        lower(asset_address) AS asset_address,
+                        price_usd AS observed_price_usd,
+                        source,
+                        source_type,
+                        source_id,
+                        method,
+                        confidence,
+                        block_number AS observed_block_number,
+                        inserted_at
+                    FROM asset_price_observations
+                    WHERE lower(asset_address) IN ({escaped})
+                      AND status = 'OK'
+                      AND price_usd > 0
+                      AND timestamp >= '{start}'
+                      AND timestamp <= '{end}'
+                )
+                GROUP BY ts, asset_address
+                ORDER BY asset_address, ts
+                """
+            )
+        except Exception as exc:
+            log.warning("[%s] Failed to query shared asset prices: %s", self.name, exc)
+            return pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
+        df["ts"] = pd.to_datetime(df["ts"])
+        df["asset_address"] = df["asset_address"].map(_asset_key)
+        return df.sort_values(["asset_address", "ts"])
+
+    def _shared_price_at(self, shared_prices: pd.DataFrame, asset: str, ts: pd.Timestamp) -> SharedPricePoint | None:
+        if shared_prices.empty:
+            return None
+        rows = shared_prices[(shared_prices["asset_address"] == _asset_key(asset)) & (shared_prices["ts"] <= ts)]
+        if rows.empty:
+            return None
+        row = rows.iloc[-1]
+        price = float(row.get("price_usd", 0.0) or 0.0)
+        if price <= 0:
+            return None
+        price_ts = pd.to_datetime(row.get("price_timestamp", row.get("ts", ts))).to_pydatetime()
+        return SharedPricePoint(
+            price_usd=price,
+            source=str(row.get("source", "")),
+            source_type=str(row.get("source_type", "")),
+            source_id=str(row.get("source_id", "")),
+            method=str(row.get("method", "")),
+            confidence=str(row.get("confidence", "")),
+            timestamp=price_ts,
+            block_number=int(row.get("block_number", 0) or 0),
+        )
+
     def _oracle_snapshot_frame(self, ch, min_ts: datetime.datetime, max_ts: datetime.datetime, oracles: set[str]) -> pd.DataFrame:
         if not oracles:
             return pd.DataFrame()
@@ -1052,93 +1372,402 @@ class MorphoSource(BaseSource):
         pivot = df.pivot_table(index="ts", columns="oracle", values="price_raw", aggfunc="last").sort_index()
         return pivot.ffill()
 
+    def _pendle_price_frame(self, ch, min_ts: datetime.datetime, max_ts: datetime.datetime, addresses: set[str]) -> pd.DataFrame:
+        """Fetch hourly Pendle close prices for PT/YT collateral tokens."""
+        if not addresses:
+            return pd.DataFrame()
+        escaped = ", ".join("'" + addr.replace("'", "''") + "'" for addr in sorted(addresses))
+        start = (pd.to_datetime(min_ts) - pd.Timedelta(days=730)).strftime("%Y-%m-%d %H:%M:%S")
+        end = pd.to_datetime(max_ts).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            df = ch.query_df(
+                f"""
+                SELECT toStartOfHour(timestamp) AS ts,
+                       asset_address,
+                       argMax(close, timestamp) AS price
+                FROM pendle_eth_price_ohlcv
+                WHERE asset_address IN ({escaped})
+                  AND time_frame = 'hour'
+                  AND close > 0
+                  AND timestamp >= '{start}'
+                  AND timestamp <= '{end}'
+                GROUP BY ts, asset_address
+                ORDER BY ts, asset_address
+                """
+            )
+        except Exception as exc:
+            log.warning("[%s] Failed to query Pendle prices: %s", self.name, exc)
+            return pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
+        pivot = df.pivot_table(index="ts", columns="asset_address", values="price", aggfunc="last").sort_index()
+        return pivot.ffill()
+
     def _write_snapshots(self, ch, snapshot_rows: list[dict]) -> int:
         df = pd.DataFrame(snapshot_rows)
-        if df.empty:
+        required_columns = {"timestamp", "market_id", "block_number"}
+        if df.empty or not required_columns.issubset(df.columns):
             return 0
         df["ts"] = pd.to_datetime(df["timestamp"]).dt.floor("h")
-        df.sort_values("block_number", inplace=True)
-        hourly = df.groupby(["ts", "market_id"]).last().reset_index()
+        if "log_index" not in df.columns:
+            df["log_index"] = 0
+        df.sort_values(["block_number", "log_index", "market_id"], inplace=True)
+        hourly = df.groupby(["ts", "market_id"], as_index=False).last()
 
         batch_ts = pd.to_datetime(hourly["ts"].max())
         batch_min_ts = pd.to_datetime(hourly["ts"].min())
         required_feeds: set[str] = set()
+        required_shared_assets: set[str] = set()
         supported_market_ids: set[str] = set()
         oracle_priced_market_ids: set[str] = set()
+        pendle_priced_market_ids: set[str] = set()
         required_oracles: set[str] = set()
-        for market_id, params in self._params.items():
-            state = self._markets.get(str(market_id))
-            if not state:
+        required_pendle_addresses: set[str] = set()
+        for market_id in hourly["market_id"].unique():
+            params = self._params.get(str(market_id))
+            if not params:
                 continue
             created = pd.to_datetime(params.creation_timestamp)
             if not pd.isna(created) and created > batch_ts:
                 continue
             support, loan_feeds, collateral_feeds, _reason = self._support_for(params)
+            loan_asset = _asset_key(params.loan_token)
+            collateral_asset = _asset_key(params.collateral_token)
+            loan_shared = loan_asset in self._shared_price_assets
+            collateral_shared = collateral_asset in self._shared_price_assets
+            if loan_shared:
+                required_shared_assets.add(loan_asset)
             if support == "CHAINLINK_SUPPORTED":
                 supported_market_ids.add(str(market_id))
-                required_feeds.update(loan_feeds)
+                if not loan_shared:
+                    required_feeds.update(loan_feeds)
                 required_feeds.update(collateral_feeds)
+            elif support == "SHARED_PRICE_SUPPORTED":
+                supported_market_ids.add(str(market_id))
+                if not loan_shared:
+                    required_feeds.update(loan_feeds)
+                if collateral_shared:
+                    required_shared_assets.add(collateral_asset)
+                else:
+                    required_feeds.update(collateral_feeds)
+            elif support == "PENDLE_SUPPORTED":
+                supported_market_ids.add(str(market_id))
+                pendle_priced_market_ids.add(str(market_id))
+                if not loan_shared:
+                    required_feeds.update(loan_feeds)
+                pendle_info = self._pendle_assets.get(params.collateral_token.lower().removeprefix("0x"))
+                if pendle_info:
+                    required_pendle_addresses.add(pendle_info["asset_address"])
             elif support == "ORACLE_SNAPSHOT_SUPPORTED":
                 supported_market_ids.add(str(market_id))
                 oracle_priced_market_ids.add(str(market_id))
-                required_feeds.update(loan_feeds)
+                if not loan_shared:
+                    required_feeds.update(loan_feeds)
                 required_oracles.add(params.oracle.lower())
+            elif support == "LOAN_ONLY_SUPPORTED":
+                supported_market_ids.add(str(market_id))
+                if not loan_shared:
+                    required_feeds.update(loan_feeds)
 
         if not supported_market_ids:
             return 0
 
         prices = self._price_frame(ch, batch_min_ts, batch_ts, required_feeds)
-        if prices.empty:
+        shared_prices = self._shared_price_frame(ch, batch_min_ts, batch_ts, required_shared_assets)
+        if required_feeds and prices.empty and not required_shared_assets:
             return 0
         oracle_prices = self._oracle_snapshot_frame(ch, batch_min_ts, batch_ts, required_oracles)
         if oracle_priced_market_ids and oracle_prices.empty:
             log.info("[%s] Oracle-priced markets are waiting for morpho_oracle_snapshots", self.name)
+        pendle_prices = self._pendle_price_frame(ch, batch_min_ts, batch_ts, required_pendle_addresses)
+        if pendle_priced_market_ids and pendle_prices.empty:
+            log.info("[%s] Pendle-priced markets are waiting for pendle_eth_price_ohlcv data", self.name)
 
         metrics = []
-        for market_id in sorted(supported_market_ids):
+        dependency_rows = []
+        exposure_rows = []
+
+        def add_dependency(
+            *,
+            market_id: str,
+            role: str,
+            asset_address: str,
+            symbol: str,
+            source: str,
+            source_type: str,
+            source_id: str,
+            method: str,
+            confidence: str,
+            block_number: int,
+            ts_value: datetime.datetime,
+            exposure_kind: str,
+            exposure_usd: float,
+        ) -> None:
+            if not source or not source_id or not _asset_key(asset_address):
+                return
+            dependency_rows.append(
+                [
+                    1,
+                    MORPHO_MARKET,
+                    "MARKET",
+                    market_id,
+                    role,
+                    _asset_key(asset_address),
+                    symbol,
+                    source,
+                    source_type,
+                    source_id,
+                    method,
+                    dependency_json(source, source_type, source_id, method),
+                    1,
+                    confidence or "UNKNOWN",
+                    block_number,
+                    block_number,
+                ]
+            )
+            exposure_rows.append(
+                [
+                    1,
+                    MORPHO_MARKET,
+                    "MARKET",
+                    market_id,
+                    role,
+                    _asset_key(asset_address),
+                    symbol,
+                    source,
+                    source_type,
+                    source_id,
+                    method,
+                    exposure_kind,
+                    float(exposure_usd),
+                    ts_value,
+                    block_number,
+                ]
+            )
+
+        def add_chainlink_dependencies(
+            *,
+            market_id: str,
+            role: str,
+            asset_address: str,
+            symbol: str,
+            feed_prices: dict[str, float],
+            block_number: int,
+            ts_value: datetime.datetime,
+            exposure_kind: str,
+            exposure_usd: float,
+        ) -> None:
+            for feed in price_feed_requirements(symbol, set(feed_prices)):
+                if feed not in feed_prices:
+                    continue
+                add_dependency(
+                    market_id=market_id,
+                    role=role,
+                    asset_address=asset_address,
+                    symbol=symbol,
+                    source="CHAINLINK",
+                    source_type="PRICE_FEED",
+                    source_id=feed,
+                    method="AnswerUpdated",
+                    confidence="DIRECT",
+                    block_number=block_number,
+                    ts_value=ts_value,
+                    exposure_kind=exposure_kind,
+                    exposure_usd=exposure_usd,
+                )
+
+        for row in hourly.itertuples(index=False):
+            market_id = str(row.market_id).lower()
+            if market_id not in supported_market_ids:
+                continue
             params = self._params.get(market_id)
-            state = self._markets.get(market_id)
-            if not params or not state:
+            if not params:
                 continue
-            ts = batch_ts
-            price_row = prices.loc[prices.index <= ts]
-            if price_row.empty:
-                continue
-            feed_prices = {
-                str(feed): float(value)
-                for feed, value in price_row.iloc[-1].dropna().items()
-            }
-            loan_price = resolve_symbol_price(params.loan_symbol, feed_prices)
+            ts = pd.to_datetime(row.ts)
+            price_row = prices.loc[prices.index <= ts] if not prices.empty else pd.DataFrame()
+            feed_prices = (
+                {str(feed): float(value) for feed, value in price_row.iloc[-1].dropna().items()}
+                if not price_row.empty
+                else {}
+            )
+            loan_price_point = self._shared_price_at(shared_prices, params.loan_token, ts)
+            loan_price = loan_price_point.price_usd if loan_price_point else resolve_symbol_price(params.loan_symbol, feed_prices)
             if loan_price is None:
                 continue
 
+            state = MorphoMarketState(
+                total_supply_assets=max(0, int(getattr(row, "total_supply_assets", 0) or 0)),
+                total_supply_shares=max(0, int(getattr(row, "total_supply_shares", 0) or 0)),
+                total_borrow_assets=max(0, int(getattr(row, "total_borrow_assets", 0) or 0)),
+                total_borrow_shares=max(0, int(getattr(row, "total_borrow_shares", 0) or 0)),
+                collateral_assets=max(0, int(getattr(row, "collateral_assets", 0) or 0)),
+                fee_wad=max(0, int(getattr(row, "fee_wad", 0) or 0)),
+                last_borrow_rate_wad=max(0, int(getattr(row, "last_borrow_rate_wad", 0) or 0)),
+                last_update_timestamp=getattr(row, "last_update_timestamp", datetime.datetime(1970, 1, 1)),
+                last_event_block=int(getattr(row, "block_number", 0) or 0),
+                last_event_timestamp=pd.to_datetime(getattr(row, "timestamp", ts)).to_pydatetime(),
+            )
             supply_assets, borrow_assets, _pending_interest = _project_market_assets(state, ts.to_pydatetime())
             supply_tokens = supply_assets / (10 ** params.loan_decimals)
             borrow_tokens = borrow_assets / (10 ** params.loan_decimals)
             collateral_tokens = state.collateral_assets / (10 ** params.collateral_decimals)
             supply_usd = supply_tokens * loan_price
             borrow_usd = borrow_tokens * loan_price
-            oracle_support_label = "CHAINLINK_SUPPORTED"
-            if market_id in oracle_priced_market_ids:
-                oracle_price_rows = oracle_prices.loc[oracle_prices.index <= ts] if not oracle_prices.empty else pd.DataFrame()
-                if oracle_price_rows.empty or params.oracle.lower() not in oracle_price_rows.columns:
-                    continue
-                oracle_price_raw = oracle_price_rows.iloc[-1].get(params.oracle.lower())
-                collateral_usd = collateral_value_usd_from_oracle(
-                    state.collateral_assets,
-                    oracle_price_raw,
-                    params.loan_decimals,
-                    loan_price,
-                )
-                if collateral_usd is None:
-                    continue
-                collateral_price = collateral_usd / collateral_tokens if collateral_tokens > 0 else 0.0
-                oracle_support_label = "ORACLE_SNAPSHOT_SUPPORTED"
+            collateral_price = 0.0
+            collateral_usd = 0.0
+            oracle_support_label = "LOAN_ONLY_SUPPORTED"
+            event_block = int(getattr(row, "block_number", 0) or 0)
+            metric_ts = ts.to_pydatetime()
+            if loan_price_point:
+                for exposure_kind, exposure_usd in (("SUPPLY", supply_usd), ("BORROW", borrow_usd)):
+                    add_dependency(
+                        market_id=market_id,
+                        role="LOAN_ASSET",
+                        asset_address=params.loan_token,
+                        symbol=params.loan_symbol,
+                        source=loan_price_point.source,
+                        source_type=loan_price_point.source_type,
+                        source_id=loan_price_point.source_id,
+                        method=loan_price_point.method,
+                        confidence=loan_price_point.confidence,
+                        block_number=event_block,
+                        ts_value=metric_ts,
+                        exposure_kind=exposure_kind,
+                        exposure_usd=exposure_usd,
+                    )
             else:
-                collateral_price = resolve_symbol_price(params.collateral_symbol, feed_prices)
-                if collateral_price is None:
-                    continue
-                collateral_usd = collateral_tokens * collateral_price
+                for exposure_kind, exposure_usd in (("SUPPLY", supply_usd), ("BORROW", borrow_usd)):
+                    add_chainlink_dependencies(
+                        market_id=market_id,
+                        role="LOAN_ASSET",
+                        asset_address=params.loan_token,
+                        symbol=params.loan_symbol,
+                        feed_prices=feed_prices,
+                        block_number=event_block,
+                        ts_value=metric_ts,
+                        exposure_kind=exposure_kind,
+                        exposure_usd=exposure_usd,
+                    )
+            if market_id in pendle_priced_market_ids:
+                pendle_info = self._pendle_assets.get(params.collateral_token.lower().removeprefix("0x"))
+                pendle_addr = pendle_info["asset_address"] if pendle_info else None
+                pendle_price_rows = pendle_prices.loc[pendle_prices.index <= ts] if not pendle_prices.empty else pd.DataFrame()
+                if pendle_addr and not pendle_price_rows.empty and pendle_addr in pendle_price_rows.columns:
+                    collateral_price = float(pendle_price_rows.iloc[-1].get(pendle_addr, 0.0) or 0.0)
+                    if collateral_price > 0:
+                        collateral_usd = collateral_tokens * collateral_price
+                        oracle_support_label = "PENDLE_SUPPORTED"
+                        add_dependency(
+                            market_id=market_id,
+                            role="COLLATERAL_ASSET",
+                            asset_address=params.collateral_token,
+                            symbol=params.collateral_symbol,
+                            source="PENDLE",
+                            source_type="PRICE_OHLCV",
+                            source_id=pendle_addr,
+                            method="hourly_close",
+                            confidence="DIRECT",
+                            block_number=event_block,
+                            ts_value=metric_ts,
+                            exposure_kind="COLLATERAL",
+                            exposure_usd=collateral_usd,
+                        )
+                else:
+                    # Pendle data missing — fall back to oracle snapshot if available
+                    if params.oracle.lower() != ZERO_ADDRESS:
+                        oracle_price_rows = oracle_prices.loc[oracle_prices.index <= ts] if not oracle_prices.empty else pd.DataFrame()
+                        if not oracle_price_rows.empty and params.oracle.lower() in oracle_price_rows.columns:
+                            oracle_price_raw = oracle_price_rows.iloc[-1].get(params.oracle.lower())
+                            oracle_collateral_usd = collateral_value_usd_from_oracle(
+                                state.collateral_assets, oracle_price_raw, params.loan_decimals, loan_price,
+                            )
+                            if oracle_collateral_usd is not None:
+                                collateral_usd = oracle_collateral_usd
+                                collateral_price = collateral_usd / collateral_tokens if collateral_tokens > 0 else 0.0
+                                oracle_support_label = "PENDLE_SUPPORTED"  # still label as Pendle-supported market
+                                add_dependency(
+                                    market_id=market_id,
+                                    role="COLLATERAL_ASSET",
+                                    asset_address=params.collateral_token,
+                                    symbol=params.collateral_symbol,
+                                    source="MORPHO_ORACLE",
+                                    source_type="IOracle",
+                                    source_id=params.oracle.lower(),
+                                    method="price()",
+                                    confidence="DERIVED",
+                                    block_number=event_block,
+                                    ts_value=metric_ts,
+                                    exposure_kind="COLLATERAL",
+                                    exposure_usd=collateral_usd,
+                                )
+            elif market_id in oracle_priced_market_ids:
+                oracle_price_rows = oracle_prices.loc[oracle_prices.index <= ts] if not oracle_prices.empty else pd.DataFrame()
+                if not oracle_price_rows.empty and params.oracle.lower() in oracle_price_rows.columns:
+                    oracle_price_raw = oracle_price_rows.iloc[-1].get(params.oracle.lower())
+                    oracle_collateral_usd = collateral_value_usd_from_oracle(
+                        state.collateral_assets,
+                        oracle_price_raw,
+                        params.loan_decimals,
+                        loan_price,
+                    )
+                    if oracle_collateral_usd is not None:
+                        collateral_usd = oracle_collateral_usd
+                        collateral_price = collateral_usd / collateral_tokens if collateral_tokens > 0 else 0.0
+                        oracle_support_label = "ORACLE_SNAPSHOT_SUPPORTED"
+                        add_dependency(
+                            market_id=market_id,
+                            role="COLLATERAL_ASSET",
+                            asset_address=params.collateral_token,
+                            symbol=params.collateral_symbol,
+                            source="MORPHO_ORACLE",
+                            source_type="IOracle",
+                            source_id=params.oracle.lower(),
+                            method="price()",
+                            confidence="DERIVED",
+                            block_number=event_block,
+                            ts_value=metric_ts,
+                            exposure_kind="COLLATERAL",
+                            exposure_usd=collateral_usd,
+                        )
+            else:
+                collateral_price_point = self._shared_price_at(shared_prices, params.collateral_token, ts)
+                resolved_collateral_price = (
+                    collateral_price_point.price_usd
+                    if collateral_price_point
+                    else resolve_symbol_price(params.collateral_symbol, feed_prices)
+                )
+                if resolved_collateral_price is not None:
+                    collateral_price = resolved_collateral_price
+                    collateral_usd = collateral_tokens * collateral_price
+                    oracle_support_label = "SHARED_PRICE_SUPPORTED" if collateral_price_point or loan_price_point else "CHAINLINK_SUPPORTED"
+                    if collateral_price_point:
+                        add_dependency(
+                            market_id=market_id,
+                            role="COLLATERAL_ASSET",
+                            asset_address=params.collateral_token,
+                            symbol=params.collateral_symbol,
+                            source=collateral_price_point.source,
+                            source_type=collateral_price_point.source_type,
+                            source_id=collateral_price_point.source_id,
+                            method=collateral_price_point.method,
+                            confidence=collateral_price_point.confidence,
+                            block_number=event_block,
+                            ts_value=metric_ts,
+                            exposure_kind="COLLATERAL",
+                            exposure_usd=collateral_usd,
+                        )
+                    else:
+                        add_chainlink_dependencies(
+                            market_id=market_id,
+                            role="COLLATERAL_ASSET",
+                            asset_address=params.collateral_token,
+                            symbol=params.collateral_symbol,
+                            feed_prices=feed_prices,
+                            block_number=event_block,
+                            ts_value=metric_ts,
+                            exposure_kind="COLLATERAL",
+                            exposure_usd=collateral_usd,
+                        )
             utilization = min(max(borrow_tokens / supply_tokens, 0.0), 1.0) if supply_tokens > 0 else 0.0
             borrow_apy = _borrow_apy_from_rate(state.last_borrow_rate_wad)
             fee = max(0.0, min(float(state.fee_wad) / WAD, 1.0))
@@ -1170,6 +1799,53 @@ class MorphoSource(BaseSource):
 
         metrics_df = pd.DataFrame(metrics)
         insert_df_batched(ch, "morpho_market_metrics", metrics_df)
+        if dependency_rows:
+            insert_rows_batched(
+                ch,
+                "oracle_dependency_edges",
+                dependency_rows,
+                [
+                    "chain_id",
+                    "protocol",
+                    "entity_type",
+                    "entity_id",
+                    "role",
+                    "asset_address",
+                    "symbol",
+                    "source",
+                    "source_type",
+                    "source_id",
+                    "method",
+                    "dependency_path",
+                    "required",
+                    "risk_tier",
+                    "first_seen_block",
+                    "last_seen_block",
+                ],
+            )
+        if exposure_rows:
+            insert_rows_batched(
+                ch,
+                "oracle_dependency_exposure_latest",
+                exposure_rows,
+                [
+                    "chain_id",
+                    "protocol",
+                    "entity_type",
+                    "entity_id",
+                    "role",
+                    "asset_address",
+                    "symbol",
+                    "source",
+                    "source_type",
+                    "source_id",
+                    "method",
+                    "exposure_kind",
+                    "exposure_usd",
+                    "timestamp",
+                    "block_number",
+                ],
+            )
 
         final = pd.DataFrame(
             {

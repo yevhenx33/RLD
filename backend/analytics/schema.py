@@ -7,7 +7,7 @@ import os
 from analytics.protocols import MORPHO_MARKET
 from analytics.state import ensure_source_status_table
 from analytics.morpho_oracle_snapshots import ensure_morpho_oracle_snapshot_tables
-from analytics.oracle_snapshots import ensure_oracle_snapshot_tables
+from analytics.oracle_snapshots import ensure_asset_price_tables, ensure_oracle_snapshot_tables
 from analytics.fluid_full_coverage import ensure_fluid_full_coverage_tables, seed_core_fluid_contracts
 from analytics.euler_schema import ensure_euler_tables
 from analytics.aave_accounts import ensure_aave_account_tables
@@ -180,6 +180,7 @@ def ensure_schema(ch) -> None:
     ensure_source_status_table(ch)
     ensure_morpho_oracle_snapshot_tables(ch)
     ensure_oracle_snapshot_tables(ch)
+    ensure_asset_price_tables(ch)
     ensure_aave_account_tables(ch)
     ensure_compound_tables(ch)
     ensure_publisher_state_tables(ch)

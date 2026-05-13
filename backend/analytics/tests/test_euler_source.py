@@ -23,7 +23,11 @@ from analytics.sources.euler import (  # noqa: E402
     RAY,
     TOPIC_BORROW,
     TOPIC_EVAULT_CREATED,
+    TOPIC_GOV_SET_CAPS,
+    TOPIC_GOV_SET_CONFIG_FLAGS,
     TOPIC_GOV_SET_INTEREST_FEE,
+    TOPIC_GOV_SET_INTEREST_RATE_MODEL,
+    TOPIC_GOV_SET_LTV,
     TOPIC_VAULT_STATUS,
     EulerSource,
     EulerVaultMetadata,
@@ -107,6 +111,7 @@ class EulerSourceTests(unittest.TestCase):
         self.assertEqual(EVENT_MAP[TOPIC_VAULT_STATUS], "VaultStatus")
         self.assertEqual(EVENT_MAP[TOPIC_BORROW], "Borrow")
         self.assertEqual(EVENT_MAP[TOPIC_GOV_SET_INTEREST_FEE], "GovSetInterestFee")
+        self.assertEqual(EVENT_MAP[TOPIC_GOV_SET_LTV], "GovSetLTV")
 
     def test_evault_created_registers_factory_vault_metadata(self):
         source = EulerSource()
@@ -146,6 +151,54 @@ class EulerSourceTests(unittest.TestCase):
         self.assertEqual(state.cash, 600)
         self.assertEqual(state.interest_accumulator, 10**27)
         self.assertEqual(state.interest_rate, 123456)
+
+    def test_governance_params_and_ltv_are_persisted(self):
+        source = EulerSource()
+        ts = dt.datetime(2026, 1, 1, 12)
+        rows = [
+            source.decode(
+                FakeLog("0x" + VAULT, TOPIC_GOV_SET_INTEREST_RATE_MODEL, data_words(address_word("55" * 20)), block=101, log_index=1),
+                {101: ts},
+            ),
+            source.decode(
+                FakeLog("0x" + VAULT, TOPIC_GOV_SET_CAPS, data_words(10_000, 20_000), block=102, log_index=2),
+                {102: ts},
+            ),
+            source.decode(
+                FakeLog("0x" + VAULT, TOPIC_GOV_SET_CONFIG_FLAGS, data_words(7), block=103, log_index=3),
+                {103: ts},
+            ),
+            source.decode(
+                FakeLog(
+                    "0x" + VAULT,
+                    TOPIC_GOV_SET_LTV,
+                    data_words(8_000, 8_500, 9_000, 1_800_000_000, 86_400),
+                    topics=[TOPIC_GOV_SET_LTV, address_topic("66" * 20)],
+                    block=104,
+                    log_index=4,
+                ),
+                {104: ts},
+            ),
+        ]
+        ch = FakeClickHouse()
+
+        source.merge(ch, rows)
+
+        params = ch.inserted["euler_vault_market_params"][-1]
+        self.assertEqual(params[0], "0x" + VAULT)
+        self.assertEqual(params[5], "0x" + "55" * 20)
+        self.assertEqual(params[6], "10000")
+        self.assertEqual(params[7], "20000")
+        self.assertEqual(params[8], 7)
+
+        ltv = ch.inserted["euler_vault_ltv_config"][0]
+        self.assertEqual(ltv[0], "0x" + VAULT)
+        self.assertEqual(ltv[1], "0x" + "66" * 20)
+        self.assertEqual(ltv[6], 8_000)
+        self.assertEqual(ltv[7], 8_500)
+        self.assertEqual(ltv[8], 9_000)
+        self.assertEqual(ltv[9], 1_800_000_000)
+        self.assertEqual(ltv[10], 86_400)
 
     def test_spy_to_apy_and_fee_conversion(self):
         rate = int((0.05 / (365.2425 * 24 * 60 * 60)) * RAY)
@@ -205,6 +258,96 @@ class EulerSourceTests(unittest.TestCase):
         self.assertEqual(served["target_id"].unique().tolist(), ["0x" + USDC])
         self.assertAlmostEqual(float(served["supply_usd"].iloc[0]), 1000.0)
         self.assertAlmostEqual(float(served["borrow_usd"].iloc[0]), 400.0)
+
+    def test_replay_uses_each_vault_status_snapshot_for_history(self):
+        source = EulerSource()
+        source._registry = {
+            "0x" + VAULT: EulerVaultMetadata(
+                vault_address="0x" + VAULT,
+                asset_address="0x" + USDC,
+                asset_symbol="USDC",
+                asset_decimals=6,
+                verified=True,
+            ),
+        }
+        rows = [
+            source.decode(
+                FakeLog(
+                    "0x" + VAULT,
+                    TOPIC_VAULT_STATUS,
+                    data_words(1_000, 400_000_000, 0, 600_000_000, 10**27, 0, 1),
+                    block=100,
+                    log_index=1,
+                ),
+                {100: dt.datetime(2026, 1, 1, 12)},
+            ),
+            source.decode(
+                FakeLog(
+                    "0x" + VAULT,
+                    TOPIC_VAULT_STATUS,
+                    data_words(2_000, 800_000_000, 0, 1_200_000_000, 10**27, 0, 1),
+                    block=200,
+                    log_index=1,
+                ),
+                {200: dt.datetime(2026, 1, 1, 13)},
+            ),
+        ]
+        ch = FakeClickHouse()
+
+        written = source.merge(ch, rows)
+
+        self.assertEqual(written, 2)
+        served = pd.concat(ch.inserted["euler_timeseries"], ignore_index=True)
+        served = served.sort_values("timestamp").reset_index(drop=True)
+        self.assertAlmostEqual(float(served["supply_usd"].iloc[0]), 1000.0)
+        self.assertAlmostEqual(float(served["borrow_usd"].iloc[0]), 400.0)
+        self.assertAlmostEqual(float(served["supply_usd"].iloc[-1]), 2000.0)
+        self.assertAlmostEqual(float(served["borrow_usd"].iloc[-1]), 800.0)
+
+    def test_replay_keeps_zero_vault_status_as_terminal_anchor(self):
+        source = EulerSource()
+        source._registry = {
+            "0x" + VAULT: EulerVaultMetadata(
+                vault_address="0x" + VAULT,
+                asset_address="0x" + USDC,
+                asset_symbol="USDC",
+                asset_decimals=6,
+                verified=True,
+            ),
+        }
+        rows = [
+            source.decode(
+                FakeLog(
+                    "0x" + VAULT,
+                    TOPIC_VAULT_STATUS,
+                    data_words(1_000, 400_000_000, 0, 600_000_000, 10**27, 0, 1),
+                    block=100,
+                    log_index=1,
+                ),
+                {100: dt.datetime(2026, 1, 1, 12)},
+            ),
+            source.decode(
+                FakeLog(
+                    "0x" + VAULT,
+                    TOPIC_VAULT_STATUS,
+                    data_words(0, 0, 0, 0, 10**27, 0, 1),
+                    block=200,
+                    log_index=1,
+                ),
+                {200: dt.datetime(2026, 1, 1, 13)},
+            ),
+        ]
+        ch = FakeClickHouse()
+
+        written = source.merge(ch, rows)
+
+        self.assertEqual(written, 2)
+        served = pd.concat(ch.inserted["euler_timeseries"], ignore_index=True)
+        served = served.sort_values("timestamp").reset_index(drop=True)
+        self.assertAlmostEqual(float(served["supply_usd"].iloc[0]), 1000.0)
+        self.assertAlmostEqual(float(served["borrow_usd"].iloc[0]), 400.0)
+        self.assertAlmostEqual(float(served["supply_usd"].iloc[-1]), 0.0)
+        self.assertAlmostEqual(float(served["borrow_usd"].iloc[-1]), 0.0)
 
 
 if __name__ == "__main__":

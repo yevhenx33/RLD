@@ -554,6 +554,11 @@ export default function LendingDataPage() {
 
   const handleProtocolFilter = (filter) => {
     setProtocolFilter(filter);
+    setSortConfig((prev) => (
+      filter === 'LENDING' && prev.key === "protocol"
+        ? { key: "supplyUsd", direction: "desc" }
+        : prev
+    ));
     setCurrentPage(1);
   };
 
@@ -606,6 +611,8 @@ export default function LendingDataPage() {
   }, [safeCurrentPage, sortedTableRows]);
 
   const totalPages = maxPage;
+  const showProtocolColumn = protocolFilter !== 'LENDING';
+  const tableGridClass = showProtocolColumn ? "grid-cols-9" : "grid-cols-8";
 
   const renderSortHeader = (key, label, className = "text-center justify-center") => {
     const active = sortConfig.key === key;
@@ -883,7 +890,7 @@ export default function LendingDataPage() {
           <div className="w-full overflow-x-auto">
             <div className="min-w-[1000px] flex flex-col">
               {/* Table Header */}
-              <div className="grid grid-cols-9 gap-4 px-4 md:px-6 py-3 text-[11px] md:text-[13px] text-gray-500 uppercase tracking-widest border-b border-white/10 bg-[#050505]">
+              <div className={`grid ${tableGridClass} gap-4 px-4 md:px-6 py-3 text-[11px] md:text-[13px] text-gray-500 uppercase tracking-widest border-b border-white/10 bg-[#050505]`}>
                 <div className="col-span-2">{renderSortHeader("name", protocolFilter === 'LENDING' ? 'Protocol' : 'Asset', "justify-start text-left")}</div>
                 <div>{renderSortHeader("netWorth", "Liquidity")}</div>
                 <div>{renderSortHeader("supplyUsd", "Total Supply")}</div>
@@ -891,7 +898,7 @@ export default function LendingDataPage() {
                 <div>{renderSortHeader("supplyApy", "Supply APY")}</div>
                 <div>{renderSortHeader("borrowApy", "Borrow APY")}</div>
                 <div>{renderSortHeader("utilization", "Utilization")}</div>
-                <div>{renderSortHeader("protocol", "Protocol")}</div>
+                {showProtocolColumn && <div>{renderSortHeader("protocol", "Protocol")}</div>}
 
               </div>
 
@@ -915,7 +922,7 @@ export default function LendingDataPage() {
                           }
                           if (pool.entityId) navigate(marketRouteFor(pool.protocol, pool.entityId));
                         }}
-                        className={`grid grid-cols-9 gap-4 px-4 md:px-6 py-4 items-center transition-colors ${canNavigate ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
+                        className={`grid ${tableGridClass} gap-4 px-4 md:px-6 py-4 items-center transition-colors ${canNavigate ? 'hover:bg-white/[0.02] cursor-pointer' : 'opacity-50 cursor-not-allowed'
                           }`}
                       >
                         <div className="col-span-2 flex items-center gap-3">
@@ -962,7 +969,7 @@ export default function LendingDataPage() {
                         <div className="flex justify-center text-center text-[10px] md:text-[13px] text-green-500 tracking-widest">{formatApy(pool.supplyApy)}</div>
                         <div className="flex justify-center text-center text-[10px] md:text-[13px] text-cyan-500 tracking-widest">{formatApy(pool.borrowApy)}</div>
                         <div className="flex justify-center text-center text-[10px] md:text-[13px] text-gray-300 tracking-widest">{formatPercent(pool.utilization)}</div>
-                        <div className="flex justify-center text-center text-[10px] md:text-[13px] text-gray-400 tracking-widest">{protocolLabel(pool.protocol)}</div>
+                        {showProtocolColumn && <div className="flex justify-center text-center text-[10px] md:text-[13px] text-gray-400 tracking-widest">{protocolLabel(pool.protocol)}</div>}
                       </div>
                     );
                   })
