@@ -1,83 +1,26 @@
 import React, { useMemo, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
-import useSWR from "swr";
 import { Activity, ArrowLeft, Loader2, ExternalLink, Shield, Link2, PieChart as PieChartIcon, Info, ChevronDown, ChevronUp } from "lucide-react";
 import { MetricCell, StatItem } from "../../../components/pools/MetricsGrid";
 import RLDPerformanceChart from "../../../charts/primitives/RLDPerformanceChart";
-import { API_GRAPHQL_URL } from "../../../api/endpoints";
-import { apiGraphQL } from "../../../api/apiClient";
-import { MARKET_PAGE_QUERY } from "../../../api/apiQueries";
-import { queryKeys } from "../../../api/queryKeys";
 import { apiProtocolForSlug, normalizeMarketIdForApi } from "../../../lib/protocolConfig";
 import { getTokenIcon } from "../../../utils/tokenIcons";
-import { REFRESH_INTERVALS } from "../../../config/refreshIntervals";
+import { useMarketPageQuery } from "../../../hooks/queries/useMarketPageQuery";
+import { ChartEmptyState } from "../../../components/data/MarketPageBlocks";
+import {
+  etherscanAddressUrl,
+  finiteNumber,
+  formatApy,
+  formatCurrency,
+  formatLltvRange,
+  formatOptionalCurrency,
+  formatPercent,
+} from "../../../lib/analyticsFormatters";
+import { buildStandardMarketPageModel } from "../../../lib/marketPageModel";
 
 const CHART_RESOLUTION = "1D";
 const TIMESERIES_LIMIT_DAYS = 500;
 const FLOW_LIMIT_DAYS = 500;
-
-const finiteNumber = (value, fallback = 0) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-};
-
-const formatCurrency = (value) => {
-  const amount = finiteNumber(value);
-  if (amount >= 1e9) return `$${(amount / 1e9).toFixed(2)}B`;
-  if (amount >= 1e6) return `$${(amount / 1e6).toFixed(2)}M`;
-  if (amount >= 1e3) return `$${(amount / 1e3).toFixed(0)}K`;
-  return `$${amount.toFixed(0)}`;
-};
-
-const formatApy = (value) => {
-  return `${(finiteNumber(value) * 100).toFixed(2)}%`;
-};
-
-const formatPercent = (value, digits = 2) => {
-  return `${(finiteNumber(value) * 100).toFixed(digits)}%`;
-};
-
-const formatLltvRange = (market) => {
-  const min = finiteNumber(market?.lltvMin, NaN);
-  const max = finiteNumber(market?.lltvMax, NaN);
-  if (Number.isFinite(min) && Number.isFinite(max) && max > 0) {
-    if (Math.abs(max - min) < 0.000001) return formatPercent(max);
-    return `${formatPercent(min)}-${formatPercent(max)}`;
-  }
-  const lltv = finiteNumber(market?.lltv, NaN);
-  return Number.isFinite(lltv) && lltv > 0 ? formatPercent(lltv) : "—";
-};
-
-const formatOptionalCurrency = (value) => {
-  const amount = finiteNumber(value);
-  return amount > 0 ? formatCurrency(amount) : "-";
-};
-
-const etherscanAddressUrl = (value) => {
-  const address = String(value || "");
-  return address.startsWith("0x") ? `https://etherscan.io/address/${address}` : null;
-};
-
-const normalizeRatePoint = (point) => ({
-  timestamp: finiteNumber(point?.timestamp),
-  supplyApy: finiteNumber(point?.supplyApy),
-  borrowApy: finiteNumber(point?.borrowApy),
-  utilization: finiteNumber(point?.utilization),
-  supplyUsd: finiteNumber(point?.supplyUsd),
-  borrowUsd: finiteNumber(point?.borrowUsd),
-});
-
-const hasAnyFiniteValue = (point, keys) => {
-  return keys.some((key) => Number.isFinite(Number(point?.[key])));
-};
-
-function ChartEmptyState({ label }) {
-  return (
-    <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500">
-      {label}
-    </div>
-  );
-}
 
 export default function AaveMarketPage() {
   const { protocol: protocolSlug, marketId } = useParams();
@@ -89,134 +32,23 @@ export default function AaveMarketPage() {
   });
   const resolvedProtocolSlug = protocolSlug || location.pathname.split("/")[2] || "aave";
   const protocolKey = apiProtocolForSlug(resolvedProtocolSlug);
-  const normalizedEntityId = useMemo(() => {
-    return normalizeMarketIdForApi(resolvedProtocolSlug, marketId);
-  }, [marketId, resolvedProtocolSlug]);
+  const normalizedEntityId = normalizeMarketIdForApi(resolvedProtocolSlug, marketId);
 
-  const { data: pageGqlData, isLoading: pageLoading } = useSWR(
-    queryKeys.apiMarketPage(API_GRAPHQL_URL, protocolKey, normalizedEntityId),
-    ([, , variables]) =>
-      apiGraphQL("MarketPage", {
-        query: MARKET_PAGE_QUERY,
-        variables: {
-          protocol: variables.protocol,
-          marketId: variables.marketId,
-          timeseriesLimit: TIMESERIES_LIMIT_DAYS,
-          flowLimit: FLOW_LIMIT_DAYS,
-          allocationLimit: 0,
-        },
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    }
+  const { data: pageGqlData, isLoading: pageLoading } = useMarketPageQuery({
+    protocol: protocolKey,
+    marketId: normalizedEntityId,
+    timeseriesLimit: TIMESERIES_LIMIT_DAYS,
+    flowLimit: FLOW_LIMIT_DAYS,
+    allocationLimit: 0,
+  });
+
+  const { market, tsData, flowData, collateralBreakdown } = useMemo(
+    () => buildStandardMarketPageModel(pageGqlData?.marketPage, {
+      fallbackProtocol: "AAVE_MARKET",
+      includeCollateralBreakdown: true,
+    }),
+    [pageGqlData],
   );
-
-  const { market, tsData, flowData, genesisTs, collateralBreakdown } = useMemo(() => {
-    const page = pageGqlData?.marketPage || {};
-    const rawMarket = page.market || null;
-
-    let safeMarket = null;
-    if (rawMarket) {
-      const supplyUsd = Math.max(0, Number(rawMarket.supplyUsd) || 0);
-      const borrowUsd = Math.max(0, Number(rawMarket.borrowUsd) || 0);
-      safeMarket = {
-        symbol: String(rawMarket.symbol || "UNKNOWN"),
-        protocol: String(rawMarket.protocol || "AAVE_MARKET"),
-        supplyUsd,
-        borrowUsd,
-        supplyApy: Math.max(0, finiteNumber(rawMarket.supplyApy)),
-        borrowApy: Math.max(0, finiteNumber(rawMarket.borrowApy)),
-        utilization: supplyUsd > 0 ? Math.min(1, borrowUsd / supplyUsd) : 0,
-        lltv: rawMarket.lltv != null ? Number(rawMarket.lltv) : null,
-        lltvMin: rawMarket.lltvMin != null ? Number(rawMarket.lltvMin) : null,
-        lltvMax: rawMarket.lltvMax != null ? Number(rawMarket.lltvMax) : null,
-        loanPriceUsd: rawMarket.loanPriceUsd != null ? Number(rawMarket.loanPriceUsd) : null,
-        oracleSupport: rawMarket.oracleSupport || null,
-      };
-    }
-
-    const chart = (page.rateChart || [])
-      .map(normalizeRatePoint)
-      .filter((p) => (
-        p.timestamp > 0
-        && hasAnyFiniteValue(p, ["supplyApy", "borrowApy", "supplyUsd", "borrowUsd", "utilization"])
-      ))
-      .sort((a, b) => a.timestamp - b.timestamp);
-    const rawFlow = page.flowChart || [];
-    const flowBase = rawFlow
-      .map((p) => {
-        const supplyOutflowAbs = Math.max(0, finiteNumber(p.supplyOutflowUsd));
-        const borrowOutflowAbs = Math.max(0, finiteNumber(p.borrowOutflowUsd));
-        return {
-          timestamp: finiteNumber(p.timestamp),
-          supplyInflowUsd: Math.max(0, finiteNumber(p.supplyInflowUsd)),
-          // Plot outflows below baseline for intuitive directionality.
-          supplyOutflowUsd: -supplyOutflowAbs,
-          netSupplyFlowUsd: finiteNumber(p.netSupplyFlowUsd),
-          borrowInflowUsd: Math.max(0, finiteNumber(p.borrowInflowUsd)),
-          borrowOutflowUsd: -borrowOutflowAbs,
-          netBorrowFlowUsd: finiteNumber(p.netBorrowFlowUsd),
-          cumulativeSupplyNetInflowUsd: finiteNumber(p.cumulativeSupplyNetInflowUsd, NaN),
-          cumulativeBorrowNetInflowUsd: finiteNumber(p.cumulativeBorrowNetInflowUsd, NaN),
-        };
-      })
-      .filter((p) => p.timestamp > 0)
-      .sort((a, b) => a.timestamp - b.timestamp);
-    const flow = flowBase.reduce(
-      (acc, point) => {
-        const hasSupplyFromApi = Number.isFinite(point.cumulativeSupplyNetInflowUsd);
-        const hasBorrowFromApi = Number.isFinite(point.cumulativeBorrowNetInflowUsd);
-        const cumulativeSupplyNetInflowUsd = hasSupplyFromApi
-          ? point.cumulativeSupplyNetInflowUsd
-          : acc.cumulativeSupply + point.netSupplyFlowUsd;
-        const cumulativeBorrowNetInflowUsd = hasBorrowFromApi
-          ? point.cumulativeBorrowNetInflowUsd
-          : acc.cumulativeBorrow + point.netBorrowFlowUsd;
-        return {
-          cumulativeSupply: cumulativeSupplyNetInflowUsd,
-          cumulativeBorrow: cumulativeBorrowNetInflowUsd,
-          rows: [
-            ...acc.rows,
-            {
-              ...point,
-              cumulativeSupplyNetInflowUsd,
-              cumulativeBorrowNetInflowUsd,
-            },
-          ],
-        };
-      },
-      { cumulativeSupply: 0, cumulativeBorrow: 0, rows: [] }
-    ).rows;
-    // Derive market "liquidity genesis" — first day cumulative supply inflow > 0.
-    // All charts on the page start from this point to avoid long flat-line prefixes.
-    const genesisPoint = flow.find((p) => p.cumulativeSupplyNetInflowUsd > 0);
-    const genesisTs = genesisPoint ? genesisPoint.timestamp : 0;
-
-    return {
-      market: safeMarket,
-      tsData: genesisTs > 0 ? chart.filter((p) => p.timestamp >= genesisTs) : chart,
-      flowData: genesisTs > 0 ? flow.filter((p) => p.timestamp >= genesisTs) : flow,
-      genesisTs,
-      collateralBreakdown: (page.collateralBreakdown || []).map((row) => ({
-        asset: String(row?.asset || ""),
-        symbol: String(row?.symbol || "UNKNOWN"),
-        priceFeed: row?.priceFeed || null,
-        borrowCollateralFactor: finiteNumber(row?.borrowCollateralFactor),
-        liquidateCollateralFactor: finiteNumber(row?.liquidateCollateralFactor),
-        liquidationFactor: finiteNumber(row?.liquidationFactor),
-        supplyCapTokens: finiteNumber(row?.supplyCapTokens),
-        totalCollateralTokens: finiteNumber(row?.totalCollateralTokens),
-        collateralUsd: finiteNumber(row?.collateralUsd),
-        capacity:
-          finiteNumber(row?.supplyCapTokens) > 0
-            ? finiteNumber(row?.totalCollateralTokens) / finiteNumber(row?.supplyCapTokens)
-            : null,
-        borrowEnabled: Boolean(row?.borrowEnabled),
-      })),
-    };
-  }, [pageGqlData]);
 
   const sortedCollateralBreakdown = useMemo(() => {
     const direction = collateralSort.direction === "asc" ? 1 : -1;

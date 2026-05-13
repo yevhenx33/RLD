@@ -25,6 +25,18 @@ import { METAMORPHO_VAULT_PAGE_QUERY } from "../../../api/apiQueries";
 import { queryKeys } from "../../../api/queryKeys";
 import { getTokenIcon } from "../../../utils/tokenIcons";
 import { REFRESH_INTERVALS } from "../../../config/refreshIntervals";
+import { ChartCard, ChartEmptyState } from "../../../components/data/MarketPageBlocks";
+import {
+  filterHistoryByWindow,
+  finiteNumber,
+  formatApy,
+  formatCurrency,
+  formatPercent,
+  formatUsdPrice,
+  proportionalSlots,
+  shortAddress,
+} from "../../../lib/analyticsFormatters";
+import { buildMetaMorphoVaultPageModel } from "../../../lib/marketPageModel";
 
 const CHART_RESOLUTION = "1D";
 const TIMESERIES_LIMIT = 2000;
@@ -48,115 +60,6 @@ const PIE_COLORS = [
   "#f472b6",
   "#64748b",
 ];
-
-const finiteNumber = (value, fallback = 0) => {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
-};
-
-const formatCurrency = (value) => {
-  const amount = finiteNumber(value);
-  if (amount >= 1e9) return `$${(amount / 1e9).toFixed(2)}B`;
-  if (amount >= 1e6) return `$${(amount / 1e6).toFixed(2)}M`;
-  if (amount >= 1e3) return `$${(amount / 1e3).toFixed(0)}K`;
-  return `$${amount.toFixed(0)}`;
-};
-
-const formatApy = (value) => `${(finiteNumber(value) * 100).toFixed(2)}%`;
-const formatPercent = (value, digits = 2) => `${(finiteNumber(value) * 100).toFixed(digits)}%`;
-const formatUsdPrice = (value) => {
-  const price = finiteNumber(value);
-  if (price >= 1000) return formatCurrency(price);
-  if (price >= 1) return `$${price.toFixed(4)}`;
-  if (price > 0) return `$${price.toPrecision(4)}`;
-  return "$0.00";
-};
-const shortAddress = (value) => {
-  const raw = String(value || "");
-  return raw.length > 12 ? `${raw.slice(0, 6)}...${raw.slice(-4)}` : raw;
-};
-
-const filterHistoryByWindow = (rows, days) => {
-  if (!days || !rows.length) return rows;
-  const latestTimestamp = rows.reduce(
-    (latest, row) => Math.max(latest, finiteNumber(row.timestamp)),
-    0,
-  );
-  if (latestTimestamp <= 0) return rows;
-  const minTimestamp = latestTimestamp - days * 24 * 60 * 60;
-  return rows.filter((row) => finiteNumber(row.timestamp) >= minTimestamp);
-};
-
-const normalizeHistoryPoint = (point) => ({
-  timestamp: finiteNumber(point?.timestamp),
-  totalDepositsUsd: finiteNumber(point?.totalDepositsUsd),
-  allocatedUsd: finiteNumber(point?.allocatedUsd),
-  liquidityUsd: finiteNumber(point?.liquidityUsd),
-  utilization: finiteNumber(point?.utilization),
-  utilizationPct: finiteNumber(point?.utilization) * 100,
-  sharePriceUsd: finiteNumber(point?.sharePriceUsd),
-  netApy: finiteNumber(point?.netApy),
-  netApyPct: finiteNumber(point?.netApy) * 100,
-});
-
-const proportionalSlots = (items, totals, top, bottom, height, minHeight = 14, gap = 12) => {
-  const slots = new Map();
-  if (!items.length) return slots;
-  const total = items.reduce((sum, item) => sum + finiteNumber(totals.get(item)), 0);
-  const available = Math.max(1, height - top - bottom - gap * (items.length - 1));
-  const rawHeights = items.map((item) => (total > 0 ? (available * finiteNumber(totals.get(item))) / total : available / items.length));
-  const heights = rawHeights.map((height) => Math.max(minHeight, height));
-  const used = heights.reduce((sum, height) => sum + height, 0) + gap * (items.length - 1);
-  const scale = used > available ? available / used : 1;
-  let y = top + Math.max(0, (height - top - bottom - used * scale) / 2);
-  items.forEach((item, index) => {
-    const h = Math.max(8, heights[index] * scale);
-    slots.set(item, { y, h, center: y + h / 2, total: finiteNumber(totals.get(item)) });
-    y += h + gap * scale;
-  });
-  return slots;
-};
-
-function ChartEmptyState({ label }) {
-  return (
-    <div className="h-[320px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500">
-      {label}
-    </div>
-  );
-}
-
-function ChartCard({ title, legendItems, controls, loading, empty, emptyLabel, children }) {
-  return (
-    <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <Activity size={18} className="text-gray-500" />
-          <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">{title}</h2>
-        </div>
-        {(controls || legendItems) && (
-          <div className="flex items-center gap-4 flex-wrap justify-end">
-            {controls}
-            {legendItems?.map(([color, label]) => (
-              <div key={label} className="flex items-center gap-2">
-                <div className="w-2 h-2" style={{ background: color }} />
-                <span className="text-xs text-gray-500 uppercase tracking-widest">{label}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {loading ? (
-        <div className="h-[320px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
-          <Loader2 size={14} className="animate-spin" /> Loading...
-        </div>
-      ) : empty ? (
-        <ChartEmptyState label={emptyLabel || "No data available"} />
-      ) : (
-        <div className="h-[320px] w-full">{children}</div>
-      )}
-    </div>
-  );
-}
 
 function HistoryWindowControls({ activeDays, onChange }) {
   return (
@@ -449,52 +352,10 @@ export default function MetaMorphoVaultPage() {
     },
   );
 
-  const page = pageGqlData?.metamorphoVaultPage || {};
-  const vault = page.vault || null;
-  const totalDeposits = finiteNumber(vault?.tvlUsd);
-  const history = useMemo(
-    () => (page.history || [])
-      .map(normalizeHistoryPoint)
-      .filter((point) => point.timestamp > 0)
-      .sort((a, b) => a.timestamp - b.timestamp),
-    [page.history],
+  const { vault, totalDeposits, history, exposures, flowLinks, flowData } = useMemo(
+    () => buildMetaMorphoVaultPageModel(pageGqlData?.metamorphoVaultPage),
+    [pageGqlData],
   );
-  const exposures = useMemo(
-    () => (page.exposures || [])
-      .map((row) => ({
-        ...row,
-        suppliedUsd: finiteNumber(row.suppliedUsd),
-        allocationShare: totalDeposits > 0 ? finiteNumber(row.suppliedUsd) / totalDeposits : finiteNumber(row.allocationShare),
-        liquidityUsd: finiteNumber(row.liquidityUsd),
-        supplyApy: finiteNumber(row.supplyApy),
-        borrowApy: finiteNumber(row.borrowApy),
-        utilization: finiteNumber(row.utilization),
-      }))
-      .filter((row) => row.marketId && row.suppliedUsd > 0)
-      .sort((a, b) => b.suppliedUsd - a.suppliedUsd),
-    [page.exposures, totalDeposits],
-  );
-  const flowLinks = page.flowLinks || [];
-  const flowData = useMemo(() => {
-    const byTimestamp = new Map();
-    (page.flowChart || []).forEach((row) => {
-      const timestamp = finiteNumber(row.timestamp);
-      if (timestamp <= 0) return;
-      const point = byTimestamp.get(timestamp) || {
-        timestamp,
-        inflowUsd: 0,
-        outflowUsd: 0,
-        netFlowUsd: 0,
-      };
-      const inflow = Math.max(0, finiteNumber(row.depositUsd));
-      const outflow = Math.max(0, finiteNumber(row.withdrawUsd));
-      point.inflowUsd += inflow;
-      point.outflowUsd -= outflow;
-      point.netFlowUsd += finiteNumber(row.netFlowUsd, inflow - outflow);
-      byTimestamp.set(timestamp, point);
-    });
-    return [...byTimestamp.values()].sort((a, b) => a.timestamp - b.timestamp);
-  }, [page.flowChart]);
   const visibleDepositsHistory = useMemo(
     () => filterHistoryByWindow(history, depositsWindowDays),
     [depositsWindowDays, history],
@@ -655,6 +516,7 @@ export default function MetaMorphoVaultPage() {
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
           <ChartCard
+            heightClass="h-[320px]"
             title="Total Deposits"
             controls={<HistoryWindowControls activeDays={depositsWindowDays} onChange={setDepositsWindowDays} />}
             legendItems={[["#34d399", "Total Deposits"]]}
@@ -667,13 +529,14 @@ export default function MetaMorphoVaultPage() {
               areas={[{ key: "totalDepositsUsd", color: "#34d399", name: "Total Deposits", format: "dollar" }]}
             />
           </ChartCard>
-          <ChartCard title="Exposure" loading={pageLoading && !exposures.length} empty={!exposures.length} emptyLabel="No market exposure data available">
+          <ChartCard heightClass="h-[320px]" title="Exposure" loading={pageLoading && !exposures.length} empty={!exposures.length} emptyLabel="No market exposure data available">
             <ExposurePie exposures={exposures} totalDeposits={totalDeposits} />
           </ChartCard>
         </div>
 
         <div className="mb-6">
           <ChartCard
+            heightClass="h-[320px]"
             title="Vault Inflow / Outflow (USD)"
             controls={<HistoryWindowControls activeDays={flowWindowDays} onChange={setFlowWindowDays} />}
             legendItems={[["#34d399", "Inflow"], ["#fb7185", "Outflow"], ["#22d3ee", "Net"]]}
@@ -696,6 +559,7 @@ export default function MetaMorphoVaultPage() {
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
           <ChartCard
+            heightClass="h-[320px]"
             title="Net APY"
             controls={<HistoryWindowControls activeDays={apyWindowDays} onChange={setApyWindowDays} />}
             legendItems={[["#22d3ee", "Net APY"]]}
@@ -709,6 +573,7 @@ export default function MetaMorphoVaultPage() {
             />
           </ChartCard>
           <ChartCard
+            heightClass="h-[320px]"
             title="Historical Utilization"
             controls={<HistoryWindowControls activeDays={utilizationWindowDays} onChange={setUtilizationWindowDays} />}
             legendItems={[["#a78bfa", "Allocated / Deposits"]]}

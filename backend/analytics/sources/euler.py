@@ -1021,7 +1021,7 @@ class EulerSource(BaseSource):
         sources: dict[str, str] = {}
         for source, table, address_column, where_expression in (
             ("PENDLE_OHLCV", "pendle_eth_price_ohlcv", "asset_address", "close > 0"),
-            ("FLUID_COMPONENT", "fluid_product_components", "token", "price_usd > 0"),
+            ("SHARED_ASSET_PRICE", "asset_price_observations", "asset_address", "status = 'OK' AND price_usd > 0"),
         ):
             try:
                 rows = ch.query(
@@ -1175,8 +1175,8 @@ class EulerSource(BaseSource):
             direct_fallback = direct_tvl >= EULER_DIRECT_ORACLE_MIN_TVL_USD
             if asset_source == "PENDLE_OHLCV":
                 plans[vault] = EulerVaultPricePlan("PENDLE_OHLCV", "PENDLE_OHLCV", direct_fallback=direct_fallback)
-            elif asset_source == "FLUID_COMPONENT":
-                plans[vault] = EulerVaultPricePlan("FLUID_COMPONENT", "FLUID_COMPONENT", direct_fallback=direct_fallback)
+            elif asset_source == "SHARED_ASSET_PRICE":
+                plans[vault] = EulerVaultPricePlan("SHARED_ASSET_PRICE", "SHARED_ASSET_PRICE", direct_fallback=direct_fallback)
             elif direct_fallback:
                 plans[vault] = EulerVaultPricePlan("EULER_ORACLE_RPC", "EULER_ORACLE_RPC")
         return plans
@@ -1210,14 +1210,14 @@ class EulerSource(BaseSource):
             "close > 0",
             asset_addresses,
         )
-        fluid_prices = self._asset_history_frame(
+        shared_asset_prices = self._asset_history_frame(
             ch,
             hourly["ts"].min(),
             hourly["ts"].max(),
-            "fluid_product_components",
-            "token",
+            "asset_price_observations",
+            "asset_address",
             "price_usd",
-            "price_usd > 0",
+            "status = 'OK' AND price_usd > 0",
             asset_addresses,
         )
         unit_prices = self._price_frame(
@@ -1244,8 +1244,8 @@ class EulerSource(BaseSource):
                     price = resolve_symbol_price(meta.asset_symbol, feed_prices)
             elif plan.source == "PENDLE_OHLCV":
                 price = self._price_at(pendle_prices, meta.asset_address.lower(), ts)
-            elif plan.source == "FLUID_COMPONENT":
-                price = self._price_at(fluid_prices, meta.asset_address.lower(), ts)
+            elif plan.source == "SHARED_ASSET_PRICE":
+                price = self._price_at(shared_asset_prices, meta.asset_address.lower(), ts)
             elif plan.source == "EULER_ORACLE_RPC":
                 unit_feed_prices = self._unit_feed_prices_at(unit_prices, ts)
                 price = self._direct_oracle_price_usd(meta, int(getattr(row, "block_number", 0) or 0), unit_feed_prices)

@@ -1,7 +1,8 @@
-"""Fluid full-coverage product schema and helpers.
+"""Fluid full-coverage event schema and helpers.
 
-These tables separate canonical Liquidity Layer reserve TVL from Fluid product
-exposure surfaces. Product rows are not additive TVL unless marked canonical.
+Direct RPC product snapshot tables were removed in favor of Envio/event replay
+surfaces. This module keeps shared Fluid registry, oracle support, and raw
+event tables only.
 """
 
 from __future__ import annotations
@@ -94,69 +95,6 @@ def ensure_fluid_full_coverage_tables(ch) -> None:
     )
     ch.command(
         """
-        CREATE TABLE IF NOT EXISTS fluid_product_snapshots (
-            chain_id UInt32,
-            product_type LowCardinality(String),
-            product_id String,
-            timestamp DateTime,
-            block_number UInt64,
-            symbol LowCardinality(String),
-            underlying String,
-            collateral_token String,
-            debt_token String,
-            supply_usd Float64,
-            borrow_usd Float64,
-            collateral_usd Float64,
-            liquidity_usd Float64,
-            volume_usd Float64,
-            fees_usd Float64,
-            supply_apy Float64,
-            borrow_apy Float64,
-            utilization Float64,
-            ltv Float64,
-            liquidation_threshold Float64,
-            position_count UInt64,
-            is_canonical_tvl UInt8,
-            pricing_status LowCardinality(String),
-            oracle_status LowCardinality(String),
-            snapshot_status LowCardinality(String),
-            provenance String,
-            error String,
-            inserted_at DateTime DEFAULT now()
-        ) ENGINE = ReplacingMergeTree(inserted_at)
-        PARTITION BY toStartOfMonth(timestamp)
-        ORDER BY (chain_id, product_type, product_id, timestamp, block_number)
-        TTL timestamp + INTERVAL 72 MONTH DELETE
-        """
-    )
-
-    ch.command(
-        """
-        CREATE TABLE IF NOT EXISTS fluid_product_components (
-            chain_id UInt32,
-            product_type LowCardinality(String),
-            product_id String,
-            timestamp DateTime,
-            block_number UInt64,
-            component_type LowCardinality(String),
-            token String,
-            symbol LowCardinality(String),
-            raw_amount String,
-            decimals UInt8,
-            price_usd Float64,
-            amount_usd Float64,
-            pricing_status LowCardinality(String),
-            oracle_status LowCardinality(String),
-            provenance String,
-            inserted_at DateTime DEFAULT now()
-        ) ENGINE = ReplacingMergeTree(inserted_at)
-        PARTITION BY toStartOfMonth(timestamp)
-        ORDER BY (chain_id, product_type, product_id, timestamp, block_number, component_type, token)
-        TTL timestamp + INTERVAL 72 MONTH DELETE
-        """
-    )
-    ch.command(
-        """
         CREATE TABLE IF NOT EXISTS fluid_asset_oracle_support (
             chain_id UInt32,
             asset String,
@@ -169,25 +107,6 @@ def ensure_fluid_full_coverage_tables(ch) -> None:
             updated_at DateTime DEFAULT now()
         ) ENGINE = ReplacingMergeTree(updated_at)
         ORDER BY (chain_id, asset)
-        """
-    )
-    ch.command(
-        """
-        CREATE TABLE IF NOT EXISTS fluid_rpc_validation_runs (
-            run_id String,
-            chain_id UInt32,
-            target LowCardinality(String),
-            started_at DateTime,
-            finished_at DateTime,
-            checked_count UInt32,
-            mismatch_count UInt32,
-            max_relative_supply_diff Float64,
-            max_relative_borrow_diff Float64,
-            status LowCardinality(String),
-            details String,
-            inserted_at DateTime DEFAULT now()
-        ) ENGINE = ReplacingMergeTree(inserted_at)
-        ORDER BY (chain_id, target, run_id)
         """
     )
     ch.command(
@@ -211,6 +130,81 @@ def ensure_fluid_full_coverage_tables(ch) -> None:
         PARTITION BY toStartOfMonth(block_timestamp)
         ORDER BY (chain_id, product_type, block_number, log_index, contract, topic0)
         TTL block_timestamp + INTERVAL 72 MONTH DELETE
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS fluid_ftoken_timeseries (
+            chain_id UInt32,
+            timestamp DateTime,
+            block_number UInt64,
+            product_id String,
+            symbol LowCardinality(String),
+            underlying String,
+            total_assets_raw String,
+            total_supply_raw String,
+            replay_total_supply_raw String,
+            assets_per_share Float64,
+            price_usd Float64,
+            supply_usd Float64,
+            deposit_assets_raw String,
+            withdraw_assets_raw String,
+            mint_shares_raw String,
+            burn_shares_raw String,
+            transfer_count UInt32,
+            deposit_count UInt32,
+            withdraw_count UInt32,
+            event_count UInt32,
+            supply_raw_diff String,
+            state_status LowCardinality(String),
+            provenance String,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        PARTITION BY toStartOfMonth(timestamp)
+        ORDER BY (chain_id, product_id, timestamp, block_number)
+        TTL timestamp + INTERVAL 72 MONTH DELETE
+        """
+    )
+    ensure_fluid_anchor_tables(ch)
+
+
+def ensure_fluid_anchor_tables(ch) -> None:
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS fluid_anchor_runs (
+            run_id String,
+            target LowCardinality(String),
+            started_at DateTime,
+            finished_at DateTime,
+            anchor_block UInt64,
+            checked_entities UInt64,
+            drifted_entities UInt64,
+            checked_fields UInt64,
+            drifted_fields UInt64,
+            max_abs_diff String,
+            max_rel_diff Float64,
+            status LowCardinality(String),
+            error String,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY (target, run_id)
+        """
+    )
+    ch.command(
+        """
+        CREATE TABLE IF NOT EXISTS fluid_anchor_diffs (
+            run_id String,
+            target LowCardinality(String),
+            anchor_block UInt64,
+            entity_id String,
+            field LowCardinality(String),
+            indexed_value String,
+            rpc_value String,
+            abs_diff String,
+            rel_diff Float64,
+            inserted_at DateTime DEFAULT now()
+        ) ENGINE = ReplacingMergeTree(inserted_at)
+        ORDER BY (target, run_id, entity_id, field)
         """
     )
 

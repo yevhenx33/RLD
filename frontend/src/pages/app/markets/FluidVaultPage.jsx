@@ -9,56 +9,13 @@ import { apiGraphQL } from "../../../api/apiClient";
 import { FLUID_VAULT_PAGE_QUERY } from "../../../api/apiQueries";
 import { getTokenIcon } from "../../../utils/tokenIcons";
 import { REFRESH_INTERVALS } from "../../../config/refreshIntervals";
+import { ChartEmptyState } from "../../../components/data/MarketPageBlocks";
+import { formatApy, formatCurrency, formatPercent } from "../../../lib/analyticsFormatters";
+import { buildFluidVaultPageModel } from "../../../lib/marketPageModel";
 
 const CHART_RESOLUTION = "1D";
 const TIMESERIES_LIMIT = 700;
 const FLOW_LIMIT = 700;
-
-const finiteNumber = (value, fallback = 0) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-};
-
-const formatCurrency = (value) => {
-  const amount = finiteNumber(value);
-  if (amount >= 1e9) return `$${(amount / 1e9).toFixed(2)}B`;
-  if (amount >= 1e6) return `$${(amount / 1e6).toFixed(2)}M`;
-  if (amount >= 1e3) return `$${(amount / 1e3).toFixed(0)}K`;
-  return `$${amount.toFixed(0)}`;
-};
-
-const formatApy = (value) => `${(finiteNumber(value) * 100).toFixed(2)}%`;
-const formatPercent = (value, digits = 2) => `${(finiteNumber(value) * 100).toFixed(digits)}%`;
-
-const normalizeRatePoint = (point) => ({
-  timestamp: finiteNumber(point?.timestamp),
-  supplyApy: finiteNumber(point?.supplyApy),
-  borrowApy: finiteNumber(point?.borrowApy),
-  utilization: finiteNumber(point?.utilization),
-  supplyUsd: finiteNumber(point?.supplyUsd),
-  borrowUsd: finiteNumber(point?.borrowUsd),
-});
-
-const normalizeFlowPoint = (point) => ({
-  timestamp: finiteNumber(point?.timestamp),
-  supplyInflowUsd: finiteNumber(point?.supplyInflowUsd),
-  supplyOutflowUsd: finiteNumber(point?.supplyOutflowUsd),
-  borrowInflowUsd: finiteNumber(point?.borrowInflowUsd),
-  borrowOutflowUsd: finiteNumber(point?.borrowOutflowUsd),
-  netSupplyFlowUsd: Number(point?.netSupplyFlowUsd) || 0,
-  netBorrowFlowUsd: Number(point?.netBorrowFlowUsd) || 0,
-});
-
-const hasAnyFiniteValue = (point, keys) =>
-  keys.some((key) => Number.isFinite(Number(point?.[key])));
-
-function ChartEmptyState({ label }) {
-  return (
-    <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500">
-      {label}
-    </div>
-  );
-}
 
 export default function FluidVaultPage() {
   const { vaultId } = useParams();
@@ -82,70 +39,10 @@ export default function FluidVaultPage() {
     }
   );
 
-  const { market, tsData, flowData, cumulativeFlowData } = useMemo(() => {
-    const page = pageGqlData?.fluidVaultPage || {};
-    const rawMarket = page.market || null;
-
-    let safeMarket = null;
-    if (rawMarket) {
-      const supplyUsd = Math.max(0, Number(rawMarket.supplyUsd) || 0);
-      const borrowUsd = Math.max(0, Number(rawMarket.borrowUsd) || 0);
-      safeMarket = {
-        symbol: String(rawMarket.symbol || "UNKNOWN"),
-        protocol: "FLUID_VAULT",
-        supplyUsd,
-        borrowUsd,
-        supplyApy: Math.max(0, finiteNumber(rawMarket.supplyApy)),
-        borrowApy: Math.max(0, finiteNumber(rawMarket.borrowApy)),
-        utilization: supplyUsd > 0 ? Math.min(1, borrowUsd / supplyUsd) : 0,
-        collateralSymbol: rawMarket.collateralSymbol || "",
-        loanAsset: rawMarket.loanAsset || "",
-        collateralPriceUsd: rawMarket.collateralPriceUsd != null ? Number(rawMarket.collateralPriceUsd) : null,
-        oracleSupport: rawMarket.oracleSupport || null,
-        lltvMin: rawMarket.lltvMin != null ? Number(rawMarket.lltvMin) : null,
-        lltvMax: rawMarket.lltvMax != null ? Number(rawMarket.lltvMax) : null,
-      };
-    }
-
-    const chart = (page.rateChart || [])
-      .map(normalizeRatePoint)
-      .filter((p) =>
-        p.timestamp > 0
-        && hasAnyFiniteValue(p, ["supplyApy", "borrowApy", "supplyUsd", "borrowUsd", "utilization"])
-      )
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    const rawFlow = (page.flowChart || [])
-      .map(normalizeFlowPoint)
-      .filter((p) => p.timestamp > 0)
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    // Filter to period starting from first positive net inflow
-    const firstPositiveIdx = rawFlow.findIndex(
-      (p) => p.netSupplyFlowUsd > 0 || p.netBorrowFlowUsd > 0
-    );
-    const filteredFlow = firstPositiveIdx >= 0 ? rawFlow.slice(firstPositiveIdx) : rawFlow;
-
-    // Build cumulative flow data
-    let cumSupply = 0;
-    let cumBorrow = 0;
-    const cumFlow = filteredFlow.map((p) => {
-      cumSupply += p.netSupplyFlowUsd;
-      cumBorrow += p.netBorrowFlowUsd;
-      return {
-        ...p,
-        cumulativeSupplyNetInflowUsd: cumSupply,
-        cumulativeBorrowNetInflowUsd: cumBorrow,
-      };
-    });
-
-    return {
-      market: safeMarket,
-      tsData: chart,
-      flowData: filteredFlow,
-      cumulativeFlowData: cumFlow,
-    };
-  }, [pageGqlData]);
+  const { market, tsData, flowData, cumulativeFlowData } = useMemo(
+    () => buildFluidVaultPageModel(pageGqlData?.fluidVaultPage),
+    [pageGqlData],
+  );
 
   if (pageLoading && !market) {
     return (

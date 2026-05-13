@@ -709,6 +709,7 @@ services:
   fluid_products_snapshot_worker:
     <<: *rld-indexer-service
     container_name: rld_fluid_products_snapshot_worker
+    profiles: ["deprecated-rpc-snapshots"]
     depends_on:
       migrate_clickhouse:
         condition: service_completed_successfully
@@ -731,7 +732,7 @@ services:
       [
         "sh",
         "-c",
-        "while true; do python -m analytics.scripts.rld_indexer fluid-full-coverage-cycle --http-timeout-sec $${FLUID_PRODUCTS_HTTP_TIMEOUT_SEC:-120} --retries $${FLUID_PRODUCTS_RPC_RETRIES:-4}; sleep $${FLUID_PRODUCTS_SNAPSHOT_INTERVAL_SEC:-3600}; done"
+        "echo 'Fluid RPC product snapshots are deprecated; use Envio/event replay tables instead.'; sleep infinity"
       ]
     labels:
       com.rld.owner: "data-platform"

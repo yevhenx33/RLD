@@ -1,199 +1,40 @@
 import React, { useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import useSWR from "swr";
 import { Activity, ArrowLeft, Loader2, ExternalLink, Shield, Link2, PieChart as PieChartIcon } from "lucide-react";
 import { MetricCell, StatItem } from "../../../components/pools/MetricsGrid";
 import RLDPerformanceChart from "../../../charts/primitives/RLDPerformanceChart";
-import { API_GRAPHQL_URL } from "../../../api/endpoints";
-import { apiGraphQL } from "../../../api/apiClient";
-import { MARKET_PAGE_QUERY } from "../../../api/apiQueries";
-import { queryKeys } from "../../../api/queryKeys";
 import { apiProtocolForSlug, normalizeMarketIdForApi } from "../../../lib/protocolConfig";
 import { getTokenIcon } from "../../../utils/tokenIcons";
-import { REFRESH_INTERVALS } from "../../../config/refreshIntervals";
+import { useMarketPageQuery } from "../../../hooks/queries/useMarketPageQuery";
+import { ChartEmptyState, FlowChartCard } from "../../../components/data/MarketPageBlocks";
+import { formatApy, formatCurrency, formatPercent } from "../../../lib/analyticsFormatters";
+import { buildStandardMarketPageModel } from "../../../lib/marketPageModel";
 
 const CHART_RESOLUTION = "1D";
 const TIMESERIES_LIMIT_DAYS = 500;
 const FLOW_LIMIT_DAYS = 500;
-
-const finiteNumber = (value, fallback = 0) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-};
-
-const formatCurrency = (value) => {
-  const amount = finiteNumber(value);
-  if (amount >= 1e9) return `$${(amount / 1e9).toFixed(2)}B`;
-  if (amount >= 1e6) return `$${(amount / 1e6).toFixed(2)}M`;
-  if (amount >= 1e3) return `$${(amount / 1e3).toFixed(0)}K`;
-  return `$${amount.toFixed(0)}`;
-};
-
-const formatApy = (value) => `${(finiteNumber(value) * 100).toFixed(2)}%`;
-const formatPercent = (value, digits = 2) => `${(finiteNumber(value) * 100).toFixed(digits)}%`;
-
-const normalizeRatePoint = (point) => ({
-  timestamp: finiteNumber(point?.timestamp),
-  supplyApy: finiteNumber(point?.supplyApy),
-  borrowApy: finiteNumber(point?.borrowApy),
-  utilization: finiteNumber(point?.utilization),
-  supplyUsd: finiteNumber(point?.supplyUsd),
-  borrowUsd: finiteNumber(point?.borrowUsd),
-});
-
-const hasAnyFiniteValue = (point, keys) => {
-  return keys.some((key) => Number.isFinite(Number(point?.[key])));
-};
-
-function ChartEmptyState({ label }) {
-  return (
-    <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500">
-      {label}
-    </div>
-  );
-}
-
-function FlowChartCard({ title, loading, data, areas }) {
-  return (
-    <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <Activity size={18} className="text-gray-500" />
-          <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">{title}</h2>
-        </div>
-        <div className="flex items-center gap-4">
-          {areas.map((area) => (
-            <div key={area.key} className="flex items-center gap-2">
-              <div className="w-2 h-2" style={{ backgroundColor: area.color }} />
-              <span className="text-xs text-gray-500 uppercase tracking-widest">{area.legend}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      {loading && data.length === 0 ? (
-        <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
-          <Loader2 size={14} className="animate-spin" />
-          Loading Flow History...
-        </div>
-      ) : data.length === 0 ? (
-        <ChartEmptyState label="No flow history available" />
-      ) : (
-        <div className="h-[300px] w-full">
-          <RLDPerformanceChart
-            data={data}
-            resolution={CHART_RESOLUTION}
-            referenceLines={[{ y: 0, stroke: "#52525b" }]}
-            areas={areas.map(({ legend, ...area }) => ({ ...area, name: legend }))}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function EulerMarketPage() {
   const { marketId } = useParams();
   const navigate = useNavigate();
   const protocolSlug = "euler";
   const protocolKey = apiProtocolForSlug(protocolSlug);
-  const normalizedEntityId = useMemo(() => {
-    return normalizeMarketIdForApi(protocolSlug, marketId);
-  }, [marketId, protocolSlug]);
+  const normalizedEntityId = normalizeMarketIdForApi(protocolSlug, marketId);
 
-  const { data: pageGqlData, isLoading: pageLoading } = useSWR(
-    queryKeys.apiMarketPage(API_GRAPHQL_URL, protocolKey, normalizedEntityId),
-    ([, , variables]) =>
-      apiGraphQL("MarketPage", {
-        query: MARKET_PAGE_QUERY,
-        variables: {
-          protocol: variables.protocol,
-          marketId: variables.marketId,
-          timeseriesLimit: TIMESERIES_LIMIT_DAYS,
-          flowLimit: FLOW_LIMIT_DAYS,
-          allocationLimit: 0,
-        },
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    },
+  const { data: pageGqlData, isLoading: pageLoading } = useMarketPageQuery({
+    protocol: protocolKey,
+    marketId: normalizedEntityId,
+    timeseriesLimit: TIMESERIES_LIMIT_DAYS,
+    flowLimit: FLOW_LIMIT_DAYS,
+    allocationLimit: 0,
+  });
+
+  const { market, tsData, flowData } = useMemo(
+    () => buildStandardMarketPageModel(pageGqlData?.marketPage, {
+      fallbackProtocol: "EULER_MARKET",
+    }),
+    [pageGqlData],
   );
-
-  const { market, tsData, flowData } = useMemo(() => {
-    const page = pageGqlData?.marketPage || {};
-    const rawMarket = page.market || null;
-
-    let safeMarket = null;
-    if (rawMarket) {
-      const supplyUsd = Math.max(0, Number(rawMarket.supplyUsd) || 0);
-      const borrowUsd = Math.max(0, Number(rawMarket.borrowUsd) || 0);
-      safeMarket = {
-        symbol: String(rawMarket.symbol || "UNKNOWN"),
-        protocol: String(rawMarket.protocol || "EULER_MARKET"),
-        supplyUsd,
-        borrowUsd,
-        supplyApy: Math.max(0, finiteNumber(rawMarket.supplyApy)),
-        borrowApy: Math.max(0, finiteNumber(rawMarket.borrowApy)),
-        utilization: supplyUsd > 0 ? Math.min(1, borrowUsd / supplyUsd) : 0,
-        loanPriceUsd: rawMarket.loanPriceUsd != null ? Number(rawMarket.loanPriceUsd) : null,
-        oracleSupport: rawMarket.oracleSupport || null,
-      };
-    }
-
-    const chart = (page.rateChart || [])
-      .map(normalizeRatePoint)
-      .filter((point) => (
-        point.timestamp > 0
-        && hasAnyFiniteValue(point, ["supplyApy", "borrowApy", "supplyUsd", "borrowUsd", "utilization"])
-      ))
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    const flowBase = (page.flowChart || [])
-      .map((point) => {
-        const supplyOutflowAbs = Math.max(0, finiteNumber(point.supplyOutflowUsd));
-        const borrowOutflowAbs = Math.max(0, finiteNumber(point.borrowOutflowUsd));
-        return {
-          timestamp: finiteNumber(point.timestamp),
-          supplyInflowUsd: Math.max(0, finiteNumber(point.supplyInflowUsd)),
-          supplyOutflowUsd: -supplyOutflowAbs,
-          netSupplyFlowUsd: finiteNumber(point.netSupplyFlowUsd),
-          borrowInflowUsd: Math.max(0, finiteNumber(point.borrowInflowUsd)),
-          borrowOutflowUsd: -borrowOutflowAbs,
-          netBorrowFlowUsd: finiteNumber(point.netBorrowFlowUsd),
-          cumulativeSupplyNetInflowUsd: finiteNumber(point.cumulativeSupplyNetInflowUsd, NaN),
-          cumulativeBorrowNetInflowUsd: finiteNumber(point.cumulativeBorrowNetInflowUsd, NaN),
-        };
-      })
-      .filter((point) => point.timestamp > 0)
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    const flow = flowBase.reduce(
-      (acc, point) => {
-        const cumulativeSupplyNetInflowUsd = Number.isFinite(point.cumulativeSupplyNetInflowUsd)
-          ? point.cumulativeSupplyNetInflowUsd
-          : acc.cumulativeSupply + point.netSupplyFlowUsd;
-        const cumulativeBorrowNetInflowUsd = Number.isFinite(point.cumulativeBorrowNetInflowUsd)
-          ? point.cumulativeBorrowNetInflowUsd
-          : acc.cumulativeBorrow + point.netBorrowFlowUsd;
-        return {
-          cumulativeSupply: cumulativeSupplyNetInflowUsd,
-          cumulativeBorrow: cumulativeBorrowNetInflowUsd,
-          rows: [...acc.rows, { ...point, cumulativeSupplyNetInflowUsd, cumulativeBorrowNetInflowUsd }],
-        };
-      },
-      { cumulativeSupply: 0, cumulativeBorrow: 0, rows: [] },
-    ).rows;
-
-    const genesisPoint = flow.find((point) => point.cumulativeSupplyNetInflowUsd > 0);
-    const genesisTs = genesisPoint ? genesisPoint.timestamp : 0;
-
-    return {
-      market: safeMarket,
-      tsData: genesisTs > 0 ? chart.filter((point) => point.timestamp >= genesisTs) : chart,
-      flowData: genesisTs > 0 ? flow.filter((point) => point.timestamp >= genesisTs) : flow,
-    };
-  }, [pageGqlData]);
 
   if (pageLoading && !market) {
     return (

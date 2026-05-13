@@ -25,17 +25,7 @@ import { MetricCell, StatItem } from "../../../components/pools/MetricsGrid";
 import RLDPerformanceChart from "../../../charts/primitives/RLDPerformanceChart";
 import { API_GRAPHQL_URL } from "../../../api/endpoints";
 import { apiGraphQL } from "../../../api/apiClient";
-import {
-  PROTOCOL_MARKETS_QUERY,
-  COMPOUND_V3_PROTOCOL_PAGE_QUERY,
-  METAMORPHO_VAULTS_QUERY,
-  PROTOCOL_APY_HISTORY_QUERY,
-  PROTOCOL_ASSET_APY_HISTORY_QUERY,
-  LENDING_DATA_QUERY,
-  MORPHO_CURATOR_FLOWS_QUERY,
-  EULER_CHANNEL_FLOWS_QUERY,
-  MORPHO_CURATOR_ALLOCATION_HISTORY_QUERY,
-} from "../../../api/apiQueries";
+import { PROTOCOL_OVERVIEW_PAGE_QUERY } from "../../../api/apiQueries";
 import { queryKeys } from "../../../api/queryKeys";
 import {
   apiProtocolForSlug,
@@ -134,6 +124,7 @@ const UTILIZATION_AREA = {
 const TABLE_MODES = [
   { key: "vaults", label: "VAULTS" },
   { key: "markets", label: "MARKETS" },
+  { key: "assets", label: "ASSETS" },
 ];
 
 const MARKET_COLUMNS = [
@@ -953,7 +944,7 @@ function CuratorAllocationChart({ data = [], curators = [], loading = false }) {
 // Main Page Component
 // ---------------------------------------------------------------------------
 
-export default function AaveProtocolPage() {
+export default function ProtocolOverviewPage() {
   const { protocol: protocolSlug } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -965,18 +956,18 @@ export default function AaveProtocolPage() {
   const displayName = rawDisplayName;
   const isMorpho = protocolKey === "MORPHO_MARKET";
   const isEuler = protocolKey === "EULER_MARKET";
-  const isCompoundV3 = protocolKey === "COMPOUND_V3_MARKET";
+  const isFluid = protocolKey === "FLUID_MARKET";
   const hasChannelFlows = isMorpho || isEuler;
   const maxBorrowApy = isMorpho ? 1 : null;
   const rateAssetSymbols = useMemo(
     () => (
-      protocolKey === "COMPOUND_V3_MARKET"
+      resolvedSlug === "compound-v3"
         ? ["USDC", "WETH"]
         : protocolKey === "SPARK_MARKET"
           ? ["USDT", "USDS"]
           : ["USDC", "USDT"]
     ),
-    [protocolKey],
+    [protocolKey, resolvedSlug],
   );
   const [primaryRateSymbol, secondaryRateSymbol] = rateAssetSymbols;
 
@@ -993,96 +984,22 @@ export default function AaveProtocolPage() {
   const activeFlowWindow = FLOW_WINDOWS.find((window) => window.days === flowWindowDays) || FLOW_WINDOWS[1];
 
   // --- Data Fetching ---
-  const compoundV3PageKey = useMemo(
-    () => (
-      isCompoundV3
-        ? queryKeys.apiCompoundV3ProtocolPage(
-          API_GRAPHQL_URL,
-          flowWindowDays,
-          APY_LIMIT,
-          rateAssetSymbols,
-        )
-        : null
-    ),
-    [flowWindowDays, isCompoundV3, rateAssetSymbols],
-  );
-  const {
-    data: compoundV3PageGql,
-    isLoading: compoundV3PageLoading,
-  } = useSWR(
-    compoundV3PageKey,
-    ([, , variables]) =>
-      apiGraphQL("CompoundV3ProtocolPage", {
-        query: COMPOUND_V3_PROTOCOL_PAGE_QUERY,
-        variables,
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    },
-  );
-
-  const { data: marketsGql, isLoading: marketsLoading } = useSWR(
-    !isCompoundV3 ? queryKeys.apiProtocolMarkets(API_GRAPHQL_URL, protocolKey, maxBorrowApy) : null,
-    ([, , variables]) =>
-      apiGraphQL("ProtocolMarketsByProtocol", {
-        query: PROTOCOL_MARKETS_QUERY,
-        variables,
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    },
-  );
-
-  const { data: vaultsGql, isLoading: vaultsLoading } = useSWR(
-    isMorpho ? queryKeys.apiMetaMorphoVaults(API_GRAPHQL_URL, 2000) : null,
-    ([, , variables]) =>
-      apiGraphQL("MetaMorphoVaults", {
-        query: METAMORPHO_VAULTS_QUERY,
-        variables,
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    },
-  );
-
-  const { data: apyGql, isLoading: apyLoading } = useSWR(
-    !isCompoundV3 ? queryKeys.apiProtocolApyHistory(
+  const overviewKey = useMemo(
+    () => queryKeys.apiProtocolOverviewPage(
       API_GRAPHQL_URL,
       protocolKey,
-      APY_RESOLUTION,
+      flowWindowDays,
       APY_LIMIT,
-      maxBorrowApy,
-    ) : null,
-    ([, , variables]) =>
-      apiGraphQL("ProtocolApyHistory", {
-        query: PROTOCOL_APY_HISTORY_QUERY,
-        variables,
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    },
-  );
-
-  const { data: assetApyGql, isLoading: assetApyLoading } = useSWR(
-    !isCompoundV3 ? queryKeys.apiProtocolAssetApyHistory(
-      API_GRAPHQL_URL,
-      protocolKey,
       rateAssetSymbols,
-      APY_RESOLUTION,
-      APY_LIMIT * 2,
       maxBorrowApy,
-    ) : null,
+    ),
+    [flowWindowDays, maxBorrowApy, protocolKey, rateAssetSymbols],
+  );
+  const { data: overviewGql, isLoading: overviewLoading } = useSWR(
+    overviewKey,
     ([, , variables]) =>
-      apiGraphQL("ProtocolAssetApyHistory", {
-        query: PROTOCOL_ASSET_APY_HISTORY_QUERY,
+      apiGraphQL("ProtocolOverviewPage", {
+        query: PROTOCOL_OVERVIEW_PAGE_QUERY,
         variables,
       }),
     {
@@ -1091,77 +1008,11 @@ export default function AaveProtocolPage() {
       revalidateOnFocus: false,
     },
   );
-
-  // Fetch selected-window alluvial flows from the lending hub page (cached, shared)
-  const { data: flowsGql } = useSWR(
-    !isCompoundV3 ? queryKeys.apiLendingPage(API_GRAPHQL_URL, "USD", flowWindowDays) : null,
-    ([, , variables]) =>
-      apiGraphQL("LendingDataHub", {
-        query: LENDING_DATA_QUERY,
-        variables,
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    },
-  );
-
-  const { data: channelFlowsGql, isLoading: channelFlowsLoading } = useSWR(
-    isMorpho
-      ? queryKeys.apiMorphoCuratorFlows(
-        API_GRAPHQL_URL,
-        flowWindowDays,
-        10,
-        maxBorrowApy,
-      )
-      : isEuler
-        ? queryKeys.apiEulerChannelFlows(
-          API_GRAPHQL_URL,
-          flowWindowDays,
-          10,
-          maxBorrowApy,
-        )
-        : null,
-    ([, , variables]) =>
-      apiGraphQL(isEuler ? "EulerChannelFlows" : "MorphoCuratorFlows", {
-        query: isEuler ? EULER_CHANNEL_FLOWS_QUERY : MORPHO_CURATOR_FLOWS_QUERY,
-        variables,
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    },
-  );
-
-  const { data: curatorAllocationGql, isLoading: curatorAllocationLoading } = useSWR(
-    isMorpho
-      ? queryKeys.apiMorphoCuratorAllocationHistory(
-        API_GRAPHQL_URL,
-        APY_RESOLUTION,
-        APY_LIMIT,
-        MORPHO_CURATOR_TOP_N,
-        maxBorrowApy,
-      )
-      : null,
-    ([, , variables]) =>
-      apiGraphQL("MorphoCuratorAllocationHistory", {
-        query: MORPHO_CURATOR_ALLOCATION_HISTORY_QUERY,
-        variables,
-      }),
-    {
-      refreshInterval: REFRESH_INTERVALS.API_PAGE_MS,
-      dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS,
-      revalidateOnFocus: false,
-    },
-  );
+  const overview = overviewGql?.protocolOverviewPage;
 
   // --- Derived Data ---
   const stats = useMemo(() => {
-    const s = isCompoundV3
-      ? compoundV3PageGql?.compoundV3ProtocolPage?.stats
-      : marketsGql?.protocolMarketsPage?.stats;
+    const s = overview?.stats;
     return {
       totalSupply: s?.totalSupplyUsd || 0,
       totalBorrow: s?.totalBorrowUsd || 0,
@@ -1170,12 +1021,10 @@ export default function AaveProtocolPage() {
       avgUtil: s?.averageUtilization || 0,
       count: s?.marketCount || 0,
     };
-  }, [compoundV3PageGql, isCompoundV3, marketsGql]);
+  }, [overview]);
 
   const markets = useMemo(() => {
-    const rows = isCompoundV3
-      ? compoundV3PageGql?.compoundV3ProtocolPage?.rows || []
-      : marketsGql?.protocolMarketsPage?.rows || [];
+    const rows = overview?.rows || [];
     return rows
       .filter((r) => !isMorpho || isMorphoMarketId(r.entityId))
       .map((r) => ({
@@ -1199,10 +1048,10 @@ export default function AaveProtocolPage() {
       loanIcon: getTokenIcon(r.symbol),
         collateralIcon: r.collateralSymbol ? getTokenIcon(r.collateralSymbol) : null,
       }));
-  }, [compoundV3PageGql, isCompoundV3, isMorpho, marketsGql]);
+  }, [isMorpho, overview]);
 
   const vaults = useMemo(() => {
-    const rows = vaultsGql?.metamorphoVaults || [];
+    const rows = overview?.vaults || [];
     const seenVaultAddresses = new Set();
     return rows
       .filter((r) => isVaultAddress(r.vaultAddress) && finiteNumber(r.tvlUsd) > 0)
@@ -1255,7 +1104,47 @@ export default function AaveProtocolPage() {
           collateralIcon: null,
         };
       });
-  }, [vaultsGql, protocolKey]);
+  }, [overview, protocolKey]);
+
+  const fluidProductRows = useMemo(() => {
+    const rows = overview?.fluidProducts || [];
+    return rows.map((r) => {
+      const productType = String(r.productType || "").toUpperCase();
+      const isVault = productType === "VAULT";
+      const isAsset = productType === "FTOKEN";
+      const entityId = String(r.productId || "").toLowerCase();
+      const symbol = String(r.symbol || "UNKNOWN");
+      return {
+        rowType: isVault ? "fluidVault" : isAsset ? "asset" : "market",
+        entityId,
+        symbol,
+        marketLabel: symbol,
+        marketSubLabel: productType,
+        collateralSymbol: isVault ? symbol.split("/")[0] : null,
+        protocol: protocolKey,
+        supplyUsd: finiteNumber(r.supplyUsd),
+        borrowUsd: finiteNumber(r.borrowUsd),
+        netWorth: Math.max(0, finiteNumber(r.liquidityUsd) || finiteNumber(r.supplyUsd) - finiteNumber(r.borrowUsd)),
+        supplyApy: finiteNumber(r.supplyApy),
+        borrowApy: finiteNumber(r.borrowApy),
+        utilization: finiteNumber(r.utilization),
+        lltv: finiteNumber(r.ltv),
+        lltvMin: finiteNumber(r.ltv),
+        lltvMax: finiteNumber(r.ltv),
+        loanIcon: getTokenIcon(symbol.split("/").pop() || symbol),
+        collateralIcon: getTokenIcon(symbol.split("/")[0] || symbol),
+        detailPath: isVault ? `/data/fluid/vault/${entityId}` : `/data/fluid/assets/${entityId}`,
+      };
+    });
+  }, [overview, protocolKey]);
+  const fluidAssets = useMemo(
+    () => fluidProductRows.filter((row) => row.rowType === "asset"),
+    [fluidProductRows],
+  );
+  const fluidVaults = useMemo(
+    () => fluidProductRows.filter((row) => row.rowType === "fluidVault"),
+    [fluidProductRows],
+  );
 
   const stablecoinBorrowApyAreas = useMemo(
     () => [
@@ -1273,9 +1162,7 @@ export default function AaveProtocolPage() {
   );
 
   const stablecoinRateChartData = useMemo(() => {
-    const rows = isCompoundV3
-      ? compoundV3PageGql?.compoundV3ProtocolPage?.assetApyHistory || []
-      : assetApyGql?.protocolAssetApyHistory || [];
+    const rows = overview?.assetApyHistory || [];
     const byTimestamp = new Map();
     rows.forEach((row) => {
       const timestamp = finiteNumber(row.timestamp);
@@ -1301,16 +1188,14 @@ export default function AaveProtocolPage() {
         ].some((value) => Number.isFinite(Number(value))),
       )
       .sort((a, b) => a.timestamp - b.timestamp);
-  }, [assetApyGql, compoundV3PageGql, isCompoundV3, primaryRateSymbol, secondaryRateSymbol]);
+  }, [overview, primaryRateSymbol, secondaryRateSymbol]);
   const visibleStablecoinRateChartData = useMemo(
     () => filterHistoryByWindow(stablecoinRateChartData, rateWindowDays),
     [rateWindowDays, stablecoinRateChartData],
   );
 
   const balanceChartData = useMemo(() => {
-    const raw = isCompoundV3
-      ? compoundV3PageGql?.compoundV3ProtocolPage?.apyHistory || []
-      : apyGql?.protocolApyHistory || [];
+    const raw = overview?.apyHistory || [];
     return [...raw]
       .filter(
         (p) =>
@@ -1319,7 +1204,7 @@ export default function AaveProtocolPage() {
             Number.isFinite(Number(p.borrowUsd))),
       )
       .sort((a, b) => a.timestamp - b.timestamp);
-  }, [apyGql, compoundV3PageGql, isCompoundV3]);
+  }, [overview]);
   const visibleBalanceChartData = useMemo(
     () => filterHistoryByWindow(balanceChartData, balanceWindowDays),
     [balanceChartData, balanceWindowDays],
@@ -1364,8 +1249,8 @@ export default function AaveProtocolPage() {
   );
 
   const channelFlows = useMemo(
-    () => channelFlowsGql?.morphoCuratorFlows || channelFlowsGql?.eulerChannelFlows || [],
-    [channelFlowsGql],
+    () => overview?.channelFlows || [],
+    [overview],
   );
 
   const flowTotals = useMemo(() => {
@@ -1380,9 +1265,7 @@ export default function AaveProtocolPage() {
       });
       return { netInflow, netOutflow, netFlow: netInflow - netOutflow };
     }
-    const allFlows = isCompoundV3
-      ? compoundV3PageGql?.compoundV3ProtocolPage?.alluvialFlows || []
-      : flowsGql?.lendingDataPage?.alluvialFlows || [];
+    const allFlows = overview?.alluvialFlows || [];
     const group = protocolGroupFromKey(protocolKey);
     let netInflow = 0;
     let netOutflow = 0;
@@ -1395,21 +1278,19 @@ export default function AaveProtocolPage() {
       if (action === "Supply Outflow" || action === "Net Outflow") netOutflow += val;
     });
     return { netInflow, netOutflow, netFlow: netInflow - netOutflow };
-  }, [compoundV3PageGql, flowsGql, hasChannelFlows, channelFlows, isCompoundV3, protocolKey]);
+  }, [overview, hasChannelFlows, channelFlows, protocolKey]);
 
   const protocolFlows = useMemo(() => {
-    const allFlows = isCompoundV3
-      ? compoundV3PageGql?.compoundV3ProtocolPage?.alluvialFlows || []
-      : flowsGql?.lendingDataPage?.alluvialFlows || [];
+    const allFlows = overview?.alluvialFlows || [];
     const group = protocolGroupFromKey(protocolKey);
     return allFlows.filter((f) => {
       const fGroup = protocolGroupFromKey(f.protocol);
       return fGroup === group;
     });
-  }, [compoundV3PageGql, flowsGql, isCompoundV3, protocolKey]);
+  }, [overview, protocolKey]);
 
   const curatorAllocation = useMemo(() => {
-    const rows = curatorAllocationGql?.morphoCuratorAllocationHistory || [];
+    const rows = overview?.curatorAllocation || [];
     const byTimestamp = new Map();
     const totals = new Map();
     rows.forEach((row) => {
@@ -1425,7 +1306,7 @@ export default function AaveProtocolPage() {
     const curators = [...totals.keys()].sort((a, b) => totals.get(b) - totals.get(a));
     const data = [...byTimestamp.values()].sort((a, b) => a.timestamp - b.timestamp);
     return { data, curators };
-  }, [curatorAllocationGql]);
+  }, [overview]);
   const visibleCuratorAllocationData = useMemo(
     () => filterHistoryByWindow(curatorAllocation.data, curatorAllocationWindowDays),
     [curatorAllocation.data, curatorAllocationWindowDays],
@@ -1451,14 +1332,23 @@ export default function AaveProtocolPage() {
     setCurrentPage(1);
   }, [setCurrentPage, setSortDir, setSortKey, setTableMode]);
 
-  const normalizedTableMode = TABLE_MODES.some((mode) => mode.key === tableMode) ? tableMode : "vaults";
-  const activeTableMode = isMorpho ? normalizedTableMode : "markets";
+  const availableTableModes = useMemo(
+    () => (isFluid ? TABLE_MODES : TABLE_MODES.filter((mode) => mode.key !== "assets")),
+    [isFluid],
+  );
+  const normalizedTableMode = availableTableModes.some((mode) => mode.key === tableMode) ? tableMode : "vaults";
+  const activeTableMode = isMorpho || isFluid ? normalizedTableMode : "markets";
   const tableColumns = isMorpho && activeTableMode === "vaults" ? VAULT_COLUMNS : MARKET_COLUMNS;
   const tableRows = useMemo(() => {
+    if (isFluid) {
+      if (activeTableMode === "assets") return fluidAssets;
+      if (activeTableMode === "vaults") return fluidVaults;
+      return markets;
+    }
     if (!isMorpho) return markets;
     if (activeTableMode === "vaults") return vaults;
     return markets;
-  }, [activeTableMode, isMorpho, markets, vaults]);
+  }, [activeTableMode, fluidAssets, fluidVaults, isFluid, isMorpho, markets, vaults]);
 
   const sortedMarkets = useMemo(() => {
     const mul = sortDir === "desc" ? -1 : 1;
@@ -1647,20 +1537,24 @@ export default function AaveProtocolPage() {
     return <div className="flex justify-center text-center text-[10px] md:text-[13px] text-gray-500 tracking-widest">-</div>;
   };
 
-  const marketsPageLoading = isCompoundV3 ? compoundV3PageLoading : marketsLoading;
-  const apyPageLoading = isCompoundV3 ? compoundV3PageLoading : apyLoading;
-  const assetApyPageLoading = isCompoundV3 ? compoundV3PageLoading : assetApyLoading;
-  const flowsPageLoading = isCompoundV3 ? compoundV3PageLoading : !flowsGql;
-  const loading = marketsPageLoading;
-  const tableLoading = marketsPageLoading || (isMorpho && activeTableMode !== "markets" && vaultsLoading);
+  const marketsPageLoading = overviewLoading;
+  const apyPageLoading = overviewLoading;
+  const assetApyPageLoading = overviewLoading;
+  const flowsPageLoading = overviewLoading;
+  const loading = overviewLoading;
+  const tableLoading = overviewLoading;
   const tableTitle =
-    isMorpho && activeTableMode === "vaults"
+    activeTableMode === "vaults"
       ? `${displayName} Vaults`
-      : `${displayName} Markets`;
+      : activeTableMode === "assets"
+        ? `${displayName} Assets`
+        : `${displayName} Markets`;
   const tableCountLabel =
     activeTableMode === "vaults"
       ? `${sortedMarkets.length} vaults`
-      : `${sortedMarkets.length} markets`;
+      : activeTableMode === "assets"
+        ? `${sortedMarkets.length} assets`
+        : `${sortedMarkets.length} markets`;
   const tableGridClass = activeTableMode === "vaults" ? "grid-cols-8" : "grid-cols-9";
   const tableMinWidthClass = activeTableMode === "vaults" ? "min-w-[980px]" : "min-w-[1120px]";
   const protocolWebsite = PROTOCOL_WEBSITES[protocolKey] || "#";
@@ -1949,7 +1843,7 @@ export default function AaveProtocolPage() {
               {hasChannelFlows ? (
                 <MorphoCuratorFlowChart
                   flows={channelFlows}
-                  loading={channelFlowsLoading}
+                  loading={overviewLoading}
                   protocolName={displayName}
                   channelLabel="CHANNELS"
                 />
@@ -1984,7 +1878,7 @@ export default function AaveProtocolPage() {
               <CuratorAllocationChart
                 data={visibleCuratorAllocationData}
                 curators={curatorAllocation.curators}
-                loading={curatorAllocationLoading}
+                loading={overviewLoading}
               />
             </div>
           </section>
@@ -2103,9 +1997,9 @@ export default function AaveProtocolPage() {
               </div>
             </div>
             <div className="flex items-center gap-4 flex-wrap justify-end">
-              {isMorpho && (
+              {(isMorpho || isFluid) && (
                 <div className="flex items-center gap-1 border border-white/10 bg-[#050505] p-1 rounded-sm">
-                  {TABLE_MODES.map((mode) => (
+                  {availableTableModes.map((mode) => (
                     <button
                       key={mode.key}
                       type="button"
@@ -2156,6 +2050,10 @@ export default function AaveProtocolPage() {
                         onClick={() => {
                           if (isMorpho && isVaultRow) {
                             navigate(`/data/morpho/vault/${m.vaultAddress || m.entityId}`);
+                            return;
+                          }
+                          if (isFluid && m.detailPath) {
+                            navigate(m.detailPath);
                             return;
                           }
                           if (!isMarketRow) return;

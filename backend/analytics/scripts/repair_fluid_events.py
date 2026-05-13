@@ -13,7 +13,7 @@ from typing import Any
 
 import requests
 
-from analytics.fluid_full_coverage import ETHEREUM_CHAIN_ID, ensure_fluid_full_coverage_tables
+from analytics.fluid_full_coverage import ETHEREUM_CHAIN_ID, ensure_fluid_anchor_tables, ensure_fluid_full_coverage_tables
 from analytics.processor import SimulatedLog
 from analytics.protocols import FLUID_MARKET
 from analytics.sources.fluid import (
@@ -470,34 +470,38 @@ def validate_rpc(ch, args) -> dict[str, Any]:
         "latestMismatches": latest_mismatches[:50],
         "rpcTopics": dict(Counter(_topic((log.get("topics") or [""])[0]) for log in rpc_logs)),
     }
-    ensure_fluid_full_coverage_tables(ch)
+    ensure_fluid_anchor_tables(ch)
     ch.insert(
-        "fluid_rpc_validation_runs",
+        "fluid_anchor_runs",
         [[
             str(uuid.uuid4()),
-            ETHEREUM_CHAIN_ID,
-            FLUID_MARKET,
+            "FLUID_MARKET_RAW_LOGS",
             started_at,
             finished_at,
+            int(to_block),
             len(rpc_logs),
             mismatch_count,
-            max_supply_diff,
-            max_borrow_diff,
+            len(rpc_logs),
+            mismatch_count,
+            "0",
+            float(max(max_supply_diff, max_borrow_diff)),
             status,
-            json.dumps(details, sort_keys=True),
+            json.dumps(details, sort_keys=True)[:1000],
         ]],
         column_names=[
             "run_id",
-            "chain_id",
             "target",
             "started_at",
             "finished_at",
-            "checked_count",
-            "mismatch_count",
-            "max_relative_supply_diff",
-            "max_relative_borrow_diff",
+            "anchor_block",
+            "checked_entities",
+            "drifted_entities",
+            "checked_fields",
+            "drifted_fields",
+            "max_abs_diff",
+            "max_rel_diff",
             "status",
-            "details",
+            "error",
         ],
     )
     return {

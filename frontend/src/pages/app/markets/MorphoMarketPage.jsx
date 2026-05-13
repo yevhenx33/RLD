@@ -1,17 +1,22 @@
 import React, { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import useSWR from "swr";
 import { Activity, ArrowLeft, Loader2, ExternalLink, Shield, Link2 } from "lucide-react";
 import { MetricCell, StatItem } from "../../../components/pools/MetricsGrid";
 import { PieChart as PieChartIcon } from "lucide-react";
 import RLDPerformanceChart from "../../../charts/primitives/RLDPerformanceChart";
-import { API_GRAPHQL_URL } from "../../../api/endpoints";
-import { apiGraphQL } from "../../../api/apiClient";
-import { MARKET_PAGE_QUERY } from "../../../api/apiQueries";
-import { queryKeys } from "../../../api/queryKeys";
 import { apiProtocolForSlug, normalizeMarketIdForApi } from "../../../lib/protocolConfig";
 import { getTokenIcon } from "../../../utils/tokenIcons";
-import { REFRESH_INTERVALS } from "../../../config/refreshIntervals";
+import { useMarketPageQuery } from "../../../hooks/queries/useMarketPageQuery";
+import { ChartCard, ChartEmptyState } from "../../../components/data/MarketPageBlocks";
+import {
+  finiteNumber,
+  formatApy,
+  formatCurrency,
+  formatPercent,
+  proportionalSlots,
+  shortOrUnassignedAddress,
+} from "../../../lib/analyticsFormatters";
+import { buildMorphoMarketPageModel } from "../../../lib/marketPageModel";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -27,89 +32,6 @@ const VAULT_COLORS = [
   "#f97316", "#a78bfa", "#38bdf8", "#4ade80", "#f472b6",
   "#e879f9", "#fbbf24", "#2dd4bf", "#c084fc", "#fb923c",
 ];
-
-const finiteNumber = (v, fb = 0) => { const n = Number(v); return Number.isFinite(n) ? n : fb; };
-const formatCurrency = (v) => {
-  const a = finiteNumber(v);
-  if (a >= 1e9) return `$${(a / 1e9).toFixed(2)}B`;
-  if (a >= 1e6) return `$${(a / 1e6).toFixed(2)}M`;
-  if (a >= 1e3) return `$${(a / 1e3).toFixed(0)}K`;
-  return `$${a.toFixed(0)}`;
-};
-const formatApy = (v) => `${(finiteNumber(v) * 100).toFixed(2)}%`;
-const formatPercent = (v, d = 2) => `${(finiteNumber(v) * 100).toFixed(d)}%`;
-const shortAddress = (value) => {
-  const raw = String(value || "");
-  if (!raw || /^0x0{40}$/i.test(raw)) return "Unassigned";
-  return raw.length > 12 ? `${raw.slice(0, 6)}...${raw.slice(-4)}` : raw;
-};
-const normalizeRatePoint = (p) => ({
-  timestamp: finiteNumber(p?.timestamp),
-  supplyApy: finiteNumber(p?.supplyApy),
-  borrowApy: finiteNumber(p?.borrowApy),
-  utilization: finiteNumber(p?.utilization),
-  supplyUsd: finiteNumber(p?.supplyUsd),
-  borrowUsd: finiteNumber(p?.borrowUsd),
-});
-const hasAnyFiniteValue = (p, keys) => keys.some((k) => Number.isFinite(Number(p?.[k])));
-
-const proportionalSlots = (items, totals, top, bottom, height, minH = 14, gap = 12) => {
-  const slots = new Map();
-  if (!items.length) return slots;
-  const total = items.reduce((sum, item) => sum + finiteNumber(totals.get(item)), 0);
-  const avail = Math.max(1, height - top - bottom - gap * (items.length - 1));
-  const rawHeights = items.map((item) => (total > 0 ? (avail * finiteNumber(totals.get(item))) / total : avail / items.length));
-  const heights = rawHeights.map((heightValue) => Math.max(minH, heightValue));
-  const used = heights.reduce((sum, heightValue) => sum + heightValue, 0) + gap * (items.length - 1);
-  const scale = used > avail ? avail / used : 1;
-  let y = top + Math.max(0, (height - top - bottom - used * scale) / 2);
-  items.forEach((item, index) => {
-    const h = Math.max(8, heights[index] * scale);
-    slots.set(item, { y, h, center: y + h / 2, total: finiteNumber(totals.get(item)) });
-    y += h + gap * scale;
-  });
-  return slots;
-};
-
-function ChartEmptyState({ label }) {
-  return (
-    <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500">
-      {label}
-    </div>
-  );
-}
-
-function ChartCard({ title, legendItems, loading, empty, emptyLabel, children }) {
-  return (
-    <div className="border border-white/10 bg-[#0a0a0a] rounded-sm p-6">
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-3">
-          <Activity size={18} className="text-gray-500" />
-          <h2 className="text-sm uppercase tracking-widest text-gray-400 font-bold">{title}</h2>
-        </div>
-        {legendItems && (
-          <div className="flex items-center gap-4 flex-wrap">
-            {legendItems.map(([color, label]) => (
-              <div key={label} className="flex items-center gap-2">
-                <div className="w-2 h-2" style={{ background: color }} />
-                <span className="text-xs text-gray-500 uppercase tracking-widest">{label}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      {loading ? (
-        <div className="h-[300px] w-full flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
-          <Loader2 size={14} className="animate-spin" /> Loading...
-        </div>
-      ) : empty ? (
-        <ChartEmptyState label={emptyLabel || "No data available"} />
-      ) : (
-        <div className="h-[300px] w-full">{children}</div>
-      )}
-    </div>
-  );
-}
 
 // Deserialize columnar allocation data into recharts-compatible pivoted rows
 function useAllocationChartData(columnar, genesisTs) {
@@ -154,9 +76,9 @@ function useCuratorAlluvialData(columnar, marketLabel) {
         const curatorAddress = String(vault.curator || "");
         return {
           market: marketLabel,
-          curator: shortAddress(curatorAddress),
+          curator: shortOrUnassignedAddress(curatorAddress),
           curatorAddress,
-          vault: vault.name || shortAddress(vault.address),
+          vault: vault.name || shortOrUnassignedAddress(vault.address),
           vaultAddress: vault.address,
           valueUsd,
         };
@@ -362,90 +284,18 @@ export default function MorphoMarketPage() {
   const protocolKey = apiProtocolForSlug(protocolSlug);
   const normalizedEntityId = normalizeMarketIdForApi(protocolSlug, marketId);
 
-  const { data: pageGqlData, isLoading: pageLoading } = useSWR(
-    queryKeys.apiMarketPage(API_GRAPHQL_URL, protocolKey, normalizedEntityId),
-    ([, , variables]) =>
-      apiGraphQL("MarketPage", {
-        query: MARKET_PAGE_QUERY,
-        variables: {
-          protocol: variables.protocol,
-          marketId: variables.marketId,
-          timeseriesLimit: TIMESERIES_LIMIT_DAYS,
-          flowLimit: FLOW_LIMIT_DAYS,
-          allocationLimit: ALLOCATION_LIMIT_DAYS,
-        },
-      }),
-    { refreshInterval: REFRESH_INTERVALS.API_PAGE_MS, dedupingInterval: REFRESH_INTERVALS.API_DEDUPE_MS, revalidateOnFocus: false }
+  const { data: pageGqlData, isLoading: pageLoading } = useMarketPageQuery({
+    protocol: protocolKey,
+    marketId: normalizedEntityId,
+    timeseriesLimit: TIMESERIES_LIMIT_DAYS,
+    flowLimit: FLOW_LIMIT_DAYS,
+    allocationLimit: ALLOCATION_LIMIT_DAYS,
+  });
+
+  const { market, tsData, flowData, allocationColumnar, genesisTs } = useMemo(
+    () => buildMorphoMarketPageModel(pageGqlData?.marketPage),
+    [pageGqlData],
   );
-
-  const { market, tsData, flowData, allocationColumnar, genesisTs } = useMemo(() => {
-    const page = pageGqlData?.marketPage || {};
-    const rawMarket = page.market || null;
-    let safeMarket = null;
-    if (rawMarket) {
-      const supplyUsd = Math.max(0, Number(rawMarket.supplyUsd) || 0);
-      const borrowUsd = Math.max(0, Number(rawMarket.borrowUsd) || 0);
-      safeMarket = {
-        symbol: String(rawMarket.symbol || "UNKNOWN"),
-        protocol: String(rawMarket.protocol || "MORPHO_MARKET"),
-        collateralSymbol: rawMarket.collateralSymbol || null,
-        lltv: rawMarket.lltv != null ? Number(rawMarket.lltv) : null,
-        collateralUsd: rawMarket.collateralUsd != null ? Number(rawMarket.collateralUsd) : null,
-        supplyUsd, borrowUsd,
-        supplyApy: Math.max(0, finiteNumber(rawMarket.supplyApy)),
-        borrowApy: Math.max(0, finiteNumber(rawMarket.borrowApy)),
-        utilization: supplyUsd > 0 ? Math.min(1, borrowUsd / supplyUsd) : 0,
-        oracle: rawMarket.oracle || null,
-        loanPriceUsd: rawMarket.loanPriceUsd != null ? Number(rawMarket.loanPriceUsd) : null,
-        collateralPriceUsd: rawMarket.collateralPriceUsd != null ? Number(rawMarket.collateralPriceUsd) : null,
-        loanToken: rawMarket.loanToken || null,
-        collateralToken: rawMarket.collateralToken || null,
-        oracleSupport: rawMarket.oracleSupport || null,
-      };
-    }
-
-    const chart = (page.rateChart || [])
-      .map(normalizeRatePoint)
-      .filter((p) => p.timestamp > 0 && hasAnyFiniteValue(p, ["supplyApy", "borrowApy", "supplyUsd", "borrowUsd", "utilization"]))
-      .sort((a, b) => a.timestamp - b.timestamp);
-
-    const flowBase = (page.flowChart || []).map((p) => {
-      const supplyOutflowAbs = Math.max(0, finiteNumber(p.supplyOutflowUsd));
-      const borrowOutflowAbs = Math.max(0, finiteNumber(p.borrowOutflowUsd));
-      return {
-        timestamp: finiteNumber(p.timestamp),
-        supplyInflowUsd: Math.max(0, finiteNumber(p.supplyInflowUsd)),
-        supplyOutflowUsd: -supplyOutflowAbs,
-        netSupplyFlowUsd: finiteNumber(p.netSupplyFlowUsd),
-        borrowInflowUsd: Math.max(0, finiteNumber(p.borrowInflowUsd)),
-        borrowOutflowUsd: -borrowOutflowAbs,
-        netBorrowFlowUsd: finiteNumber(p.netBorrowFlowUsd),
-        cumulativeSupplyNetInflowUsd: finiteNumber(p.cumulativeSupplyNetInflowUsd, NaN),
-        cumulativeBorrowNetInflowUsd: finiteNumber(p.cumulativeBorrowNetInflowUsd, NaN),
-      };
-    }).filter((p) => p.timestamp > 0).sort((a, b) => a.timestamp - b.timestamp);
-
-    const flow = flowBase.reduce((acc, point) => {
-      const hasS = Number.isFinite(point.cumulativeSupplyNetInflowUsd);
-      const hasB = Number.isFinite(point.cumulativeBorrowNetInflowUsd);
-      const cs = hasS ? point.cumulativeSupplyNetInflowUsd : acc.cumulativeSupply + point.netSupplyFlowUsd;
-      const cb = hasB ? point.cumulativeBorrowNetInflowUsd : acc.cumulativeBorrow + point.netBorrowFlowUsd;
-      return { cumulativeSupply: cs, cumulativeBorrow: cb, rows: [...acc.rows, { ...point, cumulativeSupplyNetInflowUsd: cs, cumulativeBorrowNetInflowUsd: cb }] };
-    }, { cumulativeSupply: 0, cumulativeBorrow: 0, rows: [] }).rows;
-
-    // Derive market "liquidity genesis" — first day cumulative supply inflow > 0.
-    // All charts on the page start from this point to avoid long flat-line prefixes.
-    const genesisPoint = flow.find((p) => p.cumulativeSupplyNetInflowUsd > 0);
-    const genesisTs = genesisPoint ? genesisPoint.timestamp : 0;
-
-    return {
-      market: safeMarket,
-      tsData: genesisTs > 0 ? chart.filter((p) => p.timestamp >= genesisTs) : chart,
-      flowData: genesisTs > 0 ? flow.filter((p) => p.timestamp >= genesisTs) : flow,
-      allocationColumnar: page.allocationColumnar || null,
-      genesisTs,
-    };
-  }, [pageGqlData]);
 
   const { pivoted, vaultKeys, vaultNames } = useAllocationChartData(allocationColumnar, genesisTs);
   const marketLabel = market?.collateralSymbol ? `${market.collateralSymbol}-${market.symbol}` : market?.symbol || "Morpho Market";

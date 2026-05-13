@@ -30,6 +30,7 @@ from analytics.api.graphql import (  # noqa: E402
     _query_depth,
     _query_morpho_allocation_timeseries,
     _rate_limit_allowed,
+    schema,
 )
 
 
@@ -376,7 +377,7 @@ class PageModelTests(unittest.TestCase):
     def test_morpho_allocation_timeseries_is_backend_bucketed(self):
         class Result:
             result_rows = [
-                (1_700_000_000, "0xvault", "Vault", 123.45),
+                (1_700_000_000, "0xvault", "Vault", "Curator", 123.45),
             ]
 
         class FakeClickHouse:
@@ -427,6 +428,11 @@ class PageModelTests(unittest.TestCase):
         """
         self.assertEqual(_query_depth(query), 3)
         self.assertEqual(_query_depth('query Q { latestRates { symbol: "__schema { nope }" } }'), 2)
+
+    def test_schema_exposes_protocol_overview_page(self):
+        schema_text = str(schema)
+        self.assertIn("protocolOverviewPage", schema_text)
+        self.assertIn("ProtocolOverviewPagePayload", schema_text)
 
     def test_rate_limit_helper_enforces_rolling_window(self):
         key = "unit-test-rate-limit"

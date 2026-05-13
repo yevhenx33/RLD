@@ -14,6 +14,14 @@ from dataclasses import dataclass
 from analytics.tokens import TOKENS
 
 
+NATIVE_ETH_ADDRESS = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+WETH_ADDRESS = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+BTC_PSEUDO_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+WBTC_ADDRESS = "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"
+WEETH_ADDRESS = "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee"
+WSTETH_ADDRESS = "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0"
+
+
 @dataclass(frozen=True)
 class OracleSnapshot:
     chain_id: int
@@ -68,9 +76,16 @@ def _token_symbol(address: str) -> str:
     return TOKENS.get(normalize_address(address).removeprefix("0x"), ("", 18))[0]
 
 
+COMPOSED_ASSET_PRICE_FEEDS: tuple[tuple[str, str, str, str, str, str], ...] = (
+    (WBTC_ADDRESS, "WBTC", "WBTC / BTC", "BTC / USD", "WBTC/BTC*BTC/USD", "COMPOSED"),
+    (WEETH_ADDRESS, "weETH", "weETH / ETH", "ETH / USD", "weETH/ETH*ETH/USD", "COMPOSED"),
+    (WSTETH_ADDRESS, "wstETH", "wstETH/stETH exchange rate", "STETH / USD", "wstETH/stETH*STETH/USD", "COMPOSED"),
+)
+
+
 ASSET_PRICE_FEED_MAP: tuple[tuple[str, str, str, str], ...] = (
     ("AAVE / USD", "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9", "AAVE", "DIRECT"),
-    ("BTC / USD", "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "BTC", "DIRECT"),
+    ("BTC / USD", BTC_PSEUDO_ADDRESS, "BTC", "DIRECT"),
     ("cbBTC / USD", "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf", "cbBTC", "DIRECT"),
     ("CRVUSD / USD", "0xf939e0a03fb07f59a73314e73794be0e57ac1b4e", "crvUSD", "DIRECT"),
     ("DAI / USD", "0x6b175474e89094c44da98b954eedeac495271d0f", "DAI", "DIRECT"),
@@ -236,6 +251,71 @@ def _quoted_values(values: list[str]) -> str:
     return ", ".join("'" + value.replace("'", "''") + "'" for value in values)
 
 
+def _insert_composed_chainlink_prices(ch) -> int:
+    inserted = 0
+    for asset, symbol, base_feed, quote_feed, source_id, confidence in COMPOSED_ASSET_PRICE_FEEDS:
+        ch.command(
+            f"""
+            INSERT INTO asset_price_observations (
+                chain_id, asset_address, symbol, quote_symbol, price_usd, price_quote,
+                source, source_type, source_id, method, block_number, timestamp, status,
+                confidence, freshness_seconds, value_raw, value_scale, provenance_json
+            )
+            SELECT
+                1 AS chain_id,
+                '{normalize_address(asset)}' AS asset_address,
+                '{symbol.replace("'", "''")}' AS symbol,
+                'USD' AS quote_symbol,
+                base.price * quote.price AS price_usd,
+                base.price AS price_quote,
+                'CHAINLINK' AS source,
+                'COMPOSED_PRICE_FEED' AS source_type,
+                '{source_id.replace("'", "''")}' AS source_id,
+                'AnswerUpdated*AnswerUpdated' AS method,
+                greatest(toUInt64(base.block_number), toUInt64(quote.block_number)) AS block_number,
+                base.timestamp AS timestamp,
+                'OK' AS status,
+                '{confidence.replace("'", "''")}' AS confidence,
+                0 AS freshness_seconds,
+                concat(toString(base.price), '*', toString(quote.price)) AS value_raw,
+                '1' AS value_scale,
+                concat(
+                    '{{"baseFeed":"', replaceAll(base.feed, '"', '\"'),
+                    '","quoteFeed":"', replaceAll(quote.feed, '"', '\"'),
+                    '"}}'
+                ) AS provenance_json
+            FROM (
+                SELECT feed, timestamp, block_number, price
+                FROM chainlink_prices
+                WHERE feed = '{base_feed.replace("'", "''")}' AND price > 0
+                ORDER BY timestamp
+            ) AS base
+            ASOF LEFT JOIN (
+                SELECT feed, timestamp, block_number, price
+                FROM chainlink_prices
+                WHERE feed = '{quote_feed.replace("'", "''")}' AND price > 0
+                ORDER BY timestamp
+            ) AS quote
+            ON base.timestamp >= quote.timestamp
+            WHERE quote.price > 0
+            """
+        )
+        inserted += int(
+            ch.command(
+                """
+                SELECT count()
+                FROM asset_price_observations
+                WHERE source = 'CHAINLINK'
+                  AND source_type = 'COMPOSED_PRICE_FEED'
+                  AND source_id = %(source_id)s
+                """,
+                parameters={"source_id": source_id},
+            )
+            or 0
+        )
+    return inserted
+
+
 def sync_asset_price_observations(ch) -> dict[str, int]:
     ensure_asset_price_tables(ch)
     feed_map = _feed_map_sql()
@@ -293,6 +373,7 @@ def sync_asset_price_observations(ch) -> dict[str, int]:
         WHERE c.price > 0
         """
     )
+    composed_rows = _insert_composed_chainlink_prices(ch)
     ch.command(
         f"""
         INSERT INTO asset_price_observations (
@@ -339,6 +420,7 @@ def sync_asset_price_observations(ch) -> dict[str, int]:
     latest_rows = int(ch.command("SELECT count() FROM asset_price_latest") or 0)
     return {
         "chainlink_rows_inserted": max(0, chainlink_after - chainlink_before),
+        "composed_chainlink_rows_inserted": int(composed_rows),
         "snapshot_rows_inserted": max(0, snapshot_after - snapshot_before),
         "latest_rows": latest_rows,
     }

@@ -161,6 +161,106 @@ export const COMPOUND_V3_PROTOCOL_PAGE_QUERY = `
   }
 `;
 
+export const PROTOCOL_OVERVIEW_PAGE_QUERY = `
+  query ProtocolOverviewPage(
+    $protocol: String!
+    $flowWindowDays: Int!
+    $timeseriesLimit: Int!
+    $assetSymbols: [String!]
+    $maxBorrowApy: Float
+  ) {
+    protocolOverviewPage(
+      protocol: $protocol
+      flowWindowDays: $flowWindowDays
+      timeseriesLimit: $timeseriesLimit
+      assetSymbols: $assetSymbols
+      maxBorrowApy: $maxBorrowApy
+    ) {
+      freshness { ready status generatedAt }
+      stats {
+        totalSupplyUsd
+        totalBorrowUsd
+        averageUtilization
+        averageSupplyApy
+        averageBorrowApy
+        marketCount
+      }
+      rows {
+        entityId
+        symbol
+        protocol
+        supplyUsd
+        borrowUsd
+        supplyApy
+        borrowApy
+        utilization
+        collateralSymbol
+        lltv
+        lltvMin
+        lltvMax
+        isTrapped
+      }
+      vaults {
+        vaultAddress
+        name
+        assetSymbol
+        assetAddress
+        curatorAddress
+        curator
+        totalAssets
+        totalSupply
+        sharePriceUsd
+        sharePriceAssets
+        tvlUsd
+        apy
+        exposure { symbol valueUsd }
+        isCanonicalTvl
+        lastSnapshotTimestamp
+      }
+      fluidProducts {
+        productType
+        productId
+        timestamp
+        symbol
+        underlying
+        collateralToken
+        debtToken
+        supplyUsd
+        borrowUsd
+        collateralUsd
+        liquidityUsd
+        supplyApy
+        borrowApy
+        utilization
+        ltv
+        isCanonicalTvl
+        pricingStatus
+        oracleStatus
+        snapshotStatus
+      }
+      apyHistory {
+        timestamp
+        averageSupplyApy
+        averageBorrowApy
+        supplyUsd
+        borrowUsd
+        sofrRate
+      }
+      assetApyHistory {
+        timestamp
+        symbol
+        supplyApy
+        borrowApy
+        sofrRate
+      }
+      alluvialFlows { protocol action asset valueUsd }
+      channelFlows { action asset curator curatorAddress valueUsd }
+      curatorAllocation { timestamp curator curatorAddress suppliedUsd }
+      fluidVaultComposition { timestamp symbol collateralUsd debtUsd }
+    }
+  }
+`;
+
 export const METAMORPHO_VAULTS_QUERY = `
   query MetaMorphoVaults($limit: Int!) {
     metamorphoVaults(limit: $limit) {

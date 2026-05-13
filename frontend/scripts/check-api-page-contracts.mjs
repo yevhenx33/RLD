@@ -31,10 +31,21 @@ assertIncludes(routes, "function ApiShell", "Routes must define API shell");
 assertIncludes(routes, "function SimulationRuntimeShell", "Routes must isolate simulation shell");
 assertIncludes(routes, '<Route element={<ApiShell />}>', "API routes must use API shell");
 assertIncludes(routes, '<Route element={<SimulationRuntimeShell />}>', "Simulation routes must use simulation shell");
+assertIncludes(routes, "ProtocolOverviewPage", "Protocol overview routes must share one page shell");
+assertNotIncludes(routes, "AaveProtocolPage", "Protocol overview routes must not use protocol-specific page shells");
+assertNotIncludes(routes, "FluidProtocolPage", "Protocol overview routes must not use protocol-specific page shells");
+for (const route of ["/data/aave", "/data/spark", "/data/morpho", "/data/fluid", "/data/euler", "/data/compound-v3"]) {
+  assertIncludes(
+    routes,
+    `path="${route}" element={renderLazy(ProtocolOverviewPage)}`,
+    "Protocol overview routes",
+  );
+}
+
 
 const lendingDataPage = read("src/pages/app/LendingDataPage.jsx");
 const apiQueries = read("src/api/apiQueries.js");
-assertIncludes(apiQueries, "lendingDataPage(displayIn: $displayIn)", "ApiQueries");
+assertIncludes(apiQueries, "lendingDataPage(displayIn: $displayIn, flowWindowDays: $flowWindowDays)", "ApiQueries");
 assertNotIncludes(lendingDataPage, "marketSnapshots(protocol:", "LendingDataPage");
 assertNotIncludes(lendingDataPage, "protocolTvlHistory(", "LendingDataPage");
 assertNotIncludes(lendingDataPage, "protocolApyHistory(", "LendingDataPage");
@@ -43,7 +54,7 @@ assertIncludes(apiQueries, "totalUsers", "ApiQueries");
 assertIncludes(lendingDataPage, "stats.totalUsers", "LendingDataPage");
 assertIncludes(apiQueries, "alluvialFlows", "ApiQueries");
 assertIncludes(lendingDataPage, "AlluvialFlowChart", "LendingDataPage");
-assertIncludes(lendingDataPage, "NET 30D LENDING FLOWS", "LendingDataPage");
+assertIncludes(lendingDataPage, "LENDING FLOWS", "LendingDataPage");
 assertIncludes(lendingDataPage, "NET INFLOWS", "LendingDataPage");
 assertIncludes(lendingDataPage, "NET OUTFLOWS", "LendingDataPage");
 assertIncludes(apiQueries, "aaveTvl", "ApiQueries");
@@ -52,13 +63,24 @@ assertIncludes(apiQueries, "fluidTvl", "ApiQueries");
 assertIncludes(apiQueries, "morphoTvl", "ApiQueries");
 assertIncludes(lendingDataPage, 'key: "tvl"', "LendingDataPage");
 assertIncludes(lendingDataPage, "areas={[tvlArea]}", "LendingDataPage");
-assertIncludes(lendingDataPage, "['AAVE', 'MORPHO', 'FLUID', 'EULER']", "LendingDataPage");
+assertIncludes(lendingDataPage, "LENDING_PROTOCOL_GROUPS", "LendingDataPage");
 assertNotIncludes(lendingDataPage, "EULER <span", "LendingDataPage");
-assertNotIncludes(lendingDataPage, "(SOON)", "LendingDataPage");
 
 const protocolMarkets = read("src/components/charts/ProtocolMarkets.jsx");
-assertIncludes(apiQueries, "protocolMarketsPage(protocol: $protocol)", "ApiQueries");
+assertIncludes(apiQueries, "protocolMarketsPage(protocol: $protocol", "ApiQueries");
 assertNotIncludes(protocolMarkets, "protocolMarkets(protocol:", "ProtocolMarkets");
+
+const protocolOverviewPage = read("src/pages/app/protocols/ProtocolOverviewPage.jsx");
+assertIncludes(apiQueries, "protocolOverviewPage(", "ApiQueries");
+assertIncludes(protocolOverviewPage, "PROTOCOL_OVERVIEW_PAGE_QUERY", "ProtocolOverviewPage");
+assertIncludes(protocolOverviewPage, "apiProtocolOverviewPage", "ProtocolOverviewPage");
+assertNotIncludes(protocolOverviewPage, "apiProtocolMarkets", "ProtocolOverviewPage");
+assertNotIncludes(protocolOverviewPage, "apiFluidProductSnapshots", "ProtocolOverviewPage");
+assertNotIncludes(protocolOverviewPage, "apiMetaMorphoVaults", "ProtocolOverviewPage");
+const protocolOverviewSWRCount = (protocolOverviewPage.match(/useSWR\(/g) || []).length;
+if (protocolOverviewSWRCount !== 1) {
+  throw new Error(`ProtocolOverviewPage must issue exactly one SWR-backed GraphQL request; found ${protocolOverviewSWRCount}`);
+}
 
 const marketPage = read("src/pages/app/markets/AaveMarketPage.jsx");
 const eulerMarketPage = read("src/pages/app/markets/EulerMarketPage.jsx");

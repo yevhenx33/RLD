@@ -114,29 +114,8 @@ def load_vault_registry(ch) -> dict[str, dict]:
 
 
 def load_vault_metadata(ch, vault_ids: set[str]) -> dict[str, dict]:
-    """Load vault metadata (symbol, collateral, debt tokens) from product_snapshots."""
-    if not vault_ids:
-        return {}
-    placeholders = ", ".join(f"'{v}'" for v in vault_ids)
-    rows = ch.query(f"""
-        SELECT
-            product_id,
-            argMax(symbol, timestamp) AS symbol,
-            argMax(collateral_token, timestamp) AS col_token,
-            argMax(debt_token, timestamp) AS debt_token
-        FROM fluid_product_snapshots
-        WHERE product_type = 'VAULT' AND product_id IN ({placeholders})
-        GROUP BY product_id
-    """).result_rows
-    meta = {}
-    for product_id, symbol, col_token, debt_token in rows:
-        meta[product_id.lower()] = {
-            "symbol": str(symbol),
-            "collateral_token": str(col_token).lower(),
-            "debt_token": str(debt_token).lower(),
-        }
-    log.info("Loaded metadata for %d vaults from product_snapshots", len(meta))
-    return meta
+    """Direct-RPC product snapshot metadata was removed; replay is event-only."""
+    return {}
 
 
 def load_chainlink_prices(ch) -> dict[str, dict[str, float]]:

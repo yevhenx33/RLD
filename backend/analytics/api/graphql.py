@@ -899,6 +899,21 @@ class CompoundV3ProtocolPagePayload:
 
 
 @strawberry.type
+class ProtocolOverviewPagePayload:
+    freshness: AnalyticsFreshness
+    stats: ProtocolMarketsStats
+    rows: list[ProtocolMarketRow]
+    vaults: list[MetaMorphoVault]
+    fluid_products: list[FluidProductSnapshot] = strawberry.field(name="fluidProducts")
+    apy_history: list[ProtocolApyPoint] = strawberry.field(name="apyHistory")
+    asset_apy_history: list[ProtocolAssetApyPoint] = strawberry.field(name="assetApyHistory")
+    alluvial_flows: list[LendingFlowAlluvialLink] = strawberry.field(name="alluvialFlows")
+    channel_flows: list[MorphoCuratorFlowLink] = strawberry.field(name="channelFlows")
+    curator_allocation: list[MorphoCuratorAllocationPoint] = strawberry.field(name="curatorAllocation")
+    fluid_vault_composition: list[FluidVaultCompositionPoint] = strawberry.field(name="fluidVaultComposition")
+
+
+@strawberry.type
 class LendingPoolRatePoint:
     timestamp: int
     supply_apy: float = strawberry.field(name="supplyApy")
@@ -2894,46 +2909,10 @@ def _fluid_coverage_snapshot(ch) -> dict[str, object]:
             """
         ).result_rows
         product_counts = {str(product): int(count) for product, count in product_rows}
-        snapshot_rows = _query_int(ch, "SELECT count() FROM fluid_product_snapshots FINAL")
-        priced_product_rows = _query_int(ch, """
-            SELECT countIf(pricing_status = 'PRICED')
-            FROM (
-                SELECT
-                    product_type,
-                    product_id,
-                    argMax(pricing_status, tuple(timestamp, block_number)) AS pricing_status
-                FROM fluid_product_snapshots FINAL
-                GROUP BY product_type, product_id
-            )
-            """)
-        canonical_rows = _query_int(ch, """
-            SELECT countIf(is_canonical_tvl = 1)
-            FROM (
-                SELECT
-                    product_type,
-                    product_id,
-                    argMax(is_canonical_tvl, tuple(timestamp, block_number)) AS is_canonical_tvl
-                FROM fluid_product_snapshots FINAL
-                GROUP BY product_type, product_id
-            )
-            """)
-        product_status_rows = ch.query("""
-            SELECT product_type, pricing_status, snapshot_status, count()
-            FROM (
-                SELECT
-                    product_type,
-                    product_id,
-                    argMax(pricing_status, tuple(timestamp, block_number)) AS pricing_status,
-                    argMax(snapshot_status, tuple(timestamp, block_number)) AS snapshot_status
-                FROM fluid_product_snapshots FINAL
-                GROUP BY product_type, product_id
-            )
-            GROUP BY product_type, pricing_status, snapshot_status
-            """).result_rows
-        product_status = [
-            {"productType": str(product), "pricingStatus": str(pricing), "snapshotStatus": str(snapshot), "count": int(count)}
-            for product, pricing, snapshot, count in product_status_rows
-        ]
+        snapshot_rows = 0
+        priced_product_rows = 0
+        canonical_rows = 0
+        product_status: list[dict[str, object]] = []
         missing_reason_rows = ch.query("""
             SELECT symbol, reason, count()
             FROM fluid_asset_oracle_support FINAL
@@ -2951,36 +2930,39 @@ def _fluid_coverage_snapshot(ch) -> dict[str, object]:
             {"symbol": str(symbol), "reason": str(reason), "count": int(count)}
             for symbol, reason, count in missing_reason_rows
         ]
-        component_rows = _query_int(ch, "SELECT count() FROM fluid_product_components FINAL")
-        component_subjects = _query_int(ch, "SELECT uniqExact(product_id) FROM fluid_product_components FINAL")
+        component_rows = 0
+        component_subjects = 0
         shared_oracle_rows = _query_int(ch, "SELECT count() FROM oracle_snapshots FINAL WHERE source = 'FLUID' AND status = 'OK'")
         shared_oracle_subjects = _query_int(ch, "SELECT uniqExact(subject) FROM oracle_snapshots FINAL WHERE source = 'FLUID' AND status = 'OK'")
         raw_head = _query_int(ch, "SELECT max(block_number) FROM fluid_events")
+        product_raw_head = _query_int(ch, "SELECT max(block_number) FROM fluid_product_raw_events")
+        ftoken_replay_head = _query_int(ch, "SELECT max(block_number) FROM fluid_ftoken_timeseries")
+        vault_replay_rows = _query_int(ch, "SELECT count() FROM fluid_vault_timeseries FINAL")
         processed_head = _query_int(ch, "SELECT max(last_processed_block) FROM processor_state WHERE protocol = 'FLUID_MARKET'")
-        validation_rows = ch.query(
-            """
-            SELECT status, checked_count, mismatch_count, max_relative_supply_diff, max_relative_borrow_diff, finished_at
-            FROM fluid_rpc_validation_runs FINAL
-            ORDER BY finished_at DESC
-            LIMIT 1
-            """
-        ).result_rows
-        validation = {}
+        validation_rows = []
+        try:
+            validation_rows = ch.query("""
+                SELECT target, status, checked_entities, drifted_fields, max_rel_diff, anchor_block, toUnixTimestamp(finished_at)
+                FROM fluid_anchor_runs FINAL
+                ORDER BY finished_at DESC
+                LIMIT 1
+            """).result_rows
+        except Exception:
+            validation_rows = []
         if validation_rows:
-            row = validation_rows[0]
-            finished = row[5]
-            if isinstance(finished, datetime):
-                finished_ts = int(finished.replace(tzinfo=timezone.utc).timestamp()) if finished.tzinfo is None else int(finished.timestamp())
-            else:
-                finished_ts = 0
+            target, status, checked_entities, drifted_fields, max_rel_diff, anchor_block, finished_at = validation_rows[0]
             validation = {
-                "status": str(row[0]),
-                "checkedCount": int(row[1] or 0),
-                "mismatchCount": int(row[2] or 0),
-                "maxRelativeSupplyDiff": float(row[3] or 0.0),
-                "maxRelativeBorrowDiff": float(row[4] or 0.0),
-                "finishedAt": finished_ts,
+                "target": str(target),
+                "status": str(status),
+                "checkedCount": int(checked_entities or 0),
+                "mismatchCount": int(drifted_fields or 0),
+                "maxRelativeSupplyDiff": float(max_rel_diff or 0.0),
+                "maxRelativeBorrowDiff": 0.0,
+                "anchorBlock": int(anchor_block or 0),
+                "finishedAt": int(finished_at or 0),
             }
+        else:
+            validation = {"status": "NEVER_RUN", "checkedCount": 0, "mismatchCount": 0, "maxRelativeSupplyDiff": 0.0, "maxRelativeBorrowDiff": 0.0, "finishedAt": 0}
         return {
             "reserveStates": _query_int(ch, "SELECT count() FROM fluid_reserve_state FINAL"),
             "reserveSupport": reserve_support,
@@ -2995,9 +2977,12 @@ def _fluid_coverage_snapshot(ch) -> dict[str, object]:
             "fluidOracleSnapshotRows": int(shared_oracle_rows or 0),
             "fluidOracleSnapshotSubjects": int(shared_oracle_subjects or 0),
             "rawHead": int(raw_head or 0),
+            "productRawHead": int(product_raw_head or 0),
+            "fTokenReplayHead": int(ftoken_replay_head or 0),
+            "vaultReplayRows": int(vault_replay_rows or 0),
             "processedHead": int(processed_head or 0),
             "lagBlocks": max(0, int(raw_head or 0) - int(processed_head or 0)),
-            "tvlPolicy": "Liquidity Layer reserves are canonical; fToken/vault/DEX snapshots are exposure rows unless isCanonicalTvl=true.",
+            "tvlPolicy": "Fluid direct-RPC product snapshots were removed; fToken/vault product surfaces are event-replay derived.",
             "rpcValidation": validation,
         }
     except Exception as exc:
@@ -3037,96 +3022,7 @@ def _query_fluid_contracts(product_type: Optional[str] = None, active_only: bool
 
 
 def _query_fluid_product_snapshots(product_type: Optional[str] = None, product_id: Optional[str] = None, limit: int = 500) -> list[FluidProductSnapshot]:
-    ch = get_clickhouse_client()
-    filters = ["chain_id = 1"]
-    if product_type:
-        filters.append(f"product_type = '{_escape_sql_string(product_type.upper())}'")
-    if product_id:
-        filters.append(f"product_id = '{_escape_sql_string(product_id.lower())}'")
-    safe_limit = max(1, min(int(limit or 500), 5000))
-    where_clause = " AND ".join(filters)
-    query = f"""
-        SELECT chain_id, product_type, product_id, timestamp, block_number, symbol, underlying,
-               collateral_token, debt_token, supply_usd, borrow_usd, collateral_usd, liquidity_usd,
-               volume_usd, fees_usd, supply_apy, borrow_apy, utilization, ltv,
-               liquidation_threshold, position_count, is_canonical_tvl, pricing_status,
-               oracle_status, snapshot_status, provenance, error
-        FROM (
-            SELECT
-                chain_id,
-                product_type,
-                product_id,
-                argMax(timestamp, tuple(fps.timestamp, fps.block_number)) AS timestamp,
-                argMax(block_number, tuple(fps.timestamp, fps.block_number)) AS block_number,
-                argMax(symbol, tuple(fps.timestamp, fps.block_number)) AS symbol,
-                argMax(underlying, tuple(fps.timestamp, fps.block_number)) AS underlying,
-                argMax(collateral_token, tuple(fps.timestamp, fps.block_number)) AS collateral_token,
-                argMax(debt_token, tuple(fps.timestamp, fps.block_number)) AS debt_token,
-                argMax(supply_usd, tuple(fps.timestamp, fps.block_number)) AS supply_usd,
-                argMax(borrow_usd, tuple(fps.timestamp, fps.block_number)) AS borrow_usd,
-                argMax(collateral_usd, tuple(fps.timestamp, fps.block_number)) AS collateral_usd,
-                argMax(liquidity_usd, tuple(fps.timestamp, fps.block_number)) AS liquidity_usd,
-                argMax(volume_usd, tuple(fps.timestamp, fps.block_number)) AS volume_usd,
-                argMax(fees_usd, tuple(fps.timestamp, fps.block_number)) AS fees_usd,
-                argMax(supply_apy, tuple(fps.timestamp, fps.block_number)) AS supply_apy,
-                argMax(borrow_apy, tuple(fps.timestamp, fps.block_number)) AS borrow_apy,
-                argMax(utilization, tuple(fps.timestamp, fps.block_number)) AS utilization,
-                argMaxIf(ltv, tuple(fps.timestamp, fps.block_number), ltv > 0) AS ltv,
-                argMaxIf(liquidation_threshold, tuple(fps.timestamp, fps.block_number), liquidation_threshold > 0) AS liquidation_threshold,
-                argMax(position_count, tuple(fps.timestamp, fps.block_number)) AS position_count,
-                argMax(is_canonical_tvl, tuple(fps.timestamp, fps.block_number)) AS is_canonical_tvl,
-                argMax(pricing_status, tuple(fps.timestamp, fps.block_number)) AS pricing_status,
-                argMax(oracle_status, tuple(fps.timestamp, fps.block_number)) AS oracle_status,
-                argMax(snapshot_status, tuple(fps.timestamp, fps.block_number)) AS snapshot_status,
-                argMax(provenance, tuple(fps.timestamp, fps.block_number)) AS provenance,
-                argMax(error, tuple(fps.timestamp, fps.block_number)) AS error
-            FROM fluid_product_snapshots AS fps FINAL
-            WHERE {where_clause}
-            GROUP BY chain_id, product_type, product_id
-        )
-        ORDER BY liquidity_usd DESC, supply_usd DESC, product_type, product_id
-        LIMIT {safe_limit}
-        """
-    rows = ch.query(query).result_rows
-    result: list[FluidProductSnapshot] = []
-    for row in rows:
-        ts = row[3]
-        if isinstance(ts, datetime):
-            timestamp = int(ts.replace(tzinfo=timezone.utc).timestamp()) if ts.tzinfo is None else int(ts.timestamp())
-        else:
-            timestamp = 0
-        result.append(
-            FluidProductSnapshot(
-                chain_id=int(row[0] or 0),
-                product_type=str(row[1] or ""),
-                product_id=str(row[2] or ""),
-                timestamp=timestamp,
-                block_number=int(row[4] or 0),
-                symbol=str(row[5] or ""),
-                underlying=str(row[6] or ""),
-                collateral_token=str(row[7] or ""),
-                debt_token=str(row[8] or ""),
-                supply_usd=float(row[9] or 0.0),
-                borrow_usd=float(row[10] or 0.0),
-                collateral_usd=float(row[11] or 0.0),
-                liquidity_usd=float(row[12] or 0.0),
-                volume_usd=float(row[13] or 0.0),
-                fees_usd=float(row[14] or 0.0),
-                supply_apy=float(row[15] or 0.0),
-                borrow_apy=float(row[16] or 0.0),
-                utilization=float(row[17] or 0.0),
-                ltv=float(row[18] or 0.0),
-                liquidation_threshold=float(row[19] or 0.0),
-                position_count=int(row[20] or 0),
-                is_canonical_tvl=bool(row[21]),
-                pricing_status=str(row[22] or ""),
-                oracle_status=str(row[23] or ""),
-                snapshot_status=str(row[24] or ""),
-                provenance=str(row[25] or ""),
-                error=str(row[26] or ""),
-            )
-        )
-    return result
+    return []
 
 
 def _query_fluid_product_snapshot_history(
@@ -3134,222 +3030,18 @@ def _query_fluid_product_snapshot_history(
     resolution: str = "1D",
     limit: int = 10000,
 ) -> list[FluidProductSnapshot]:
-    ch = get_clickhouse_client()
-    filters = ["chain_id = 1"]
-    if product_type:
-        filters.append(f"product_type = '{_escape_sql_string(product_type.upper())}'")
-    safe_limit = _safe_limit(limit)
-    where_clause = " AND ".join(filters)
-    bucket_expr = _time_bucket_expr(resolution, "fps.timestamp")
-    query = f"""
-        SELECT chain_id, product_type, product_id, bucket_ts, block_number, symbol, underlying,
-               collateral_token, debt_token, supply_usd, borrow_usd, collateral_usd, liquidity_usd,
-               volume_usd, fees_usd, supply_apy, borrow_apy, utilization, ltv,
-               liquidation_threshold, position_count, is_canonical_tvl, pricing_status,
-               oracle_status, snapshot_status, provenance, error
-        FROM (
-            SELECT
-                chain_id,
-                product_type,
-                product_id,
-                {bucket_expr} AS bucket_ts,
-                argMax(block_number, tuple(fps.timestamp, fps.block_number)) AS block_number,
-                argMax(symbol, tuple(fps.timestamp, fps.block_number)) AS symbol,
-                argMax(underlying, tuple(fps.timestamp, fps.block_number)) AS underlying,
-                argMax(collateral_token, tuple(fps.timestamp, fps.block_number)) AS collateral_token,
-                argMax(debt_token, tuple(fps.timestamp, fps.block_number)) AS debt_token,
-                argMax(supply_usd, tuple(fps.timestamp, fps.block_number)) AS supply_usd,
-                argMax(borrow_usd, tuple(fps.timestamp, fps.block_number)) AS borrow_usd,
-                argMax(collateral_usd, tuple(fps.timestamp, fps.block_number)) AS collateral_usd,
-                argMax(liquidity_usd, tuple(fps.timestamp, fps.block_number)) AS liquidity_usd,
-                argMax(volume_usd, tuple(fps.timestamp, fps.block_number)) AS volume_usd,
-                argMax(fees_usd, tuple(fps.timestamp, fps.block_number)) AS fees_usd,
-                argMax(supply_apy, tuple(fps.timestamp, fps.block_number)) AS supply_apy,
-                argMax(borrow_apy, tuple(fps.timestamp, fps.block_number)) AS borrow_apy,
-                argMax(utilization, tuple(fps.timestamp, fps.block_number)) AS utilization,
-                argMaxIf(ltv, tuple(fps.timestamp, fps.block_number), ltv > 0) AS ltv,
-                argMaxIf(liquidation_threshold, tuple(fps.timestamp, fps.block_number), liquidation_threshold > 0) AS liquidation_threshold,
-                argMax(position_count, tuple(fps.timestamp, fps.block_number)) AS position_count,
-                argMax(is_canonical_tvl, tuple(fps.timestamp, fps.block_number)) AS is_canonical_tvl,
-                argMax(pricing_status, tuple(fps.timestamp, fps.block_number)) AS pricing_status,
-                argMax(oracle_status, tuple(fps.timestamp, fps.block_number)) AS oracle_status,
-                argMax(snapshot_status, tuple(fps.timestamp, fps.block_number)) AS snapshot_status,
-                argMax(provenance, tuple(fps.timestamp, fps.block_number)) AS provenance,
-                argMax(error, tuple(fps.timestamp, fps.block_number)) AS error
-            FROM fluid_product_snapshots AS fps FINAL
-            WHERE {where_clause}
-            GROUP BY chain_id, product_type, product_id, bucket_ts
-        )
-        ORDER BY bucket_ts DESC, collateral_usd DESC, borrow_usd DESC, product_type, product_id
-        LIMIT {safe_limit}
-        """
-    rows = ch.query(query).result_rows
-    result: list[FluidProductSnapshot] = []
-    for row in rows:
-        ts = row[3]
-        if isinstance(ts, datetime):
-            timestamp = int(ts.replace(tzinfo=timezone.utc).timestamp()) if ts.tzinfo is None else int(ts.timestamp())
-        else:
-            timestamp = 0
-        result.append(
-            FluidProductSnapshot(
-                chain_id=int(row[0] or 0),
-                product_type=str(row[1] or ""),
-                product_id=str(row[2] or ""),
-                timestamp=timestamp,
-                block_number=int(row[4] or 0),
-                symbol=str(row[5] or ""),
-                underlying=str(row[6] or ""),
-                collateral_token=str(row[7] or ""),
-                debt_token=str(row[8] or ""),
-                supply_usd=float(row[9] or 0.0),
-                borrow_usd=float(row[10] or 0.0),
-                collateral_usd=float(row[11] or 0.0),
-                liquidity_usd=float(row[12] or 0.0),
-                volume_usd=float(row[13] or 0.0),
-                fees_usd=float(row[14] or 0.0),
-                supply_apy=float(row[15] or 0.0),
-                borrow_apy=float(row[16] or 0.0),
-                utilization=float(row[17] or 0.0),
-                ltv=float(row[18] or 0.0),
-                liquidation_threshold=float(row[19] or 0.0),
-                position_count=int(row[20] or 0),
-                is_canonical_tvl=bool(row[21]),
-                pricing_status=str(row[22] or ""),
-                oracle_status=str(row[23] or ""),
-                snapshot_status=str(row[24] or ""),
-                provenance=str(row[25] or ""),
-                error=str(row[26] or ""),
-            )
-        )
-    return result
+    return []
 
 
 def _query_fluid_vault_composition_history(
     resolution: str = "1D",
     limit: int = 50000,
 ) -> list[FluidVaultCompositionPoint]:
-    ch = get_clickhouse_client()
-    safe_limit = max(1, min(int(limit or 50000), 50000))
-    vault_bucket_expr = _time_bucket_expr(resolution, "v.timestamp")
-    snapshot_bucket_expr = _time_bucket_expr(resolution, "s.timestamp")
-    query = f"""
-        WITH raw_vaults AS (
-            SELECT
-                {vault_bucket_expr} AS bucket_ts,
-                lower(v.vault_id) AS vault_id,
-                v.symbol AS symbol,
-                toFloat64(v.supply_usd) AS collateral_usd,
-                toFloat64(v.borrow_usd) AS debt_usd,
-                1 AS source_priority,
-                v.timestamp AS source_ts,
-                v.inserted_at AS inserted_at
-            FROM fluid_vault_timeseries AS v FINAL
-            WHERE v.symbol != ''
-
-            UNION ALL
-
-            SELECT
-                {snapshot_bucket_expr} AS bucket_ts,
-                lower(s.product_id) AS vault_id,
-                s.symbol AS symbol,
-                toFloat64(s.collateral_usd) AS collateral_usd,
-                toFloat64(s.borrow_usd) AS debt_usd,
-                2 AS source_priority,
-                s.timestamp AS source_ts,
-                s.inserted_at AS inserted_at
-            FROM fluid_product_snapshots AS s FINAL
-            WHERE s.chain_id = 1
-              AND s.product_type = 'VAULT'
-              AND s.symbol != ''
-              AND s.symbol != 'VAULT'
-        ),
-        per_vault_bucket AS (
-            SELECT
-                bucket_ts,
-                vault_id,
-                argMax(symbol, tuple(source_priority, source_ts, inserted_at)) AS symbol,
-                argMax(collateral_usd, tuple(source_priority, source_ts, inserted_at)) AS collateral_usd,
-                argMax(debt_usd, tuple(source_priority, source_ts, inserted_at)) AS debt_usd
-            FROM raw_vaults
-            GROUP BY bucket_ts, vault_id
-        ),
-        side_rows AS (
-            SELECT
-                bucket_ts,
-                if(position(symbol, '/') > 0, splitByChar('/', symbol)[1], symbol) AS symbol,
-                sum(collateral_usd) AS collateral_usd,
-                0.0 AS debt_usd
-            FROM per_vault_bucket
-            GROUP BY bucket_ts, symbol
-
-            UNION ALL
-
-            SELECT
-                bucket_ts,
-                if(position(symbol, '/') > 0, splitByChar('/', symbol)[length(splitByChar('/', symbol))], symbol) AS symbol,
-                0.0 AS collateral_usd,
-                sum(debt_usd) AS debt_usd
-            FROM per_vault_bucket
-            GROUP BY bucket_ts, symbol
-        )
-        SELECT
-            toUnixTimestamp(bucket_ts) AS ts,
-            symbol,
-            sum(collateral_usd) AS collateral_usd,
-            sum(debt_usd) AS debt_usd
-        FROM side_rows
-        WHERE symbol != ''
-        GROUP BY bucket_ts, symbol
-        HAVING collateral_usd > 0 OR debt_usd > 0
-        ORDER BY bucket_ts DESC, greatest(collateral_usd, debt_usd) DESC, symbol
-        LIMIT {safe_limit}
-        """
-    rows = ch.query(query).result_rows
-    points = [
-        FluidVaultCompositionPoint(
-            timestamp=int(row[0] or 0),
-            symbol=str(row[1] or ""),
-            collateral_usd=_finite_non_negative(row[2]),
-            debt_usd=_finite_non_negative(row[3]),
-        )
-        for row in rows
-        if int(row[0] or 0) > 0 and str(row[1] or "")
-    ]
-    points.reverse()
-    return points
+    return []
 
 
 def _query_fluid_product_components(product_type: Optional[str] = None, product_id: Optional[str] = None, limit: int = 1000) -> list[FluidProductComponent]:
-    ch = get_clickhouse_client()
-    filters = ["chain_id = 1"]
-    if product_type:
-        filters.append(f"product_type = '{_escape_sql_string(product_type.upper())}'")
-    if product_id:
-        filters.append(f"product_id = '{_escape_sql_string(product_id.lower())}'")
-    safe_limit = max(1, min(int(limit or 1000), 10000))
-    query = f"""
-        SELECT chain_id, product_type, product_id, timestamp, block_number, component_type,
-               token, symbol, raw_amount, decimals, price_usd, amount_usd, pricing_status,
-               oracle_status, provenance
-        FROM fluid_product_components FINAL
-        WHERE {' AND '.join(filters)}
-        ORDER BY timestamp DESC, product_type, product_id, component_type, token
-        LIMIT {safe_limit}
-        """
-    rows = ch.query(query).result_rows
-    result: list[FluidProductComponent] = []
-    for row in rows:
-        ts = row[3]
-        timestamp = int(ts.replace(tzinfo=timezone.utc).timestamp()) if isinstance(ts, datetime) and ts.tzinfo is None else (int(ts.timestamp()) if isinstance(ts, datetime) else 0)
-        result.append(FluidProductComponent(
-            chain_id=int(row[0] or 0), product_type=str(row[1] or ""), product_id=str(row[2] or ""),
-            timestamp=timestamp, block_number=int(row[4] or 0), component_type=str(row[5] or ""),
-            token=str(row[6] or ""), symbol=str(row[7] or ""), raw_amount=str(row[8] or "0"),
-            decimals=int(row[9] or 0), price_usd=float(row[10] or 0.0), amount_usd=float(row[11] or 0.0),
-            pricing_status=str(row[12] or ""), oracle_status=str(row[13] or ""), provenance=str(row[14] or ""),
-        ))
-    return result
+    return []
 
 
 def _morpho_coverage_snapshot(ch) -> dict[str, object]:
@@ -4810,6 +4502,88 @@ def _query_compound_v3_protocol_page(
     return payload
 
 
+def _query_protocol_overview_page(
+    ch,
+    protocol: str,
+    flow_window_days: int = 7,
+    timeseries_limit: int = 5000,
+    asset_symbols: Optional[list[str]] = None,
+    max_borrow_apy: Optional[float] = None,
+) -> ProtocolOverviewPagePayload:
+    protocol_key = str(protocol or AAVE_MARKET).upper()
+    symbols = asset_symbols or ["USDC", "USDT"]
+    safe_limit = _api_page_size(timeseries_limit)
+    safe_flow_days = max(1, min(90, int(flow_window_days or 7)))
+
+    if protocol_key == COMPOUND_V3_MARKET:
+        compound = _query_compound_v3_protocol_page(
+            ch,
+            safe_flow_days,
+            safe_limit,
+            symbols or ["USDC", "WETH"],
+        )
+        return ProtocolOverviewPagePayload(
+            freshness=compound.freshness,
+            stats=compound.stats,
+            rows=compound.rows,
+            vaults=[],
+            fluid_products=[],
+            apy_history=compound.apy_history,
+            asset_apy_history=compound.asset_apy_history,
+            alluvial_flows=compound.alluvial_flows,
+            channel_flows=[],
+            curator_allocation=[],
+            fluid_vault_composition=[],
+        )
+
+    markets_page = _query_protocol_markets_page(ch, protocol_key, max_borrow_apy)
+    channel_flows: list[MorphoCuratorFlowLink] = []
+    curator_allocation: list[MorphoCuratorAllocationPoint] = []
+    vaults: list[MetaMorphoVault] = []
+    fluid_products: list[FluidProductSnapshot] = []
+    fluid_vault_composition: list[FluidVaultCompositionPoint] = []
+
+    if protocol_key == MORPHO_MARKET:
+        vaults = _query_metamorpho_vaults(None, 2000)
+        channel_flows = _query_morpho_curator_flows(ch, safe_flow_days, 10, max_borrow_apy)
+        curator_allocation = _query_morpho_curator_allocation_history(
+            ch,
+            "1D",
+            safe_limit,
+            15,
+            max_borrow_apy,
+        )
+    elif protocol_key == "EULER_MARKET":
+        channel_flows = _query_euler_channel_flows(ch, safe_flow_days, 10, max_borrow_apy)
+    elif protocol_key == FLUID_MARKET:
+        fluid_products = [
+            *_query_fluid_product_snapshots("FTOKEN", None, 2000),
+            *_query_fluid_product_snapshots("VAULT", None, 2000),
+        ]
+        fluid_vault_composition = _query_fluid_vault_composition_history("1D", 50000)
+
+    return ProtocolOverviewPagePayload(
+        freshness=markets_page.freshness,
+        stats=markets_page.stats,
+        rows=markets_page.rows,
+        vaults=vaults,
+        fluid_products=fluid_products,
+        apy_history=_query_protocol_apy_history(ch, protocol_key, "1D", safe_limit, max_borrow_apy),
+        asset_apy_history=_query_protocol_asset_apy_history(
+            ch,
+            protocol_key,
+            symbols,
+            "1D",
+            safe_limit * 2,
+            max_borrow_apy,
+        ),
+        alluvial_flows=_query_lending_flow_alluvial(ch, safe_flow_days),
+        channel_flows=channel_flows,
+        curator_allocation=curator_allocation,
+        fluid_vault_composition=fluid_vault_composition,
+    )
+
+
 # ---------------------------------------------------------------------------
 # In-process TTL cache for page-level payloads
 # ---------------------------------------------------------------------------
@@ -4882,35 +4656,13 @@ def _query_lending_pool_page(
 
     if protocol.upper() == "FLUID_MARKET":
         try:
-            escaped_entity = entity_id.replace("'", "")
+            escaped_entity = _escape_sql_string(entity_id.lower())
             vault_rows = ch.query(f"""
-                SELECT v.product_id, v.symbol, v.collateral_token, v.debt_token, v.ltv,
-                       v.supply_usd, v.borrow_usd,
-                       coalesce(rs.supply_apy, 0) AS supply_apy,
-                       coalesce(rd.borrow_apy, 0) AS borrow_apy
-                FROM (
-                    SELECT product_id, symbol, collateral_token, debt_token,
-                           max(ltv) AS ltv,
-                           argMax(supply_usd, timestamp) AS supply_usd,
-                           argMax(borrow_usd, timestamp) AS borrow_usd
-                    FROM fluid_product_snapshots
-                    WHERE product_type = 'VAULT'
-                      AND debt_token = '{escaped_entity}'
-                    GROUP BY product_id, symbol, collateral_token, debt_token
-                    HAVING supply_usd + borrow_usd > 100
-                ) AS v
-                LEFT JOIN (
-                    SELECT entity_id, argMax(supply_apy, timestamp) AS supply_apy
-                    FROM fluid_timeseries
-                    WHERE protocol = 'FLUID_MARKET'
-                    GROUP BY entity_id
-                ) AS rs ON rs.entity_id = v.collateral_token
-                LEFT JOIN (
-                    SELECT entity_id, argMax(borrow_apy, timestamp) AS borrow_apy
-                    FROM fluid_timeseries
-                    WHERE protocol = 'FLUID_MARKET'
-                    GROUP BY entity_id
-                ) AS rd ON rd.entity_id = v.debt_token
+                SELECT vault_id, symbol, supply_usd, borrow_usd, supply_apy, borrow_apy
+                FROM fluid_vault_timeseries FINAL
+                WHERE debt_token = '{escaped_entity}' AND symbol != ''
+                ORDER BY timestamp DESC, inserted_at DESC
+                LIMIT 200
             """).result_rows
             if vault_rows:
                 payload.vault_breakdown = [
@@ -4919,11 +4671,11 @@ def _query_lending_pool_page(
                         vault_id=str(row[0] or ""),
                         collateral=str(row[1] or "").split("/")[0] if "/" in str(row[1] or "") else str(row[1] or ""),
                         debt=str(row[1] or "").split("/")[-1] if "/" in str(row[1] or "") else str(row[1] or ""),
-                        ltv=float(row[4] or 0),
-                        supply_usd=float(row[5] or 0),
-                        borrow_usd=float(row[6] or 0),
-                        supply_apy=float(row[7] or 0),
-                        borrow_apy=float(row[8] or 0),
+                        ltv=0.0,
+                        supply_usd=float(row[2] or 0),
+                        borrow_usd=float(row[3] or 0),
+                        supply_apy=float(row[4] or 0),
+                        borrow_apy=float(row[5] or 0),
                     )
                     for row in vault_rows
                 ]
@@ -4997,64 +4749,32 @@ def _query_fluid_vault_page(
     ]
     flow_chart.sort(key=lambda p: p.timestamp)
 
-    # 3. Market detail from product_snapshots
-    meta_rows = ch.query(f"""
-        SELECT symbol, collateral_token, debt_token,
-               argMax(supply_usd, timestamp) AS supply_usd,
-               argMax(borrow_usd, timestamp) AS borrow_usd,
-               max(ltv) AS ltv
-        FROM fluid_product_snapshots
-        WHERE product_type = 'VAULT' AND product_id = '{escaped}'
-          AND symbol != 'VAULT' AND symbol != ''
-        GROUP BY symbol, collateral_token, debt_token
-        ORDER BY supply_usd + borrow_usd DESC
+    latest_rows = ch.query(f"""
+        SELECT symbol, collateral_token, debt_token, supply_usd, borrow_usd,
+               supply_apy, borrow_apy, utilization
+        FROM fluid_vault_timeseries FINAL
+        WHERE vault_id = '{escaped}' AND symbol != ''
+        ORDER BY timestamp DESC, inserted_at DESC
         LIMIT 1
     """).result_rows
     market = None
-    if meta_rows:
-        row = meta_rows[0]
+    if latest_rows:
+        row = latest_rows[0]
         symbol = str(row[0] or "")
         col_sym = symbol.split("/")[0] if "/" in symbol else symbol
         debt_sym = symbol.split("/")[-1] if "/" in symbol else symbol
-
-        # Resolve collateral price from Chainlink
-        _SYM_TO_FEED = {
-            "ETH": "ETH / USD", "WETH": "ETH / USD", "wstETH": "ETH / USD",
-            "weETH": "ETH / USD", "WBTC": "BTC / USD", "cbBTC": "BTC / USD",
-            "tBTC": "BTC / USD", "USDC": "USDC / USD", "USDT": "USDT / USD",
-        }
-        col_feed = _SYM_TO_FEED.get(col_sym)
-        col_price = None
-        if col_feed:
-            price_rows = ch.query(f"""
-                SELECT argMax(price, timestamp) FROM chainlink_prices
-                WHERE feed = '{col_feed}'
-            """).result_rows
-            if price_rows and price_rows[0][0]:
-                col_price = float(price_rows[0][0])
-                # Apply approximate multiplier for wrapped tokens
-                if col_sym == "wstETH":
-                    col_price *= 1.18
-                elif col_sym == "weETH":
-                    col_price *= 1.05
-        elif col_sym.upper() in ("USDC", "USDT", "DAI", "GHO", "USDE", "FDUSD"):
-            col_price = 1.0
-
-        market = MarketDetail(
+        market = LendingPoolMarketRow(
+            protocol="FLUID_MARKET",
             entity_id=escaped,
-            protocol="FLUID_VAULT",
             symbol=symbol,
-            collateral_symbol=col_sym,
-            loan_asset=debt_sym,
+            name=f"Fluid Vault {symbol}",
             supply_usd=float(row[3] or 0),
             borrow_usd=float(row[4] or 0),
-            supply_apy=rate_chart[-1].supply_apy / 100.0 if rate_chart else 0.0,
-            borrow_apy=rate_chart[-1].borrow_apy / 100.0 if rate_chart else 0.0,
-            utilization=rate_chart[-1].utilization / 100.0 if rate_chart else 0.0,
-            lltv_min=float(row[5] or 0),
-            lltv_max=float(row[5] or 0),
-            collateral_price_usd=col_price,
-            oracle_support="Chainlink",
+            supply_apy=float(row[5] or 0) * 100.0,
+            borrow_apy=float(row[6] or 0) * 100.0,
+            utilization=float(row[7] or 0) * 100.0,
+            collateral_symbol=col_sym,
+            debt_symbol=debt_sym,
         )
 
     return LendingPoolPagePayload(
@@ -5859,32 +5579,6 @@ def _query_protocol_markets(
         )
         for row in res.result_rows
     ]
-
-    # Enrich Fluid markets with vault-level LTV range from product snapshots
-    if protocol == FLUID_MARKET and markets:
-        try:
-            ltv_rows = ch.query("""
-                SELECT debt_token,
-                       min(ltv) AS ltv_min,
-                       max(ltv) AS ltv_max
-                FROM (
-                    SELECT product_id, debt_token,
-                           argMaxIf(ltv, tuple(timestamp, block_number), ltv > 0) AS ltv
-                    FROM fluid_product_snapshots
-                    WHERE product_type = 'VAULT'
-                    GROUP BY product_id, debt_token
-                    HAVING ltv > 0
-                )
-                GROUP BY debt_token
-            """).result_rows
-            ltv_map = {str(row[0]): (float(row[1]), float(row[2])) for row in ltv_rows}
-            for m in markets:
-                rng = ltv_map.get(m.entity_id)
-                if rng:
-                    m.lltv_min = rng[0]
-                    m.lltv_max = rng[1]
-        except Exception:
-            pass
 
     if protocol == COMPOUND_V3_MARKET and markets:
         try:
@@ -7952,6 +7646,377 @@ def _query_pendle_eth_price_history(
     ]
 
 
+def _fluid_ts_to_unix(value) -> int:
+    if isinstance(value, datetime):
+        return int(value.replace(tzinfo=timezone.utc).timestamp()) if value.tzinfo is None else int(value.timestamp())
+    return int(value or 0)
+
+
+def _fluid_product_from_event_row(
+    product_type: str,
+    product_id: str,
+    timestamp,
+    block_number: int,
+    symbol: str,
+    underlying: str = "",
+    collateral_token: str = "",
+    debt_token: str = "",
+    supply_usd: float = 0.0,
+    borrow_usd: float = 0.0,
+    supply_apy: float = 0.0,
+    borrow_apy: float = 0.0,
+    utilization: float = 0.0,
+    ltv: float = 0.0,
+    state_status: str = "EVENT_REPLAY",
+    provenance: str = "",
+) -> FluidProductSnapshot:
+    supply = _finite_non_negative(supply_usd)
+    borrow = _finite_non_negative(borrow_usd)
+    return FluidProductSnapshot(
+        chain_id=1,
+        product_type=product_type,
+        product_id=str(product_id or "").lower(),
+        timestamp=_fluid_ts_to_unix(timestamp),
+        block_number=int(block_number or 0),
+        symbol=str(symbol or product_type),
+        underlying=str(underlying or ""),
+        collateral_token=str(collateral_token or ""),
+        debt_token=str(debt_token or ""),
+        supply_usd=supply,
+        borrow_usd=borrow,
+        collateral_usd=supply,
+        liquidity_usd=max(0.0, supply - borrow),
+        volume_usd=0.0,
+        fees_usd=0.0,
+        supply_apy=float(supply_apy or 0.0),
+        borrow_apy=float(borrow_apy or 0.0),
+        utilization=float(utilization or 0.0),
+        ltv=float(ltv or 0.0),
+        liquidation_threshold=0.0,
+        position_count=0,
+        is_canonical_tvl=False,
+        pricing_status="EVENT_REPLAY",
+        oracle_status="EVENT_REPLAY_PRICING",
+        snapshot_status=str(state_status or "EVENT_REPLAY"),
+        provenance=provenance or '{"source":"event_replay"}',
+        error="",
+    )
+
+
+def _query_fluid_product_snapshots(product_type: Optional[str] = None, product_id: Optional[str] = None, limit: int = 500) -> list[FluidProductSnapshot]:
+    """Compatibility field backed by event-replay tables, not RPC snapshots."""
+    ch = get_clickhouse_client()
+    requested = str(product_type or "").upper() or None
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    escaped_id = _escape_sql_string(str(product_id or "").lower())
+    rows: list[FluidProductSnapshot] = []
+
+    if requested in (None, "VAULT"):
+        vault_filter = f"AND vault_id = '{escaped_id}'" if escaped_id else ""
+        try:
+            vault_rows = ch.query(f"""
+                SELECT
+                    vault_id,
+                    max(timestamp) AS ts,
+                    argMax(symbol, tuple(timestamp, inserted_at)) AS symbol,
+                    argMax(collateral_token, tuple(timestamp, inserted_at)) AS collateral_token,
+                    argMax(debt_token, tuple(timestamp, inserted_at)) AS debt_token,
+                    argMax(supply_usd, tuple(timestamp, inserted_at)) AS supply_usd,
+                    argMax(borrow_usd, tuple(timestamp, inserted_at)) AS borrow_usd,
+                    argMax(supply_apy, tuple(timestamp, inserted_at)) AS supply_apy,
+                    argMax(borrow_apy, tuple(timestamp, inserted_at)) AS borrow_apy,
+                    argMax(utilization, tuple(timestamp, inserted_at)) AS utilization
+                FROM fluid_vault_timeseries FINAL
+                WHERE notEmpty(fluid_vault_timeseries.symbol) {vault_filter}
+                GROUP BY vault_id
+                ORDER BY supply_usd + borrow_usd DESC
+                LIMIT {safe_limit}
+            """).result_rows
+            rows.extend(
+                _fluid_product_from_event_row(
+                    "VAULT", row[0], row[1], 0, row[2], "",
+                    row[3], row[4], row[5], row[6], row[7], row[8], row[9],
+                    state_status="EVENT_REPLAY",
+                    provenance='{"source":"fluid_vault_timeseries"}',
+                )
+                for row in vault_rows
+            )
+        except Exception as exc:
+            logger.warning("Fluid vault event-product query failed: %s", exc)
+
+    if requested in (None, "FTOKEN"):
+        ftoken_filter = f"AND product_id = '{escaped_id}'" if escaped_id else ""
+        try:
+            ftoken_rows = ch.query(f"""
+                SELECT
+                    product_id,
+                    max(timestamp) AS ts,
+                    argMax(fluid_ftoken_timeseries.block_number, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS block_number,
+                    argMax(symbol, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS symbol,
+                    argMax(underlying, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS underlying,
+                    argMax(supply_usd, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS supply_usd,
+                    argMax(state_status, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS state_status,
+                    argMax(provenance, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS provenance
+                FROM fluid_ftoken_timeseries FINAL
+                WHERE product_id != '' {ftoken_filter}
+                GROUP BY product_id
+                ORDER BY supply_usd DESC
+                LIMIT {safe_limit}
+            """).result_rows
+            rows.extend(
+                _fluid_product_from_event_row(
+                    "FTOKEN", row[0], row[1], row[2], row[3], row[4],
+                    "", "", row[5], 0.0, 0.0, 0.0, 0.0,
+                    state_status=row[6] or "EVENT_REPLAY",
+                    provenance=row[7] or '{"source":"fluid_ftoken_timeseries"}',
+                )
+                for row in ftoken_rows
+            )
+        except Exception as exc:
+            logger.warning("Fluid fToken event-product query failed: %s", exc)
+
+    rows.sort(key=lambda item: (item.supply_usd + item.borrow_usd), reverse=True)
+    return rows[:safe_limit]
+
+
+def _query_fluid_product_snapshot_history(
+    product_type: Optional[str] = None,
+    resolution: str = "1D",
+    limit: int = 10000,
+) -> list[FluidProductSnapshot]:
+    """Compatibility history backed by event-replay tables, not RPC snapshots."""
+    ch = get_clickhouse_client()
+    requested = str(product_type or "").upper() or None
+    safe_limit = _safe_limit(limit)
+    rows: list[FluidProductSnapshot] = []
+
+    if requested in (None, "VAULT"):
+        bucket_expr = _time_bucket_expr(resolution, "timestamp")
+        try:
+            vault_rows = ch.query(f"""
+                SELECT
+                    vault_id,
+                    {bucket_expr} AS bucket_ts,
+                    argMax(symbol, tuple(timestamp, inserted_at)) AS symbol,
+                    argMax(collateral_token, tuple(timestamp, inserted_at)) AS collateral_token,
+                    argMax(debt_token, tuple(timestamp, inserted_at)) AS debt_token,
+                    argMax(supply_usd, tuple(timestamp, inserted_at)) AS supply_usd,
+                    argMax(borrow_usd, tuple(timestamp, inserted_at)) AS borrow_usd,
+                    argMax(supply_apy, tuple(timestamp, inserted_at)) AS supply_apy,
+                    argMax(borrow_apy, tuple(timestamp, inserted_at)) AS borrow_apy,
+                    argMax(utilization, tuple(timestamp, inserted_at)) AS utilization
+                FROM fluid_vault_timeseries FINAL
+                WHERE notEmpty(fluid_vault_timeseries.symbol)
+                GROUP BY vault_id, bucket_ts
+                ORDER BY bucket_ts DESC, supply_usd + borrow_usd DESC
+                LIMIT {safe_limit}
+            """).result_rows
+            rows.extend(
+                _fluid_product_from_event_row(
+                    "VAULT", row[0], row[1], 0, row[2], "",
+                    row[3], row[4], row[5], row[6], row[7], row[8], row[9],
+                    state_status="EVENT_REPLAY",
+                    provenance='{"source":"fluid_vault_timeseries"}',
+                )
+                for row in vault_rows
+            )
+        except Exception as exc:
+            logger.warning("Fluid vault event-history query failed: %s", exc)
+
+    if requested in (None, "FTOKEN"):
+        bucket_expr = _time_bucket_expr(resolution, "timestamp")
+        try:
+            ftoken_rows = ch.query(f"""
+                SELECT
+                    product_id,
+                    {bucket_expr} AS bucket_ts,
+                    argMax(fluid_ftoken_timeseries.block_number, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS block_number,
+                    argMax(symbol, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS symbol,
+                    argMax(underlying, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS underlying,
+                    argMax(supply_usd, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS supply_usd,
+                    argMax(state_status, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS state_status,
+                    argMax(provenance, tuple(timestamp, fluid_ftoken_timeseries.block_number, inserted_at)) AS provenance
+                FROM fluid_ftoken_timeseries FINAL
+                WHERE product_id != ''
+                GROUP BY product_id, bucket_ts
+                ORDER BY bucket_ts DESC, supply_usd DESC
+                LIMIT {safe_limit}
+            """).result_rows
+            rows.extend(
+                _fluid_product_from_event_row(
+                    "FTOKEN", row[0], row[1], row[2], row[3], row[4],
+                    "", "", row[5], 0.0, 0.0, 0.0, 0.0,
+                    state_status=row[6] or "EVENT_REPLAY",
+                    provenance=row[7] or '{"source":"fluid_ftoken_timeseries"}',
+                )
+                for row in ftoken_rows
+            )
+        except Exception as exc:
+            logger.warning("Fluid fToken event-history query failed: %s", exc)
+
+    rows.sort(key=lambda item: (item.timestamp, item.supply_usd + item.borrow_usd), reverse=True)
+    return rows[:safe_limit]
+
+
+def _query_fluid_product_components(product_type: Optional[str] = None, product_id: Optional[str] = None, limit: int = 1000) -> list[FluidProductComponent]:
+    return []
+
+
+def _query_fluid_vault_composition_history(
+    resolution: str = "1D",
+    limit: int = 50000,
+) -> list[FluidVaultCompositionPoint]:
+    ch = get_clickhouse_client()
+    safe_limit = max(1, min(int(limit or 50000), 50000))
+    bucket_expr = _time_bucket_expr(resolution, "timestamp")
+    query = f"""
+        WITH per_vault_bucket AS (
+            SELECT
+                {bucket_expr} AS bucket_ts,
+                vault_id,
+                argMax(symbol, tuple(timestamp, inserted_at)) AS symbol,
+                argMax(supply_usd, tuple(timestamp, inserted_at)) AS collateral_usd,
+                argMax(borrow_usd, tuple(timestamp, inserted_at)) AS debt_usd
+            FROM fluid_vault_timeseries FINAL
+            WHERE notEmpty(fluid_vault_timeseries.symbol)
+            GROUP BY bucket_ts, vault_id
+        ),
+        side_rows AS (
+            SELECT
+                bucket_ts,
+                if(position(symbol, '/') > 0, splitByChar('/', symbol)[1], symbol) AS symbol,
+                sum(collateral_usd) AS collateral_usd,
+                0.0 AS debt_usd
+            FROM per_vault_bucket
+            GROUP BY bucket_ts, symbol
+
+            UNION ALL
+
+            SELECT
+                bucket_ts,
+                if(position(symbol, '/') > 0, splitByChar('/', symbol)[length(splitByChar('/', symbol))], symbol) AS symbol,
+                0.0 AS collateral_usd,
+                sum(debt_usd) AS debt_usd
+            FROM per_vault_bucket
+            GROUP BY bucket_ts, symbol
+        )
+        SELECT
+            toUnixTimestamp(bucket_ts) AS ts,
+            symbol,
+            sum(collateral_usd) AS collateral_usd,
+            sum(debt_usd) AS debt_usd
+        FROM side_rows
+        WHERE symbol != ''
+        GROUP BY bucket_ts, symbol
+        HAVING collateral_usd > 0 OR debt_usd > 0
+        ORDER BY bucket_ts DESC, greatest(collateral_usd, debt_usd) DESC, symbol
+        LIMIT {safe_limit}
+    """
+    points = [
+        FluidVaultCompositionPoint(
+            timestamp=int(row[0] or 0),
+            symbol=str(row[1] or ""),
+            collateral_usd=_finite_non_negative(row[2]),
+            debt_usd=_finite_non_negative(row[3]),
+        )
+        for row in ch.query(query).result_rows
+        if int(row[0] or 0) > 0 and str(row[1] or "")
+    ]
+    points.reverse()
+    return points
+
+
+def _query_fluid_vault_page(
+    ch, vault_id: str, timeseries_limit: int, flow_limit: int
+) -> LendingPoolPagePayload:
+    """Build a vault-level detail page only from event-replay output."""
+    escaped = _escape_sql_string(str(vault_id or "").lower())
+    ts_rows = ch.query(f"""
+        SELECT toUnixTimestamp(timestamp) AS ts,
+               supply_usd, borrow_usd, supply_apy, borrow_apy, utilization
+        FROM fluid_vault_timeseries FINAL
+        WHERE vault_id = '{escaped}'
+        ORDER BY timestamp DESC
+        LIMIT {int(timeseries_limit)}
+    """).result_rows
+    rate_chart = [
+        LendingPoolRatePoint(
+            timestamp=int(row[0]),
+            supply_apy=_finite_non_negative(row[3]) * 100.0,
+            borrow_apy=_finite_non_negative(row[4]) * 100.0,
+            utilization=_finite_non_negative(row[5]) * 100.0,
+            supply_usd=_finite_non_negative(row[1]),
+            borrow_usd=_finite_non_negative(row[2]),
+        )
+        for row in ts_rows
+        if int(row[0]) > 0
+    ]
+    rate_chart.sort(key=lambda p: p.timestamp)
+
+    flow_rows = ch.query(f"""
+        SELECT toUnixTimestamp(timestamp) AS ts,
+               supply_inflow_usd, supply_outflow_usd,
+               borrow_inflow_usd, borrow_outflow_usd,
+               net_supply_flow_usd, net_borrow_flow_usd
+        FROM fluid_vault_timeseries FINAL
+        WHERE vault_id = '{escaped}'
+        ORDER BY timestamp DESC
+        LIMIT {int(flow_limit)}
+    """).result_rows
+    flow_chart = [
+        MarketFlowPoint(
+            timestamp=int(row[0]),
+            supply_inflow_usd=_finite_non_negative(row[1]),
+            supply_outflow_usd=_finite_non_negative(row[2]),
+            borrow_inflow_usd=_finite_non_negative(row[3]),
+            borrow_outflow_usd=_finite_non_negative(row[4]),
+            net_supply_flow_usd=float(row[5] or 0),
+            net_borrow_flow_usd=float(row[6] or 0),
+        )
+        for row in flow_rows
+        if int(row[0]) > 0
+    ]
+    flow_chart.sort(key=lambda p: p.timestamp)
+
+    latest_rows = ch.query(f"""
+        SELECT symbol, collateral_token, debt_token, supply_usd, borrow_usd,
+               supply_apy, borrow_apy, utilization
+        FROM fluid_vault_timeseries FINAL
+        WHERE vault_id = '{escaped}' AND symbol != ''
+        ORDER BY timestamp DESC, inserted_at DESC
+        LIMIT 1
+    """).result_rows
+    market = None
+    if latest_rows:
+        row = latest_rows[0]
+        symbol = str(row[0] or "")
+        col_sym = symbol.split("/")[0] if "/" in symbol else symbol
+        debt_sym = symbol.split("/")[-1] if "/" in symbol else symbol
+        market = MarketDetail(
+            entity_id=escaped,
+            protocol="FLUID_VAULT",
+            symbol=symbol,
+            collateral_symbol=col_sym,
+            loan_asset=debt_sym,
+            supply_usd=_finite_non_negative(row[3]),
+            borrow_usd=_finite_non_negative(row[4]),
+            supply_apy=float(row[5] or 0.0),
+            borrow_apy=float(row[6] or 0.0),
+            utilization=float(row[7] or 0.0),
+            lltv_min=0.0,
+            lltv_max=0.0,
+            collateral_price_usd=None,
+            oracle_support="event replay",
+        )
+
+    return LendingPoolPagePayload(
+        freshness=_freshness_payload(),
+        market=market,
+        rate_chart=rate_chart,
+        flow_chart=flow_chart,
+    )
+
+
 @strawberry.type
 class Query:
     @strawberry.field(name="apiStatus")
@@ -8067,6 +8132,25 @@ class Query:
             flow_window_days,
             _api_page_size(timeseries_limit),
             asset_symbols or ["USDC", "WETH"],
+        )
+
+    @strawberry.field(name="protocolOverviewPage")
+    def protocol_overview_page(
+        self,
+        protocol: str = AAVE_MARKET,
+        flow_window_days: int = 7,
+        timeseries_limit: int = 5000,
+        asset_symbols: Optional[List[str]] = None,
+        max_borrow_apy: Optional[float] = None,
+    ) -> ProtocolOverviewPagePayload:
+        ch = get_clickhouse_client()
+        return _query_protocol_overview_page(
+            ch,
+            protocol,
+            flow_window_days,
+            _api_page_size(timeseries_limit),
+            asset_symbols or ["USDC", "USDT"],
+            max_borrow_apy,
         )
 
     @strawberry.field(name="lendingPoolPage")

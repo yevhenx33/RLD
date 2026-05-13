@@ -182,6 +182,51 @@ class FluidSourceTests(unittest.TestCase):
         self.assertEqual(status, "ORACLE_SNAPSHOT_REQUIRED")
         self.assertIn("Renzo", reason)
 
+    def test_shared_price_btc_does_not_use_native_eth_pseudo_address(self):
+        from analytics.oracle_snapshots import ASSET_PRICE_FEED_MAP, BTC_PSEUDO_ADDRESS
+
+        feed_map = {feed: asset for feed, asset, _symbol, _confidence in ASSET_PRICE_FEED_MAP}
+        self.assertEqual(feed_map["BTC / USD"], BTC_PSEUDO_ADDRESS)
+        self.assertNotEqual(feed_map["BTC / USD"], "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+        self.assertEqual(feed_map["ETH / USD"], "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
+
+    def test_shared_price_composed_feeds_cover_fluid_assets(self):
+        from analytics.oracle_snapshots import COMPOSED_ASSET_PRICE_FEEDS
+
+        assets = {symbol: (base, quote) for _asset, symbol, base, quote, _source_id, _confidence in COMPOSED_ASSET_PRICE_FEEDS}
+        self.assertEqual(assets["WBTC"], ("WBTC / BTC", "BTC / USD"))
+        self.assertEqual(assets["weETH"], ("weETH / ETH", "ETH / USD"))
+        self.assertEqual(assets["wstETH"], ("wstETH/stETH exchange rate", "STETH / USD"))
+
+    def test_fluid_anchor_schema_is_audit_only(self):
+        from analytics.fluid_full_coverage import ensure_fluid_anchor_tables
+
+        class FakeClient:
+            def __init__(self):
+                self.commands = []
+
+            def command(self, sql):
+                self.commands.append(sql)
+
+        fake = FakeClient()
+        ensure_fluid_anchor_tables(fake)
+        ddl = "\n".join(fake.commands)
+        self.assertIn("fluid_anchor_runs", ddl)
+        self.assertIn("fluid_anchor_diffs", ddl)
+        self.assertNotIn("fluid_product_snapshots", ddl)
+        self.assertNotIn("fluid_product_components", ddl)
+        self.assertNotIn("fluid_rpc_validation_runs", ddl)
+
+    def test_vault_replay_decodes_signed_deltas_and_exchange_prices(self):
+        from analytics.scripts.fluid_vault_ops import _decode_int256_word, _event_exchange_prices
+
+        self.assertEqual(_decode_int256_word(word(123)), 123)
+        self.assertEqual(_decode_int256_word(word((1 << 256) - 7)), -7)
+        supply_ep = 10**12 + 123
+        borrow_ep = 10**12 + 456
+        packed = (supply_ep << 91) | (borrow_ep << 155)
+        self.assertEqual(_event_exchange_prices(data_words(0, 0, 0, 0, 0, packed)), (supply_ep, borrow_ep))
+
 
 if __name__ == "__main__":
     unittest.main()

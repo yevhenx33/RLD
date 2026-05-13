@@ -27,6 +27,7 @@ from analytics.processor import ProtocolProcessor
 from analytics.sources.metamorpho import MetaMorphoFactorySource, MetaMorphoSource, MetaMorphoVaultBackfillSource
 from analytics.sources import (
     FluidSource,
+    FluidFTokenSource,
     ChainlinkSource,
     EulerSource,
     AaveV3Source,
@@ -46,6 +47,7 @@ from analytics.protocols import (
     SPARK_MARKET,
     EULER_MARKET,
     FLUID_MARKET,
+    FLUID_FTOKEN,
     MORPHO_MARKET,
     COMPOUND_V2_MARKET,
     COMPOUND_V3_MARKET,
@@ -71,6 +73,7 @@ SOURCE_MAP = {
     SPARK_MARKET: SparkLendSource,
     EULER_MARKET: EulerSource,
     FLUID_MARKET: FluidSource,
+    FLUID_FTOKEN: FluidFTokenSource,
     MORPHO_MARKET: MorphoSource,
     COMPOUND_V2_MARKET: CompoundV2Source,
     COMPOUND_V3_MARKET: CompoundV3Source,

@@ -33,6 +33,12 @@ class RldIndexerStreamsCliTests(unittest.TestCase):
             self.assertTrue(handler.called)
 
 
+    def test_fluid_e2e_command_wires_to_handler(self):
+        with patch.object(rld_indexer, "cmd_fluid_e2e", return_value=0) as handler:
+            with patch.object(sys, "argv", ["rld_indexer", "fluid-e2e", "--target", "vault", "--from-block", "25057000", "--to-block", "25057100", "--anchor-block", "25057100", "--dry-run"]):
+                self.assertEqual(rld_indexer.main(), 0)
+            self.assertTrue(handler.called)
+
 
 if __name__ == "__main__":
     unittest.main()

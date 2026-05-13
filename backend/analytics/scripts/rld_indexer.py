@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -177,9 +178,12 @@ def cmd_metamorpho_backfill(args) -> int:
 
 
 def cmd_fluid_product_backfill(args) -> int:
-    from analytics.scripts.backfill_fluid_product_snapshots import run as run_fluid_product_backfill
-
-    return run_fluid_product_backfill(args)
+    print(
+        "Fluid RPC product snapshots are deprecated. "
+        "Use Envio/event replay ingestion and RPC only for explicit anchor validation.",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def cmd_fluid_repair(args) -> int:
@@ -200,6 +204,147 @@ def cmd_fluid_validate_rpc(args) -> int:
         return run_validate(args, ch)
     finally:
         ch.close()
+
+
+def cmd_fluid_ftoken_collect(args) -> int:
+    from analytics.scripts.fluid_ftoken_ops import collect_envio
+
+    ch = ch_client()
+    try:
+        return collect_envio(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_fluid_ftoken_rpc_repair(args) -> int:
+    from analytics.scripts.fluid_ftoken_ops import collect
+
+    ch = ch_client()
+    try:
+        return collect(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_fluid_ftoken_replay(args) -> int:
+    from analytics.scripts.fluid_ftoken_ops import replay
+
+    ch = ch_client()
+    try:
+        return replay(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_fluid_ftoken_anchor(args) -> int:
+    from analytics.scripts.fluid_ftoken_ops import anchor
+
+    ch = ch_client()
+    try:
+        return anchor(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_fluid_vault_replay(args) -> int:
+    from analytics.scripts.fluid_vault_ops import replay
+
+    ch = ch_client()
+    try:
+        return replay(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_fluid_vault_collect(args) -> int:
+    from analytics.scripts.fluid_vault_ops import collect_envio
+
+    ch = ch_client()
+    try:
+        return collect_envio(args, ch)
+    finally:
+        ch.close()
+
+
+def cmd_fluid_vault_anchor(args) -> int:
+    from analytics.scripts.fluid_vault_ops import anchor
+
+    ch = ch_client()
+    try:
+        return anchor(args, ch)
+    finally:
+        ch.close()
+
+
+def _clone_args(args, **overrides):
+    values = vars(args).copy()
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def cmd_fluid_e2e(args) -> int:
+    phases: list[dict[str, object]] = []
+    targets = ["ftoken", "vault"] if args.target == "all" else [args.target]
+    exit_code = 0
+    total_started = time.monotonic()
+    for target in targets:
+        phase_started = time.monotonic()
+        if target == "ftoken":
+            collect_args = _clone_args(args, progress_every=0)
+            collect_code = cmd_fluid_ftoken_collect(collect_args)
+            phases.append({"target": target, "phase": "collect", "exitCode": collect_code, "elapsedSec": round(time.monotonic() - phase_started, 3)})
+            if collect_code:
+                exit_code = collect_code
+                if args.fail_on_drift:
+                    break
+            phase_started = time.monotonic()
+            replay_args = _clone_args(args, snapshot_mode="daily", include_anchor=True, max_snapshot_points=0)
+            replay_code = cmd_fluid_ftoken_replay(replay_args)
+            phases.append({"target": target, "phase": "replay", "exitCode": replay_code, "elapsedSec": round(time.monotonic() - phase_started, 3)})
+            if replay_code:
+                exit_code = replay_code
+                if args.fail_on_drift:
+                    break
+            table = "fluid_ftoken_timeseries"
+        else:
+            phase_started = time.monotonic()
+            collect_args = _clone_args(args, progress_every=0)
+            collect_code = cmd_fluid_vault_collect(collect_args)
+            phases.append({"target": target, "phase": "collect", "exitCode": collect_code, "elapsedSec": round(time.monotonic() - phase_started, 3)})
+            if collect_code:
+                exit_code = collect_code
+                if args.fail_on_drift:
+                    break
+            phase_started = time.monotonic()
+            replay_args = _clone_args(args, min_usd=0.0)
+            replay_code = cmd_fluid_vault_replay(replay_args)
+            phases.append({"target": target, "phase": "replay", "exitCode": replay_code, "elapsedSec": round(time.monotonic() - phase_started, 3)})
+            if replay_code:
+                exit_code = replay_code
+                if args.fail_on_drift:
+                    break
+            table = "fluid_vault_timeseries"
+        phase_started = time.monotonic()
+        ch = ch_client()
+        try:
+            rows = int(ch.command(f"SELECT count() FROM {table}") or 0)
+        finally:
+            ch.close()
+        phases.append({"target": target, "phase": "serving_smoke", "table": table, "rows": rows, "exitCode": 0 if rows or args.dry_run else 1, "elapsedSec": round(time.monotonic() - phase_started, 3)})
+        if not rows and not args.dry_run:
+            exit_code = 1
+            if args.fail_on_drift:
+                break
+        phase_started = time.monotonic()
+        anchor_args = _clone_args(args, block_number=int(args.anchor_block or args.to_block or 0), dry_run=bool(args.dry_run))
+        anchor_code = cmd_fluid_ftoken_anchor(anchor_args) if target == "ftoken" else cmd_fluid_vault_anchor(anchor_args)
+        phases.append({"target": target, "phase": "anchor", "exitCode": anchor_code, "elapsedSec": round(time.monotonic() - phase_started, 3)})
+        if anchor_code:
+            exit_code = anchor_code
+            if args.fail_on_drift:
+                break
+    print(json.dumps({"status": "OK" if exit_code == 0 else "DRIFT", "target": args.target, "fromBlock": args.from_block, "toBlock": args.to_block, "anchorBlock": args.anchor_block or args.to_block, "dryRun": bool(args.dry_run), "elapsedSec": round(time.monotonic() - total_started, 3), "phases": phases}, indent=2, sort_keys=True))
+    return exit_code
 
 
 def cmd_euler_refresh_verified(args) -> int:
@@ -482,7 +627,7 @@ def main() -> int:
     metamorpho.add_argument("--dry-run", action="store_true")
     metamorpho.set_defaults(func=cmd_metamorpho_backfill)
 
-    fluid_products = sub.add_parser("fluid-products-backfill", help="Backfill Fluid product discovery and latest snapshots")
+    fluid_products = sub.add_parser("fluid-products-backfill", help="Deprecated: Fluid RPC product snapshots are disabled")
     fluid_products.add_argument("--rpc-url", default=None)
     fluid_products.add_argument("--block-number", type=int, default=None)
     fluid_products.add_argument("--max-contracts", type=int, default=None)
@@ -493,7 +638,7 @@ def main() -> int:
     fluid_products.add_argument("--skip-validation", action="store_true")
     fluid_products.set_defaults(func=cmd_fluid_product_backfill)
 
-    fluid_full = sub.add_parser("fluid-full-coverage-cycle", help="Run Fluid oracle snapshots, product snapshots, and validation")
+    fluid_full = sub.add_parser("fluid-full-coverage-cycle", help="Deprecated: Fluid RPC product snapshots are disabled")
     fluid_full.add_argument("--rpc-url", default=None)
     fluid_full.add_argument("--block-number", type=int, default=None)
     fluid_full.add_argument("--max-contracts", type=int, default=None)
@@ -528,6 +673,94 @@ def main() -> int:
     fluid_validate.add_argument("--retries", type=int, default=2)
     fluid_validate.add_argument("--fail-on-drift", action="store_true")
     fluid_validate.set_defaults(func=cmd_fluid_validate_rpc)
+
+    fluid_ftoken_collect = sub.add_parser("fluid-ftoken-collect", help="Backfill Fluid fToken raw logs through Envio HyperSync")
+    fluid_ftoken_collect.add_argument("--from-block", type=int, default=0)
+    fluid_ftoken_collect.add_argument("--to-block", type=int, default=0, help="Inclusive block; defaults to confirmed HyperSync head")
+    fluid_ftoken_collect.add_argument("--batch-blocks", type=int, default=100000)
+    fluid_ftoken_collect.add_argument("--progress-every", type=int, default=5)
+    fluid_ftoken_collect.add_argument("--dry-run", action="store_true")
+    fluid_ftoken_collect.set_defaults(func=cmd_fluid_ftoken_collect)
+
+    fluid_ftoken_rpc_repair = sub.add_parser("fluid-ftoken-rpc-repair", help="Repair Fluid fToken raw logs from direct RPC; not used for canonical collection")
+    fluid_ftoken_rpc_repair.add_argument("--rpc-url", default=None)
+    fluid_ftoken_rpc_repair.add_argument("--from-block", type=int, default=0)
+    fluid_ftoken_rpc_repair.add_argument("--to-block", type=int, default=0, help="Inclusive block; defaults to confirmed RPC head")
+    fluid_ftoken_rpc_repair.add_argument("--batch-blocks", type=int, default=5000)
+    fluid_ftoken_rpc_repair.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_ftoken_rpc_repair.add_argument("--retries", type=int, default=2)
+    fluid_ftoken_rpc_repair.add_argument("--dry-run", action="store_true")
+    fluid_ftoken_rpc_repair.set_defaults(func=cmd_fluid_ftoken_rpc_repair)
+
+    fluid_ftoken_replay = sub.add_parser("fluid-ftoken-replay", help="Replay Envio-collected Fluid fToken raw events into event-derived state rows")
+    fluid_ftoken_replay.add_argument("--rpc-url", default=None)
+    fluid_ftoken_replay.add_argument("--from-block", type=int, default=0)
+    fluid_ftoken_replay.add_argument("--to-block", type=int, default=0, help="Inclusive block; defaults to confirmed RPC head")
+    fluid_ftoken_replay.add_argument("--snapshot-mode", choices=["event", "daily", "anchor"], default="daily")
+    fluid_ftoken_replay.add_argument("--include-anchor", action=argparse.BooleanOptionalAction, default=True)
+    fluid_ftoken_replay.add_argument("--max-snapshot-points", type=int, default=0)
+    fluid_ftoken_replay.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_ftoken_replay.add_argument("--retries", type=int, default=2)
+    fluid_ftoken_replay.add_argument("--dry-run", action="store_true")
+    fluid_ftoken_replay.add_argument("--fail-on-drift", action="store_true")
+    fluid_ftoken_replay.set_defaults(func=cmd_fluid_ftoken_replay)
+
+    fluid_ftoken_anchor = sub.add_parser("fluid-ftoken-anchor", help="Validate Fluid fToken raw logs and replayed state against direct RPC at an anchor block")
+    fluid_ftoken_anchor.add_argument("--rpc-url", default=None)
+    fluid_ftoken_anchor.add_argument("--from-block", type=int, default=0)
+    fluid_ftoken_anchor.add_argument("--block-number", type=int, default=0, help="Anchor block; defaults to confirmed RPC head")
+    fluid_ftoken_anchor.add_argument("--recent-blocks", type=int, default=5000)
+    fluid_ftoken_anchor.add_argument("--batch-blocks", type=int, default=5000)
+    fluid_ftoken_anchor.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_ftoken_anchor.add_argument("--retries", type=int, default=2)
+    fluid_ftoken_anchor.add_argument("--asset-relative-tolerance", type=float, default=1e-6)
+    fluid_ftoken_anchor.add_argument("--dry-run", action="store_true")
+    fluid_ftoken_anchor.add_argument("--write-validation", action="store_true", help="Deprecated no-op; anchors write fluid_anchor_runs unless --dry-run")
+    fluid_ftoken_anchor.add_argument("--fail-on-drift", action="store_true")
+    fluid_ftoken_anchor.set_defaults(func=cmd_fluid_ftoken_anchor)
+
+    fluid_vault_collect = sub.add_parser("fluid-vault-collect", help="Backfill Fluid vault raw logs through Envio HyperSync")
+    fluid_vault_collect.add_argument("--from-block", type=int, default=0)
+    fluid_vault_collect.add_argument("--to-block", type=int, default=0, help="Inclusive block; defaults to confirmed HyperSync head")
+    fluid_vault_collect.add_argument("--batch-blocks", type=int, default=100000)
+    fluid_vault_collect.add_argument("--progress-every", type=int, default=5)
+    fluid_vault_collect.add_argument("--dry-run", action="store_true")
+    fluid_vault_collect.set_defaults(func=cmd_fluid_vault_collect)
+
+    fluid_vault_replay = sub.add_parser("fluid-vault-replay", help="Replay Fluid vault state from Envio-collected vault contract events")
+    fluid_vault_replay.add_argument("--from-block", type=int, default=19258464)
+    fluid_vault_replay.add_argument("--to-block", type=int, default=0, help="Inclusive block; defaults to latest collected Fluid event block")
+    fluid_vault_replay.add_argument("--min-usd", type=float, default=0.0, help="Optional storage filter; default keeps all replayed states")
+    fluid_vault_replay.add_argument("--dry-run", action="store_true")
+    fluid_vault_replay.set_defaults(func=cmd_fluid_vault_replay)
+
+    fluid_vault_anchor = sub.add_parser("fluid-vault-anchor", help="Validate Fluid vault event replay against direct RPC storage at an anchor block")
+    fluid_vault_anchor.add_argument("--rpc-url", default=None)
+    fluid_vault_anchor.add_argument("--from-block", type=int, default=19258464)
+    fluid_vault_anchor.add_argument("--block-number", type=int, default=0, help="Anchor block; defaults to latest collected Fluid event block")
+    fluid_vault_anchor.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_vault_anchor.add_argument("--retries", type=int, default=2)
+    fluid_vault_anchor.add_argument("--relative-tolerance", type=float, default=1e-8)
+    fluid_vault_anchor.add_argument("--dry-run", action="store_true")
+    fluid_vault_anchor.add_argument("--write-validation", action="store_true", help="Deprecated no-op; anchors write fluid_anchor_runs unless --dry-run")
+    fluid_vault_anchor.add_argument("--fail-on-drift", action="store_true")
+    fluid_vault_anchor.set_defaults(func=cmd_fluid_vault_anchor)
+
+    fluid_e2e = sub.add_parser("fluid-e2e", help="Run bounded Fluid event collection, replay, serving smoke, and final RPC anchor")
+    fluid_e2e.add_argument("--target", choices=["vault", "ftoken", "all"], default="all")
+    fluid_e2e.add_argument("--rpc-url", default=None)
+    fluid_e2e.add_argument("--from-block", type=int, default=0)
+    fluid_e2e.add_argument("--to-block", type=int, default=0)
+    fluid_e2e.add_argument("--anchor-block", type=int, default=0)
+    fluid_e2e.add_argument("--batch-blocks", type=int, default=100000)
+    fluid_e2e.add_argument("--recent-blocks", type=int, default=5000)
+    fluid_e2e.add_argument("--http-timeout-sec", type=int, default=60)
+    fluid_e2e.add_argument("--retries", type=int, default=2)
+    fluid_e2e.add_argument("--asset-relative-tolerance", type=float, default=1e-6)
+    fluid_e2e.add_argument("--relative-tolerance", type=float, default=1e-8)
+    fluid_e2e.add_argument("--dry-run", action="store_true")
+    fluid_e2e.add_argument("--fail-on-drift", action="store_true")
+    fluid_e2e.set_defaults(func=cmd_fluid_e2e)
 
     euler_refresh = sub.add_parser("euler-refresh-verified", help="Refresh Euler governedPerspective verified vault registry")
     euler_refresh.add_argument("--rpc-url", default=None)

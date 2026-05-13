@@ -34,6 +34,11 @@ export const queryKeys = {
     "api.compound-v3-protocol-page.v1",
     { flowWindowDays, timeseriesLimit, assetSymbols },
   ],
+  apiProtocolOverviewPage: (url, protocol, flowWindowDays, timeseriesLimit, assetSymbols, maxBorrowApy = null) => [
+    url,
+    "api.protocol-overview-page.v1",
+    { protocol, flowWindowDays, timeseriesLimit, assetSymbols, maxBorrowApy },
+  ],
   apiMetaMorphoVaults: (url, limit = 2000) => [
     url,
     "api.metamorpho-vaults.v1",

@@ -32,8 +32,7 @@ const PoolLPPage = lazy(() => import("../pages/app/PoolLPPage"));
 const PoolsDirectoryPage = lazy(() => import("../pages/app/PoolsDirectoryPage"));
 const TwammOrdersPage = lazy(() => import("../pages/app/TwammOrdersPage"));
 const LendingDataPage = lazy(() => import("../pages/app/LendingDataPage"));
-const AaveProtocolPage = lazy(() => import("../pages/app/protocols/AaveProtocolPage"));
-const FluidProtocolPage = lazy(() => import("../pages/app/protocols/FluidProtocolPage"));
+const ProtocolOverviewPage = lazy(() => import("../pages/app/protocols/ProtocolOverviewPage"));
 
 function LegacyExploreProtocolRedirect() {
   const { protocol } = useParams();
@@ -97,12 +96,12 @@ export default function AppRoutes() {
 
       <Route element={<ApiShell />}>
         <Route path="/data" element={renderLazy(LendingDataPage)} />
-        <Route path="/data/aave" element={renderLazy(AaveProtocolPage)} />
-        <Route path="/data/spark" element={renderLazy(AaveProtocolPage)} />
-        <Route path="/data/morpho" element={renderLazy(AaveProtocolPage)} />
-        <Route path="/data/fluid" element={renderLazy(FluidProtocolPage)} />
-        <Route path="/data/euler" element={renderLazy(AaveProtocolPage)} />
-        <Route path="/data/compound-v3" element={renderLazy(AaveProtocolPage)} />
+        <Route path="/data/aave" element={renderLazy(ProtocolOverviewPage)} />
+        <Route path="/data/spark" element={renderLazy(ProtocolOverviewPage)} />
+        <Route path="/data/morpho" element={renderLazy(ProtocolOverviewPage)} />
+        <Route path="/data/fluid" element={renderLazy(ProtocolOverviewPage)} />
+        <Route path="/data/euler" element={renderLazy(ProtocolOverviewPage)} />
+        <Route path="/data/compound-v3" element={renderLazy(ProtocolOverviewPage)} />
         <Route
           path="/data/:protocol"
           element={renderLazy(ProtocolMarketsPage)}

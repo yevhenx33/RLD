@@ -1,4 +1,5 @@
 from .fluid import FluidSource
+from .fluid_ftoken import FluidFTokenSource
 from .euler import EulerSource
 from .chainlink import ChainlinkSource
 from .aave_v3 import AaveV3Source, SparkLendSource
@@ -12,6 +13,7 @@ from .pendle import PendleEthereumPtYtSource
 
 __all__ = [
     "FluidSource",
+    "FluidFTokenSource",
     "EulerSource",
     "ChainlinkSource",
     "AaveV3Source",
