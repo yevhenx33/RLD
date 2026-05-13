@@ -381,6 +381,73 @@ export const FLUID_VAULT_PAGE_QUERY = `
   }
 `;
 
+export const FLUID_PRODUCT_SNAPSHOTS_QUERY = `
+  query FluidProductSnapshots($productType: String, $limit: Int!) {
+    fluidProductSnapshots(productType: $productType, limit: $limit) {
+      productType
+      productId
+      timestamp
+      symbol
+      underlying
+      collateralToken
+      debtToken
+      supplyUsd
+      borrowUsd
+      collateralUsd
+      liquidityUsd
+      supplyApy
+      borrowApy
+      utilization
+      ltv
+      liquidationThreshold
+      positionCount
+      isCanonicalTvl
+      pricingStatus
+      oracleStatus
+      snapshotStatus
+    }
+  }
+`;
+
+export const FLUID_PRODUCT_HISTORY_QUERY = `
+  query FluidProductHistory($productType: String, $resolution: String!, $limit: Int!) {
+    fluidProductSnapshotHistory(productType: $productType, resolution: $resolution, limit: $limit) {
+      productType
+      productId
+      timestamp
+      symbol
+      underlying
+      collateralToken
+      debtToken
+      supplyUsd
+      borrowUsd
+      collateralUsd
+      liquidityUsd
+      supplyApy
+      borrowApy
+      utilization
+      ltv
+      liquidationThreshold
+      positionCount
+      isCanonicalTvl
+      pricingStatus
+      oracleStatus
+      snapshotStatus
+    }
+  }
+`;
+
+export const FLUID_VAULT_COMPOSITION_HISTORY_QUERY = `
+  query FluidVaultCompositionHistory($resolution: String!, $limit: Int!) {
+    fluidVaultCompositionHistory(resolution: $resolution, limit: $limit) {
+      timestamp
+      symbol
+      collateralUsd
+      debtUsd
+    }
+  }
+`;
+
 
 export const PENDLE_MARKET_QUERY = `
   query PendleMarket($search: String!) {

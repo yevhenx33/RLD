@@ -2,6 +2,7 @@
 
 > Canonical blueprint: `docs/blueprints/analytics-indexer-architecture.md`.
 > Launch scope note: this analytics track is non-launch-critical for the Reth V2 baseline and is operated separately from the core simulation launch path.
+> Validation methodology: `backend/analytics/docs/INDEXING_METHODOLOGY.md`.
 
 This document is the local companion for the ClickHouse-backed rates analytics stack in `backend/analytics`. It summarizes implementation details that support the blueprint.
 

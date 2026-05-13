@@ -39,6 +39,21 @@ export const queryKeys = {
     "api.metamorpho-vaults.v1",
     { limit },
   ],
+  apiFluidProductSnapshots: (url, productType = null, limit = 2000) => [
+    url,
+    "api.fluid-product-snapshots.v1",
+    { productType, limit },
+  ],
+  apiFluidProductSnapshotHistory: (url, productType = null, resolution = "1D", limit = 10000) => [
+    url,
+    "api.fluid-product-snapshot-history.v1",
+    { productType, resolution, limit },
+  ],
+  apiFluidVaultCompositionHistory: (url, resolution = "1D", limit = 50000) => [
+    url,
+    "api.fluid-vault-composition-history.v1",
+    { resolution, limit },
+  ],
   apiMetaMorphoVaultPage: (url, vaultAddress) =>
     vaultAddress
       ? [url, "api.metamorpho-vault-page.v1", { vaultAddress: vaultAddress.toLowerCase() }]

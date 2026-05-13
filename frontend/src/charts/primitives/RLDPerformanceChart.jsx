@@ -10,15 +10,16 @@ import {
   ReferenceLine,
 } from "recharts";
 
-const formatDollarCompact = (value) => {
+const formatDollarCompact = (value, decimals = 1) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return "$0";
   const abs = Math.abs(num);
   const sign = num < 0 ? "-" : "";
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
+  const precision = Number.isFinite(Number(decimals)) ? Number(decimals) : 1;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(precision)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(precision)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(precision)}K`;
+  return `${sign}$${abs.toFixed(precision)}`;
 };
 
 const formatAssetCompact = (value, unit = "") => {
@@ -37,7 +38,7 @@ const fmtValue = (name, value, areas) => {
   // Check if any area with this name has format: 'dollar'
   const area = areas?.find((a) => a.name === name);
   if (area?.format === "dollar") {
-    return formatDollarCompact(value);
+    return formatDollarCompact(value, area?.tooltipDecimals);
   }
   if (area?.format === "asset") {
     return formatAssetCompact(value, area?.unit);

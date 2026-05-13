@@ -33,6 +33,7 @@ const PoolsDirectoryPage = lazy(() => import("../pages/app/PoolsDirectoryPage"))
 const TwammOrdersPage = lazy(() => import("../pages/app/TwammOrdersPage"));
 const LendingDataPage = lazy(() => import("../pages/app/LendingDataPage"));
 const AaveProtocolPage = lazy(() => import("../pages/app/protocols/AaveProtocolPage"));
+const FluidProtocolPage = lazy(() => import("../pages/app/protocols/FluidProtocolPage"));
 
 function LegacyExploreProtocolRedirect() {
   const { protocol } = useParams();
@@ -99,6 +100,7 @@ export default function AppRoutes() {
         <Route path="/data/aave" element={renderLazy(AaveProtocolPage)} />
         <Route path="/data/spark" element={renderLazy(AaveProtocolPage)} />
         <Route path="/data/morpho" element={renderLazy(AaveProtocolPage)} />
+        <Route path="/data/fluid" element={renderLazy(FluidProtocolPage)} />
         <Route path="/data/euler" element={renderLazy(AaveProtocolPage)} />
         <Route path="/data/compound-v3" element={renderLazy(AaveProtocolPage)} />
         <Route
@@ -109,6 +111,9 @@ export default function AppRoutes() {
         <Route path="/data/spark/:marketId" element={renderLazy(AaveMarketPage)} />
         <Route path="/data/morpho/vault/:vaultAddress" element={renderLazy(MetaMorphoVaultPage)} />
         <Route path="/data/morpho/:marketId" element={renderLazy(MorphoMarketPage)} />
+        <Route path="/data/fluid/assets/:marketId" element={renderLazy(FluidMarketPage)} />
+        <Route path="/data/fluid/vaults/:marketId" element={renderLazy(FluidMarketPage)} />
+        <Route path="/data/fluid/markets/:vaultId" element={renderLazy(FluidVaultPage)} />
         <Route path="/data/fluid/vault/:vaultId" element={renderLazy(FluidVaultPage)} />
         <Route path="/data/fluid/:marketId" element={renderLazy(FluidMarketPage)} />
         <Route path="/data/euler/:marketId" element={renderLazy(EulerMarketPage)} />

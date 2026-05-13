@@ -62,6 +62,18 @@ def cmd_migrate(args) -> int:
     return 0
 
 
+def cmd_price_sync(_args) -> int:
+    from analytics.oracle_snapshots import sync_asset_price_observations
+
+    ch = ch_client()
+    try:
+        summary = sync_asset_price_observations(ch)
+    finally:
+        ch.close()
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_status(args) -> int:
     code, payload = fetch_json("/status")
     if args.json:
@@ -368,6 +380,9 @@ def main() -> int:
     migrate.add_argument("--backfill", action="store_true")
     migrate.add_argument("--rebuild-views", action="store_true")
     migrate.set_defaults(func=cmd_migrate)
+
+    price_sync = sub.add_parser("price-sync", help="Sync shared asset price observations from canonical oracle sources")
+    price_sync.set_defaults(func=cmd_price_sync)
 
     status = sub.add_parser("status", help="Show source status")
     status.add_argument("--json", action="store_true")

@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import { Activity, ArrowLeft, Loader2, ExternalLink, Shield, Link2 } from "lucide-react";
@@ -38,6 +38,11 @@ const formatCurrency = (v) => {
 };
 const formatApy = (v) => `${(finiteNumber(v) * 100).toFixed(2)}%`;
 const formatPercent = (v, d = 2) => `${(finiteNumber(v) * 100).toFixed(d)}%`;
+const shortAddress = (value) => {
+  const raw = String(value || "");
+  if (!raw || /^0x0{40}$/i.test(raw)) return "Unassigned";
+  return raw.length > 12 ? `${raw.slice(0, 6)}...${raw.slice(-4)}` : raw;
+};
 const normalizeRatePoint = (p) => ({
   timestamp: finiteNumber(p?.timestamp),
   supplyApy: finiteNumber(p?.supplyApy),
@@ -47,6 +52,24 @@ const normalizeRatePoint = (p) => ({
   borrowUsd: finiteNumber(p?.borrowUsd),
 });
 const hasAnyFiniteValue = (p, keys) => keys.some((k) => Number.isFinite(Number(p?.[k])));
+
+const proportionalSlots = (items, totals, top, bottom, height, minH = 14, gap = 12) => {
+  const slots = new Map();
+  if (!items.length) return slots;
+  const total = items.reduce((sum, item) => sum + finiteNumber(totals.get(item)), 0);
+  const avail = Math.max(1, height - top - bottom - gap * (items.length - 1));
+  const rawHeights = items.map((item) => (total > 0 ? (avail * finiteNumber(totals.get(item))) / total : avail / items.length));
+  const heights = rawHeights.map((heightValue) => Math.max(minH, heightValue));
+  const used = heights.reduce((sum, heightValue) => sum + heightValue, 0) + gap * (items.length - 1);
+  const scale = used > avail ? avail / used : 1;
+  let y = top + Math.max(0, (height - top - bottom - used * scale) / 2);
+  items.forEach((item, index) => {
+    const h = Math.max(8, heights[index] * scale);
+    slots.set(item, { y, h, center: y + h / 2, total: finiteNumber(totals.get(item)) });
+    y += h + gap * scale;
+  });
+  return slots;
+};
 
 function ChartEmptyState({ label }) {
   return (
@@ -119,6 +142,48 @@ function useAllocationChartData(columnar, genesisTs) {
   }, [columnar, genesisTs]);
 }
 
+function useCuratorAlluvialData(columnar, marketLabel) {
+  return useMemo(() => {
+    if (!columnar?.timestamps?.length || !columnar?.vaults?.length) {
+      return { rows: [], curators: [], vaults: [], curatorTotals: new Map(), vaultTotals: new Map(), total: 0, timestamp: 0 };
+    }
+    const latestIndex = columnar.timestamps.length - 1;
+    const rows = columnar.vaults
+      .map((vault, index) => {
+        const valueUsd = finiteNumber(columnar.suppliedUsd?.[index]?.[latestIndex]);
+        const curatorAddress = String(vault.curator || "");
+        return {
+          market: marketLabel,
+          curator: shortAddress(curatorAddress),
+          curatorAddress,
+          vault: vault.name || shortAddress(vault.address),
+          vaultAddress: vault.address,
+          valueUsd,
+        };
+      })
+      .filter((row) => row.valueUsd > 0)
+      .sort((a, b) => b.valueUsd - a.valueUsd)
+      .slice(0, 14);
+
+    const curatorTotals = new Map();
+    const vaultTotals = new Map();
+    rows.forEach((row) => {
+      curatorTotals.set(row.curator, (curatorTotals.get(row.curator) || 0) + row.valueUsd);
+      vaultTotals.set(row.vault, (vaultTotals.get(row.vault) || 0) + row.valueUsd);
+    });
+
+    return {
+      rows,
+      curators: [...curatorTotals.keys()].sort((a, b) => curatorTotals.get(b) - curatorTotals.get(a)),
+      vaults: [...vaultTotals.keys()].sort((a, b) => vaultTotals.get(b) - vaultTotals.get(a)),
+      curatorTotals,
+      vaultTotals,
+      total: rows.reduce((sum, row) => sum + row.valueUsd, 0),
+      timestamp: columnar.timestamps[latestIndex] || 0,
+    };
+  }, [columnar, marketLabel]);
+}
+
 const AllocationTooltip = ({ active, payload, vaultNames }) => {
   if (!active || !payload?.length) return null;
   const ts = payload[0]?.payload?.timestamp;
@@ -137,6 +202,158 @@ const AllocationTooltip = ({ active, payload, vaultNames }) => {
     </div>
   );
 };
+
+function CuratorAlluvialChart({ model, marketLabel, loading }) {
+  const [tooltip, setTooltip] = useState(null);
+
+  if (loading && !model.rows.length) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center text-xs uppercase tracking-widest text-gray-500 gap-2">
+        <Loader2 size={14} className="animate-spin" /> Loading Curator Flows...
+      </div>
+    );
+  }
+  if (!model.rows.length) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center text-xs uppercase tracking-widest text-gray-500">
+        No curator allocation data available
+      </div>
+    );
+  }
+
+  const width = 1120;
+  const height = 360;
+  const nodeWidth = 12;
+  const xMarket = 150;
+  const xCurator = 550;
+  const xVault = 930;
+  const top = 34;
+  const bottom = 24;
+  const marketTotals = new Map([[marketLabel, model.total]]);
+  const marketSlot = proportionalSlots([marketLabel], marketTotals, top + 70, bottom + 70, height, 52, 0);
+  const curatorSlots = proportionalSlots(model.curators, model.curatorTotals, top + 22, bottom, height, 12, 12);
+  const vaultSlots = proportionalSlots(model.vaults, model.vaultTotals, top + 22, bottom, height, 10, 10);
+
+  const ribbonPath = (x1, src, x2, tgt) => {
+    const mid = (x1 + x2) / 2;
+    return [
+      `M ${x1.toFixed(2)} ${src.y0.toFixed(2)}`,
+      `C ${mid.toFixed(2)} ${src.y0.toFixed(2)}, ${mid.toFixed(2)} ${tgt.y0.toFixed(2)}, ${x2.toFixed(2)} ${tgt.y0.toFixed(2)}`,
+      `L ${x2.toFixed(2)} ${tgt.y1.toFixed(2)}`,
+      `C ${mid.toFixed(2)} ${tgt.y1.toFixed(2)}, ${mid.toFixed(2)} ${src.y1.toFixed(2)}, ${x1.toFixed(2)} ${src.y1.toFixed(2)}`,
+      "Z",
+    ].join(" ");
+  };
+  const linkSeg = (layout, totals, offsets, key, value) => {
+    const slot = layout.get(key);
+    if (!slot) return null;
+    const total = Math.max(1, finiteNumber(totals.get(key)));
+    const dy = (slot.h * finiteNumber(value)) / total;
+    const offset = offsets.get(key) || 0;
+    offsets.set(key, offset + dy);
+    return { y0: slot.y + offset, y1: slot.y + offset + dy };
+  };
+
+  const marketOffsets = new Map();
+  const curatorInOffsets = new Map();
+  const curatorOutOffsets = new Map();
+  const vaultOffsets = new Map();
+  const curatorLinks = model.curators.map((curator) => {
+    const valueUsd = model.curatorTotals.get(curator) || 0;
+    const src = linkSeg(marketSlot, marketTotals, marketOffsets, marketLabel, valueUsd);
+    const tgt = linkSeg(curatorSlots, model.curatorTotals, curatorInOffsets, curator, valueUsd);
+    if (!src || !tgt) return null;
+    return {
+      d: ribbonPath(xMarket + nodeWidth, src, xCurator, tgt),
+      color: "#34d399",
+      sourceName: marketLabel,
+      targetName: curator,
+      valueUsd,
+    };
+  }).filter(Boolean);
+  const vaultLinks = model.rows.map((row) => {
+    const src = linkSeg(curatorSlots, model.curatorTotals, curatorOutOffsets, row.curator, row.valueUsd);
+    const tgt = linkSeg(vaultSlots, model.vaultTotals, vaultOffsets, row.vault, row.valueUsd);
+    if (!src || !tgt) return null;
+    return {
+      d: ribbonPath(xCurator + nodeWidth, src, xVault, tgt),
+      color: "#22d3ee",
+      sourceName: row.curator,
+      targetName: row.vault,
+      valueUsd: row.valueUsd,
+    };
+  }).filter(Boolean);
+
+  const showTip = (event, link) => {
+    const bounds = event.currentTarget.ownerSVGElement.getBoundingClientRect();
+    const x = event.clientX - bounds.left;
+    const y = event.clientY - bounds.top;
+    setTooltip({ x: x > bounds.width - 180 ? x - 190 : x + 14, y: y + 14, link });
+  };
+  const renderNodes = (items, totals, slots, x, anchor, color) => items.map((item) => {
+    const slot = slots.get(item);
+    if (!slot) return null;
+    const labelX = anchor === "end" ? x - 8 : anchor === "middle" ? x + nodeWidth / 2 : x + nodeWidth + 8;
+    return (
+      <g key={item}>
+        <rect x={x} y={slot.y} width={nodeWidth} height={slot.h} fill={color} rx="2" />
+        <text
+          x={labelX}
+          y={anchor === "middle" ? slot.y - 8 : slot.y + slot.h / 2 + 4}
+          textAnchor={anchor}
+          fill="#e5e7eb"
+          fontSize="12"
+        >
+          {anchor === "middle" ? `${item} ${formatCurrency(totals.get(item))}` : `${item} ${formatCurrency(totals.get(item))}`}
+        </text>
+      </g>
+    );
+  });
+
+  return (
+    <div className="relative w-full h-full">
+      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" role="img" aria-label="Morpho curator allocation alluvial chart">
+        <g>
+          {[...curatorLinks, ...vaultLinks].map((link, index) => (
+            <path
+              key={index}
+              d={link.d}
+              fill={link.color}
+              fillOpacity="0.28"
+              stroke="none"
+              onMouseMove={(event) => showTip(event, link)}
+              onMouseLeave={() => setTooltip(null)}
+              className="transition-opacity hover:opacity-80 cursor-default"
+            />
+          ))}
+          <text x={xMarket + nodeWidth / 2} y={16} textAnchor="middle" fill="#6b7280" fontSize="10">MARKET</text>
+          <text x={xCurator + nodeWidth / 2} y={16} textAnchor="middle" fill="#6b7280" fontSize="10">CURATORS</text>
+          <text x={xVault + nodeWidth / 2} y={16} textAnchor="middle" fill="#6b7280" fontSize="10">VAULTS</text>
+          {renderNodes([marketLabel], marketTotals, marketSlot, xMarket, "middle", "#998EFF")}
+          {renderNodes(model.curators, model.curatorTotals, curatorSlots, xCurator, "middle", "#34d399")}
+          {renderNodes(model.vaults, model.vaultTotals, vaultSlots, xVault, "start", "#22d3ee")}
+        </g>
+      </svg>
+      {tooltip && (
+        <div
+          className="absolute z-20 pointer-events-none rounded-sm border border-zinc-800 bg-[#0a0a0a] px-3 py-2 text-xs font-mono shadow-2xl"
+          style={{ left: tooltip.x, top: tooltip.y }}
+        >
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-2 border-b border-white/10 pb-1.5 mb-0.5">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: tooltip.link.color }} />
+              <span className="font-bold text-white uppercase tracking-wider">{tooltip.link.sourceName} {"->"} {tooltip.link.targetName}</span>
+            </div>
+            <div className="flex justify-between gap-6">
+              <span className="text-gray-500 uppercase tracking-widest text-[10px]">Allocated</span>
+              <span className="text-white">{formatCurrency(tooltip.link.valueUsd)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function MorphoMarketPage() {
   const { marketId } = useParams();
@@ -231,6 +448,8 @@ export default function MorphoMarketPage() {
   }, [pageGqlData]);
 
   const { pivoted, vaultKeys, vaultNames } = useAllocationChartData(allocationColumnar, genesisTs);
+  const marketLabel = market?.collateralSymbol ? `${market.collateralSymbol}-${market.symbol}` : market?.symbol || "Morpho Market";
+  const curatorAlluvial = useCuratorAlluvialData(allocationColumnar, marketLabel);
 
   if (pageLoading && !market) {
     return (<div className="min-h-screen bg-[#050505] flex items-center justify-center"><Loader2 className="w-8 h-8 text-cyan-500 animate-spin" /></div>);
@@ -375,6 +594,39 @@ export default function MorphoMarketPage() {
             />
           </div>
         </div>
+
+        {/* Curator Allocation Alluvial */}
+        <section className="mb-6">
+          <div className="flex flex-col p-4 md:p-6 border border-white/10 bg-[#080808] rounded-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm md:text-lg text-white font-semibold tracking-tight uppercase">
+                Curator Allocation Flows
+              </h2>
+              <div className="flex items-center gap-4 flex-wrap justify-end">
+                <div className="text-[10px] text-gray-500 uppercase tracking-widest">
+                  {curatorAlluvial.curators.length} curators
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2" style={{ backgroundColor: "#34d399" }} />
+                    <span className="text-[9px] text-gray-500 uppercase tracking-widest">Market to Curator</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2" style={{ backgroundColor: "#22d3ee" }} />
+                    <span className="text-[9px] text-gray-500 uppercase tracking-widest">Curator to Vault</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="h-[360px] w-full relative mt-auto">
+              <CuratorAlluvialChart
+                model={curatorAlluvial}
+                marketLabel={marketLabel}
+                loading={pageLoading}
+              />
+            </div>
+          </div>
+        </section>
 
         {/* Row 1: Interest Rates | Value Locked */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">

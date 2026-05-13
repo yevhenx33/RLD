@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from analytics.sources.morpho import EVENT_MAP, MORPHO_BLUE, MorphoSource  # noqa: E402
+from analytics.state import update_source_status  # noqa: E402
 
 
 TOPICS = sorted(EVENT_MAP.keys())
@@ -127,6 +128,15 @@ def rpc_url(explicit: str | None = None) -> str:
     if not value:
         raise RuntimeError("MAINNET_RPC_URL, ETH_RPC_URL, or RPC_URL is required")
     return value
+
+
+def sanitize_error(exc: Exception | str) -> str:
+    message = str(exc)
+    for key in ("MAINNET_RPC_URL", "ETH_RPC_URL", "RPC_URL", "RESERVE_RPC_URL"):
+        value = os.getenv(key)
+        if value:
+            message = message.replace(value, "[redacted-rpc-url]")
+    return message
 
 
 def rpc_call(url: str, method: str, params: list, timeout: int = 30, retries: int = 3):
@@ -265,6 +275,8 @@ def rebuild_latest_state(args) -> dict[str, int]:
     try:
         source._ensure_tables(ch)
         source._load_available_feeds(ch)
+        source._load_shared_price_assets(ch)
+        source._load_pendle_address_map(ch)
         max_block = args.to_block or int(ch.command("SELECT max(block_number) FROM morpho_events") or 0)
         min_block = args.from_block or source.genesis_block
         decoded = 0
@@ -290,6 +302,7 @@ def rebuild_latest_state(args) -> dict[str, int]:
             return {"decoded": decoded, "markets": len(source._markets), "positions": len(source._positions)}
 
         source._persist_params(ch, list(source._params))
+        source._persist_history(ch)
         source._touched_markets = set(source._markets)
         source._touched_positions = set(source._positions)
         source._persist_state(ch)
@@ -313,6 +326,227 @@ def rebuild_latest_state(args) -> dict[str, int]:
         ch.close()
 
 
+def clear_derived_history(ch) -> None:
+    for table in (
+        "morpho_market_params",
+        "morpho_market_state",
+        "morpho_market_state_history",
+        "morpho_market_positions",
+        "morpho_market_position_history",
+        "morpho_market_events",
+        "morpho_market_oracle_support",
+        "morpho_market_metrics",
+        "morpho_chainlink_timeseries",
+    ):
+        ch.command(f"TRUNCATE TABLE {table}")
+    for table in (
+        "oracle_dependency_edges",
+        "oracle_dependency_exposure_latest",
+    ):
+        ch.command(f"ALTER TABLE {table} DELETE WHERE protocol = 'MORPHO_MARKET' SETTINGS mutations_sync = 2")
+    for table in (
+        "market_timeseries",
+        "api_market_latest",
+        "api_market_timeseries_hourly_agg",
+    ):
+        ch.command(f"ALTER TABLE {table} DELETE WHERE protocol = 'MORPHO_MARKET' SETTINGS mutations_sync = 2")
+    ch.command("ALTER TABLE api_protocol_tvl_entity_weekly_agg DELETE WHERE protocol = 'MORPHO' SETTINGS mutations_sync = 2")
+
+
+def rebuild_historical_timeseries(args) -> dict[str, int]:
+    ch = clickhouse_client()
+    source = MorphoSource()
+    try:
+        source._ensure_tables(ch)
+        source._load_available_feeds(ch)
+        source._load_shared_price_assets(ch)
+        source._load_pendle_address_map(ch)
+        bounds = ch.query(
+            """
+            SELECT min(block_number), max(block_number), count()
+            FROM morpho_events
+            """
+        ).result_rows[0]
+        min_block = int(args.from_block or bounds[0] or source.genesis_block)
+        max_block = int(args.to_block or bounds[1] or 0)
+        raw_events = int(bounds[2] or 0)
+        if max_block <= 0:
+            return {"raw_events": raw_events, "decoded": 0, "timeseries_rows": 0, "markets": 0, "positions": 0}
+        if args.max_markets:
+            raise SystemExit("--max-markets is not supported for --rebuild-history; history replay must stay complete")
+
+        if not args.dry_run:
+            clear_derived_history(ch)
+
+        decoded_total = 0
+        timeseries_total = 0
+        for start in range(min_block, max_block + 1, int(args.replay_batch_blocks or 50_000)):
+            end = min(start + int(args.replay_batch_blocks or 50_000) - 1, max_block)
+            rows = ch.query(
+                f"""
+                SELECT block_number, block_timestamp, tx_hash, log_index, contract,
+                       event_name, topic0, topic1, topic2, topic3, data
+                FROM morpho_events
+                WHERE block_number >= {int(start)} AND block_number <= {int(end)}
+                ORDER BY block_number ASC, log_index ASC
+                """
+            ).result_rows
+            block_ts = {int(row[0]): row[1] for row in rows}
+            decoded_rows = []
+            for row in rows:
+                event = source.decode(SimulatedLog(row), block_ts)
+                if event:
+                    decoded_rows.append(event)
+            decoded_total += len(decoded_rows)
+            written = 0
+            if decoded_rows and not args.dry_run:
+                written = source.merge(ch, decoded_rows)
+                timeseries_total += int(written or 0)
+            elif decoded_rows:
+                source._event_facts.clear()
+            print(
+                json.dumps(
+                    {
+                        "replayRange": [start, end],
+                        "rawRows": len(rows),
+                        "decodedRows": len(decoded_rows),
+                        "timeseriesRows": written,
+                        "markets": len(source._markets),
+                        "positions": len(source._positions),
+                    }
+                ),
+                flush=True,
+            )
+        if not args.dry_run:
+            latest_ts = ch.query(
+                f"SELECT max(block_timestamp) FROM morpho_events WHERE block_number <= {int(max_block)}"
+            ).result_rows[0][0]
+            ch.insert(
+                "processor_state",
+                [[source.name, int(max_block)]],
+                column_names=["protocol", "last_processed_block"],
+            )
+            update_source_status(
+                ch,
+                source.name,
+                "processor",
+                last_processed_block=int(max_block),
+                last_event_block=int(max_block),
+                last_data_timestamp=latest_ts,
+            )
+        return {
+            "raw_events": raw_events,
+            "decoded": decoded_total,
+            "timeseries_rows": timeseries_total,
+            "markets": len(source._markets),
+            "positions": len(source._positions),
+            "from_block": min_block,
+            "to_block": max_block,
+        }
+    finally:
+        ch.close()
+
+
+def rewind_after_block(args) -> dict[str, object]:
+    block = int(args.rewind_after_block or 0)
+    if block <= 0:
+        raise SystemExit("--rewind-after-block must be positive")
+    ch = clickhouse_client()
+    try:
+        cutoff = ch.query(
+            f"SELECT toStartOfHour(max(block_timestamp)) FROM morpho_events WHERE block_number <= {block}"
+        ).result_rows[0][0]
+        market_topics = ", ".join(f"'{topic}'" for topic in TOPICS)
+        touched = ch.query(
+            f"""
+            SELECT countDistinct(topic1)
+            FROM morpho_events
+            WHERE block_number > {block}
+              AND topic0 IN ({market_topics})
+              AND topic1 IS NOT NULL
+              AND topic1 != ''
+            """
+        ).result_rows[0][0]
+        touched_markets = f"""
+            SELECT DISTINCT topic1
+            FROM morpho_events
+            WHERE block_number > {block}
+              AND topic0 IN ({market_topics})
+              AND topic1 IS NOT NULL
+              AND topic1 != ''
+        """
+        commands = [
+            f"ALTER TABLE morpho_market_state DELETE WHERE last_event_block > {block} SETTINGS mutations_sync = 2",
+            f"ALTER TABLE morpho_market_state_history DELETE WHERE last_event_block > {block} SETTINGS mutations_sync = 2",
+            f"ALTER TABLE morpho_market_positions DELETE WHERE last_event_block > {block} SETTINGS mutations_sync = 2",
+            f"ALTER TABLE morpho_market_position_history DELETE WHERE last_event_block > {block} SETTINGS mutations_sync = 2",
+            f"ALTER TABLE morpho_market_events DELETE WHERE block_number > {block} SETTINGS mutations_sync = 2",
+            f"""
+            ALTER TABLE morpho_market_metrics
+            DELETE WHERE market_id IN ({touched_markets})
+              AND timestamp >= toDateTime({int(cutoff.timestamp())})
+            SETTINGS mutations_sync = 2
+            """,
+            f"""
+            ALTER TABLE morpho_chainlink_timeseries
+            DELETE WHERE entity_id IN ({touched_markets})
+              AND timestamp >= toDateTime({int(cutoff.timestamp())})
+            SETTINGS mutations_sync = 2
+            """,
+            f"""
+            ALTER TABLE market_timeseries
+            DELETE WHERE protocol = 'MORPHO_MARKET'
+              AND entity_id IN ({touched_markets})
+              AND timestamp >= toDateTime({int(cutoff.timestamp())})
+            SETTINGS mutations_sync = 2
+            """,
+            f"""
+            ALTER TABLE api_market_latest
+            DELETE WHERE protocol = 'MORPHO_MARKET'
+              AND entity_id IN ({touched_markets})
+            SETTINGS mutations_sync = 2
+            """,
+            f"""
+            ALTER TABLE api_market_timeseries_hourly_agg
+            DELETE WHERE protocol = 'MORPHO_MARKET'
+              AND entity_id IN ({touched_markets})
+              AND ts >= toDateTime({int(cutoff.timestamp())})
+            SETTINGS mutations_sync = 2
+            """,
+            f"""
+            ALTER TABLE api_protocol_tvl_entity_weekly_agg
+            DELETE WHERE protocol = 'MORPHO'
+              AND entity_id IN ({touched_markets})
+              AND day >= toStartOfWeek(toDateTime({int(cutoff.timestamp())}))
+            SETTINGS mutations_sync = 2
+            """,
+        ]
+        if not args.dry_run:
+            for command in commands:
+                ch.command(command)
+            ch.insert(
+                "processor_state",
+                [[MorphoSource.name, block]],
+                column_names=["protocol", "last_processed_block"],
+            )
+            update_source_status(
+                ch,
+                MorphoSource.name,
+                "processor",
+                last_processed_block=block,
+                last_event_block=block,
+                last_data_timestamp=cutoff,
+            )
+        return {
+            "rewound_after_block": block,
+            "cutoff_hour": cutoff.isoformat(sep=" "),
+            "touched_markets": int(touched or 0),
+            "dry_run": bool(args.dry_run),
+        }
+    finally:
+        ch.close()
+
+
 def sync_rpc_market_state(args) -> dict[str, int]:
     url = rpc_url(args.rpc_url)
     ch = clickhouse_client()
@@ -320,6 +554,7 @@ def sync_rpc_market_state(args) -> dict[str, int]:
     try:
         source._ensure_tables(ch)
         source._load_available_feeds(ch)
+        source._load_shared_price_assets(ch)
         block = args.to_block
         block_ts = block_timestamp(url, block, {})
         market_rows = ch.query(
@@ -337,8 +572,8 @@ def sync_rpc_market_state(args) -> dict[str, int]:
             """
             SELECT
                 market_id,
-                argMax(last_borrow_rate_wad, updated_at),
-                argMax(collateral_assets, updated_at)
+                argMax(last_borrow_rate_wad, (last_event_block, updated_at)),
+                argMax(collateral_assets, (last_event_block, updated_at))
             FROM morpho_market_state
             GROUP BY market_id
             """
@@ -354,7 +589,7 @@ def sync_rpc_market_state(args) -> dict[str, int]:
                 result = rpc_call(url, "eth_call", [{"to": MORPHO_BLUE, "data": data}, hex(block)], timeout=60, retries=5)
             except Exception as exc:
                 errors += 1
-                print(json.dumps({"rpcSyncError": market_id, "error": str(exc)}), flush=True)
+                print(json.dumps({"rpcSyncError": market_id, "error": sanitize_error(exc)}), flush=True)
                 continue
             words = result.removeprefix("0x")
             if len(words) < 64 * 6:
@@ -453,8 +688,8 @@ def db_market_state(ch) -> dict[str, tuple[int, int]]:
     rows = ch.query(
         """
         SELECT market_id,
-               argMax(total_supply_assets, updated_at),
-               argMax(total_borrow_assets, updated_at)
+               argMax(total_supply_assets, (last_event_block, updated_at)),
+               argMax(total_borrow_assets, (last_event_block, updated_at))
         FROM morpho_market_state
         GROUP BY market_id
         """
@@ -515,6 +750,7 @@ def run_rpc_anchor(args) -> dict[str, object]:
     status = "OK"
     error = ""
     diff_rows: list[list] = []
+    diff_rows_inserted = False
     try:
         ensure_anchor_tables(ch)
         block = anchor_block(args, ch, url)
@@ -593,13 +829,29 @@ def run_rpc_anchor(args) -> dict[str, object]:
                     "rel_diff",
                 ],
             )
+            diff_rows_inserted = True
     except Exception as exc:
         block = locals().get("block", 0)
         status = "ERROR"
-        error = str(exc)
+        error = sanitize_error(exc)
     finally:
         finished = dt.datetime.now(dt.UTC).replace(tzinfo=None, microsecond=0)
         if not args.dry_run:
+            if diff_rows and not diff_rows_inserted:
+                ch.insert(
+                    "morpho_rpc_anchor_diffs",
+                    diff_rows,
+                    column_names=[
+                        "run_id",
+                        "block_number",
+                        "market_id",
+                        "field",
+                        "db_value",
+                        "rpc_value",
+                        "abs_diff",
+                        "rel_diff",
+                    ],
+                )
             ch.insert(
                 "morpho_rpc_anchor_runs",
                 [
@@ -660,6 +912,12 @@ def run(args) -> int:
     load_env()
     if getattr(args, "anchor_once", False):
         return int(run_rpc_anchor(args).get("exitCode", 0))
+    if getattr(args, "rewind_after_block", 0):
+        print(json.dumps(rewind_after_block(args), sort_keys=True), flush=True)
+        return 0
+    if getattr(args, "rebuild_history", False):
+        print(json.dumps(rebuild_historical_timeseries(args), sort_keys=True), flush=True)
+        return 0
     if not args.from_block or not args.to_block:
         raise SystemExit("--from-block and --to-block are required unless --anchor-once is set")
     summary = {"checked": 0, "missing": 0, "inserted": 0}
@@ -690,7 +948,9 @@ def main() -> int:
     parser.add_argument("--batch-blocks", type=int, default=500)
     parser.add_argument("--skip-repair", action="store_true")
     parser.add_argument("--rebuild-state", action="store_true")
+    parser.add_argument("--rebuild-history", action="store_true")
     parser.add_argument("--sync-rpc-state", action="store_true")
+    parser.add_argument("--rewind-after-block", type=int, default=0)
     parser.add_argument("--replay-batch-blocks", type=int, default=50_000)
     parser.add_argument("--max-markets", type=int, default=0)
     parser.add_argument("--sleep-sec", type=float, default=0.0)
