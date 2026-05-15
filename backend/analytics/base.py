@@ -23,6 +23,7 @@ log = logging.getLogger("indexer")
 # The Merge-engine 'unified_timeseries' view combines them for reads.
 PROTOCOL_TABLES = {
     "AAVE_MARKET": "aave_timeseries",
+    "FLUID_MARKET": "fluid_timeseries",
 }
 
 DEFAULT_INSERT_BATCH_SIZE = int(os.getenv("CLICKHOUSE_INSERT_BATCH_SIZE", "20000"))
