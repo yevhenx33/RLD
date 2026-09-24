@@ -10,6 +10,8 @@ services:
     volumes:
       - /mnt/data/clickhouse/data:/var/lib/clickhouse
       - /mnt/data/clickhouse/log:/var/log/clickhouse-server
+      - ./clickhouse-config.d/storage.xml:/etc/clickhouse-server/config.d/storage.xml:ro
+      - ./clickhouse-config.d/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
     environment:
       - CLICKHOUSE_USER=default
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD must be set}
@@ -17,7 +19,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 12G
+          memory: 16G
     restart: unless-stopped
     labels:
       com.rld.owner: "data-platform"
