@@ -27,19 +27,19 @@
     </query_metric_log>
 
     <query_log>
-        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </query_log>
     <query_views_log>
-        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </query_views_log>
     <part_log>
-        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </part_log>
     <background_schedule_pool_log>
-        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </background_schedule_pool_log>
     <error_log>
-        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </error_log>
     <backup_log>
         <ttl>event_date + INTERVAL 90 DAY DELETE</ttl>
